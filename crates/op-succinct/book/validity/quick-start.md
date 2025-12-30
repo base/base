@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide will walk you through the steps to deploy OP Succinct for your OP Stack chain. By the end of this guide, you will have a deployed smart contract on L1 that is tracking the state of your OP Stack chain with mock SP1 proofs and Ethereum as the data availability layer. 
+This guide will walk you through the steps to deploy OP Succinct for your OP Stack chain. By the end of this guide, you will have a deployed smart contract on L1 that is tracking the state of your OP Stack chain with mock SP1 proofs and Ethereum as the data availability layer.
 
 ```admonish note
 For OP Stack chain with alternative DA layers, please refer to the [Experimental Features](./experimental/experimental.md) section.
@@ -17,26 +17,40 @@ For OP Stack chain with alternative DA layers, please refer to the [Experimental
 - [Rust](https://www.rust-lang.org/tools/install)
 - [Just](https://github.com/casey/just?tab=readme-ov-file#installation)
 
-``` admonish info
-On Ubuntu, you'll need some system dependencies to run the service: `curl`, `clang`, `pkg-config`,
-`libssl-dev`, `ca-certificates`, `git`, `libclang-dev`, and `jq`. You can see the [Dockerfile](https://github.com/succinctlabs/op-succinct/blob/main/validity/Dockerfile#L38) for more details.
+```` admonish info
+On Ubuntu, you'll need some system dependencies to run the service:
+
+```bash
+sudo apt update && sudo apt install -y \
+  curl clang pkg-config libssl-dev ca-certificates git libclang-dev jq build-essential
+```
+````
+
+## Step 1: Clone and build contracts
+
+Clone the repository and build the contracts:
+
+```bash
+git clone https://github.com/succinctlabs/op-succinct.git
+cd op-succinct/contracts
+forge build
+cd ..
 ```
 
-## Step 1: Set environment variables.
+## Step 2: Configure environment
 
 In the root directory, create a file called `.env` and set the following environment variables:
 
-| Parameter | Description |
-|-----------|-------------|
-| `L1_RPC` | L1 Archive Node. |
-| `L2_RPC` | L2 Execution Node (`op-geth`). |
-| `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
-| `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
-| `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
+```env
+# Required
+L1_RPC=<YOUR_L1_RPC_URL>                   # L1 Archive Node
+L2_RPC=<YOUR_L2_RPC_URL>                   # L2 Execution Node (op-geth)
+L2_NODE_RPC=<YOUR_L2_NODE_RPC_URL>         # L2 Rollup Node (op-node)
+PRIVATE_KEY=<YOUR_PRIVATE_KEY>             # Private key for deploying contracts
+ETHERSCAN_API_KEY=<YOUR_ETHERSCAN_API_KEY> # For verifying deployed contracts
 
-```admonish note
-If your integration requires access to consensus-layer data, set the
-`L1_BEACON_RPC` (L1 Beacon Node). This is optional and not required by default.
+# Optional
+L1_BEACON_RPC=<YOUR_L1_BEACON_RPC_URL>     # L1 Beacon Node (for integrations that access consensus-layer data)
 ```
 
 ```admonish info
@@ -49,7 +63,9 @@ Obtaining a Test Private Key
 ⚠️ **Caution:** Never use test keys on mainnet or with real assets.
 ```
 
-## Step 2: Deploy an `SP1MockVerifier` for verifying mock proofs
+## Step 3: Deploy contracts
+
+### Deploy an `SP1MockVerifier` for verifying mock proofs
 
 Deploy an `SP1MockVerifier` for verifying mock proofs by running the following command:
 
@@ -65,38 +81,23 @@ Script ran successfully.
 0: address 0x4cb20fa9e6FdFE8FDb6CE0942c5f40d49c898646
 ....
 ```
+
 In these deployment logs, `0x4cb20fa9e6FdFE8FDb6CE0942c5f40d49c898646` is the address of the `SP1MockVerifier` contract.
 
-Add the address of the `SP1MockVerifier` contract to the `.env` file in the root directory.
+Add the address to your `.env` file:
 
-| Parameter | Description |
-|-----------|-------------|
-| `VERIFIER_ADDRESS` | The address of the `SP1MockVerifier` contract. |
+```env
+VERIFIER_ADDRESS=<SP1_MOCK_VERIFIER_ADDRESS>  # Address of the SP1MockVerifier contract
+```
 
-
-## Step 3: Deploy the `OPSuccinctL2OutputOracle` contract
+### Deploy the `OPSuccinctL2OutputOracle` contract
 
 This contract is a modification of Optimism's `L2OutputOracle` contract which verifies a proof along with the proposed state root.
 
-Now, you should have the following in your `.env` file:
-
-| Parameter | Description |
-|-----------|-------------|
-| `L1_RPC` | L1 Archive Node. |
-| `L1_BEACON_RPC` | L1 Beacon Node. |
-| `L2_RPC` | L2 Execution Node (`op-geth`). |
-| `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
-| `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
-| `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
-| `VERIFIER_ADDRESS` | The address of the `SP1MockVerifier` contract. |
-
-Then, deploy the `OPSuccinctL2OutputOracle` contract by running the following
-command. This command automatically fetches and stores the rollup configuration,
-loads the required environment variables, and executes the Foundry deployment
-script, optionally verifying the contract on Etherscan
+Deploy the contract by running the following command. This command automatically fetches and stores the rollup configuration, loads the required environment variables, and executes the Foundry deployment script, optionally verifying the contract on Etherscan:
 
 ```shell
-% just deploy-oracle    
+% just deploy-oracle
 ...
 
 == Return ==
@@ -105,43 +106,26 @@ script, optionally verifying the contract on Etherscan
 
 In these deployment logs, `0xde4656D4FbeaC0c0863Ab428727e3414Fa251A4C` is the address of the proxy for the `OPSuccinctL2OutputOracle` contract. This deployed proxy contract is used to track the verified state roots of the OP Stack chain on L1.
 
-## Step 4: Set `op-succinct` service environment variables
+## Step 4: Run the service
 
-To start the mock `op-succinct` service, add the following parameters to the `.env` file in the root directory:
+Add the following parameters to the `.env` file:
 
-| Parameter | Description |
-|-----------|-------------|
-| `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
-| `OP_SUCCINCT_MOCK` | When set to `true`, the `op-succinct` service will generate mock proofs. For this quick start guide, set to `true`. |
-
-Now, you should have the following in your `.env` file:
-
-| Parameter | Description |
-|-----------|-------------|
-| `L1_RPC` | L1 Archive Node. |
-| `L1_BEACON_RPC` | L1 Beacon Node. |
-| `L2_RPC` | L2 Execution Node (`op-geth`). |
-| `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
-| `PRIVATE_KEY` | Private key for the account that will be deploying the contract and relaying proofs on-chain. |
-| `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
-| `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
-| `OP_SUCCINCT_MOCK` | When set to `true`, the `op-succinct` service will generate mock proofs. For this quick start guide, set to `true`. |
+```env
+L2OO_ADDRESS=<OPSUCCINCT_L2_OUTPUT_ORACLE_ADDRESS>  # Address of the OPSuccinctL2OutputOracle proxy
+OP_SUCCINCT_MOCK=true                               # Set to true to generate mock proofs
+```
 
 ``` admonish info
 When running just the proposer, you won't need the `ETHERSCAN_API_KEY` or `VERIFIER_ADDRESS` environment variables. These are only required for contract deployment.
 ```
 
-## Step 5: Start the `op-succinct` service in mock mode.
-
-We provide a Docker Compose file for running the `op-succinct` service.
-
-#### Build the Docker Compose setup.
+### Build the Docker Compose setup
 
 ```shell
 docker compose build
 ```
 
-#### Run the Proposer
+### Run the Proposer
 
 This command launches the [op-succinct](./proposer.md) in the background.
 
@@ -162,4 +146,3 @@ To stop the `op-succinct` service, run:
 ```shell
 docker compose stop
 ```
-
