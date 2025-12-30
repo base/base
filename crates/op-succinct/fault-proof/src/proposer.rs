@@ -756,14 +756,6 @@ where
     ) -> Result<(TxHash, u64, u64)> {
         tracing::info!("Attempting to prove game {:?}", game_address);
 
-        let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config().await {
-            Ok(f) => f,
-            Err(e) => {
-                tracing::error!("Failed to create data fetcher: {}", e);
-                return Err(anyhow::anyhow!("Failed to create data fetcher: {}", e));
-            }
-        };
-
         let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
         let l1_head_hash = game.l1Head().call().await?.0;
         tracing::debug!("L1 head hash: {:?}", hex::encode(l1_head_hash));
@@ -830,7 +822,7 @@ where
 
         let latest_l1_head = boot_infos.last().context("No boot infos generated")?.l1Head;
 
-        let headers = match fetcher.get_header_preimages(&boot_infos, latest_l1_head).await {
+        let headers = match self.fetcher.get_header_preimages(&boot_infos, latest_l1_head).await {
             Ok(headers) => headers,
             Err(e) => {
                 tracing::error!("Failed to get header preimages: {e}");
