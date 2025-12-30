@@ -15,7 +15,7 @@ mod integration {
             MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE,
         },
         monitor::{verify_all_resolved_correctly, TrackedGame},
-        TestEnvironment,
+        new_proposer, TestEnvironment,
     };
     use fault_proof::{
         challenger::Game,
@@ -26,7 +26,7 @@ mod integration {
     use tokio::time::{sleep, Duration};
     use tracing::info;
 
-    use crate::common::init_challenger;
+    use crate::common::new_challenger;
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
@@ -802,14 +802,16 @@ mod integration {
 
         // === PHASE 2: Challenge Game 3 =================================
         info!("=== Phase 2: Challenge Game 3 ===");
-        let challenger = init_challenger(
+        let challenger = new_challenger(
             &env.rpc_config,
             env.private_keys.challenger,
+            &env.deployed.anchor_state_registry,
             &env.deployed.factory,
             env.game_type,
             Some(100.0),
         )
         .await?;
+        challenger.try_init().await?;
         info!("✓ Challenger initialized");
 
         let game_to_challenge = Game {
@@ -903,7 +905,7 @@ mod integration {
     async fn test_proposer_retains_anchor_after_bond_claim() -> Result<()> {
         let env = TestEnvironment::setup().await?;
 
-        let proposer = Arc::new(env.init_proposer().await?);
+        let proposer = Arc::new(env.new_proposer().await?);
 
         let proposer_handle = {
             let proposer_clone = proposer.clone();
@@ -943,9 +945,9 @@ mod integration {
         Ok(())
     }
 
-    // Tests that the proposer fails fast when the contract's starting L2 block number is
-    // misconfigured to a future value (e.g., a single block ahead of actual finalized L2 block).
-    // This prevents the proposer from running indefinitely without creating games.
+    // Tests that the proposer's startup validations fail when the contract's starting L2 block
+    // number is misconfigured to a future value (e.g., a single block ahead of actual finalized
+    // L2 block). This prevents the proposer from running indefinitely without creating games.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_proposer_rejects_future_starting_block() -> Result<()> {
         let env = TestEnvironment::setup_with_starting_block_offset(
@@ -953,7 +955,17 @@ mod integration {
         )
         .await?;
 
-        let result = env.init_proposer().await;
+        // Create proposer and call validate_and_init directly (not try_init which retries).
+        let proposer = new_proposer(
+            &env.rpc_config,
+            env.private_keys.proposer,
+            &env.deployed.anchor_state_registry,
+            &env.deployed.factory,
+            env.game_type,
+        )
+        .await?;
+
+        let result = proposer.validate_and_init().await;
 
         let error = match result {
             Err(e) => e,

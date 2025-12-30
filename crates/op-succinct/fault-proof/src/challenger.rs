@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, U256};
@@ -10,6 +14,7 @@ use tokio::{sync::Mutex, time};
 use crate::{
     config::ChallengerConfig,
     contract::{
+        AnchorStateRegistry::AnchorStateRegistryInstance,
         DisputeGameFactory::DisputeGameFactoryInstance, GameStatus, OPSuccinctFaultDisputeGame,
         ProposalStatus,
     },
@@ -28,8 +33,9 @@ where
     signer: SignerLock,
     l1_provider: L1Provider,
     l2_provider: L2Provider,
+    anchor_state_registry: AnchorStateRegistryInstance<P>,
     factory: DisputeGameFactoryInstance<P>,
-    challenger_bond: U256,
+    challenger_bond: OnceLock<U256>,
     state: Arc<Mutex<ChallengerState>>,
 }
 
@@ -37,34 +43,38 @@ impl<P> OPSuccinctChallenger<P>
 where
     P: Provider + Clone,
 {
-    /// Creates a new challenger instance for testing with provided configuration.
-    pub async fn new(
+    /// Creates a new challenger instance with provided configuration.
+    pub fn new(
         config: ChallengerConfig,
         l1_provider: L1Provider,
+        anchor_state_registry: AnchorStateRegistryInstance<P>,
         factory: DisputeGameFactoryInstance<P>,
         signer: SignerLock,
-    ) -> Result<Self> {
-        let challenger_bond = factory.fetch_challenger_bond(config.game_type).await?;
+    ) -> Self {
         let l2_rpc = config.l2_rpc.clone();
 
-        Ok(OPSuccinctChallenger {
+        OPSuccinctChallenger {
             config,
             signer,
             l1_provider: l1_provider.clone(),
             l2_provider: ProviderBuilder::default().connect_http(l2_rpc),
+            anchor_state_registry,
             factory,
-            challenger_bond,
+            challenger_bond: OnceLock::new(),
             state: Arc::new(Mutex::new(ChallengerState {
                 cursor: U256::ZERO,
                 games: HashMap::new(),
             })),
-        })
+        }
     }
 
     /// Runs the main challenger loop. On each tick it waits for the configured interval, refreshes
     /// cached state, and then handles challenging, resolution, and bond-claiming tasks.
     pub async fn run(&mut self) -> Result<()> {
         tracing::info!("OP Succinct Lite Challenger running...");
+
+        self.try_init().await?;
+
         if self.config.malicious_challenge_percentage > 0.0 {
             tracing::warn!(
                 "\x1b[33mMalicious challenging enabled: {}% of valid games will be challenged for testing\x1b[0m",
@@ -84,6 +94,7 @@ where
             // Synchronize cached dispute state before scheduling work.
             if let Err(e) = self.sync_state().await {
                 tracing::warn!("Failed to sync challenger state: {:?}", e);
+                continue
             }
 
             if let Err(e) = self.handle_game_challenging().await {
@@ -98,6 +109,66 @@ where
                 tracing::warn!("Failed to handle bond claiming: {:?}", e);
             }
         }
+    }
+
+    /// Runs startup validations with retries before entering main loop.
+    pub async fn try_init(&self) -> Result<()> {
+        let mut interval = time::interval(Duration::from_secs(self.config.fetch_interval));
+        let mut retry_count = 0u32;
+
+        loop {
+            match self.validate_and_init().await {
+                Ok(()) => break,
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count == 1 {
+                        tracing::error!(attempt = retry_count, error = %e, "Startup validations failed");
+                    } else {
+                        tracing::warn!(
+                            attempt = retry_count,
+                            "Startup validations still pending, retrying..."
+                        );
+                    }
+                    interval.tick().await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates startup and initializes state.
+    async fn validate_and_init(&self) -> Result<()> {
+        let bond = self.startup_validations().await?;
+        self.init_state(bond);
+        Ok(())
+    }
+
+    /// Runs one-time startup validations before the challenger begins normal operations.
+    /// Returns the challenger bond on success.
+    async fn startup_validations(&self) -> Result<U256> {
+        // Validate game type is registered and get game implementation.
+        let game_impl = self.factory.game_impl(self.config.game_type).await?;
+
+        // Validate anchor state registry matches factory's game implementation.
+        let expected_registry = game_impl.anchorStateRegistry().call().await?;
+        if *self.anchor_state_registry.address() != expected_registry {
+            anyhow::bail!(
+                "Anchor state registry address mismatch: config has {}, but factory's game implementation uses {}",
+                self.anchor_state_registry.address(),
+                expected_registry
+            );
+        }
+
+        // Fetch challenger bond.
+        let bond = game_impl.challengerBond().call().await?;
+
+        Ok(bond)
+    }
+
+    /// Initialize challenger state with the validated challenger bond.
+    fn init_state(&self, bond: U256) {
+        self.challenger_bond.set(bond).expect("challenger_bond must not already be set");
     }
 
     /// Synchronizes the game cache.
@@ -210,10 +281,8 @@ where
                         }
                     }
                     GameStatus::CHALLENGER_WINS => {
-                        let is_finalized = self
-                            .factory
-                            .is_game_finalized(self.config.game_type, game.address)
-                            .await?;
+                        let is_finalized =
+                            self.anchor_state_registry.isGameFinalized(game.address).call().await?;
                         let credit = contract.credit(signer_address).call().await?;
 
                         if is_finalized && credit == U256::ZERO {
@@ -413,8 +482,12 @@ where
 
     pub async fn submit_challenge_transaction(&self, game: &Game) -> Result<()> {
         let contract = OPSuccinctFaultDisputeGame::new(game.address, self.l1_provider.clone());
+        let challenger_bond = *self
+            .challenger_bond
+            .get()
+            .context("challenger_bond must be set via startup_validations")?;
         let transaction_request =
-            contract.challenge().value(self.challenger_bond).into_transaction_request();
+            contract.challenge().value(challenger_bond).into_transaction_request();
         let receipt = self
             .signer
             .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)

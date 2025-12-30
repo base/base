@@ -43,14 +43,15 @@ MAX_CONCURRENT_DEFENSE_TASKS=8      # Maximum number of concurrently running def
 
 ```env
 # Required Configuration
-L1_RPC=                  # L1 RPC endpoint URL
-L2_RPC=                  # L2 RPC endpoint URL
-FACTORY_ADDRESS=         # Address of the DisputeGameFactory contract
-GAME_TYPE=               # Type identifier for the dispute game
-PRIVATE_KEY=             # Private key for transaction signing
+L1_RPC=                              # L1 RPC endpoint URL
+L2_RPC=                              # L2 RPC endpoint URL
+ANCHOR_STATE_REGISTRY_ADDRESS=       # Address of the AnchorStateRegistry contract
+FACTORY_ADDRESS=                     # Address of the DisputeGameFactory contract
+GAME_TYPE=                           # Type identifier for the dispute game
+PRIVATE_KEY=                         # Private key for transaction signing
 
 # Optional Configuration
-FETCH_INTERVAL=30        # Polling interval in seconds
+FETCH_INTERVAL=30                    # Polling interval in seconds
 ```
 
 2. Start the services:

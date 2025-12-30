@@ -37,6 +37,7 @@ Create a `.env.challenger` file in the `fault-proof` directory with all required
 |----------|-------------|
 | `L1_RPC` | L1 RPC endpoint URL |
 | `L2_RPC` | L2 RPC endpoint URL |
+| `ANCHOR_STATE_REGISTRY_ADDRESS` | Address of the AnchorStateRegistry contract |
 | `FACTORY_ADDRESS` | Address of the DisputeGameFactory contract |
 | `GAME_TYPE` | Type identifier for the dispute game |
 
@@ -58,11 +59,12 @@ Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for t
 
 ```env
 # Required Configuration
-L1_RPC=                  # L1 RPC endpoint URL
-L2_RPC=                  # L2 RPC endpoint URL
-FACTORY_ADDRESS=         # Address of the DisputeGameFactory contract
-GAME_TYPE=               # Type identifier for the dispute game
-PRIVATE_KEY=             # Private key for transaction signing
+L1_RPC=                              # L1 RPC endpoint URL
+L2_RPC=                              # L2 RPC endpoint URL
+ANCHOR_STATE_REGISTRY_ADDRESS=       # Address of the AnchorStateRegistry contract
+FACTORY_ADDRESS=                     # Address of the DisputeGameFactory contract
+GAME_TYPE=                           # Type identifier for the dispute game
+PRIVATE_KEY=                         # Private key for transaction signing
 
 # Optional Configuration
 FETCH_INTERVAL=30                     # Polling interval in seconds

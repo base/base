@@ -36,7 +36,7 @@ use tracing_subscriber::{filter::Targets, fmt, prelude::*, util::SubscriberInitE
 use crate::common::{
     constants::*,
     contracts::{deploy_mock_permissioned_game, send_contract_transaction},
-    init_proposer, start_challenger, start_proposer, warp_time, ANVIL,
+    new_proposer, start_challenger, start_proposer, warp_time, ANVIL,
 };
 
 use super::{
@@ -189,17 +189,24 @@ impl TestEnvironment {
         Ok(Self { game_type, private_keys, rpc_config, fetcher, anvil, deployed })
     }
 
-    pub async fn init_proposer(
+    pub async fn new_proposer(
         &self,
     ) -> Result<OPSuccinctProposer<fault_proof::L1Provider, impl OPSuccinctHost + Clone>> {
-        let proposer = init_proposer(
+        new_proposer(
             &self.rpc_config,
             self.private_keys.proposer,
             &self.deployed.anchor_state_registry,
             &self.deployed.factory,
             self.game_type,
         )
-        .await?;
+        .await
+    }
+
+    pub async fn init_proposer(
+        &self,
+    ) -> Result<OPSuccinctProposer<fault_proof::L1Provider, impl OPSuccinctHost + Clone>> {
+        let proposer = self.new_proposer().await?;
+        proposer.try_init().await?;
         info!("✓ Proposer initialized");
         Ok(proposer)
     }
@@ -229,6 +236,7 @@ impl TestEnvironment {
         let handle = start_challenger(
             &self.rpc_config,
             self.private_keys.challenger,
+            &self.deployed.anchor_state_registry,
             &self.deployed.factory,
             self.game_type,
             malicious_percentage,
