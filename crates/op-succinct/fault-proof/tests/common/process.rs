@@ -7,7 +7,7 @@ use anyhow::Result;
 use fault_proof::{
     challenger::OPSuccinctChallenger,
     config::{ChallengerConfig, RangeSplitCount},
-    contract::DisputeGameFactory,
+    contract::{AnchorStateRegistry, DisputeGameFactory},
     proposer::OPSuccinctProposer,
 };
 use op_succinct_host_utils::{
@@ -22,6 +22,7 @@ use tracing::Instrument;
 pub async fn init_proposer(
     rpc_config: &RPCConfig,
     private_key: &str,
+    anchor_state_registry_address: &Address,
     factory_address: &Address,
     game_type: u32,
 ) -> Result<OPSuccinctProposer<fault_proof::L1Provider, impl OPSuccinctHost + Clone>> {
@@ -32,6 +33,7 @@ pub async fn init_proposer(
     let config = fault_proof::config::ProposerConfig {
         l1_rpc: rpc_config.l1_rpc.clone(),
         l2_rpc: rpc_config.l2_rpc.clone(),
+        anchor_state_registry_address: *anchor_state_registry_address,
         factory_address: *factory_address,
         mock_mode: true,
         fast_finality_mode: false,
@@ -59,22 +61,32 @@ pub async fn init_proposer(
     };
 
     let l1_provider = ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone());
+    let anchor_state_registry =
+        AnchorStateRegistry::new(*anchor_state_registry_address, l1_provider.clone());
     let factory = DisputeGameFactory::new(*factory_address, l1_provider.clone());
 
     let fetcher = Arc::new(OPSuccinctDataFetcher::new_with_rollup_config().await?);
     let host = initialize_host(fetcher.clone());
 
-    OPSuccinctProposer::new(config, signer, factory, fetcher, host).await
+    OPSuccinctProposer::new(config, signer, anchor_state_registry, factory, fetcher, host).await
 }
 
 /// Start a proposer, and return a handle to the proposer task.
 pub async fn start_proposer(
     rpc_config: &RPCConfig,
     private_key: &str,
+    anchor_state_registry_address: &Address,
     factory_address: &Address,
     game_type: u32,
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    let proposer = init_proposer(rpc_config, private_key, factory_address, game_type).await?;
+    let proposer = init_proposer(
+        rpc_config,
+        private_key,
+        anchor_state_registry_address,
+        factory_address,
+        game_type,
+    )
+    .await?;
     Ok(tokio::spawn(async move {
         Arc::new(proposer).run().instrument(tracing::info_span!("PROPOSER")).await
     }))

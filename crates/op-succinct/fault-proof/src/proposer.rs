@@ -37,6 +37,7 @@ use tokio::{
 use crate::{
     config::ProposerConfig,
     contract::{
+        AnchorStateRegistry::AnchorStateRegistryInstance,
         DisputeGameFactory::{DisputeGameCreated, DisputeGameFactoryInstance},
         GameStatus,
         OPSuccinctFaultDisputeGame::{self, OPSuccinctFaultDisputeGameInstance},
@@ -173,6 +174,7 @@ where
     pub signer: SignerLock,
     pub l1_provider: L1Provider,
     pub l2_provider: L2Provider,
+    pub anchor_state_registry: Arc<AnchorStateRegistryInstance<P>>,
     pub factory: Arc<DisputeGameFactoryInstance<P>>,
     pub init_bond: U256,
     pub safe_db_fallback: bool,
@@ -194,6 +196,7 @@ where
     pub async fn new(
         config: ProposerConfig,
         signer: SignerLock,
+        anchor_state_registry: AnchorStateRegistryInstance<P>,
         factory: DisputeGameFactoryInstance<P>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
@@ -226,6 +229,7 @@ where
             signer,
             l1_provider,
             l2_provider,
+            anchor_state_registry: Arc::new(anchor_state_registry),
             factory: Arc::new(factory.clone()),
             init_bond,
             safe_db_fallback: config.safe_db_fallback,
@@ -1662,6 +1666,18 @@ where
                 );
                 return Ok((false, U256::ZERO, u32::MAX));
             }
+        }
+
+        // Check if our game type matches the current respected game type.
+        // The proposer should only create games when its type is the respected type.
+        let respected_game_type = self.anchor_state_registry.respectedGameType().call().await?;
+        if self.config.game_type != respected_game_type {
+            tracing::warn!(
+                proposer_game_type = self.config.game_type,
+                ?respected_game_type,
+                "Skipping game creation, game type does not match respected type"
+            );
+            return Ok((false, U256::ZERO, u32::MAX));
         }
 
         let (canonical_head_l2_block, parent_game_index) = {
