@@ -1,12 +1,12 @@
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
-use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
-use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use clap::Parser;
 use fault_proof::{
-    config::ProposerConfig, contract::DisputeGameFactory, prometheus::ProposerGauge,
+    config::ProposerConfig,
+    contract::{AnchorStateRegistry, DisputeGameFactory},
+    prometheus::ProposerGauge,
     proposer::OPSuccinctProposer,
 };
 use op_succinct_host_utils::{
@@ -39,24 +39,29 @@ async fn main() -> Result<()> {
 
     let proposer_signer = SignerLock::from_env().await?;
 
-    let l1_provider =
-        ProviderBuilder::new().connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
+    let l1_provider = ProviderBuilder::new().connect_http(proposer_config.l1_rpc.clone());
 
-    let factory = DisputeGameFactory::new(
-        env::var("FACTORY_ADDRESS")
-            .expect("FACTORY_ADDRESS must be set")
-            .parse::<Address>()
-            .unwrap(),
+    let anchor_state_registry = AnchorStateRegistry::new(
+        proposer_config.anchor_state_registry_address,
         l1_provider.clone(),
     );
+
+    let factory = DisputeGameFactory::new(proposer_config.factory_address, l1_provider.clone());
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(fetcher.clone()));
 
     let proposer = Arc::new(
-        OPSuccinctProposer::new(proposer_config, proposer_signer, factory, Arc::new(fetcher), host)
-            .await
-            .unwrap(),
+        OPSuccinctProposer::new(
+            proposer_config,
+            proposer_signer,
+            anchor_state_registry,
+            factory,
+            Arc::new(fetcher),
+            host,
+        )
+        .await
+        .unwrap(),
     );
 
     // Initialize proposer gauges.

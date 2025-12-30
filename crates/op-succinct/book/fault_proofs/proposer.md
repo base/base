@@ -37,6 +37,7 @@ Create a `.env.proposer` file in the `fault-proof` directory with all required v
 |----------|-------------|
 | `L1_RPC` | L1 RPC endpoint URL |
 | `L2_RPC` | L2 RPC endpoint URL |
+| `ANCHOR_STATE_REGISTRY_ADDRESS` | Address of the AnchorStateRegistry contract |
 | `FACTORY_ADDRESS` | Address of the DisputeGameFactory contract |
 | `GAME_TYPE` | Type identifier for the dispute game |
 | `NETWORK_PRIVATE_KEY` | Private key for the Succinct Prover Network. See the [Succinct Prover Network Quickstart](https://docs.succinct.xyz/docs/sp1/prover-network/quickstart) for setup instructions. (Set to `0x0000000000000000000000000000000000000000000000000000000000000001` if not using fast finality mode) |
@@ -107,26 +108,27 @@ Depending on the one you choose, you must provide the corresponding environment 
 
 ```env
 # Required Configuration
-L1_RPC=                  # L1 RPC endpoint URL
-L2_RPC=                  # L2 RPC endpoint URL
-FACTORY_ADDRESS=         # Address of the DisputeGameFactory contract (obtained from deployment)
-GAME_TYPE=               # Type identifier for the dispute game (must match factory configuration)
+L1_RPC=                          # L1 RPC endpoint URL
+L2_RPC=                          # L2 RPC endpoint URL
+ANCHOR_STATE_REGISTRY_ADDRESS=   # Address of the AnchorStateRegistry contract
+FACTORY_ADDRESS=                 # Address of the DisputeGameFactory contract (obtained from deployment)
+GAME_TYPE=                       # Type identifier for the dispute game (must match factory configuration)
 
 # Transaction Signing Configuration (Choose one)
 # Option 1: Private Key Signer
-PRIVATE_KEY=             # Private key for transaction signing
+PRIVATE_KEY=                     # Private key for transaction signing
 # Option 2: Web3 Signer
-SIGNER_URL=              # URL of the web3 signer service
-SIGNER_ADDRESS=          # Address of the account managed by the web3 signer
+SIGNER_URL=                      # URL of the web3 signer service
+SIGNER_ADDRESS=                  # Address of the account managed by the web3 signer
 
 # Optional Configuration
-MOCK_MODE=false                          # Whether to use mock mode
-FAST_FINALITY_MODE=false                 # Whether to use fast finality mode
-RANGE_PROOF_STRATEGY=reserved            # Set to hosted to use hosted proof strategy
-AGG_PROOF_STRATEGY=reserved              # Set to hosted to use hosted proof strategy
-PROPOSAL_INTERVAL_IN_BLOCKS=1800         # Number of L2 blocks between proposals
-FETCH_INTERVAL=30                        # Polling interval in seconds
-PROPOSER_METRICS_PORT=9000               # The port to expose metrics on
+MOCK_MODE=false                  # Whether to use mock mode
+FAST_FINALITY_MODE=false         # Whether to use fast finality mode
+RANGE_PROOF_STRATEGY=reserved    # Set to hosted to use hosted proof strategy
+AGG_PROOF_STRATEGY=reserved      # Set to hosted to use hosted proof strategy
+PROPOSAL_INTERVAL_IN_BLOCKS=1800 # Number of L2 blocks between proposals
+FETCH_INTERVAL=30                # Polling interval in seconds
+PROPOSER_METRICS_PORT=9000       # The port to expose metrics on
 ```
 
 ### Configuration Steps

@@ -83,7 +83,7 @@ for the required setup steps.
     just deploy-fdg-contracts
     ```
 
-Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory Proxy: 0x..."
+Save the output addresses, particularly `ANCHOR_STATE_REGISTRY_ADDRESS` as "AnchorStateRegistry: 0x..." and `FACTORY_ADDRESS` as "Factory Proxy: 0x..."
 
 ## Step 2: Run the Proposer
 
@@ -94,6 +94,7 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
     L1_RPC=<YOUR_L1_RPC_URL>
     L2_RPC=<YOUR_L2_RPC_URL>
     L2_NODE_RPC=<YOUR_L2_NODE_RPC_URL>
+    ANCHOR_STATE_REGISTRY_ADDRESS=<ANCHOR_STATE_REGISTRY_ADDRESS_FROM_DEPLOYMENT>
     FACTORY_ADDRESS=<FACTORY_ADDRESS_FROM_DEPLOYMENT>
     GAME_TYPE=42
     PRIVATE_KEY=<YOUR_PRIVATE_KEY>

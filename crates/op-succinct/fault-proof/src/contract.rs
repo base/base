@@ -128,6 +128,9 @@ sol! {
 
         /// @notice Returns the current anchor game reference.
         function anchorGame() public view returns (IDisputeGame anchorGame_);
+
+        /// @notice Returns the respected game type.
+        function respectedGameType() external view returns (GameType);
     }
 
     #[derive(Debug, PartialEq)]

@@ -24,11 +24,12 @@ The fault proof system consists of two main components:
 
 ```env
 # Required Configuration
-L1_RPC=                  # L1 RPC endpoint URL
-L2_RPC=                  # L2 RPC endpoint URL
-FACTORY_ADDRESS=         # Address of the DisputeGameFactory contract
-GAME_TYPE=               # Type identifier for the dispute game
-PRIVATE_KEY=             # Private key for transaction signing
+L1_RPC=                         # L1 RPC endpoint URL
+L2_RPC=                         # L2 RPC endpoint URL
+ANCHOR_STATE_REGISTRY_ADDRESS=  # Address of the AnchorStateRegistry contract
+FACTORY_ADDRESS=                # Address of the DisputeGameFactory contract
+GAME_TYPE=                      # Type identifier for the dispute game
+PRIVATE_KEY=                    # Private key for transaction signing
 NETWORK_PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000001
 
 # Optional Configuration
