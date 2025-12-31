@@ -12,7 +12,7 @@ mod integration {
         constants::{
             CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS,
             L2_BLOCK_OFFSET_FROM_FINALIZED, MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION,
-            MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE,
+            MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE, WAIT_TIMEOUT,
         },
         monitor::{verify_all_resolved_correctly, TrackedGame},
         new_proposer, TestEnvironment,
@@ -49,7 +49,7 @@ mod integration {
         info!("=== Waiting for Game Creation ===");
 
         // Track first 3 games (L2 finalized head won't advance far enough for 3)
-        let tracked_games = env.wait_and_track_games(3, 30).await?;
+        let tracked_games = env.wait_and_track_games(3, WAIT_TIMEOUT).await?;
         info!("✓ Proposer created {} games:", tracked_games.len());
         for (i, game) in tracked_games.iter().enumerate() {
             info!("  Game {}: {} at L2 block {}", i + 1, game.address, game.l2_block_number);
@@ -74,7 +74,7 @@ mod integration {
         info!("=== Phase 3: Resolution ===");
 
         // Wait for games to be resolved
-        let resolutions = env.wait_for_resolutions(&tracked_games, 30).await?;
+        let resolutions = env.wait_for_resolutions(&tracked_games, WAIT_TIMEOUT).await?;
 
         // Verify all games resolved correctly (proposer wins)
         verify_all_resolved_correctly(&resolutions)?;
@@ -91,7 +91,7 @@ mod integration {
         info!("=== Phase 4: Bond Claims ===");
 
         // Wait for proposer to claim bonds
-        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 30).await?;
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, WAIT_TIMEOUT).await?;
 
         env.stop_proposer(proposer_handle);
 
@@ -152,19 +152,19 @@ mod integration {
         let proposer_handle = env.start_proposer().await?;
         info!("✓ Proposer started after legacy games seeded");
 
-        let tracked_games = env.wait_and_track_games(3, 30).await?;
+        let tracked_games = env.wait_and_track_games(3, WAIT_TIMEOUT).await?;
         assert_eq!(tracked_games.len(), 3);
         info!("✓ Proposer created 3 type {} games despite legacy history", env.game_type);
 
         env.warp_time(MAX_CHALLENGE_DURATION).await?;
 
-        let resolutions = env.wait_for_resolutions(&tracked_games, 30).await?;
+        let resolutions = env.wait_for_resolutions(&tracked_games, WAIT_TIMEOUT).await?;
 
         verify_all_resolved_correctly(&resolutions)?;
 
         env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 30).await?;
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, WAIT_TIMEOUT).await?;
 
         env.stop_proposer(proposer_handle);
 
@@ -234,19 +234,19 @@ mod integration {
 
         env.set_respected_game_type(TEST_GAME_TYPE).await?;
 
-        let tracked_games = env.wait_and_track_games(3, 30).await?;
+        let tracked_games = env.wait_and_track_games(3, WAIT_TIMEOUT).await?;
         assert_eq!(tracked_games.len(), 3);
         info!("✓ Proposer created 3 type {} games despite legacy history", env.game_type);
 
         env.warp_time(MAX_CHALLENGE_DURATION).await?;
 
-        let resolutions = env.wait_for_resolutions(&tracked_games, 30).await?;
+        let resolutions = env.wait_for_resolutions(&tracked_games, WAIT_TIMEOUT).await?;
 
         verify_all_resolved_correctly(&resolutions)?;
 
         env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 30).await?;
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, WAIT_TIMEOUT).await?;
 
         env.stop_proposer(proposer_handle);
 
@@ -316,7 +316,7 @@ mod integration {
 
         // === PHASE 2: Challenge Period ===
         info!("=== Phase 2: Challenge Period ===");
-        env.wait_for_challenges(&invalid_games, 30).await?;
+        env.wait_for_challenges(&invalid_games, WAIT_TIMEOUT).await?;
         info!("✓ All games challenged successfully");
 
         // === PHASE 3: Resolution ===
@@ -333,7 +333,7 @@ mod integration {
             &invalid_games,
             GameStatus::CHALLENGER_WINS,
             "ChallengerWins",
-            30,
+            WAIT_TIMEOUT,
         )
         .await?;
 
@@ -362,7 +362,7 @@ mod integration {
             })
             .collect();
 
-        env.wait_for_bond_claims(&tracked_games, CHALLENGER_ADDRESS, 30).await?;
+        env.wait_for_bond_claims(&tracked_games, CHALLENGER_ADDRESS, WAIT_TIMEOUT).await?;
 
         // Stop challenger
         info!("=== Stopping Challenger ===");
@@ -583,7 +583,7 @@ mod integration {
         let challenger_handle = env.start_challenger(Some(100.0)).await?;
 
         // Wait for challenge
-        env.wait_for_challenges(&[parent_game_address], 30).await?;
+        env.wait_for_challenges(&[parent_game_address], WAIT_TIMEOUT).await?;
         info!("✓ Parent game challenged");
 
         // Warp time to resolve as CHALLENGER_WINS (no proof submitted)
@@ -594,7 +594,7 @@ mod integration {
             &[parent_game_address],
             GameStatus::CHALLENGER_WINS,
             "ChallengerWins",
-            30,
+            WAIT_TIMEOUT,
         )
         .await?;
         info!("✓ Parent game resolved as CHALLENGER_WINS");
@@ -795,7 +795,7 @@ mod integration {
         // Wait for proposer to create 3 games
         let factory = env.factory()?;
 
-        let tracked_games = env.wait_and_track_games(3, 30).await?;
+        let tracked_games = env.wait_and_track_games(3, WAIT_TIMEOUT).await?;
         info!("✓ Proposer created {} games:", tracked_games.len());
 
         assert!(!proposer_handle.is_finished(), "Proposer should be running");
@@ -839,7 +839,7 @@ mod integration {
 
         let first_two_games = &tracked_games[0..2];
 
-        let resolutions = env.wait_for_resolutions(first_two_games, 30).await?;
+        let resolutions = env.wait_for_resolutions(first_two_games, WAIT_TIMEOUT).await?;
         verify_all_resolved_correctly(&resolutions)?;
         info!("✓ First 2 games resolved as DEFENDER_WINS");
 
@@ -853,7 +853,7 @@ mod integration {
         // Warp time to allow the proposer to finalize the first 2 games
         env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        env.wait_for_bond_claims(first_two_games, PROPOSER_ADDRESS, 30).await?;
+        env.wait_for_bond_claims(first_two_games, PROPOSER_ADDRESS, WAIT_TIMEOUT).await?;
         info!("✓ Proposer finalized the first 2 games");
 
         // === PHASE 4: Verify Proposer recovers automatically ===
@@ -912,16 +912,16 @@ mod integration {
             tokio::spawn(async move { proposer_clone.run().await })
         };
 
-        let tracked_games = env.wait_and_track_games(3, 30).await?;
+        let tracked_games = env.wait_and_track_games(3, WAIT_TIMEOUT).await?;
 
         env.warp_time(MAX_CHALLENGE_DURATION).await?;
 
-        let resolutions = env.wait_for_resolutions(&tracked_games, 30).await?;
+        let resolutions = env.wait_for_resolutions(&tracked_games, WAIT_TIMEOUT).await?;
         verify_all_resolved_correctly(&resolutions)?;
 
         env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 30).await?;
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, WAIT_TIMEOUT).await?;
 
         // Allow the proposer loop to observe the finalized games and update its cache.
         let settle_delay = Duration::from_secs(proposer.config.fetch_interval + 5);
@@ -945,13 +945,13 @@ mod integration {
         Ok(())
     }
 
-    // Tests that the proposer's startup validations fail when the contract's starting L2 block
-    // number is misconfigured to a future value (e.g., a single block ahead of actual finalized
-    // L2 block). This prevents the proposer from running indefinitely without creating games.
+    // Tests that the proposer fails fast when the contract's starting L2 block number is
+    // misconfigured to a future value (10 blocks ahead of the finalized block at setup time).
+    // This prevents the proposer from running indefinitely without creating games.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_proposer_rejects_future_starting_block() -> Result<()> {
         let env = TestEnvironment::setup_with_starting_block_offset(
-            (L2_BLOCK_OFFSET_FROM_FINALIZED + 1) as i64,
+            (L2_BLOCK_OFFSET_FROM_FINALIZED + 10) as i64,
         )
         .await?;
 

@@ -165,6 +165,7 @@ func (dgf *DgfClient) LatestGame(ctx context.Context) (*GameAtIndexResult, error
 
 // WaitForGameCount waits until the dispute game factory has at least min games created.
 func WaitForGameCount(ctx context.Context, t devtest.T, dgf *DgfClient, min uint64) {
+	var lastCount uint64
 	for {
 		gameCount, err := dgf.GameCount(ctx)
 		require.NoError(t, err, "failed to get game count from factory")
@@ -173,10 +174,11 @@ func WaitForGameCount(ctx context.Context, t devtest.T, dgf *DgfClient, min uint
 			t.Logger().Info("Dispute game detected", "count", gameCount)
 			return
 		}
+		lastCount = gameCount
 
 		select {
 		case <-ctx.Done():
-			t.Errorf("timeout waiting for dispute game to be created")
+			t.Errorf("timeout waiting for games: got %d, need %d", lastCount, min)
 			t.FailNow()
 		case <-time.After(time.Second):
 		}
@@ -343,18 +345,20 @@ func (w ethCaller) CodeAt(ctx context.Context, contract common.Address, blockNum
 	return code, nil
 }
 
-func WaitForDefenderWins(ctx context.Context, t devtest.T, dgf *FdgClient) {
+func WaitForDefenderWins(ctx context.Context, t devtest.T, fdg *FdgClient) {
+	var lastStatus GameStatus
 	for {
-		status, err := dgf.Status(ctx)
+		status, err := fdg.Status(ctx)
 		require.NoError(t, err, "failed to get game status")
+		lastStatus = GameStatus(status)
 
-		if GameStatus(status) == DefenderWins {
+		if lastStatus == DefenderWins {
 			return
 		}
 
 		select {
 		case <-ctx.Done():
-			t.Errorf("timeout waiting for dispute game to be resolved")
+			t.Errorf("timeout waiting for defender win: status=%d (0=InProgress, 1=ChallengerWins, 2=DefenderWins)", lastStatus)
 			t.FailNow()
 		case <-time.After(time.Second):
 		}
