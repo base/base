@@ -54,6 +54,7 @@ tracing.workspace = true
 metrics.workspace = true
 arc-swap.workspace = true
 metrics-derive.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

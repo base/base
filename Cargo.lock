@@ -1543,6 +1543,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-rpc-types",
  "rand 0.9.2",
+ "rayon",
  "reth",
  "reth-db",
  "reth-db-common",
