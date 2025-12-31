@@ -41,7 +41,7 @@ use crate::{
     is_parent_resolved,
     prometheus::ProposerGauge,
     prover::{MockProofProvider, NetworkProofProvider, ProofKeys, ProofProvider},
-    FactoryTrait, L1Provider, L2Provider, L2ProviderTrait,
+    FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, TxErrorExt, TX_REVERTED_PREFIX,
 };
 
 /// Max allowed time (secs) between a game's deadline and the anchor game's deadline.
@@ -973,6 +973,10 @@ where
             .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
             .await?;
 
+        if !receipt.status() {
+            bail!("{TX_REVERTED_PREFIX} {receipt:?}");
+        }
+
         Ok((receipt.transaction_hash, total_instruction_cycles, total_sp1_gas))
     }
 
@@ -1029,6 +1033,10 @@ where
             .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
             .await?;
 
+        if !receipt.status() {
+            bail!("{TX_REVERTED_PREFIX} {receipt:?}");
+        }
+
         let game_address = receipt
             .inner
             .logs()
@@ -1075,13 +1083,23 @@ where
 
         for game in candidates {
             if let Err(error) = self.submit_resolution_transaction(&game).await {
-                tracing::warn!(
-                    game_index = %game.index,
-                    game_address = ?game.address,
-                    l2_block_end = %game.l2_block,
-                    ?error,
-                    "Failed to resolve game"
-                );
+                if error.is_revert() {
+                    tracing::error!(
+                        game_index = %game.index,
+                        game_address = ?game.address,
+                        l2_block_end = %game.l2_block,
+                        ?error,
+                        "Resolution tx included but reverted on-chain"
+                    );
+                } else {
+                    tracing::warn!(
+                        game_index = %game.index,
+                        game_address = ?game.address,
+                        l2_block_end = %game.l2_block,
+                        ?error,
+                        "Resolution tx unconfirmed (may be on-chain), will verify next cycle"
+                    );
+                }
                 ProposerGauge::GameResolutionError.increment(1.0);
                 continue;
             }
@@ -1106,13 +1124,23 @@ where
 
         for game in candidates {
             if let Err(error) = self.submit_bond_claim_transaction(&game).await {
-                tracing::warn!(
-                    game_index = %game.index,
-                    game_address = ?game.address,
-                    l2_block_end = %game.l2_block,
-                    ?error,
-                    "Failed to claim bond for game"
-                );
+                if error.is_revert() {
+                    tracing::error!(
+                        game_index = %game.index,
+                        game_address = ?game.address,
+                        l2_block_end = %game.l2_block,
+                        ?error,
+                        "Bond claim tx included but reverted on-chain"
+                    );
+                } else {
+                    tracing::warn!(
+                        game_index = %game.index,
+                        game_address = ?game.address,
+                        l2_block_end = %game.l2_block,
+                        ?error,
+                        "Bond claim tx unconfirmed (may be on-chain), will verify next cycle"
+                    );
+                }
                 ProposerGauge::BondClaimingError.increment(1.0);
                 continue;
             }
@@ -1130,6 +1158,10 @@ where
             .signer
             .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
             .await?;
+
+        if !receipt.status() {
+            bail!("{TX_REVERTED_PREFIX} {receipt:?}");
+        }
 
         tracing::info!(
             game_index = %game.index,
@@ -1152,6 +1184,10 @@ where
             .signer
             .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
             .await?;
+
+        if !receipt.status() {
+            bail!("{TX_REVERTED_PREFIX} {receipt:?}");
+        }
 
         tracing::info!(
             game_index = %game.index,
