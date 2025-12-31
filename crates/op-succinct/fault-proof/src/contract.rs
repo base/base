@@ -98,6 +98,9 @@ sol! {
         /// @notice Returns the max challenge duration.
         function maxChallengeDuration() external view returns (uint256 maxChallengeDuration_);
 
+        /// @notice Returns the max prove duration.
+        function maxProveDuration() external view returns (uint64 maxProveDuration_);
+
         /// @notice Returns the anchor state registry contract.
         function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_);
 
