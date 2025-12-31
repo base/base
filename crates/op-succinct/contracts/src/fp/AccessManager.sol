@@ -6,7 +6,6 @@ import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
 import {GameType} from "src/dispute/lib/Types.sol";
 import {Timestamp} from "src/dispute/lib/LibUDT.sol";
 import {OP_SUCCINCT_FAULT_DISPUTE_GAME_TYPE} from "src/lib/Types.sol";
-import {console} from "forge-std/console.sol";
 
 /// @title AccessManager
 /// @notice Manages permissions for dispute game proposers and challengers.
@@ -94,10 +93,16 @@ contract AccessManager is Ownable {
         uint256 i = numGames - 1;
         while (true) {
             (GameType gameTypeAtIndex, Timestamp timestamp,) = DISPUTE_GAME_FACTORY.gameAtIndex(i);
+            uint256 gameTimestamp = uint256(timestamp.raw());
+
+            // If this game is older than deployment, no point searching further.
+            if (gameTimestamp < DEPLOYMENT_TIMESTAMP) {
+                return DEPLOYMENT_TIMESTAMP;
+            }
 
             // If we found a game of the correct type, return its timestamp.
             if (gameTypeAtIndex.raw() == gameType.raw()) {
-                return uint256(timestamp.raw());
+                return gameTimestamp;
             }
 
             // If we've reached index 0, break out of the loop
@@ -114,17 +119,23 @@ contract AccessManager is Ownable {
         return DEPLOYMENT_TIMESTAMP;
     }
 
+    /// @notice Returns whether proposal fallback timeout has elapsed.
+    /// @return Whether permissionless proposing is active.
+    function isProposalPermissionlessMode() public view returns (bool) {
+        // Check the cheap storage read first to avoid expensive function call.
+        if (proposers[address(0)]) {
+            return true;
+        }
+
+        uint256 lastProposalTimestamp = getLastProposalTimestamp();
+        return block.timestamp - lastProposalTimestamp > FALLBACK_TIMEOUT;
+    }
+
     /// @notice Checks if an address is allowed to propose.
     /// @param _proposer The address to check.
     /// @return allowed_ Whether the address is allowed to propose.
     function isAllowedProposer(address _proposer) external view returns (bool allowed_) {
-        // If address(0) is allowed, then it's permissionless.
-        // If the fallback timeout has elapsed since last proposal, anyone can propose.
-
-        uint256 lastProposalTimestamp = getLastProposalTimestamp();
-
-        allowed_ = proposers[address(0)] || proposers[_proposer]
-            || (block.timestamp - lastProposalTimestamp > FALLBACK_TIMEOUT);
+        allowed_ = proposers[_proposer] || isProposalPermissionlessMode();
     }
 
     /// @notice Checks if an address is allowed to challenge.
@@ -133,12 +144,5 @@ contract AccessManager is Ownable {
     function isAllowedChallenger(address _challenger) external view returns (bool allowed_) {
         // If address(0) is allowed, then it's permissionless.
         allowed_ = challengers[address(0)] || challengers[_challenger];
-    }
-
-    /// @notice Returns whether proposal fallback timeout has elapsed.
-    /// @return Whether permissionless proposing is active.
-    function isProposalPermissionlessMode() external view returns (bool) {
-        uint256 lastProposalTimestamp = getLastProposalTimestamp();
-        return block.timestamp - lastProposalTimestamp > FALLBACK_TIMEOUT || proposers[address(0)];
     }
 }
