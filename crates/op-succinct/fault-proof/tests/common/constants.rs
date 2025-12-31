@@ -44,3 +44,6 @@ pub const L2_BLOCK_OFFSET_FROM_FINALIZED: u64 = 500;
 
 // Test configuration for mock permissioned games
 pub const MOCK_PERMISSIONED_GAME_TYPE: u32 = 1;
+
+// Timeout (seconds) for async test operations like game creation, resolution, etc.
+pub const WAIT_TIMEOUT: u64 = 60;
