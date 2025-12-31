@@ -26,6 +26,7 @@ pub type L2NodeProvider = RootProvider<Optimism>;
 
 pub const NUM_CONFIRMATIONS: u64 = 3;
 pub const TIMEOUT_SECONDS: u64 = 60;
+
 #[async_trait]
 pub trait L2ProviderTrait {
     /// Get the L2 block by number.
@@ -192,4 +193,19 @@ where
     let parent_game_contract = IDisputeGame::new(parent_game_address, factory.provider());
 
     Ok(parent_game_contract.status().call().await? == GameStatus::CHALLENGER_WINS)
+}
+
+/// Prefix used for transaction revert errors.
+pub const TX_REVERTED_PREFIX: &str = "transaction reverted:";
+
+/// Extension trait for checking transaction error types.
+pub trait TxErrorExt {
+    /// Returns true if this error indicates a transaction revert (definitive failure).
+    fn is_revert(&self) -> bool;
+}
+
+impl TxErrorExt for anyhow::Error {
+    fn is_revert(&self) -> bool {
+        self.to_string().starts_with(TX_REVERTED_PREFIX)
+    }
 }
