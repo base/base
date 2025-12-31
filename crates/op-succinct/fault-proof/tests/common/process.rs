@@ -6,7 +6,7 @@ use alloy_provider::ProviderBuilder;
 use anyhow::Result;
 use fault_proof::{
     challenger::OPSuccinctChallenger,
-    config::{ChallengerConfig, RangeSplitCount},
+    config::{ChallengerConfig, ProofProviderConfig, RangeSplitCount},
     contract::{AnchorStateRegistry, DisputeGameFactory},
     proposer::OPSuccinctProposer,
 };
@@ -37,9 +37,6 @@ pub async fn new_proposer(
         factory_address: *factory_address,
         mock_mode: true,
         fast_finality_mode: false,
-        range_proof_strategy: FulfillmentStrategy::Hosted,
-        agg_proof_strategy: FulfillmentStrategy::Hosted,
-        agg_proof_mode: SP1ProofMode::Plonk,
         proposal_interval_in_blocks: 10, // Much smaller interval for testing
         fetch_interval: 5,               // Check more frequently in tests
         game_type,
@@ -48,16 +45,23 @@ pub async fn new_proposer(
         metrics_port: 9000,
         fast_finality_proving_limit: 0,
         use_kms_requester: false,
-        max_price_per_pgu: 300_000_000, // 0.3 PROVE per billion PGU
-        min_auction_period: 1,
-        timeout: 14400, // 4 hours
-        range_cycle_limit: 1_000_000_000_000,
-        range_gas_limit: 1_000_000_000_000,
         range_split_count: RangeSplitCount::one(),
         max_concurrent_range_proofs: NonZero::<usize>::MIN,
-        agg_cycle_limit: 1_000_000_000_000,
-        agg_gas_limit: 1_000_000_000_000,
-        whitelist: None,
+        proof_provider: ProofProviderConfig {
+            timeout: 14400, // 4 hours
+            network_calls_timeout: 15,
+            auction_timeout: 60,
+            range_proof_strategy: FulfillmentStrategy::Hosted,
+            agg_proof_strategy: FulfillmentStrategy::Hosted,
+            agg_proof_mode: SP1ProofMode::Plonk,
+            range_cycle_limit: 1_000_000_000_000,
+            range_gas_limit: 1_000_000_000_000,
+            agg_cycle_limit: 1_000_000_000_000,
+            agg_gas_limit: 1_000_000_000_000,
+            max_price_per_pgu: 300_000_000, // 0.3 PROVE per billion PGU
+            min_auction_period: 1,
+            whitelist: None,
+        },
     };
 
     let l1_provider = ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone());

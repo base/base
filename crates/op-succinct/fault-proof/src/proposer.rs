@@ -9,7 +9,7 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, FixedBytes, TxHash, B256, U256};
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_sol_types::{SolEvent, SolValue};
 use anyhow::{bail, Context, Result};
 use futures::stream::{self, StreamExt, TryStreamExt};
@@ -25,10 +25,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::SignerLock;
-use sp1_sdk::{
-    NetworkProver, Prover, ProverClient, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey,
-    SP1Stdin, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
-};
+use sp1_sdk::{Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin};
 use tokio::{
     sync::{Mutex, RwLock},
     time,
@@ -39,12 +36,11 @@ use crate::{
     contract::{
         AnchorStateRegistry::AnchorStateRegistryInstance,
         DisputeGameFactory::{DisputeGameCreated, DisputeGameFactoryInstance},
-        GameStatus,
-        OPSuccinctFaultDisputeGame::{self, OPSuccinctFaultDisputeGameInstance},
-        ProposalStatus,
+        GameStatus, OPSuccinctFaultDisputeGame, ProposalStatus,
     },
     is_parent_resolved,
     prometheus::ProposerGauge,
+    prover::{MockProofProvider, NetworkProofProvider, ProofKeys, ProofProvider},
     FactoryTrait, L1Provider, L2Provider, L2ProviderTrait,
 };
 
@@ -56,6 +52,12 @@ use crate::{
 /// The 14-day window is chosen with a 7-day challenge period in mind, plus a 7-day buffer,
 /// ensuring all actionable games are included under normal conditions.
 pub const MAX_GAME_DEADLINE_LAG: u64 = 60 * 60 * 24 * 14; // 14 days
+
+/// Divisor for calculating deadline warning threshold.
+///
+/// When less than `max_duration / DEADLINE_WARNING_DIVISOR` time remains,
+/// the deadline is considered "approaching".
+pub const DEADLINE_WARNING_DIVISOR: u64 = 2;
 
 /// Type alias for task ID
 pub type TaskId = u64;
@@ -73,15 +75,6 @@ pub enum TaskInfo {
     GameProving { game_address: Address, is_defense: bool },
     GameResolution,
     BondClaim,
-}
-
-#[derive(Clone)]
-struct SP1Prover {
-    network_prover: Arc<NetworkProver>,
-    range_pk: Arc<SP1ProvingKey>,
-    range_vk: Arc<SP1VerifyingKey>,
-    agg_pk: Arc<SP1ProvingKey>,
-    agg_mode: SP1ProofMode,
 }
 
 /// Represents a dispute game in the on-chain game DAG.
@@ -164,6 +157,15 @@ pub struct ProposerStateSnapshot {
     pub games: Vec<(U256, Address)>,
 }
 
+/// On-chain contract timing parameters.
+#[derive(Clone, Debug)]
+pub struct ContractParams {
+    /// Maximum duration allowed for challenging a game.
+    pub max_challenge_duration: u64,
+    /// Maximum duration allowed for proving after a challenge.
+    pub max_prove_duration: u64,
+}
+
 #[derive(Clone)]
 pub struct OPSuccinctProposer<P, H: OPSuccinctHost>
 where
@@ -171,6 +173,7 @@ where
     H: OPSuccinctHost + Clone + Send + Sync + 'static,
 {
     pub config: ProposerConfig,
+    contract_params: OnceLock<ContractParams>,
     pub signer: SignerLock,
     pub l1_provider: L1Provider,
     pub l2_provider: L2Provider,
@@ -178,7 +181,7 @@ where
     pub factory: Arc<DisputeGameFactoryInstance<P>>,
     init_bond: OnceLock<U256>,
     pub safe_db_fallback: bool,
-    prover: SP1Prover,
+    prover: ProofProvider,
     fetcher: Arc<OPSuccinctDataFetcher>,
     host: Arc<H>,
     tasks: Arc<Mutex<TaskMap>>,
@@ -203,13 +206,37 @@ where
     ) -> Result<Self> {
         // Set up the network prover.
         let network_signer = get_network_signer(config.use_kms_requester).await?;
-        let network_mode =
-            determine_network_mode(config.range_proof_strategy, config.agg_proof_strategy)?;
+        let network_mode = determine_network_mode(
+            config.proof_provider.range_proof_strategy,
+            config.proof_provider.agg_proof_strategy,
+        )?;
         let network_prover = Arc::new(
             ProverClient::builder().network_for(network_mode).signer(network_signer).build(),
         );
         let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
         let (agg_pk, _) = network_prover.setup(AGGREGATION_ELF);
+
+        let keys = ProofKeys {
+            range_pk: Arc::new(range_pk),
+            range_vk: Arc::new(range_vk),
+            agg_pk: Arc::new(agg_pk),
+        };
+
+        let prover = if config.mock_mode {
+            ProofProvider::Mock(MockProofProvider::new(
+                network_prover,
+                keys,
+                config.proof_provider.clone(),
+                AGGREGATION_ELF,
+            ))
+        } else {
+            ProofProvider::Network(NetworkProofProvider::new(
+                network_prover,
+                keys,
+                config.proof_provider.clone(),
+                network_mode,
+            ))
+        };
 
         let l1_provider = ProviderBuilder::default().connect_http(config.l1_rpc.clone());
         let l2_provider = ProviderBuilder::default().connect_http(config.l2_rpc.clone());
@@ -218,6 +245,7 @@ where
 
         Ok(Self {
             config: config.clone(),
+            contract_params: OnceLock::new(),
             signer,
             l1_provider,
             l2_provider,
@@ -225,13 +253,7 @@ where
             factory: Arc::new(factory.clone()),
             init_bond: OnceLock::new(),
             safe_db_fallback: config.safe_db_fallback,
-            prover: SP1Prover {
-                network_prover,
-                range_pk: Arc::new(range_pk),
-                range_vk: Arc::new(range_vk),
-                agg_pk: Arc::new(agg_pk),
-                agg_mode: config.agg_proof_mode,
-            },
+            prover,
             fetcher: fetcher.clone(),
             host,
             tasks: Arc::new(Mutex::new(HashMap::new())),
@@ -339,14 +361,13 @@ where
 
     /// Validates startup and initializes state.
     pub async fn validate_and_init(&self) -> Result<()> {
-        let (anchor_l2_block, init_bond) = self.startup_validations().await?;
-        self.init_state(anchor_l2_block, init_bond).await;
-        Ok(())
+        let (anchor_l2_block, init_bond, contract_params) = self.startup_validations().await?;
+        self.init_state(anchor_l2_block, init_bond, contract_params).await
     }
 
     /// Runs one-time startup validations before the proposer begins normal operations.
-    /// Returns the validated anchor L2 block number and init bond.
-    async fn startup_validations(&self) -> Result<(U256, U256)> {
+    /// Returns the validated anchor L2 block number, init bond, and contract params.
+    async fn startup_validations(&self) -> Result<(U256, U256, ContractParams)> {
         // Validate anchor state registry matches factory's game implementation.
         Self::validate_anchor_state_registry(
             &self.anchor_state_registry,
@@ -368,13 +389,31 @@ where
         // Fetch init bond.
         let init_bond = self.factory.fetch_init_bond(self.config.game_type).await?;
 
-        Ok((anchor_l2_block, init_bond))
+        // Fetch contract params from game implementation.
+        let game_impl = self.factory.game_impl(self.config.game_type).await?;
+        let max_challenge_duration = game_impl.maxChallengeDuration().call().await?.to::<u64>();
+        let max_prove_duration = game_impl.maxProveDuration().call().await?;
+        let contract_params = ContractParams { max_challenge_duration, max_prove_duration };
+
+        Ok((anchor_l2_block, init_bond, contract_params))
     }
 
-    /// Initialize proposer state with the validated anchor L2 block and init bond.
-    async fn init_state(&self, anchor_l2_block: U256, init_bond: U256) {
+    /// Initialize proposer state with the validated anchor L2 block, init bond, and contract
+    /// params.
+    async fn init_state(
+        &self,
+        anchor_l2_block: U256,
+        init_bond: U256,
+        contract_params: ContractParams,
+    ) -> Result<()> {
         self.state.write().await.canonical_head_l2_block = Some(anchor_l2_block);
-        self.init_bond.set(init_bond).expect("init_bond must not already be set");
+        self.init_bond
+            .set(init_bond)
+            .map_err(|_| anyhow::anyhow!("init_bond must not already be set"))?;
+        self.contract_params
+            .set(contract_params)
+            .map_err(|_| anyhow::anyhow!("contract_params must not already be set"))?;
+        Ok(())
     }
 
     async fn validate_anchor_l2_block(
@@ -854,7 +893,7 @@ where
                 tracing::info!("Generating Range Proof for blocks {start} to {end}");
                 let sp1_stdin = this.range_proof_stdin(start, end, l1_head_hash.into()).await?;
                 let (range_proof, inst_cycles, sp1_gas) =
-                    this.range_proof_request(&sp1_stdin).await?;
+                    this.prover.generate_range_proof(&sp1_stdin).await?;
                 Ok::<_, anyhow::Error>((idx, range_proof, inst_cycles, sp1_gas))
             }
         });
@@ -915,7 +954,7 @@ where
             proofs,
             boot_infos,
             headers,
-            &self.prover.range_vk,
+            &self.prover.keys().range_vk,
             latest_l1_head,
             self.signer.address(),
         ) {
@@ -926,9 +965,15 @@ where
             }
         };
 
-        let tx_hash = self.agg_proof_request(&game, &sp1_stdin).await?;
+        let agg_proof = self.prover.generate_agg_proof(&sp1_stdin).await?;
 
-        Ok((tx_hash, total_instruction_cycles, total_sp1_gas))
+        let transaction_request = game.prove(agg_proof.bytes().into()).into_transaction_request();
+        let receipt = self
+            .signer
+            .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
+            .await?;
+
+        Ok((receipt.transaction_hash, total_instruction_cycles, total_sp1_gas))
     }
 
     async fn range_proof_stdin(
@@ -960,113 +1005,6 @@ where
         };
 
         Ok(sp1_stdin)
-    }
-
-    async fn range_proof_request(
-        &self,
-        sp1_stdin: &SP1Stdin,
-    ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
-        if self.config.mock_mode {
-            tracing::info!("Using mock mode for range proof generation");
-            let (public_values, report) = self
-                .prover
-                .network_prover
-                .execute(get_range_elf_embedded(), sp1_stdin)
-                .calculate_gas(true)
-                .deferred_proof_verification(false)
-                .run()?;
-
-            // Record execution stats
-            let total_instruction_cycles = report.total_instruction_count();
-            let total_sp1_gas = report.gas.unwrap_or(0);
-
-            // Update Prometheus metrics
-            ProposerGauge::TotalInstructionCycles.set(total_instruction_cycles as f64);
-            ProposerGauge::TotalSP1Gas.set(total_sp1_gas as f64);
-
-            tracing::info!(
-                total_instruction_cycles = total_instruction_cycles,
-                total_sp1_gas = total_sp1_gas,
-                "Captured execution stats for range proof"
-            );
-
-            // Create a mock range proof with the public values.
-            let proof = SP1ProofWithPublicValues::create_mock_proof(
-                &self.prover.range_pk,
-                public_values,
-                SP1ProofMode::Compressed,
-                SP1_CIRCUIT_VERSION,
-            );
-
-            Ok((proof, total_instruction_cycles, total_sp1_gas))
-        } else {
-            // In network mode, we don't have access to execution stats
-            let proof = self
-                .prover
-                .network_prover
-                .prove(&self.prover.range_pk, sp1_stdin)
-                .compressed()
-                .skip_simulation(true)
-                .strategy(self.config.range_proof_strategy)
-                .timeout(Duration::from_secs(self.config.timeout))
-                .min_auction_period(self.config.min_auction_period)
-                .max_price_per_pgu(self.config.max_price_per_pgu)
-                .cycle_limit(self.config.range_cycle_limit)
-                .gas_limit(self.config.range_gas_limit)
-                .whitelist(self.config.whitelist.clone())
-                .run_async()
-                .await?;
-
-            Ok((proof, 0, 0))
-        }
-    }
-
-    async fn agg_proof_request(
-        &self,
-        game: &OPSuccinctFaultDisputeGameInstance<RootProvider>,
-        sp1_stdin: &SP1Stdin,
-    ) -> Result<TxHash> {
-        tracing::info!("Generating Agg Proof");
-        let agg_proof = if self.config.mock_mode {
-            tracing::info!("Using mock mode for aggregation proof generation");
-            let (public_values, _) = self
-                .prover
-                .network_prover
-                .execute(AGGREGATION_ELF, sp1_stdin)
-                .deferred_proof_verification(false)
-                .run()?;
-
-            // Create a mock aggregation proof with the public values.
-            SP1ProofWithPublicValues::create_mock_proof(
-                &self.prover.agg_pk,
-                public_values,
-                self.prover.agg_mode,
-                SP1_CIRCUIT_VERSION,
-            )
-        } else {
-            self.prover
-                .network_prover
-                .prove(&self.prover.agg_pk, sp1_stdin)
-                .mode(self.prover.agg_mode)
-                .strategy(self.config.agg_proof_strategy)
-                .timeout(Duration::from_secs(self.config.timeout))
-                .min_auction_period(self.config.min_auction_period)
-                .max_price_per_pgu(self.config.max_price_per_pgu)
-                .cycle_limit(self.config.agg_cycle_limit)
-                .gas_limit(self.config.agg_gas_limit)
-                .whitelist(self.config.whitelist.clone())
-                .run_async()
-                .await?
-        };
-
-        let transaction_request = game.prove(agg_proof.bytes().into()).into_transaction_request();
-
-        let receipt = self
-            .signer
-            .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
-            .await?;
-
-        Ok(receipt.transaction_hash)
     }
 
     /// Creates a new game with the given parameters.
@@ -1114,8 +1052,9 @@ where
         if self.config.fast_finality_mode {
             tracing::info!("Fast finality mode enabled: Spawning proof generation task");
 
-            // Spawn a tracked proving task for the new game
-            if let Err(e) = self.spawn_game_proving_task(game_address, false).await {
+            // Spawn a tracked proving task for the new game (None = just created, skip deadline
+            // check)
+            if let Err(e) = self.spawn_game_proving_task(game_address, false, None).await {
                 tracing::warn!("Failed to spawn fast finality proof task: {:?}", e);
             }
         }
@@ -1655,7 +1594,7 @@ where
                         .values()
                         .filter(|game| game.status == GameStatus::IN_PROGRESS)
                         .filter(|game| game.proposal_status == ProposalStatus::Unchallenged)
-                        .map(|game| (game.index, game.address))
+                        .map(|game| (game.index, game.address, game.deadline))
                         .collect::<Vec<_>>();
 
                     let proving_set = tasks
@@ -1669,13 +1608,13 @@ where
                     // Filter games being proven
                     candidates
                         .into_iter()
-                        .filter(|(_, address)| !proving_set.contains(address))
+                        .filter(|(_, address, _)| !proving_set.contains(address))
                         .collect::<Vec<_>>()
                 };
 
                 let mut spawned_count = 0;
 
-                for (index, game_address) in unproven_games {
+                for (index, game_address, deadline) in unproven_games {
                     if active_proving >= self.config.fast_finality_proving_limit {
                         tracing::debug!(
                             "Reached fast finality proving capacity ({}/{}) while resuming games",
@@ -1705,7 +1644,7 @@ where
                     }
 
                     // Spawn proving task
-                    match self.spawn_game_proving_task(game_address, false).await {
+                    match self.spawn_game_proving_task(game_address, false, Some(deadline)).await {
                         Ok(()) => {
                             tracing::info!(
                                 game_address = ?game_address,
@@ -1818,7 +1757,7 @@ where
 
         let mut tasks_spawned = false;
 
-        for (index, game_address, _) in candidates {
+        for (index, game_address, deadline) in candidates {
             if active_defense_tasks_count >= max_concurrent {
                 tracing::debug!(
                     "The max concurrent defense tasks count ({}) has been reached",
@@ -1836,7 +1775,7 @@ where
                 game_index = %index,
                 "Spawning defense for challenged game"
             );
-            self.spawn_game_proving_task(game_address, true).await?;
+            self.spawn_game_proving_task(game_address, true, Some(deadline)).await?;
             active_defense_tasks_count += 1;
             tasks_spawned = true;
         }
@@ -1852,8 +1791,21 @@ where
         })
     }
 
-    /// Spawn a game proving task for a specific game
-    async fn spawn_game_proving_task(&self, game_address: Address, is_defense: bool) -> Result<()> {
+    /// Spawn a game proving task for a specific game.
+    ///
+    /// Skips if game deadline has passed (too late to prove).
+    async fn spawn_game_proving_task(
+        &self,
+        game_address: Address,
+        is_defense: bool,
+        deadline: Option<u64>,
+    ) -> Result<()> {
+        if let Some(deadline) = deadline {
+            if self.should_skip_proving(game_address, deadline, is_defense)? {
+                return Ok(());
+            }
+        }
+
         let proposer: OPSuccinctProposer<P, H> = self.clone();
         let task_id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
 
@@ -1927,6 +1879,53 @@ where
         let task_info = TaskInfo::GameProving { game_address, is_defense };
         self.tasks.lock().await.insert(task_id, (handle, task_info));
         Ok(())
+    }
+
+    /// Check if proving should be skipped due to insufficient time remaining.
+    ///
+    /// Returns `Ok(true)` if proving should be skipped (deadline passed).
+    /// Returns `Ok(false)` if proving should proceed.
+    /// Logs a warning if the deadline is approaching.
+    fn should_skip_proving(
+        &self,
+        game_address: Address,
+        deadline: u64,
+        is_defense: bool,
+    ) -> Result<bool> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+
+        let contract_params =
+            self.contract_params.get().context("contract_params must be set via try_init")?;
+        let max_duration = if is_defense {
+            contract_params.max_prove_duration
+        } else {
+            contract_params.max_challenge_duration
+        };
+
+        let status = check_deadline_status(now, deadline, max_duration);
+
+        match status {
+            DeadlineStatus::Passed => {
+                tracing::error!(
+                    game_address = ?game_address,
+                    deadline = deadline,
+                    now = now,
+                    "Game deadline passed, cannot prove"
+                );
+                Ok(true)
+            }
+            DeadlineStatus::Approaching { hours_remaining } => {
+                tracing::warn!(
+                    game_address = ?game_address,
+                    is_defense = is_defense,
+                    "Game deadline approaching, {:.1} hours remaining",
+                    hours_remaining
+                );
+                ProposerGauge::DeadlineApproaching.increment(1.0);
+                Ok(false)
+            }
+            DeadlineStatus::Ok => Ok(false),
+        }
     }
 
     /// Spawn a game resolution task
@@ -2020,6 +2019,34 @@ impl From<U256> for Cursor {
     }
 }
 
+/// Result of checking a game's deadline status.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeadlineStatus {
+    /// Deadline has passed
+    Passed,
+    /// Deadline is approaching
+    Approaching { hours_remaining: f64 },
+    /// Deadline is not imminent
+    Ok,
+}
+
+/// Check the deadline status for a game.
+pub fn check_deadline_status(now: u64, deadline: u64, max_duration: u64) -> DeadlineStatus {
+    if now >= deadline {
+        return DeadlineStatus::Passed;
+    }
+
+    let time_remaining = deadline.saturating_sub(now);
+    let warning_threshold = max_duration / DEADLINE_WARNING_DIVISOR;
+
+    if time_remaining < warning_threshold {
+        let hours_remaining = time_remaining as f64 / 3600.0;
+        DeadlineStatus::Approaching { hours_remaining }
+    } else {
+        DeadlineStatus::Ok
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::RangeSplitCount;
@@ -2086,6 +2113,44 @@ mod tests {
             let ranges = RangeSplitCount::new(8).unwrap().split(0, 800).unwrap();
             let results = prove_ranges(ranges, None, 4, Duration::from_micros(100)).await.unwrap();
             assert_eq!(results.len(), 8);
+        }
+    }
+
+    mod proving_deadline_tests {
+        use super::super::{check_deadline_status, DeadlineStatus};
+        use rstest::rstest;
+
+        const HOUR: u64 = 3600;
+        const MAX_DURATION: u64 = 6 * HOUR;
+
+        #[rstest]
+        #[case::passed_in_past(1000, 900, DeadlineStatus::Passed)]
+        #[case::passed_exactly_now(1000, 1000, DeadlineStatus::Passed)]
+        #[case::ok_plenty_of_time(1000, 1000 + 5 * HOUR, DeadlineStatus::Ok)]
+        #[case::ok_at_threshold(1000, 1000 + MAX_DURATION / 2, DeadlineStatus::Ok)]
+        fn test_deadline_status(
+            #[case] now: u64,
+            #[case] deadline: u64,
+            #[case] expected: DeadlineStatus,
+        ) {
+            let status = check_deadline_status(now, deadline, MAX_DURATION);
+            assert_eq!(status, expected);
+        }
+
+        #[rstest]
+        #[case::two_hours_left(1000, 1000 + 2 * HOUR, 2.0)]
+        #[case::one_hour_left(1000, 1000 + HOUR, 1.0)]
+        fn test_deadline_approaching(
+            #[case] now: u64,
+            #[case] deadline: u64,
+            #[case] expected_hours: f64,
+        ) {
+            match check_deadline_status(now, deadline, MAX_DURATION) {
+                DeadlineStatus::Approaching { hours_remaining } => {
+                    assert!((hours_remaining - expected_hours).abs() < 0.01);
+                }
+                other => panic!("Expected Approaching, got {:?}", other),
+            }
         }
     }
 }
