@@ -4,21 +4,35 @@ pragma solidity ^0.8.15;
 import {Test} from "forge-std/Test.sol";
 import {AccessManager} from "../../src/fp/AccessManager.sol";
 import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {GameType} from "src/dispute/lib/Types.sol";
+import {Timestamp} from "src/dispute/lib/LibUDT.sol";
+import {OP_SUCCINCT_FAULT_DISPUTE_GAME_TYPE} from "src/lib/Types.sol";
 
-// Mock factory that returns empty results for findLatestGames
+/// @notice Mock factory with configurable games for testing
 contract MockDisputeGameFactory {
-    function findLatestGames(GameType, uint256, uint256)
-        external
-        pure
-        returns (IDisputeGameFactory.GameSearchResult[] memory)
-    {
-        // Return empty array
-        return new IDisputeGameFactory.GameSearchResult[](0);
+    struct GameData {
+        GameType gameType;
+        uint64 timestamp;
     }
 
-    function gameCount() external pure returns (uint256) {
-        return 0;
+    GameData[] public games;
+
+    function addGame(GameType _gameType, uint64 _timestamp) external {
+        games.push(GameData({gameType: _gameType, timestamp: _timestamp}));
+    }
+
+    function gameCount() external view returns (uint256) {
+        return games.length;
+    }
+
+    function gameAtIndex(uint256 _index)
+        external
+        view
+        returns (GameType gameType_, Timestamp timestamp_, IDisputeGame proxy_)
+    {
+        GameData memory game = games[_index];
+        return (game.gameType, Timestamp.wrap(game.timestamp), IDisputeGame(address(0)));
     }
 }
 
@@ -144,4 +158,29 @@ contract AccessManagerTest is Test {
     // Event declarations for testing
     event ProposerPermissionUpdated(address indexed proposer, bool allowed);
     event ChallengerPermissionUpdated(address indexed challenger, bool allowed);
+
+    function testGetLastProposalTimestamp_EarlyExitOnOldGames() public {
+        MockDisputeGameFactory(address(mockFactory)).addGame(GameType.wrap(0), 0);
+
+        assertEq(accessManager.getLastProposalTimestamp(), accessManager.DEPLOYMENT_TIMESTAMP());
+    }
+
+    function testGetLastProposalTimestamp_FindsOPSuccinctGame() public {
+        uint64 newTimestamp = uint64(accessManager.DEPLOYMENT_TIMESTAMP()) + 1;
+        MockDisputeGameFactory(address(mockFactory))
+            .addGame(GameType.wrap(OP_SUCCINCT_FAULT_DISPUTE_GAME_TYPE), newTimestamp);
+
+        assertEq(accessManager.getLastProposalTimestamp(), newTimestamp);
+    }
+
+    function testGetLastProposalTimestamp_SkipsNonOPSuccinctGames() public {
+        uint64 cannonTimestamp = uint64(accessManager.DEPLOYMENT_TIMESTAMP()) + 2;
+        MockDisputeGameFactory(address(mockFactory)).addGame(GameType.wrap(0), cannonTimestamp);
+
+        uint64 opSuccinctTimestamp = uint64(accessManager.DEPLOYMENT_TIMESTAMP()) + 1;
+        MockDisputeGameFactory(address(mockFactory))
+            .addGame(GameType.wrap(OP_SUCCINCT_FAULT_DISPUTE_GAME_TYPE), opSuccinctTimestamp);
+
+        assertEq(accessManager.getLastProposalTimestamp(), opSuccinctTimestamp);
+    }
 }
