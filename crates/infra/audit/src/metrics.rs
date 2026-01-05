@@ -1,4 +1,4 @@
-use metrics::{Counter, Histogram};
+use metrics::{Counter, Gauge, Histogram};
 use metrics_derive::Metrics;
 
 #[derive(Metrics, Clone)]
@@ -33,4 +33,7 @@ pub struct Metrics {
 
     #[metric(describe = "Total S3 writes skipped due to dedup")]
     pub s3_writes_skipped: Counter,
+
+    #[metric(describe = "Number of in-flight archive tasks")]
+    pub in_flight_archive_tasks: Gauge,
 }

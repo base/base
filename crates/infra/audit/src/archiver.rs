@@ -50,6 +50,7 @@ where
                     // TODO: the integration test breaks because Minio doesn't support etag
                     let writer = self.writer.clone();
                     let metrics = self.metrics.clone();
+                    self.metrics.in_flight_archive_tasks.increment(1.0);
                     tokio::spawn(async move {
                         let archive_start = Instant::now();
                         if let Err(e) = writer.archive_event(event).await {
@@ -60,6 +61,7 @@ where
                                 .record(archive_start.elapsed().as_secs_f64());
                             metrics.events_processed.increment(1);
                         }
+                        metrics.in_flight_archive_tasks.decrement(1.0);
                     });
 
                     let commit_start = Instant::now();
