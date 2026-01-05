@@ -54,6 +54,7 @@ codegen-units = 1
 base-fbal = { path = "crates/fbal" }
 base-reth-cli = { path = "crates/cli" }
 base-reth-rpc = { path = "crates/rpc" }
+base-reth-rpc-types = { path = "crates/reth-rpc-types" }
 base-tracex = { path = "crates/tracex" }
 base-reth-runner = { path = "crates/runner" }
 base-flashtypes = { path = "crates/flashtypes" }
@@ -85,6 +86,7 @@ reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
