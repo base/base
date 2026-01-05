@@ -347,7 +347,7 @@ where
 
         let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
-        // If the call is to pending block use cached override (if they exist)
+        // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             self.metrics.call.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
@@ -388,7 +388,7 @@ where
 
         let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
-        // If the call is to pending block use cached override (if they exist)
+        // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             self.metrics.estimate_gas.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
@@ -419,7 +419,7 @@ where
         let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
 
-        // If the call is to pending block use cached override (if they exist)
+        // If the call is to pending block use cached override (if it exists)
         if block_id.is_pending() {
             self.metrics.simulate_v1.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
