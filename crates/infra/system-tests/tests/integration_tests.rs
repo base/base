@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use common::kafka::wait_for_audit_event_by_hash;
 use op_alloy_network::Optimism;
 use serial_test::serial;
-use tips_audit::types::BundleEvent;
+use tips_audit_lib::types::BundleEvent;
 use tips_core::BundleExtensions;
 use tips_system_tests::client::TipsRpcClient;
 use tips_system_tests::fixtures::{

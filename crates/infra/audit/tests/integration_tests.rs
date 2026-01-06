@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use std::time::Duration;
-use tips_audit::{
+use tips_audit_lib::{
     KafkaAuditArchiver, KafkaAuditLogReader, KafkaUserOpAuditLogReader, UserOpEventReader,
     publisher::{
         BundleEventPublisher, KafkaBundleEventPublisher, KafkaUserOpEventPublisher,

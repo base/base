@@ -1,0 +1,23 @@
+[package]
+name = "tips-ingress-rpc"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[dependencies]
+tips-core.workspace = true
+tips-audit-lib.workspace = true
+tips-ingress-rpc-lib.workspace = true
+account-abstraction-core.workspace = true
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+dotenvy.workspace = true
+rdkafka.workspace = true
+jsonrpsee.workspace = true
+op-alloy-network.workspace = true
+alloy-provider.workspace = true

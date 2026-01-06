@@ -9,38 +9,37 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-tips-core.workspace = true
-tips-audit.workspace = true
-tips-ingress-rpc = { path = "../ingress-rpc" }
-url.workspace = true
-bytes.workspace = true
-op-revm.workspace = true
-async-trait.workspace = true
-alloy-network.workspace = true
-alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-alloy-signer-local.workspace = true
-op-alloy-network.workspace = true
-aws-credential-types.workspace = true
 hex = "0.4.3"
 rand = "0.8"
 dashmap = "6.0"
 indicatif = "0.17"
 rand_chacha = "0.3"
-tokio = { workspace = true, features = ["full"] }
+url = { workspace = true }
+tips-core = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+tips-audit-lib = { workspace = true }
+alloy-network = { workspace = true }
+tips-ingress-rpc-lib.workspace = true
+op-alloy-network = { workspace = true }
+alloy-signer-local = { workspace = true }
+aws-credential-types = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
-uuid = { workspace = true, features = ["v4", "serde"] }
+tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 serde_json = { workspace = true, features = ["std"] }
+reqwest = { version = "0.12.12", features = ["json"] }
 rdkafka = { workspace = true, features = ["tokio", "libz"] }
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
-op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
-reqwest = { version = "0.12.12", features = ["json"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
 clap = { version = "4.5", features = ["std", "derive", "env"] }
-tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
+op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
@@ -48,4 +47,3 @@ serial_test = "3"
 tokio = { workspace = true, features = ["full", "test-util"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }
-

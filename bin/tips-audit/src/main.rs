@@ -5,7 +5,7 @@ use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
 use std::net::SocketAddr;
-use tips_audit::{
+use tips_audit_lib::{
     KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
 };
 use tips_core::logger::init_logger_with_format;

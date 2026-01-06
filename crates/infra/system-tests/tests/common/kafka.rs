@@ -8,7 +8,7 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::BorrowedMessage,
 };
-use tips_audit::types::BundleEvent;
+use tips_audit_lib::types::BundleEvent;
 use tips_core::{BundleExtensions, kafka::load_kafka_config_from_file};
 use tokio::time::{Instant, timeout};
 use uuid::Uuid;

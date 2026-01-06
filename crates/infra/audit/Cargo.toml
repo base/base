@@ -1,5 +1,5 @@
 [package]
-name = "tips-audit"
+name = "tips-audit-lib"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -7,20 +7,16 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
-[[bin]]
-name = "tips-audit"
-path = "src/bin/main.rs"
-
 [dependencies]
-tips-core = { workspace = true, features = ["test-utils"] }
 bytes.workspace = true
 metrics.workspace = true
 dotenvy.workspace = true
 async-trait.workspace = true
 metrics-derive.workspace = true
-alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-tokio = { workspace = true, features = ["full"] }
+aws-credential-types.workspace = true
+tips-core = { workspace = true, features = ["test-utils"] }
 serde = { workspace = true, features = ["std", "derive"] }
+tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true, features = ["v4", "serde"] }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
@@ -28,12 +24,12 @@ serde_json = { workspace = true, features = ["std"] }
 rdkafka = { workspace = true, features = ["tokio", "libz"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
-op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 clap = { version = "4.5.47", features = ["std", "derive", "env"] }
+op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
-aws-credential-types.workspace = true
 
 [dev-dependencies]
 testcontainers = { workspace = true, features = ["blocking"] }

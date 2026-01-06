@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, TxHash, U256};
 use std::sync::Arc;
-use tips_audit::{
+use tips_audit_lib::{
     reader::Event,
     storage::{
         BundleEventS3Reader, EventWriter, S3EventReaderWriter, UserOpEventS3Reader,
