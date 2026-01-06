@@ -18,7 +18,7 @@ pub struct Args {
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
 
-    /// The mac pending blocks depth.
+    /// The max pending blocks depth.
     #[arg(
         long = "max-pending-blocks-depth",
         value_name = "MAX_PENDING_BLOCKS_DEPTH",
