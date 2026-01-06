@@ -14,12 +14,12 @@ impl FromStr for LogFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "json" => Ok(LogFormat::Json),
-            "compact" => Ok(LogFormat::Compact),
-            "pretty" => Ok(LogFormat::Pretty),
+            "json" => Ok(Self::Json),
+            "compact" => Ok(Self::Compact),
+            "pretty" => Ok(Self::Pretty),
             _ => {
                 warn!("Invalid log format '{}', defaulting to 'pretty'", s);
-                Ok(LogFormat::Pretty)
+                Ok(Self::Pretty)
             }
         }
     }

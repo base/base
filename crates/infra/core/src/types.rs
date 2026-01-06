@@ -92,7 +92,7 @@ impl TryFrom<Bundle> for ParsedBundle {
             .transpose()
             .map_err(|e| format!("Invalid UUID: {e:?}"))?;
 
-        Ok(ParsedBundle {
+        Ok(Self {
             txs,
             block_number: bundle.block_number,
             flashblock_number_min: bundle.flashblock_number_min,
@@ -243,7 +243,7 @@ impl BundleTxs for AcceptedBundle {
 
 impl AcceptedBundle {
     pub fn new(bundle: ParsedBundle, meter_bundle_response: MeterBundleResponse) -> Self {
-        AcceptedBundle {
+        Self {
             uuid: bundle.replacement_uuid.unwrap_or_else(Uuid::new_v4),
             txs: bundle.txs,
             block_number: bundle.block_number,
@@ -258,7 +258,7 @@ impl AcceptedBundle {
         }
     }
 
-    pub fn uuid(&self) -> &Uuid {
+    pub const fn uuid(&self) -> &Uuid {
         &self.uuid
     }
 }

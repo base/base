@@ -18,7 +18,7 @@ pub const TXN_HASH: TxHash =
 pub fn create_bundle_from_txn_data() -> AcceptedBundle {
     AcceptedBundle::new(
         Bundle {
-            txs: vec![TXN_DATA.clone()],
+            txs: vec![TXN_DATA],
             ..Default::default()
         }
         .try_into()
@@ -40,7 +40,7 @@ pub fn create_transaction(from: PrivateKeySigner, nonce: u64, to: Address) -> Op
         .unwrap();
 
     let sig = from.sign_transaction_sync(&mut txn).unwrap();
-    OpTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig).clone())
+    OpTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig))
 }
 
 pub fn create_test_bundle(

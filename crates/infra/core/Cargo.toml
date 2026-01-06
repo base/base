@@ -1,11 +1,15 @@
 [package]
 name = "tips-core"
+description = "Core primitives and utilities for TIPS"
 version.workspace = true
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-edition.workspace = true
+
+[lints]
+workspace = true
 
 [features]
 test-utils = ["dep:alloy-signer-local", "dep:op-alloy-rpc-types"]

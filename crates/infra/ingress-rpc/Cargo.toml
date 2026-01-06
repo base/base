@@ -21,6 +21,7 @@ alloy-signer-local.workspace = true
 reth-optimism-evm.workspace = true
 reth-rpc-eth-types.workspace = true
 account-abstraction-core.workspace = true
+alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
@@ -33,7 +34,6 @@ backon = { workspace = true, features = ["std", "tokio-sleep"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 clap = { version = "4.5.47", features = ["std", "derive", "env"] }
 op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 
 [dev-dependencies]
 mockall = "0.13"
