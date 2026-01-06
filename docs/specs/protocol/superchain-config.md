@@ -5,6 +5,10 @@
 **Table of Contents**
 
 - [Overview](#overview)
+- [Configuration Data Structure](#configuration-data-structure)
+  - [SuperchainDefinition](#superchaindefinition)
+  - [Hardforks](#hardforks)
+  - [SuperchainL1](#superchainl1)
 - [Invariants](#invariants)
   - [iSUPC-001: The Guardian and Pause Deputy must be able to trigger the Pause Mechanism](#isupc-001-the-guardian-and-pause-deputy-must-be-able-to-trigger-the-pause-mechanism)
     - [Impact](#impact)
@@ -28,6 +32,80 @@
 
 The SuperchainConfig contract is used to manage global configuration values for multiple OP Chains
 within a single Superchain network.
+
+## Configuration Data Structure
+
+The `SuperchainDefinition` type represents the configuration for a
+Superchain target, containing information about L1 contract addresses
+and network parameters.
+
+### SuperchainDefinition
+
+```javascript
+SuperchainDefinition {
+    Name                   string
+    ProtocolVersionsAddr   address
+    SuperchainConfigAddr   address
+    OPContractsManagerAddr address
+    Hardforks              Hardforks
+    L1                     SuperchainL1
+}
+```
+
+**Fields:**
+
+- `Name`: The name of the superchain (e.g., "mainnet", "sepolia")
+- `ProtocolVersionsAddr`: Address of the ProtocolVersions contract on L1
+- `SuperchainConfigAddr`: Address of the SuperchainConfig contract on L1
+- `OPContractsManagerAddr`: Address of the OP Contracts Manager on L1
+- `Hardforks`: Hardfork activation configuration for the superchain
+- `L1`: L1 chain information including chain ID, RPC endpoint, and explorer URL
+
+### Hardforks
+
+The `Hardforks` type contains optional activation timestamps for each network upgrade.
+
+```javascript
+Hardforks {
+    CanyonTime             uint64
+    DeltaTime              uint64
+    EcotoneTime            uint64
+    FjordTime              uint64
+    GraniteTime            uint64
+    HoloceneTime           uint64
+    IsthmusTime            uint64
+    InteropTime            uint64
+}
+```
+
+**Fields:**
+
+- `CanyonTime`: Activation timestamp for the Canyon upgrade
+- `DeltaTime`: Activation timestamp for the Delta upgrade
+- `EcotoneTime`: Activation timestamp for the Ecotone upgrade
+- `FjordTime`: Activation timestamp for the Fjord upgrade
+- `GraniteTime`: Activation timestamp for the Granite upgrade
+- `HoloceneTime`: Activation timestamp for the Holocene upgrade
+- `IsthmusTime`: Activation timestamp for the Isthmus upgrade
+- `InteropTime`: Activation timestamp for the Interop upgrade
+
+### SuperchainL1
+
+The `SuperchainL1` type contains L1 chain information for the superchain.
+
+```javascript
+SuperchainL1 {
+    ChainID   uint64
+    PublicRPC string
+    Explorer  string
+}
+```
+
+**Fields:**
+
+- `ChainID`: The chain ID of the L1 network (e.g. 1 for Ethereum mainnet, 11155111 for Sepolia)
+- `PublicRPC`: Public RPC endpoint URL for the L1 network
+- `Explorer`: Block explorer URL for the L1 network
 
 ## Invariants
 
