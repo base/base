@@ -1634,6 +1634,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-reth-rpc-types"
+version = "0.2.1"
+dependencies = [
+ "reth-optimism-evm",
+ "reth-rpc-eth-types",
+]
+
+[[package]]
 name = "base-reth-runner"
 version = "0.2.1"
 dependencies = [
