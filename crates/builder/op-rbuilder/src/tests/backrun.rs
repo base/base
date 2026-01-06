@@ -560,3 +560,106 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
 
     Ok(())
 }
+
+/// Tests that backrun bundles with EVM errors (not reverts) are skipped gracefully
+/// instead of failing the entire block build.
+/// This covers errors like nonce-too-low which return Err from evm.transact()
+/// rather than Ok with a failed result.
+#[rb_test(flashblocks)]
+async fn backrun_bundle_evm_error_skipped(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+
+    // 1. Build target tx
+    let target_tx = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .with_max_priority_fee_per_gas(20)
+        .build()
+        .await;
+    let target_tx_hash = target_tx.tx_hash().clone();
+
+    let provider = rbuilder.provider().await?;
+    let _ = provider
+        .send_raw_transaction(target_tx.encoded_2718().as_slice())
+        .await?;
+
+    // 2. Create a backrun tx from accounts[1] with nonce 0
+    let backrun_tx = driver
+        .create_transaction()
+        .with_signer(accounts[1])
+        .with_max_priority_fee_per_gas(50)
+        .with_nonce(0)
+        .build()
+        .await;
+    let backrun_tx_hash = backrun_tx.tx_hash().clone();
+
+    // 3. Also send a DIFFERENT tx from accounts[1] with nonce 0 to the mempool
+    //    This tx will be included first, making the backrun's nonce stale
+    let conflicting_tx = driver
+        .create_transaction()
+        .with_signer(accounts[1])
+        .with_max_priority_fee_per_gas(100) // Higher fee so it's picked first
+        .with_nonce(0)
+        .send()
+        .await?;
+    let conflicting_tx_hash = conflicting_tx.tx_hash().clone();
+
+    // 4. Insert backrun bundle targeting our target tx
+    let bundle = AcceptedBundle {
+        uuid: Uuid::new_v4(),
+        txs: vec![target_tx, backrun_tx],
+        block_number: driver.latest().await?.header.number + 1,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+        meter_bundle_response: MeterBundleResponse {
+            bundle_gas_price: U256::ZERO,
+            bundle_hash: TxHash::ZERO,
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: U256::ZERO,
+            results: vec![],
+            state_block_number: 0,
+            state_flashblock_index: None,
+            total_gas_used: 0,
+            total_execution_time_us: 0,
+        },
+    };
+
+    rbuilder
+        .tx_data_store()
+        .insert_backrun_bundle(bundle)
+        .expect("Failed to insert backrun bundle");
+
+    // 5. Build the block - this should NOT fail even though backrun has invalid nonce
+    driver.build_new_block().await?;
+
+    // 6. Verify block contents
+    let block = driver.latest_full().await?;
+    let tx_hashes: Vec<_> = block.transactions.hashes().collect();
+
+    // Target tx should be in block
+    assert!(
+        tx_hashes.contains(&target_tx_hash),
+        "Target tx should be included in block"
+    );
+
+    // Conflicting tx (from mempool) should be in block
+    assert!(
+        tx_hashes.contains(&conflicting_tx_hash),
+        "Conflicting tx should be included in block"
+    );
+
+    // Backrun tx should NOT be in block (nonce already used by conflicting tx)
+    assert!(
+        !tx_hashes.contains(&backrun_tx_hash),
+        "Backrun tx should NOT be in block (nonce-too-low EVM error)"
+    );
+
+    Ok(())
+}
