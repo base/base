@@ -48,4 +48,8 @@ pub struct Metrics {
     /// Number of in-flight archive tasks.
     #[metric(describe = "Number of in-flight archive tasks")]
     pub in_flight_archive_tasks: Gauge,
+
+    /// Number of failed archive tasks.
+    #[metric(describe = "Number of failed archive tasks")]
+    pub failed_archive_tasks: Counter,
 }

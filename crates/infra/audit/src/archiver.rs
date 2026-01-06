@@ -69,6 +69,7 @@ where
                         let archive_start = Instant::now();
                         if let Err(e) = writer.archive_event(event).await {
                             error!(error = %e, "Failed to write event");
+                            metrics.failed_archive_tasks.increment(1);
                         } else {
                             metrics
                                 .archive_event_duration
