@@ -73,7 +73,7 @@ pub struct IngressService<Q: MessageQueue, M: Mempool> {
     tx_submission_method: TxSubmissionMethod,
     bundle_queue_publisher: BundleQueuePublisher<Q>,
     user_op_queue_publisher: UserOpQueuePublisher<Q>,
-    reputation_service: Arc<ReputationServiceImpl<M>>,
+    reputation_service: Option<Arc<ReputationServiceImpl<M>>>,
     audit_channel: mpsc::UnboundedSender<BundleEvent>,
     send_transaction_default_lifetime_seconds: u64,
     metrics: Metrics,
@@ -93,9 +93,10 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
         builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
-        mempool_engine: Arc<MempoolEngine<M>>,
+        mempool_engine: impl Into<Option<Arc<MempoolEngine<M>>>>,
         config: Config,
     ) -> Self {
+        let mempool_engine = mempool_engine.into();
         let mempool_provider = Arc::new(providers.mempool);
         let simulation_provider = Arc::new(providers.simulation);
         let raw_tx_forward_provider = providers.raw_tx_forward.map(Arc::new);
@@ -104,7 +105,9 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
             config.validate_user_operation_timeout_ms,
         );
         let queue_connection = Arc::new(queue);
-        let reputation_service = ReputationServiceImpl::new(mempool_engine.get_mempool());
+        let reputation_service = mempool_engine
+            .as_ref()
+            .map(|engine| Arc::new(ReputationServiceImpl::new(engine.get_mempool())));
         Self {
             mempool_provider,
             simulation_provider,
@@ -119,7 +122,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
                 queue_connection.clone(),
                 config.ingress_topic,
             ),
-            reputation_service: Arc::new(reputation_service),
+            reputation_service,
             audit_channel,
             send_transaction_default_lifetime_seconds: config
                 .send_transaction_default_lifetime_seconds,
@@ -384,11 +387,11 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
             chain_id: 1,
         };
 
-        // DO Nothing with reputation at the moment as this is scafolding
-        let _ = self
-            .reputation_service
-            .get_reputation(&request.user_operation.sender())
-            .await;
+        if let Some(reputation_service) = &self.reputation_service {
+            let _ = reputation_service
+                .get_reputation(&request.user_operation.sender())
+                .await;
+        }
 
         let user_op_hash = request.hash().map_err(|e| {
             warn!(message = "Failed to hash user operation", error = %e);
@@ -592,7 +595,7 @@ mod tests {
             ingress_topic: String::new(),
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
-            user_operation_consumer_properties: String::new(),
+            user_operation_consumer_properties: Some(String::new()),
             user_operation_consumer_group_id: "tips-user-operation".to_string(),
             log_level: String::from("info"),
             log_format: tips_core::logger::LogFormat::Pretty,

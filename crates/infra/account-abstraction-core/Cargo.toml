@@ -18,7 +18,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-rdkafka = { workspace = true, features = ["tokio", "libz"] }
+rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 alloy-rpc-types = { workspace = true, features = ["eth"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }

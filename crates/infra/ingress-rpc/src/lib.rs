@@ -90,7 +90,7 @@ pub struct Config {
         long,
         env = "TIPS_INGRESS_KAFKA_USER_OPERATION_CONSUMER_PROPERTIES_FILE"
     )]
-    pub user_operation_consumer_properties: String,
+    pub user_operation_consumer_properties: Option<String>,
 
     /// Consumer group id for user operation topic (set uniquely per deployment)
     #[arg(
