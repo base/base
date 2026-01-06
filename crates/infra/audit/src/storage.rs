@@ -17,116 +17,167 @@ use std::time::Instant;
 use tips_core::AcceptedBundle;
 use tracing::info;
 
+/// S3 key types for storing different event types.
 #[derive(Debug)]
 pub enum S3Key {
+    /// Key for bundle events.
     Bundle(BundleId),
+    /// Key for transaction lookups by hash.
     TransactionByHash(TxHash),
+    /// Key for user operation events.
     UserOp(UserOpHash),
 }
 
 impl fmt::Display for S3Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            S3Key::Bundle(bundle_id) => write!(f, "bundles/{bundle_id}"),
-            S3Key::TransactionByHash(hash) => write!(f, "transactions/by_hash/{hash}"),
-            S3Key::UserOp(user_op_hash) => write!(f, "userops/{user_op_hash}"),
+            Self::Bundle(bundle_id) => write!(f, "bundles/{bundle_id}"),
+            Self::TransactionByHash(hash) => write!(f, "transactions/by_hash/{hash}"),
+            Self::UserOp(user_op_hash) => write!(f, "userops/{user_op_hash}"),
         }
     }
 }
 
+/// Metadata for a transaction, tracking which bundles it belongs to.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TransactionMetadata {
+    /// Bundle IDs that contain this transaction.
     pub bundle_ids: Vec<BundleId>,
 }
 
+/// History event for a bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum BundleHistoryEvent {
+    /// Bundle was received.
     Received {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// The accepted bundle.
         bundle: Box<AcceptedBundle>,
     },
+    /// Bundle was cancelled.
     Cancelled {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
     },
+    /// Bundle was included by a builder.
     BuilderIncluded {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// Builder identifier.
         builder: String,
+        /// Block number.
         block_number: u64,
+        /// Flashblock index.
         flashblock_index: u64,
     },
+    /// Bundle was included in a block.
     BlockIncluded {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// Block number.
         block_number: u64,
+        /// Block hash.
         block_hash: TxHash,
     },
+    /// Bundle was dropped.
     Dropped {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// Drop reason.
         reason: DropReason,
     },
 }
 
 impl BundleHistoryEvent {
+    /// Returns the event key.
     pub fn key(&self) -> &str {
         match self {
-            BundleHistoryEvent::Received { key, .. } => key,
-            BundleHistoryEvent::Cancelled { key, .. } => key,
-            BundleHistoryEvent::BuilderIncluded { key, .. } => key,
-            BundleHistoryEvent::BlockIncluded { key, .. } => key,
-            BundleHistoryEvent::Dropped { key, .. } => key,
+            Self::Received { key, .. } => key,
+            Self::Cancelled { key, .. } => key,
+            Self::BuilderIncluded { key, .. } => key,
+            Self::BlockIncluded { key, .. } => key,
+            Self::Dropped { key, .. } => key,
         }
     }
 }
 
+/// History of events for a bundle.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BundleHistory {
+    /// List of history events.
     pub history: Vec<BundleHistoryEvent>,
 }
 
+/// History event for a user operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum UserOpHistoryEvent {
+    /// User operation was added to the mempool.
     AddedToMempool {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// Sender address.
         sender: Address,
+        /// Entry point address.
         entry_point: Address,
+        /// Nonce.
         nonce: U256,
     },
+    /// User operation was dropped.
     Dropped {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// Drop reason.
         reason: UserOpDropReason,
     },
+    /// User operation was included in a block.
     Included {
+        /// Event key.
         key: String,
+        /// Event timestamp.
         timestamp: i64,
+        /// Block number.
         block_number: u64,
+        /// Transaction hash.
         tx_hash: TxHash,
     },
 }
 
 impl UserOpHistoryEvent {
+    /// Returns the event key.
     pub fn key(&self) -> &str {
         match self {
-            UserOpHistoryEvent::AddedToMempool { key, .. } => key,
-            UserOpHistoryEvent::Dropped { key, .. } => key,
-            UserOpHistoryEvent::Included { key, .. } => key,
+            Self::AddedToMempool { key, .. } => key,
+            Self::Dropped { key, .. } => key,
+            Self::Included { key, .. } => key,
         }
     }
 }
 
+/// History of events for a user operation.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserOpHistory {
+    /// List of history events.
     pub history: Vec<UserOpHistoryEvent>,
 }
 
-pub use crate::reader::UserOpEventWrapper;
+pub(crate) use crate::reader::UserOpEventWrapper;
 
 fn update_bundle_history_transform(
     bundle_history: BundleHistory,
@@ -268,31 +319,41 @@ fn update_userop_history_transform(
     Some(userop_history)
 }
 
+/// Trait for writing bundle events to storage.
 #[async_trait]
 pub trait EventWriter {
+    /// Archives a bundle event.
     async fn archive_event(&self, event: Event) -> Result<()>;
 }
 
+/// Trait for writing user operation events to storage.
 #[async_trait]
 pub trait UserOpEventWriter {
+    /// Archives a user operation event.
     async fn archive_userop_event(&self, event: UserOpEventWrapper) -> Result<()>;
 }
 
+/// Trait for reading bundle events from S3.
 #[async_trait]
 pub trait BundleEventS3Reader {
+    /// Gets the bundle history for a given bundle ID.
     async fn get_bundle_history(&self, bundle_id: BundleId) -> Result<Option<BundleHistory>>;
+    /// Gets transaction metadata for a given transaction hash.
     async fn get_transaction_metadata(
         &self,
         tx_hash: TxHash,
     ) -> Result<Option<TransactionMetadata>>;
 }
 
+/// Trait for reading user operation events from S3.
 #[async_trait]
 pub trait UserOpEventS3Reader {
+    /// Gets the user operation history for a given hash.
     async fn get_userop_history(&self, user_op_hash: UserOpHash) -> Result<Option<UserOpHistory>>;
 }
 
-#[derive(Clone)]
+/// S3-backed event reader and writer.
+#[derive(Clone, Debug)]
 pub struct S3EventReaderWriter {
     s3_client: S3Client,
     bucket: String,
@@ -300,6 +361,7 @@ pub struct S3EventReaderWriter {
 }
 
 impl S3EventReaderWriter {
+    /// Creates a new S3 event reader/writer.
     pub fn new(s3_client: S3Client, bucket: String) -> Self {
         Self {
             s3_client,

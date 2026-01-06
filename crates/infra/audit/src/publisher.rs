@@ -2,24 +2,36 @@ use crate::types::{BundleEvent, UserOpEvent};
 use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use serde_json;
 use tracing::{debug, error, info};
 
+/// Trait for publishing bundle events.
 #[async_trait]
 pub trait BundleEventPublisher: Send + Sync {
+    /// Publishes a single bundle event.
     async fn publish(&self, event: BundleEvent) -> Result<()>;
 
+    /// Publishes multiple bundle events.
     async fn publish_all(&self, events: Vec<BundleEvent>) -> Result<()>;
 }
 
+/// Publishes bundle events to Kafka.
 #[derive(Clone)]
 pub struct KafkaBundleEventPublisher {
     producer: FutureProducer,
     topic: String,
 }
 
+impl std::fmt::Debug for KafkaBundleEventPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaBundleEventPublisher")
+            .field("topic", &self.topic)
+            .finish_non_exhaustive()
+    }
+}
+
 impl KafkaBundleEventPublisher {
-    pub fn new(producer: FutureProducer, topic: String) -> Self {
+    /// Creates a new Kafka bundle event publisher.
+    pub const fn new(producer: FutureProducer, topic: String) -> Self {
         Self { producer, topic }
     }
 
@@ -71,11 +83,13 @@ impl BundleEventPublisher for KafkaBundleEventPublisher {
     }
 }
 
-#[derive(Clone)]
+/// Publishes bundle events to logs (for testing/debugging).
+#[derive(Clone, Debug)]
 pub struct LoggingBundleEventPublisher;
 
 impl LoggingBundleEventPublisher {
-    pub fn new() -> Self {
+    /// Creates a new logging bundle event publisher.
+    pub const fn new() -> Self {
         Self
     }
 }
@@ -105,21 +119,34 @@ impl BundleEventPublisher for LoggingBundleEventPublisher {
     }
 }
 
+/// Trait for publishing user operation events.
 #[async_trait]
 pub trait UserOpEventPublisher: Send + Sync {
+    /// Publishes a single user operation event.
     async fn publish(&self, event: UserOpEvent) -> Result<()>;
 
+    /// Publishes multiple user operation events.
     async fn publish_all(&self, events: Vec<UserOpEvent>) -> Result<()>;
 }
 
+/// Publishes user operation events to Kafka.
 #[derive(Clone)]
 pub struct KafkaUserOpEventPublisher {
     producer: FutureProducer,
     topic: String,
 }
 
+impl std::fmt::Debug for KafkaUserOpEventPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaUserOpEventPublisher")
+            .field("topic", &self.topic)
+            .finish_non_exhaustive()
+    }
+}
+
 impl KafkaUserOpEventPublisher {
-    pub fn new(producer: FutureProducer, topic: String) -> Self {
+    /// Creates a new Kafka user operation event publisher.
+    pub const fn new(producer: FutureProducer, topic: String) -> Self {
         Self { producer, topic }
     }
 
@@ -171,11 +198,13 @@ impl UserOpEventPublisher for KafkaUserOpEventPublisher {
     }
 }
 
-#[derive(Clone)]
+/// Publishes user operation events to logs (for testing/debugging).
+#[derive(Clone, Debug)]
 pub struct LoggingUserOpEventPublisher;
 
 impl LoggingUserOpEventPublisher {
-    pub fn new() -> Self {
+    /// Creates a new logging user operation event publisher.
+    pub const fn new() -> Self {
         Self
     }
 }

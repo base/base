@@ -5,102 +5,134 @@ use serde::{Deserialize, Serialize};
 use tips_core::AcceptedBundle;
 use uuid::Uuid;
 
+/// Unique identifier for a transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TransactionId {
+    /// The sender address.
     pub sender: Address,
+    /// The transaction nonce.
     pub nonce: U256,
+    /// The transaction hash.
     pub hash: TxHash,
 }
 
+/// Unique identifier for a bundle.
 pub type BundleId = Uuid;
 
+/// Reason a bundle was dropped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DropReason {
+    /// Bundle timed out.
     TimedOut,
+    /// Bundle transaction reverted.
     Reverted,
 }
 
+/// A transaction with its data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transaction {
+    /// Transaction identifier.
     pub id: TransactionId,
+    /// Raw transaction data.
     pub data: Bytes,
 }
 
+/// Hash of a user operation.
 pub type UserOpHash = B256;
 
+/// Reason a user operation was dropped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UserOpDropReason {
+    /// User operation was invalid.
     Invalid(String),
+    /// User operation expired.
     Expired,
+    /// Replaced by a higher fee user operation.
     ReplacedByHigherFee,
 }
 
+/// Bundle lifecycle event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum BundleEvent {
+    /// Bundle was received.
     Received {
+        /// Bundle identifier.
         bundle_id: BundleId,
+        /// The accepted bundle.
         bundle: Box<AcceptedBundle>,
     },
+    /// Bundle was cancelled.
     Cancelled {
+        /// Bundle identifier.
         bundle_id: BundleId,
     },
+    /// Bundle was included by a builder.
     BuilderIncluded {
+        /// Bundle identifier.
         bundle_id: BundleId,
+        /// Builder identifier.
         builder: String,
+        /// Block number.
         block_number: u64,
+        /// Flashblock index.
         flashblock_index: u64,
     },
+    /// Bundle was included in a block.
     BlockIncluded {
+        /// Bundle identifier.
         bundle_id: BundleId,
+        /// Block number.
         block_number: u64,
+        /// Block hash.
         block_hash: TxHash,
     },
+    /// Bundle was dropped.
     Dropped {
+        /// Bundle identifier.
         bundle_id: BundleId,
+        /// Drop reason.
         reason: DropReason,
     },
 }
 
 impl BundleEvent {
-    pub fn bundle_id(&self) -> BundleId {
+    /// Returns the bundle ID for this event.
+    pub const fn bundle_id(&self) -> BundleId {
         match self {
-            BundleEvent::Received { bundle_id, .. } => *bundle_id,
-            BundleEvent::Cancelled { bundle_id, .. } => *bundle_id,
-            BundleEvent::BuilderIncluded { bundle_id, .. } => *bundle_id,
-            BundleEvent::BlockIncluded { bundle_id, .. } => *bundle_id,
-            BundleEvent::Dropped { bundle_id, .. } => *bundle_id,
+            Self::Received { bundle_id, .. } => *bundle_id,
+            Self::Cancelled { bundle_id, .. } => *bundle_id,
+            Self::BuilderIncluded { bundle_id, .. } => *bundle_id,
+            Self::BlockIncluded { bundle_id, .. } => *bundle_id,
+            Self::Dropped { bundle_id, .. } => *bundle_id,
         }
     }
 
+    /// Returns transaction IDs from this event (only for Received events).
     pub fn transaction_ids(&self) -> Vec<TransactionId> {
         match self {
-            BundleEvent::Received { bundle, .. } => {
-                bundle
-                    .txs
-                    .iter()
-                    .filter_map(|envelope| {
-                        match envelope.recover_signer() {
-                            Ok(sender) => Some(TransactionId {
-                                sender,
-                                nonce: U256::from(envelope.nonce()),
-                                hash: *envelope.hash(),
-                            }),
-                            Err(_) => None, // Skip invalid transactions
-                        }
+            Self::Received { bundle, .. } => bundle
+                .txs
+                .iter()
+                .filter_map(|envelope| {
+                    envelope.recover_signer().ok().map(|sender| TransactionId {
+                        sender,
+                        nonce: U256::from(envelope.nonce()),
+                        hash: *envelope.hash(),
                     })
-                    .collect()
-            }
-            BundleEvent::Cancelled { .. } => vec![],
-            BundleEvent::BuilderIncluded { .. } => vec![],
-            BundleEvent::BlockIncluded { .. } => vec![],
-            BundleEvent::Dropped { .. } => vec![],
+                })
+                .collect(),
+            Self::Cancelled { .. } => vec![],
+            Self::BuilderIncluded { .. } => vec![],
+            Self::BlockIncluded { .. } => vec![],
+            Self::Dropped { .. } => vec![],
         }
     }
 
+    /// Generates a unique event key for this event.
     pub fn generate_event_key(&self) -> String {
         match self {
-            BundleEvent::BlockIncluded {
+            Self::BlockIncluded {
                 bundle_id,
                 block_hash,
                 ..
@@ -114,38 +146,53 @@ impl BundleEvent {
     }
 }
 
+/// User operation lifecycle event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum UserOpEvent {
+    /// User operation was added to the mempool.
     AddedToMempool {
+        /// Hash of the user operation.
         user_op_hash: UserOpHash,
+        /// Sender address.
         sender: Address,
+        /// Entry point address.
         entry_point: Address,
+        /// Nonce.
         nonce: U256,
     },
+    /// User operation was dropped.
     Dropped {
+        /// Hash of the user operation.
         user_op_hash: UserOpHash,
+        /// Reason for dropping.
         reason: UserOpDropReason,
     },
+    /// User operation was included in a block.
     Included {
+        /// Hash of the user operation.
         user_op_hash: UserOpHash,
+        /// Block number.
         block_number: u64,
+        /// Transaction hash.
         tx_hash: TxHash,
     },
 }
 
 impl UserOpEvent {
-    pub fn user_op_hash(&self) -> UserOpHash {
+    /// Returns the user operation hash for this event.
+    pub const fn user_op_hash(&self) -> UserOpHash {
         match self {
-            UserOpEvent::AddedToMempool { user_op_hash, .. } => *user_op_hash,
-            UserOpEvent::Dropped { user_op_hash, .. } => *user_op_hash,
-            UserOpEvent::Included { user_op_hash, .. } => *user_op_hash,
+            Self::AddedToMempool { user_op_hash, .. } => *user_op_hash,
+            Self::Dropped { user_op_hash, .. } => *user_op_hash,
+            Self::Included { user_op_hash, .. } => *user_op_hash,
         }
     }
 
+    /// Generates a unique event key for this event.
     pub fn generate_event_key(&self) -> String {
         match self {
-            UserOpEvent::Included {
+            Self::Included {
                 user_op_hash,
                 tx_hash,
                 ..

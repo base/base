@@ -2,10 +2,12 @@ use crate::metrics::Metrics;
 use crate::reader::EventReader;
 use crate::storage::EventWriter;
 use anyhow::Result;
+use std::fmt;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info};
 
+/// Archives audit events from Kafka to S3 storage.
 pub struct KafkaAuditArchiver<R, W>
 where
     R: EventReader,
@@ -16,11 +18,22 @@ where
     metrics: Metrics,
 }
 
+impl<R, W> fmt::Debug for KafkaAuditArchiver<R, W>
+where
+    R: EventReader,
+    W: EventWriter + Clone + Send + 'static,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KafkaAuditArchiver").finish_non_exhaustive()
+    }
+}
+
 impl<R, W> KafkaAuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
 {
+    /// Creates a new archiver with the given reader and writer.
     pub fn new(reader: R, writer: W) -> Self {
         Self {
             reader,
@@ -29,6 +42,7 @@ where
         }
     }
 
+    /// Runs the archiver loop, reading events and writing them to storage.
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting Kafka bundle archiver");
 
