@@ -15,8 +15,8 @@ import (
 // the latest game exceeds the allowed threshold, or if any root claim is incorrect.
 func TestFaultProofProposer_Progress(gt *testing.T) {
 	t := devtest.ParallelT(gt)
-	cfg := opspresets.LongRunningFaultProofConfig()
-	sys, dgf := setupFaultProofSystem(t, cfg, opspresets.LongRunningL2ChainConfig())
+	cfg := opspresets.LongRunningFPProposerConfig()
+	sys, dgf := setupFaultProofSystem(t, cfg, opspresets.LongRunningL2ChainConfig(), opspresets.WithDefaultChallenger())
 
 	err := utils.RunProgressTest(func() error {
 		return checkLatestGame(t, sys, dgf, nil)
@@ -28,8 +28,8 @@ func TestFaultProofProposer_Progress(gt *testing.T) {
 // ensures games are being proven (not just created), and verifies root claims are correct.
 func TestFaultProofProposer_FastFinality_Progress(gt *testing.T) {
 	t := devtest.ParallelT(gt)
-	cfg := opspresets.LongRunningFastFinalityFaultProofConfig()
-	sys, dgf := setupFaultProofSystem(t, cfg, opspresets.LongRunningL2ChainConfig())
+	cfg := opspresets.LongRunningFastFinalityFPProposerConfig()
+	sys, dgf := setupFaultProofSystem(t, cfg, opspresets.LongRunningL2ChainConfig(), opspresets.WithDefaultChallenger())
 
 	err := utils.RunProgressTest(func() error {
 		return checkLatestGame(t, sys, dgf, &cfg)
@@ -47,15 +47,15 @@ func TestFaultProofProposer_FastFinality_Progress(gt *testing.T) {
 	t.Require().True(proven, "fast finality did not prove first game")
 }
 
-func setupFaultProofSystem(t devtest.T, cfg opspresets.FaultProofConfig, chain opspresets.L2ChainConfig) (*opspresets.FaultProofSystem, *utils.DgfClient) {
-	sys := opspresets.NewFaultProofSystem(t, cfg, chain)
+func setupFaultProofSystem(t devtest.T, cfg opspresets.FPProposerConfig, chain opspresets.L2ChainConfig, opts ...opspresets.FaultProofSystemOption) (*opspresets.FaultProofSystem, *utils.DgfClient) {
+	sys := opspresets.NewFaultProofSystem(t, cfg, chain, opts...)
 	t.Log("=== Stack is running ===")
 	return sys, sys.DgfClient(t)
 }
 
 // checkLatestGame verifies the latest game's lag and root claim correctness.
 // If cfg is provided, also checks anchor state lag (for fast finality mode).
-func checkLatestGame(t devtest.T, sys *opspresets.FaultProofSystem, dgf *utils.DgfClient, cfg *opspresets.FaultProofConfig) error {
+func checkLatestGame(t devtest.T, sys *opspresets.FaultProofSystem, dgf *utils.DgfClient, cfg *opspresets.FPProposerConfig) error {
 	ctx := t.Ctx()
 	l2Finalized := sys.L2EL.BlockRefByLabel(eth.Finalized)
 

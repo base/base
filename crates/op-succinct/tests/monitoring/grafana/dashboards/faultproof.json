@@ -1,5 +1,5 @@
 {
-  "title": "Fault Proof Proposer",
+  "title": "Fault Proof Proposer & Challenger",
   "uid": "faultproof",
   "refresh": "5s",
   "time": {
@@ -9,13 +9,25 @@
   "panels": [
     {
       "id": 1,
+      "title": "Proposer",
+      "type": "row",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false
+    },
+    {
+      "id": 2,
       "title": "Blocks Behind (max 900)",
       "type": "gauge",
       "gridPos": {
         "h": 6,
         "w": 6,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -55,14 +67,14 @@
       ]
     },
     {
-      "id": 2,
-      "title": "Total Errors",
+      "id": 3,
+      "title": "Errors",
       "type": "stat",
       "gridPos": {
         "h": 6,
         "w": 6,
         "x": 6,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -90,20 +102,20 @@
       },
       "targets": [
         {
-          "expr": "op_succinct_fp_game_creation_error + op_succinct_fp_game_proving_error + op_succinct_fp_game_resolution_error + op_succinct_fp_bond_claiming_error + op_succinct_fp_metrics_error",
+          "expr": "sum(op_succinct_fp_game_creation_error or vector(0)) + sum(op_succinct_fp_game_proving_error or vector(0)) + sum(op_succinct_fp_game_resolution_error or vector(0)) + sum(op_succinct_fp_bond_claiming_error or vector(0)) + sum(op_succinct_fp_metrics_error or vector(0))",
           "refId": "A"
         }
       ]
     },
     {
-      "id": 3,
+      "id": 4,
       "title": "RAM (GB)",
       "type": "stat",
       "gridPos": {
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -120,20 +132,20 @@
       },
       "targets": [
         {
-          "expr": "process_resident_memory_bytes / (1024 * 1024 * 1024)",
+          "expr": "process_resident_memory_bytes{job=\"proposer\"} / (1024 * 1024 * 1024)",
           "refId": "A"
         }
       ]
     },
     {
-      "id": 4,
+      "id": 5,
       "title": "CPU (%)",
       "type": "stat",
       "gridPos": {
         "h": 6,
         "w": 6,
         "x": 18,
-        "y": 0
+        "y": 1
       },
       "fieldConfig": {
         "defaults": {
@@ -150,20 +162,20 @@
       },
       "targets": [
         {
-          "expr": "100 * rate(process_cpu_seconds_total[1m])",
+          "expr": "100 * rate(process_cpu_seconds_total{job=\"proposer\"}[1m])",
           "refId": "A"
         }
       ]
     },
     {
-      "id": 5,
+      "id": 6,
       "title": "Block Lag Over Time",
       "type": "timeseries",
       "gridPos": {
-        "h": 12,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 7
       },
       "fieldConfig": {
         "defaults": {
@@ -206,14 +218,14 @@
       ]
     },
     {
-      "id": 6,
+      "id": 7,
       "title": "Game Lifecycle",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -244,14 +256,14 @@
       ]
     },
     {
-      "id": 7,
+      "id": 8,
       "title": "Active Proving Tasks",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 18
+        "y": 15
       },
       "fieldConfig": {
         "defaults": {
@@ -267,14 +279,14 @@
       ]
     },
     {
-      "id": 8,
+      "id": 9,
       "title": "Errors Over Time",
       "type": "timeseries",
       "gridPos": {
-        "h": 6,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -306,6 +318,202 @@
           "expr": "op_succinct_fp_metrics_error",
           "legendFormat": "Metrics",
           "refId": "E"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Challenger",
+      "type": "row",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "collapsed": false
+    },
+    {
+      "id": 11,
+      "title": "Games Challenged",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_challenger_games_challenged",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Errors",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_challenger_errors",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "RAM (GB)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{job=\"challenger\"} / (1024 * 1024 * 1024)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "CPU (%)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * rate(process_cpu_seconds_total{job=\"challenger\"}[1m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Games Challenged Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_challenger_games_challenged",
+          "legendFormat": "Challenged",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Errors Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_challenger_errors",
+          "legendFormat": "Errors",
+          "refId": "A"
         }
       ]
     }
