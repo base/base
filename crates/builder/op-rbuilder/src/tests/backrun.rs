@@ -561,9 +561,9 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
     Ok(())
 }
 
-/// Tests that backrun bundles with EVM errors are skipped gracefully instead of failing block build
+/// Tests that backrun bundles with invalid tx errors (e.g. nonce too low) are skipped gracefully
 #[rb_test(flashblocks)]
-async fn backrun_bundle_evm_error_skipped(rbuilder: LocalInstance) -> eyre::Result<()> {
+async fn backrun_bundle_invalid_tx_skipped(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
 

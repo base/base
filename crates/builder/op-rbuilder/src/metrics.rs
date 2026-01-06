@@ -175,8 +175,10 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundles_received_total: Counter,
     /// Number of backrun bundles that reverted during execution (all-or-nothing)
     pub backrun_bundles_reverted_total: Counter,
-    /// Number of backrun bundles that failed with EVM errors (nonce too low, invalid tx, etc.)
-    pub backrun_bundles_evm_error_total: Counter,
+    /// Number of backrun bundles skipped due to invalid tx errors (nonce too low, etc.)
+    pub backrun_bundles_invalid_tx_total: Counter,
+    /// Number of backrun bundles that caused fatal EVM errors
+    pub backrun_bundles_fatal_error_total: Counter,
     /// Number of backrun bundles rejected due to priority fee below target tx
     pub backrun_bundles_rejected_low_fee_total: Counter,
     /// Number of backrun bundles rejected due to exceeding block limits
