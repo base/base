@@ -13,7 +13,6 @@ alloy-serde.workspace = true
 async-trait.workspace = true
 alloy-sol-types.workspace = true
 op-alloy-network.workspace = true
-reth-rpc-eth-types.workspace = true
 serde = { workspace = true, features = ["std", "derive"] }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }

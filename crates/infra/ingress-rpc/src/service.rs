@@ -7,13 +7,13 @@ use alloy_consensus::transaction::Recovered;
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
+use base_reth_rpc_types::EthApiError;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
-use reth_rpc_eth_types::EthApiError;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tips_audit_lib::BundleEvent;
 use tips_core::types::ParsedBundle;

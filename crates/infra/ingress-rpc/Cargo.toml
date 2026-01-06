@@ -18,8 +18,7 @@ async-trait.workspace = true
 metrics-derive.workspace = true
 op-alloy-network.workspace = true
 alloy-signer-local.workspace = true
-reth-optimism-evm.workspace = true
-reth-rpc-eth-types.workspace = true
+base-reth-rpc-types.workspace = true
 account-abstraction-core.workspace = true
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tokio = { workspace = true, features = ["full"] }
