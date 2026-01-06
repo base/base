@@ -116,6 +116,7 @@ alloy-rpc-types-eth = "1.0.41"
 alloy-rpc-types-engine = "1.0.41"
 
 # op-alloy
+alloy-op-evm = { version = "0.23.3", default-features = false }
 op-alloy-network = "0.22.0"
 op-alloy-rpc-types = "0.22.0"
 op-alloy-consensus = "0.22.0"
