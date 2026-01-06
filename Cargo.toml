@@ -125,7 +125,7 @@ op-alloy-rpc-types-engine = "0.22.0"
 # tokio
 tokio = "1.48.0"
 tokio-stream = "0.1.17"
-tokio-tungstenite = "0.28.0"
+tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
 
 # async
 futures = "0.3.31"
