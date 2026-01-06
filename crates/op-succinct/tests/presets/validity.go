@@ -164,7 +164,7 @@ func (s *ValiditySystem) StartProposer() {
 // NewValiditySystem creates a new validity test system with custom configuration.
 func NewValiditySystem(t devtest.T, cfg ValidityConfig, chain L2ChainConfig) *ValiditySystem {
 	var ids sysgo.DefaultSingleChainInteropSystemIDs
-	sys, prop := newSystemWithProposer(t, WithSuccinctValidityProposer(&ids, cfg, chain), &ids)
+	sys, _, prop := newSystemWithProposer(t, WithSuccinctValidityProposer(&ids, cfg, chain), &ids)
 
 	vp, ok := prop.(sysgo.ValidityProposer)
 	t.Require().True(ok, "proposer must implement ValidityProposer")

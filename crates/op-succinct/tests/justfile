@@ -23,15 +23,17 @@ test-e2e-sysgo PKG="" FILTER="" TIMEOUT="90m": build-contracts unzip-contract-ar
 
     if [ -z "$TEST_PATH" ]; then
         TEST_PATH="./e2e/..."
-        BUILD_ARGS="--bin validity --bin proposer"
+        BUILD_ARGS="--bin validity --bin proposer --bin challenger"
         export VALIDITY_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/validity"
         export FAULT_PROOF_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/proposer"
+        export FAULT_PROOF_CHALLENGER_EXEC_PATH="{{ROOT}}/target/release/challenger"
     elif [[ "$TEST_PATH" == *"validity"* ]]; then
         BUILD_ARGS="--bin validity"
         export VALIDITY_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/validity"
     elif [[ "$TEST_PATH" == *"faultproof"* ]]; then
-        BUILD_ARGS="--bin proposer"
+        BUILD_ARGS="--bin proposer --bin challenger"
         export FAULT_PROOF_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/proposer"
+        export FAULT_PROOF_CHALLENGER_EXEC_PATH="{{ROOT}}/target/release/challenger"
     else
         echo "PKG must contain 'validity' or 'faultproof' to choose a binary."
         exit 1
@@ -85,7 +87,8 @@ unzip-contract-artifacts DEST_DIR="":
 
 update-packages: submodule
     #!/bin/bash
-    cd {{SOURCE}}/optimism/op-deployer && just build-contracts copy-contract-artifacts
+    cd {{SOURCE}}/optimism/packages/contracts-bedrock && forge build --skip "/**/test/**" -D never
+    cd {{SOURCE}}/optimism/op-deployer && just copy-contract-artifacts
     cp {{SOURCE}}/optimism/op-deployer/pkg/deployer/artifacts/forge-artifacts/artifacts.tzst {{SOURCE}}/artifacts/compressed/artifacts.tzst
 
 submodule:

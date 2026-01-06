@@ -11,19 +11,19 @@ import (
 )
 
 func TestFaultProofProposer_RestartRecovery_Basic(gt *testing.T) {
-	cfg := opspresets.DefaultFaultProofConfig()
+	cfg := opspresets.DefaultFPProposerConfig()
 	cfg.ProposalIntervalInBlocks = 40
 	runRecoveryTest(gt, cfg, 1, utils.ShortTimeout())
 }
 
 func TestFaultProofProposer_RestartRecovery_FastFinalityBasic(gt *testing.T) {
-	cfg := opspresets.FastFinalityFaultProofConfig()
+	cfg := opspresets.FastFinalityFPProposerConfig()
 	cfg.ProposalIntervalInBlocks = 40
 	runRecoveryTest(gt, cfg, 1, utils.ShortTimeout())
 }
 
 func TestFaultProofProposer_RestartRecovery_FastFinalityRangeSplit(gt *testing.T) {
-	cfg := opspresets.FastFinalityFaultProofConfig()
+	cfg := opspresets.FastFinalityFPProposerConfig()
 	cfg.ProposalIntervalInBlocks = 40
 	cfg.RangeSplitCount = 4
 	cfg.MaxConcurrentRangeProofs = 4
@@ -31,12 +31,12 @@ func TestFaultProofProposer_RestartRecovery_FastFinalityRangeSplit(gt *testing.T
 }
 
 func TestFaultProofProposer_RestartRecovery_MultipleRestarts(gt *testing.T) {
-	cfg := opspresets.FastFinalityFaultProofConfig()
+	cfg := opspresets.FastFinalityFPProposerConfig()
 	cfg.ProposalIntervalInBlocks = 40
 	runRecoveryTest(gt, cfg, 3, utils.ShortTimeout())
 }
 
-func runRecoveryTest(gt *testing.T, cfg opspresets.FaultProofConfig, restartCount int, timeout time.Duration) {
+func runRecoveryTest(gt *testing.T, cfg opspresets.FPProposerConfig, restartCount int, timeout time.Duration) {
 	t := devtest.ParallelT(gt)
 	sys := opspresets.NewFaultProofSystem(t, cfg, opspresets.DefaultL2ChainConfig())
 	ctx, cancel := context.WithTimeout(t.Ctx(), timeout)

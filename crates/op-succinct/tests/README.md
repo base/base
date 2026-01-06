@@ -9,7 +9,7 @@ run the suite with the expected environment.
 - `e2e/`: Go e2e tests.
   - `nodes/`: Nodes-only tests (no proposer) for local development.
   - `validity/`: Validity proposer tests.
-  - `faultproof/`: Fault proof proposer tests.
+  - `faultproof/`: Fault proof proposer and challenger tests.
 - `artifacts/`: Contract artifacts; a compressed tarball lives at
   `artifacts/compressed/artifacts.tzst` and is unpacked into `artifacts/src`
   before tests.
@@ -23,7 +23,7 @@ run the suite with the expected environment.
 ## Prerequisites
 
 - Go 1.23+ (matches `go.mod`).
-- Rust toolchain (to build the `validity` binary).
+- Rust toolchain (to build the `validity`, `proposer`, and `challenger` binaries).
 - `just`, `zstd`, and `tar` available on your PATH.
 
 ## Setup
@@ -108,14 +108,14 @@ just long-running faultproof    # Fault proof proposer
 just long-running faultproof-ff # Fault proof with fast finality
 ```
 
-At startup, an env file is written with variables needed for debugging:
+At startup, env files are written with variables needed for debugging:
 
-| Mode | Env File |
-|------|----------|
+| Mode | Env Files |
+|------|-----------|
 | validity | `.env.validity` |
-| faultproof / faultproof-ff | `.env.faultproof` |
+| faultproof / faultproof-ff | `.env.proposer`, `.env.challenger` |
 
-Source it to use with tools like `cast`:
+Source them to use with tools like `cast`:
 
 ```bash
 source .env.validity

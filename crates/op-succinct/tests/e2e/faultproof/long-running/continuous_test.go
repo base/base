@@ -12,9 +12,11 @@ import (
 // TestFaultProofProposer_LongRunning runs until shutdown, logging progress.
 func TestFaultProofProposer_LongRunning(gt *testing.T) {
 	t := devtest.SerialT(gt)
-	cfg := opspresets.LongRunningFaultProofConfig()
-	cfg.EnvFilePath = "../../../.env.faultproof"
-	sys, dgf := setupFaultProofSystem(t, cfg, opspresets.LongRunningL2ChainConfig())
+	proposerCfg := opspresets.LongRunningFPProposerConfig()
+	proposerCfg.EnvFilePath = ".env.proposer"
+	challengerCfg := opspresets.DefaultFPChallengerConfig()
+	challengerCfg.EnvFilePath = ".env.challenger"
+	sys, dgf := setupFaultProofSystem(t, proposerCfg, opspresets.LongRunningL2ChainConfig(), opspresets.WithChallenger(challengerCfg))
 
 	utils.RunUntilShutdown(60*time.Second, func() error {
 		checkLatestGame(t, sys, dgf, nil)
@@ -25,12 +27,14 @@ func TestFaultProofProposer_LongRunning(gt *testing.T) {
 // TestFaultProofProposer_FastFinality_LongRunning runs until shutdown, logging progress.
 func TestFaultProofProposer_FastFinality_LongRunning(gt *testing.T) {
 	t := devtest.SerialT(gt)
-	cfg := opspresets.LongRunningFastFinalityFaultProofConfig()
-	cfg.EnvFilePath = "../../../.env.faultproof"
-	sys, dgf := setupFaultProofSystem(t, cfg, opspresets.LongRunningL2ChainConfig())
+	proposerCfg := opspresets.LongRunningFastFinalityFPProposerConfig()
+	proposerCfg.EnvFilePath = ".env.proposer"
+	challengerCfg := opspresets.DefaultFPChallengerConfig()
+	challengerCfg.EnvFilePath = ".env.challenger"
+	sys, dgf := setupFaultProofSystem(t, proposerCfg, opspresets.LongRunningL2ChainConfig(), opspresets.WithChallenger(challengerCfg))
 
 	utils.RunUntilShutdown(60*time.Second, func() error {
-		checkLatestGame(t, sys, dgf, &cfg)
+		checkLatestGame(t, sys, dgf, &proposerCfg)
 		return nil
 	})
 }
