@@ -16,3 +16,9 @@ mod payload;
 pub use payload::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
+
+pub mod validation;
+pub use validation::{
+    is_non_zero_address, is_valid_blob_gas, is_valid_block_hash, is_valid_gas_usage,
+    is_valid_state_root, is_valid_timestamp, is_valid_transaction_bytes,
+};

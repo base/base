@@ -46,6 +46,26 @@ impl Flashblock {
         })
     }
 
+    /// Returns true if this flashblock carries the base payload data.
+    pub fn has_base_payload(&self) -> bool {
+        self.base.is_some()
+    }
+
+    /// Returns true if this is the first flashblock in the payload sequence.
+    pub fn is_first_chunk(&self) -> bool {
+        self.index == 0
+    }
+
+    /// Returns the number of transactions carried by this flashblock.
+    pub fn transaction_count(&self) -> usize {
+        self.diff.transactions.len()
+    }
+
+    /// Returns true if the flashblock includes withdrawals.
+    pub fn has_withdrawals(&self) -> bool {
+        !self.diff.withdrawals.is_empty()
+    }
+
     fn try_parse_message(bytes: Bytes) -> Result<String, FlashblockDecodeError> {
         if let Ok(text) = std::str::from_utf8(&bytes)
             && text.trim_start().starts_with('{')
@@ -104,6 +124,24 @@ mod tests {
     }))))] // missing block_number in metadata
     fn try_decode_message_rejects_invalid_data(#[case] bytes: Bytes) {
         assert!(Flashblock::try_decode_message(bytes).is_err());
+    }
+
+    #[test]
+    fn helper_methods_reflect_flashblock_state() {
+        let mut payload = sample_payload(json!({
+            "receipts": {},
+            "new_account_balances": {},
+            "block_number": 321u64
+        }));
+        payload.index = 0;
+
+        let flashblock = Flashblock::try_decode_message(encode_plain(&payload))
+            .expect("payload should decode");
+
+        assert!(flashblock.has_base_payload());
+        assert!(flashblock.is_first_chunk());
+        assert_eq!(flashblock.transaction_count(), 1);
+        assert!(!flashblock.has_withdrawals());
     }
 
     fn encode_plain(payload: &FlashblocksPayloadV1) -> Bytes {
