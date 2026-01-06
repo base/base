@@ -678,8 +678,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         let ResultAndState { result, state } = match evm.transact(&consensus_tx) {
                             Ok(res) => res,
                             Err(err) => {
-                                // Handle EVM errors gracefully - skip the bundle instead of failing the block
-                                self.metrics.backrun_bundles_reverted_total.increment(1);
+                                self.metrics.backrun_bundles_evm_error_total.increment(1);
                                 info!(
                                     target: "payload_builder",
                                     target_tx = ?tx_hash,
