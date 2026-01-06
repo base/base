@@ -44,16 +44,12 @@ fn generate_transactions(count: usize) -> Vec<OpTransactionSigned> {
 
 /// Sequential sender recovery (baseline)
 fn recover_senders_sequential(txs: &[OpTransactionSigned]) -> Vec<Address> {
-    txs.iter()
-        .map(|tx| tx.recover_signer().expect("valid signature"))
-        .collect()
+    txs.iter().map(|tx| tx.recover_signer().expect("valid signature")).collect()
 }
 
 /// Parallel sender recovery using rayon
 fn recover_senders_parallel(txs: &[OpTransactionSigned]) -> Vec<Address> {
-    txs.par_iter()
-        .map(|tx| tx.recover_signer().expect("valid signature"))
-        .collect()
+    txs.par_iter().map(|tx| tx.recover_signer().expect("valid signature")).collect()
 }
 
 fn sender_recovery_benches(c: &mut Criterion) {
@@ -71,13 +67,9 @@ fn sender_recovery_benches(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("parallel", tx_count),
-            &transactions,
-            |b, txs| {
-                b.iter(|| recover_senders_parallel(txs));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("parallel", tx_count), &transactions, |b, txs| {
+            b.iter(|| recover_senders_parallel(txs));
+        });
     }
 
     group.finish();
