@@ -42,9 +42,9 @@ With the Holocene upgrade, the `extraData` header field of each block must have 
 
 Additionally,
 
-- `version` must be 0
-- `denominator` must be non-zero
-- there is no additional data beyond these 9 bytes
+- `version` must be `0`,
+- `denominator` and `elasticity` must be non-zero,
+- there is no additional data beyond these 9 bytes.
 
 Note that `extraData` has a maximum capacity of 32 bytes (to fit in the L1 beacon-chain `extraData` data-type) and its
 format may be modified/extended by future upgrades.
