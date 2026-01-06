@@ -396,11 +396,11 @@ where
 
             // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
-            let sender_by_hash: HashMap<B256, Address> = block
+            let txs_with_senders: Vec<(&OpTxEnvelope, Address)> = block
                 .body
                 .transactions
                 .par_iter()
-                .map(|tx| -> eyre::Result<(B256, Address)> {
+                .map(|tx| -> eyre::Result<(&OpTxEnvelope, Address)> {
                     let tx_hash = tx.tx_hash();
                     let sender = match prev_pending_blocks
                         .as_ref()
@@ -409,18 +409,13 @@ where
                         Some(cached) => cached,
                         None => tx.recover_signer()?,
                     };
-                    Ok((tx_hash, sender))
+                    Ok((tx, sender))
                 })
                 .collect::<eyre::Result<_>>()?;
             self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
-            for (idx, transaction) in block.body.transactions.iter().enumerate() {
+            for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();
-
-                // Sender already recovered in parallel phase
-                let sender = *sender_by_hash
-                    .get(&tx_hash)
-                    .expect("sender must exist from parallel recovery");
 
                 pending_blocks_builder.with_transaction_sender(tx_hash, sender);
                 pending_blocks_builder.increment_nonce(sender);
