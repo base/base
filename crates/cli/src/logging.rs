@@ -61,8 +61,9 @@ pub struct LogArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
+
+    use super::*;
 
     // Helper struct to parse GlobalArgs within a test CLI structure
     #[derive(Parser, Debug)]

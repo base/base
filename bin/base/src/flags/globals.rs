@@ -1,7 +1,7 @@
 //! Contains the global CLI flags.
 
-use clap::Parser;
 use base_cli::LogArgs;
+use clap::Parser;
 
 /// Global arguments for the CLI.
 #[derive(Parser, Default, Clone, Debug)]

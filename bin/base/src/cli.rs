@@ -1,11 +1,9 @@
 //! Contains the CLI entry point for the Base binary.
 
 use anyhow::Result;
-use clap::{builder::styling::Styles, Parser};
+use clap::{Parser, builder::styling::Styles};
 
-use crate::commands::Commands;
-use crate::flags::GlobalArgs;
-use crate::version;
+use crate::{commands::Commands, flags::GlobalArgs, version};
 
 /// Returns the CLI styles.
 const fn cli_styles() -> Styles {

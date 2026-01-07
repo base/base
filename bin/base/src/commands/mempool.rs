@@ -1,17 +1,15 @@
 //! Mempool command - streams pending transactions via WebSocket.
 
 use alloy_chains::Chain;
+// Re-export traits for accessing tx fields
+use alloy_provider::network::TransactionResponse;
 use alloy_provider::{Provider, ProviderBuilder, WsConnect};
-use alloy_rpc_types_eth::Transaction;
+use alloy_rpc_types_eth::{Transaction, TransactionTrait};
 use anyhow::Result;
 use clap::Args;
 use futures_util::StreamExt;
 
 use crate::flags::GlobalArgs;
-
-// Re-export traits for accessing tx fields
-use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types_eth::TransactionTrait;
 
 /// Returns the default public WebSocket RPC URL for the given chain.
 ///
@@ -19,7 +17,7 @@ use alloy_rpc_types_eth::TransactionTrait;
 /// See: <https://chainlist.org/chain/8453>
 fn default_ws_url(chain: &Chain) -> Option<&'static str> {
     match chain.id() {
-        8453 => Some("wss://base-rpc.publicnode.com"),   // Base Mainnet
+        8453 => Some("wss://base-rpc.publicnode.com"), // Base Mainnet
         84532 => Some("wss://base-sepolia-rpc.publicnode.com"), // Base Sepolia
         1 => Some("wss://ethereum-rpc.publicnode.com"), // Ethereum Mainnet
         11155111 => Some("wss://ethereum-sepolia-rpc.publicnode.com"), // Ethereum Sepolia
@@ -81,10 +79,7 @@ impl MempoolCommand {
         let ws = WsConnect::new(&ws_url);
         let provider = ProviderBuilder::new().connect_ws(ws).await?;
 
-        println!(
-            "Connected! Subscribing to pending transactions on {}...",
-            global.network
-        );
+        println!("Connected! Subscribing to pending transactions on {}...", global.network);
 
         // Subscribe to pending transactions
         let sub = provider.subscribe_pending_transactions().await?;
