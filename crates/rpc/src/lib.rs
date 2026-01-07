@@ -8,7 +8,7 @@ pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 
 mod base;
 pub use base::{
-annotator::{FlashblockInclusion, ResourceAnnotator},
+annotator::{AnnotatorCommand, FlashblockInclusion, ResourceAnnotator},
     block::meter_block,
     cache::{BlockMetrics, FlashblockMetrics, MeteredTransaction, MeteringCache, ResourceTotals},
     estimator::{

@@ -14,8 +14,7 @@ pub use runner::BaseNodeRunner;
 
 mod config;
 pub use config::{
-    BaseNodeConfig, FlashblocksConfig, KafkaConfig, MeteringConfig, ResourceLimitsConfig,
-    TracingConfig,
+    BaseNodeConfig, FlashblocksConfig, MeteringConfig, ResourceLimitsConfig, TracingConfig,
 };
 
 mod extensions;

@@ -52,6 +52,20 @@ pub trait MeteringApi {
         &self,
         bundle: Bundle,
     ) -> RpcResult<MeteredPriorityFeeResponse>;
+
+    /// Sets metering information for a transaction. Called by tips-ingress to push
+    /// transaction resource usage data for priority fee estimation.
+    #[method(name = "setMeteringInfo")]
+    async fn set_metering_info(&self, tx_hash: TxHash, meter: MeterBundleResponse)
+    -> RpcResult<()>;
+
+    /// Enables or disables metering data collection.
+    #[method(name = "setMeteringEnabled")]
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
+
+    /// Clears all pending metering information.
+    #[method(name = "clearMeteringInfo")]
+    async fn clear_metering_info(&self) -> RpcResult<()>;
 }
 
 /// RPC API for transaction status

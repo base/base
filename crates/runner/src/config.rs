@@ -54,8 +54,6 @@ pub struct TracingConfig {
 pub struct MeteringConfig {
     /// Whether metering is enabled.
     pub enabled: bool,
-    /// Kafka configuration for bundle events.
-    pub kafka: Option<KafkaConfig>,
     /// Resource limits for fee estimation.
     pub resource_limits: ResourceLimitsConfig,
     /// Percentile for recommended priority fee (0.0-1.0).
@@ -64,21 +62,6 @@ pub struct MeteringConfig {
     pub uncongested_priority_fee: u128,
     /// Number of recent blocks to retain in metering cache.
     pub cache_size: usize,
-}
-
-/// Kafka connection configuration.
-///
-/// All rdkafka settings (bootstrap.servers, group.id, timeouts, etc.) should be
-/// specified in the properties file. The CLI only specifies the path to this file
-/// and the topic name.
-#[derive(Debug, Clone)]
-pub struct KafkaConfig {
-    /// Path to the Kafka properties file containing rdkafka settings.
-    pub properties_file: String,
-    /// Topic name for accepted bundle events.
-    pub topic: String,
-    /// Optional consumer group ID override (takes precedence over properties file).
-    pub group_id_override: Option<String>,
 }
 
 /// Resource limits for priority fee estimation.

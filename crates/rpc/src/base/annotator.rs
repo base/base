@@ -1,4 +1,4 @@
-//! Resource annotator that correlates Kafka metering data with flashblock inclusions.
+//! Resource annotator that correlates metering data with flashblock inclusions.
 
 use std::{fmt, sync::Arc};
 
@@ -8,6 +8,13 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::{debug, info, warn};
 
 use crate::{MeteredTransaction, MeteringCache};
+
+/// Commands that can be sent to the annotator.
+#[derive(Debug, Clone)]
+pub enum AnnotatorCommand {
+    /// Clear all pending transactions.
+    ClearPending,
+}
 
 /// Message received from the flashblocks websocket feed indicating which
 /// transactions were included in a specific flashblock.
@@ -27,7 +34,7 @@ const MAX_PENDING_TRANSACTIONS: usize = 10_000;
 /// Annotates flashblock transactions with their resource usage.
 ///
 /// The flow is:
-/// 1. Kafka sends `MeteredTransaction` with resource usage data keyed by tx hash
+/// 1. RPC receives `MeteredTransaction` via `base_setMeteringInfo` and sends it here
 /// 2. These are stored in a pending lookup table
 /// 3. Websocket sends `FlashblockInclusion` with actual (block, flashblock) location
 /// 4. We look up pending transactions and insert them into the cache at the real location
@@ -35,6 +42,7 @@ pub struct ResourceAnnotator {
     cache: Arc<RwLock<MeteringCache>>,
     tx_updates_rx: UnboundedReceiver<MeteredTransaction>,
     flashblock_rx: UnboundedReceiver<FlashblockInclusion>,
+    command_rx: UnboundedReceiver<AnnotatorCommand>,
     /// Pending metering data awaiting flashblock inclusion confirmation.
     /// Uses IndexMap to maintain insertion order for FIFO eviction.
     pending_transactions: indexmap::IndexMap<TxHash, MeteredTransaction>,
@@ -54,16 +62,18 @@ impl ResourceAnnotator {
         cache: Arc<RwLock<MeteringCache>>,
         tx_updates_rx: UnboundedReceiver<MeteredTransaction>,
         flashblock_rx: UnboundedReceiver<FlashblockInclusion>,
+        command_rx: UnboundedReceiver<AnnotatorCommand>,
     ) -> Self {
         Self {
             cache,
             tx_updates_rx,
             flashblock_rx,
+            command_rx,
             pending_transactions: indexmap::IndexMap::new(),
         }
     }
 
-    /// Runs the annotator until both channels are closed.
+    /// Runs the annotator until all channels are closed.
     pub async fn run(mut self) {
         info!(target: "metering::annotator", "Starting ResourceAnnotator");
         loop {
@@ -74,10 +84,28 @@ impl ResourceAnnotator {
                 Some(flashblock_event) = self.flashblock_rx.recv() => {
                     self.handle_flashblock_event(flashblock_event);
                 }
+                Some(command) = self.command_rx.recv() => {
+                    self.handle_command(command);
+                }
                 else => {
                     info!(target: "metering::annotator", "ResourceAnnotator terminating");
                     break;
                 }
+            }
+        }
+    }
+
+    fn handle_command(&mut self, command: AnnotatorCommand) {
+        match command {
+            AnnotatorCommand::ClearPending => {
+                let count = self.pending_transactions.len();
+                self.pending_transactions.clear();
+                info!(
+                    target: "metering::annotator",
+                    cleared = count,
+                    "Cleared pending transactions"
+                );
+                metrics::gauge!("metering.pending.size").set(0.0);
             }
         }
     }
@@ -203,8 +231,9 @@ mod tests {
         let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
         let (tx_sender, tx_rx) = mpsc::unbounded_channel();
         let (fb_sender, fb_rx) = mpsc::unbounded_channel();
+        let (cmd_sender, cmd_rx) = mpsc::unbounded_channel();
 
-        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx);
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
 
         // Pre-populate cache with blocks 100, 101, 102
         {
@@ -229,6 +258,7 @@ mod tests {
 
         drop(tx_sender);
         drop(fb_sender);
+        drop(cmd_sender);
     }
 
     #[tokio::test]
@@ -236,8 +266,9 @@ mod tests {
         let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
         let (tx_sender, tx_rx) = mpsc::unbounded_channel();
         let (fb_sender, fb_rx) = mpsc::unbounded_channel();
+        let (cmd_sender, cmd_rx) = mpsc::unbounded_channel();
 
-        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx);
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
 
         // Pre-populate cache with block 100
         {
@@ -256,6 +287,7 @@ mod tests {
 
         drop(tx_sender);
         drop(fb_sender);
+        drop(cmd_sender);
     }
 
     #[tokio::test]
@@ -263,8 +295,9 @@ mod tests {
         let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
         let (tx_sender, tx_rx) = mpsc::unbounded_channel();
         let (fb_sender, fb_rx) = mpsc::unbounded_channel();
+        let (cmd_sender, cmd_rx) = mpsc::unbounded_channel();
 
-        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx);
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
 
         // Pre-populate cache with block 100
         {
@@ -284,5 +317,6 @@ mod tests {
 
         drop(tx_sender);
         drop(fb_sender);
+        drop(cmd_sender);
     }
 }

@@ -6,16 +6,15 @@ use alloy_primitives::{B256, U256, keccak256};
 use base_flashtypes::Flashblock;
 use base_reth_flashblocks::{FlashblocksReceiver, FlashblocksState, FlashblocksSubscriber};
 use base_reth_rpc::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblockInclusion,
-    KafkaBundleConsumer, KafkaBundleConsumerConfig, MeteredTransaction, MeteringApiImpl,
-    MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceAnnotator, ResourceLimits,
-    TransactionStatusApiImpl, TransactionStatusApiServer,
+    AnnotatorCommand, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
+    FlashblockInclusion, MeteredTransaction, MeteringApiImpl, MeteringApiServer, MeteringCache,
+    PriorityFeeEstimator, ResourceAnnotator, ResourceLimits, TransactionStatusApiImpl,
+    TransactionStatusApiServer,
 };
 use parking_lot::RwLock;
-use rdkafka::ClientConfig;
 use reth_optimism_payload_builder::config::OpDAConfig;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 use crate::{
@@ -28,10 +27,12 @@ use crate::{
 struct MeteringRuntime {
     /// Priority fee estimator.
     estimator: Arc<PriorityFeeEstimator>,
-    /// Sender for metered transactions from Kafka.
+    /// Sender for metered transactions from RPC.
     tx_sender: mpsc::UnboundedSender<MeteredTransaction>,
     /// Sender for flashblock inclusions.
     flashblock_sender: mpsc::UnboundedSender<FlashblockInclusion>,
+    /// Sender for annotator commands.
+    command_sender: mpsc::UnboundedSender<AnnotatorCommand>,
 }
 
 /// Composite receiver that forwards flashblocks to both FlashblocksState and the metering pipeline.
@@ -91,24 +92,6 @@ fn flashblock_inclusion_from_flashblock(flashblock: &Flashblock) -> Option<Flash
     })
 }
 
-/// Loads Kafka configuration from a properties file.
-fn load_kafka_config_from_file(
-    path: &str,
-) -> Result<Vec<(String, String)>, Box<dyn std::error::Error + Send + Sync>> {
-    let content = std::fs::read_to_string(path)?;
-    let mut props = Vec::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            props.push((key.trim().to_string(), value.trim().to_string()));
-        }
-    }
-    Ok(props)
-}
-
 /// Helper struct that wires the custom RPC modules into the node builder.
 #[derive(Debug, Clone)]
 pub struct BaseRpcExtension {
@@ -147,16 +130,8 @@ impl BaseNodeExtension for BaseRpcExtension {
         let da_config = self.da_config.clone();
 
         builder.extend_rpc_modules(move |ctx| {
-            // Warn if metering is enabled but Kafka is not configured
-            if metering.enabled && metering.kafka.is_none() {
-                warn!(
-                    message = "Metering enabled but Kafka not configured",
-                    help = "Priority fee estimation requires --metering-kafka-properties-file"
-                );
-            }
-
-            // Set up metering runtime if enabled with Kafka
-            let metering_runtime = if metering.enabled && metering.kafka.is_some() {
+            // Set up metering runtime if enabled
+            let metering_runtime = if metering.enabled {
                 info!(message = "Starting Metering RPC with priority fee estimation");
 
                 let cache = Arc::new(RwLock::new(MeteringCache::new(metering.cache_size)));
@@ -182,64 +157,25 @@ impl BaseNodeExtension for BaseRpcExtension {
                 let (tx_sender, tx_receiver) = mpsc::unbounded_channel::<MeteredTransaction>();
                 let (flashblock_sender, flashblock_receiver) =
                     mpsc::unbounded_channel::<FlashblockInclusion>();
+                let (command_sender, command_receiver) =
+                    mpsc::unbounded_channel::<AnnotatorCommand>();
 
                 // Spawn the resource annotator
                 tokio::spawn(async move {
-                    ResourceAnnotator::new(cache, tx_receiver, flashblock_receiver).run().await;
+                    ResourceAnnotator::new(
+                        cache,
+                        tx_receiver,
+                        flashblock_receiver,
+                        command_receiver,
+                    )
+                    .run()
+                    .await;
                 });
 
-                Some(MeteringRuntime { estimator, tx_sender, flashblock_sender })
+                Some(MeteringRuntime { estimator, tx_sender, flashblock_sender, command_sender })
             } else {
                 None
             };
-
-            // Spawn Kafka consumer if configured
-            if let (Some(runtime), Some(kafka_cfg)) = (&metering_runtime, &metering.kafka) {
-                info!(
-                    message = "Starting Kafka consumer for metering",
-                    properties_file = %kafka_cfg.properties_file,
-                    topic = %kafka_cfg.topic
-                );
-
-                // Load all rdkafka settings from the properties file
-                let props = match load_kafka_config_from_file(&kafka_cfg.properties_file) {
-                    Ok(props) => props,
-                    Err(err) => {
-                        error!(
-                            target: "metering::kafka",
-                            file = %kafka_cfg.properties_file,
-                            %err,
-                            "Failed to load Kafka properties file"
-                        );
-                        return Ok(());
-                    }
-                };
-
-                let mut client_config = ClientConfig::new();
-                for (key, value) in props {
-                    client_config.set(key, value);
-                }
-
-                // Apply CLI override for group.id if specified
-                if let Some(group_id) = &kafka_cfg.group_id_override {
-                    client_config.set("group.id", group_id);
-                }
-
-                let tx_sender = runtime.tx_sender.clone();
-                let topic = kafka_cfg.topic.clone();
-                tokio::spawn(async move {
-                    let config = KafkaBundleConsumerConfig { client_config, topic };
-
-                    match KafkaBundleConsumer::new(config, tx_sender) {
-                        Ok(consumer) => consumer.run().await,
-                        Err(err) => error!(
-                            target: "metering::kafka",
-                            %err,
-                            "Failed to initialize Kafka consumer"
-                        ),
-                    }
-                });
-            }
 
             // Register metering RPC
             if metering.enabled {
@@ -249,6 +185,8 @@ impl BaseNodeExtension for BaseRpcExtension {
                         MeteringApiImpl::with_estimator(
                             ctx.provider().clone(),
                             rt.estimator.clone(),
+                            rt.tx_sender.clone(),
+                            rt.command_sender.clone(),
                         )
                     },
                 );

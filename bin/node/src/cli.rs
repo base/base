@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use base_reth_runner::{
-    BaseNodeConfig, FlashblocksCell, FlashblocksConfig, KafkaConfig, MeteringConfig,
-    ResourceLimitsConfig, TracingConfig,
+    BaseNodeConfig, FlashblocksCell, FlashblocksConfig, MeteringConfig, ResourceLimitsConfig,
+    TracingConfig,
 };
 use once_cell::sync::OnceCell;
 use reth_optimism_node::args::RollupArgs;
@@ -46,20 +46,6 @@ pub struct Args {
     pub enable_metering: bool,
 
     // --- Priority fee estimation args ---
-    /// Path to Kafka properties file (required for priority fee estimation).
-    /// The properties file should contain rdkafka settings like bootstrap.servers,
-    /// group.id, session.timeout.ms, etc.
-    #[arg(long = "metering-kafka-properties-file")]
-    pub metering_kafka_properties_file: Option<String>,
-
-    /// Kafka topic for accepted bundle events
-    #[arg(long = "metering-kafka-topic", default_value = "tips-ingress")]
-    pub metering_kafka_topic: String,
-
-    /// Kafka consumer group ID (overrides group.id in properties file if set)
-    #[arg(long = "metering-kafka-group-id")]
-    pub metering_kafka_group_id: Option<String>,
-
     /// Gas limit per flashblock for priority fee estimation
     #[arg(long = "metering-gas-limit", default_value = "30000000")]
     pub metering_gas_limit: u64,
@@ -106,16 +92,8 @@ impl From<Args> for BaseNodeConfig {
             max_pending_blocks_depth: args.max_pending_blocks_depth,
         });
 
-        // Build Kafka config if properties file is provided
-        let kafka = args.metering_kafka_properties_file.map(|properties_file| KafkaConfig {
-            properties_file,
-            topic: args.metering_kafka_topic,
-            group_id_override: args.metering_kafka_group_id,
-        });
-
         let metering = MeteringConfig {
             enabled: args.enable_metering,
-            kafka,
             resource_limits: ResourceLimitsConfig {
                 gas_limit: args.metering_gas_limit,
                 execution_time_us: args.metering_execution_time_us,
