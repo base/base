@@ -13,7 +13,7 @@ pub use constants::{
 };
 
 mod contracts;
-pub use contracts::{DoubleCounter, MockERC20, TransparentUpgradeableProxy};
+pub use contracts::{DoubleCounter, Minimal7702Account, MockERC20, TransparentUpgradeableProxy};
 
 mod engine;
 pub use engine::{EngineAddress, EngineApi, EngineProtocol, HttpEngine, IpcEngine};
@@ -34,4 +34,6 @@ pub use node::{
 };
 
 mod tracing;
+// Re-export signer traits for use in tests
+pub use alloy_signer::SignerSync;
 pub use tracing::init_silenced_tracing;
