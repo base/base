@@ -79,8 +79,6 @@ mod tests {
         #[case] encoder: fn(&FlashblocksPayloadV1) -> Bytes,
     ) {
         let payload = sample_payload(json!({
-            "receipts": {},
-            "new_account_balances": {},
             "block_number": 1234u64
         }));
 
@@ -92,15 +90,11 @@ mod tests {
         assert_eq!(decoded.base, payload.base);
         assert_eq!(decoded.diff, payload.diff);
         assert_eq!(decoded.metadata.block_number, 1234);
-        assert!(decoded.metadata.receipts.is_empty());
-        assert!(decoded.metadata.new_account_balances.is_empty());
     }
 
     #[rstest]
     #[case::invalid_brotli(Bytes::from_static(b"not brotli data"))]
     #[case::missing_metadata(encode_plain(&sample_payload(json!({
-        "receipts": {},
-        "new_account_balances": {}
     }))))] // missing block_number in metadata
     fn try_decode_message_rejects_invalid_data(#[case] bytes: Bytes) {
         assert!(Flashblock::try_decode_message(bytes).is_err());

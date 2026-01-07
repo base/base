@@ -5,9 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_consensus::Receipt;
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, b256, bytes, hex::FromHex};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, bytes, hex::FromHex};
 use alloy_rpc_types_engine::PayloadId;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
@@ -15,13 +14,12 @@ use base_flashtypes::{
 use base_reth_flashblocks::{FlashblocksAPI, FlashblocksReceiver, FlashblocksState};
 use base_reth_test_utils::{LocalNodeProvider, TestAccounts, TestHarness};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use op_alloy_consensus::OpDepositReceipt;
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::BlockReader,
     transaction_pool::test_utils::TransactionBuilder,
 };
-use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::{OpBlock, OpTransactionSigned};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::{runtime::Runtime, time::sleep};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
@@ -33,8 +31,6 @@ const CHUNK_SIZE: usize = 10;
 const BLOCK_INFO_TXN: Bytes = bytes!(
     "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000"
 );
-const BLOCK_INFO_TXN_HASH: B256 =
-    b256!("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6");
 
 struct BenchSetup {
     provider: LocalNodeProvider,
@@ -203,20 +199,6 @@ fn base_flashblock(
     canonical_block: &RecoveredBlock<OpBlock>,
     block_number: BlockNumber,
 ) -> Flashblock {
-    let mut receipts = alloy_primitives::map::HashMap::default();
-    receipts.insert(
-        BLOCK_INFO_TXN_HASH,
-        OpReceipt::Deposit(OpDepositReceipt {
-            inner: Receipt {
-                status: true.into(),
-                cumulative_gas_used: DEPOSIT_GAS_USED,
-                logs: vec![],
-            },
-            deposit_nonce: Some(0),
-            deposit_receipt_version: None,
-        }),
-    );
-
     Flashblock {
         payload_id: PayloadId::default(),
         index: 0,
@@ -242,7 +224,7 @@ fn base_flashblock(
             transactions: vec![BLOCK_INFO_TXN.clone()],
             blob_gas_used: Default::default(),
         },
-        metadata: Metadata { block_number, receipts, new_account_balances: Default::default() },
+        metadata: Metadata { block_number },
     }
 }
 
@@ -252,20 +234,11 @@ fn transaction_flashblock(
     transactions: &[OpTransactionSigned],
     gas_used: &mut u64,
 ) -> Flashblock {
-    let mut tx_receipts = alloy_primitives::map::HashMap::default();
     let mut tx_bytes = Vec::with_capacity(transactions.len());
 
     for tx in transactions {
         *gas_used += TX_GAS_USED;
         tx_bytes.push(tx.encoded_2718().into());
-        tx_receipts.insert(
-            tx.hash().clone(),
-            OpReceipt::Eip1559(Receipt {
-                status: true.into(),
-                cumulative_gas_used: *gas_used,
-                logs: vec![],
-            }),
-        );
     }
 
     Flashblock {
@@ -283,11 +256,7 @@ fn transaction_flashblock(
             transactions: tx_bytes,
             blob_gas_used: Default::default(),
         },
-        metadata: Metadata {
-            block_number,
-            receipts: tx_receipts,
-            new_account_balances: Default::default(),
-        },
+        metadata: Metadata { block_number },
     }
 }
 

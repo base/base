@@ -3,11 +3,9 @@
 use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
-use alloy_consensus::{Receipt, Transaction};
+use alloy_consensus::Transaction;
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{
-    Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes, map::HashMap,
-};
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
@@ -16,19 +14,129 @@ use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_test_utils::{
-    DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH,
-};
+use base_reth_test_utils::{DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX};
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
-use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::revm::context::TransactionType;
-use reth_optimism_primitives::OpReceipt;
 use reth_rpc_eth_api::RpcReceipt;
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+// LogEmitterB: Emits LOG1 with TEST_LOG_TOPIC_0 when called
+// Runtime bytecode:
+//   PUSH32 0x01       ; data to log (32 bytes of value 1)
+//   PUSH1 0x00        ; memory offset to store data
+//   MSTORE            ; store data at memory[0:32]
+//   PUSH32 topic0     ; TEST_LOG_TOPIC_0
+//   PUSH1 0x20        ; log data size (32 bytes)
+//   PUSH1 0x00        ; log data offset
+//   LOG1              ; emit log with 1 topic
+//   STOP              ; end execution
+const LOG_EMITTER_B_RUNTIME: &str = concat!(
+    "7f",
+    "0000000000000000000000000000000000000000000000000000000000000001", // PUSH32 data
+    "6000",                                                             // PUSH1 0
+    "52",                                                               // MSTORE
+    "7f",
+    "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // PUSH32 topic0
+    "6020",                                                             // PUSH1 32
+    "6000",                                                             // PUSH1 0
+    "a1",                                                               // LOG1
+    "00",                                                               // STOP
+);
+
+// LogEmitterA: Emits LOG2 with topic0 and topic1, then CALLs LogEmitterB
+// Runtime bytecode (LOG_EMITTER_B_ADDR will be patched in):
+//   PUSH32 data       ; 1 ETH in wei as log data
+//   PUSH1 0x00        ; memory offset
+//   MSTORE            ; store at memory[0:32]
+//   PUSH32 topic1     ; TEST_LOG_TOPIC_1
+//   PUSH32 topic0     ; TEST_LOG_TOPIC_0
+//   PUSH1 0x20        ; size
+//   PUSH1 0x00        ; offset
+//   LOG2              ; emit log with 2 topics
+//   ; Now CALL LogEmitterB
+//   PUSH1 0x00        ; retSize
+//   PUSH1 0x00        ; retOffset
+//   PUSH1 0x00        ; argsSize
+//   PUSH1 0x00        ; argsOffset
+//   PUSH1 0x00        ; value
+//   PUSH20 addr       ; LogEmitterB address (patched)
+//   PUSH2 0xffff      ; gas
+//   CALL              ; call LogEmitterB
+//   STOP
+fn log_emitter_a_runtime(log_emitter_b_addr: Address) -> String {
+    // Convert address to hex without 0x prefix
+    let addr_hex = format!("{:040x}", log_emitter_b_addr);
+    format!(
+        concat!(
+            "7f",
+            "0000000000000000000000000000000000000000000000000de0b6b3a7640000", // PUSH32 data (1 ETH)
+            "6000",                                                             // PUSH1 0
+            "52",                                                               // MSTORE
+            "7f",
+            "000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266", // PUSH32 topic1
+            "7f",
+            "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // PUSH32 topic0
+            "6020",                                                             // PUSH1 32
+            "6000",                                                             // PUSH1 0
+            "a2",                                                               // LOG2
+            "6000",                                                             // PUSH1 0 (retSize)
+            "6000", // PUSH1 0 (retOffset)
+            "6000", // PUSH1 0 (argsSize)
+            "6000", // PUSH1 0 (argsOffset)
+            "6000", // PUSH1 0 (value)
+            "73",
+            "{addr}", // PUSH20 LogEmitterB address
+            "61ffff", // PUSH2 0xffff (gas)
+            "f1",     // CALL
+            "00",     // STOP
+        ),
+        addr = addr_hex
+    )
+}
+
+// Wrap runtime code in init code that returns it
+// Init code: CODECOPY runtime to memory[0:size], RETURN it
+fn wrap_in_init_code(runtime_hex: &str) -> Bytes {
+    // Parse hex string (handle both with and without 0x prefix)
+    let hex_str = runtime_hex.strip_prefix("0x").unwrap_or(runtime_hex);
+    let mut runtime_bytes = Vec::new();
+    for i in (0..hex_str.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex_str[i..i + 2], 16).expect("valid hex");
+        runtime_bytes.push(byte);
+    }
+    let runtime_size = runtime_bytes.len();
+
+    // Init code:
+    //   PUSH1 runtime_size
+    //   PUSH1 init_size (12 bytes)
+    //   PUSH1 0
+    //   CODECOPY
+    //   PUSH1 runtime_size
+    //   PUSH1 0
+    //   RETURN
+    // Total init: 12 bytes
+    let init_size = 12u8;
+    let mut init_code = vec![
+        0x60,
+        runtime_size as u8, // PUSH1 runtime_size
+        0x60,
+        init_size, // PUSH1 init_size
+        0x60,
+        0x00, // PUSH1 0
+        0x39, // CODECOPY
+        0x60,
+        runtime_size as u8, // PUSH1 runtime_size
+        0x60,
+        0x00, // PUSH1 0
+        0xf3, // RETURN
+    ];
+    init_code.extend(runtime_bytes);
+    Bytes::from(init_code)
+}
 
 struct TestSetup {
     harness: FlashblocksHarness,
@@ -37,17 +145,27 @@ struct TestSetup {
 
 struct TransactionDetails {
     counter_deployment_tx: Bytes,
-    counter_deployment_hash: TxHash,
     counter_address: Address,
 
     counter_increment_tx: Bytes,
-    counter_increment_hash: TxHash,
 
     counter_increment2_tx: Bytes,
-    counter_increment2_hash: TxHash,
 
     alice_eth_transfer_tx: Bytes,
     alice_eth_transfer_hash: TxHash,
+
+    // Log-emitting contracts for log tests
+    log_emitter_b_deployment_tx: Bytes,
+    log_emitter_b_address: Address,
+
+    log_emitter_a_deployment_tx: Bytes,
+    log_emitter_a_address: Address,
+
+    log_trigger_tx: Bytes,
+    log_trigger_hash: TxHash,
+
+    // Balance transfer for balance test
+    balance_transfer_tx: Bytes,
 }
 
 impl TestSetup {
@@ -59,16 +177,19 @@ impl TestSetup {
         let alice = &harness.accounts().alice;
         let bob = &harness.accounts().bob;
 
-        let (counter_deployment_tx, counter_address, counter_deployment_hash) = deployer
+        // DoubleCounter deployment at nonce 0
+        let (counter_deployment_tx, counter_address, _) = deployer
             .create_deployment_tx(DoubleCounter::BYTECODE.clone(), 0)
             .expect("should be able to sign DoubleCounter deployment txn");
         let counter = DoubleCounterInstance::new(counter_address.clone(), provider);
-        let (increment1_tx, increment1_tx_hash) = deployer
+        let (increment1_tx, _) = deployer
             .sign_txn_request(counter.increment().into_transaction_request().nonce(1))
             .expect("should be able to sign increment() txn");
-        let (increment2_tx, increment2_tx_hash) = deployer
+        let (increment2_tx, _) = deployer
             .sign_txn_request(counter.increment2().into_transaction_request().nonce(2))
             .expect("should be able to sign increment2() txn");
+
+        // Alice's ETH transfer at nonce 0
         let (eth_transfer_tx, eth_transfer_hash) = alice
             .sign_txn_request(
                 OpTransactionRequest::default()
@@ -82,16 +203,63 @@ impl TestSetup {
             )
             .expect("should be able to sign eth transfer txn");
 
+        // Log-emitting contracts:
+        // Deploy LogEmitterB at deployer nonce 3
+        let log_emitter_b_address = deployer.address.create(3);
+        let log_emitter_b_bytecode = wrap_in_init_code(LOG_EMITTER_B_RUNTIME);
+        let (log_emitter_b_deployment_tx, _, _) = deployer
+            .create_deployment_tx(log_emitter_b_bytecode, 3)
+            .expect("should be able to sign LogEmitterB deployment txn");
+
+        // Deploy LogEmitterA at deployer nonce 4 (knows LogEmitterB's address)
+        let log_emitter_a_address = deployer.address.create(4);
+        let log_emitter_a_runtime = log_emitter_a_runtime(log_emitter_b_address);
+        let log_emitter_a_bytecode = wrap_in_init_code(&log_emitter_a_runtime);
+        let (log_emitter_a_deployment_tx, _, _) = deployer
+            .create_deployment_tx(log_emitter_a_bytecode, 4)
+            .expect("should be able to sign LogEmitterA deployment txn");
+
+        // Call LogEmitterA at deployer nonce 5 to trigger logs
+        let (log_trigger_tx, log_trigger_hash) = deployer
+            .sign_txn_request(
+                OpTransactionRequest::default()
+                    .from(deployer.address)
+                    .transaction_type(TransactionType::Eip1559.into())
+                    .gas_limit(100_000)
+                    .nonce(5)
+                    .to(log_emitter_a_address)
+                    .into(),
+            )
+            .expect("should be able to sign log trigger txn");
+
+        // Balance transfer: alice sends PENDING_BALANCE wei to TEST_ADDRESS at nonce 1
+        let (balance_transfer_tx, _) = alice
+            .sign_txn_request(
+                OpTransactionRequest::default()
+                    .from(alice.address)
+                    .transaction_type(TransactionType::Eip1559.into())
+                    .gas_limit(21_000)
+                    .nonce(1)
+                    .to(TEST_ADDRESS)
+                    .value(U256::from(PENDING_BALANCE))
+                    .into(),
+            )
+            .expect("should be able to sign balance transfer txn");
+
         let txn_details = TransactionDetails {
             counter_deployment_tx,
-            counter_deployment_hash,
             counter_address,
             counter_increment_tx: increment1_tx,
-            counter_increment_hash: increment1_tx_hash,
             counter_increment2_tx: increment2_tx,
-            counter_increment2_hash: increment2_tx_hash,
             alice_eth_transfer_tx: eth_transfer_tx,
             alice_eth_transfer_hash: eth_transfer_hash,
+            log_emitter_b_deployment_tx,
+            log_emitter_b_address,
+            log_emitter_a_deployment_tx,
+            log_emitter_a_address,
+            log_trigger_tx,
+            log_trigger_hash,
+            balance_transfer_tx,
         };
 
         Ok(Self { harness, txn_details })
@@ -117,26 +285,7 @@ impl TestSetup {
                 transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
                 ..Default::default()
             },
-            metadata: Metadata {
-                block_number: 1,
-                receipts: {
-                    let mut receipts = HashMap::default();
-                    receipts.insert(
-                        L1_BLOCK_INFO_DEPOSIT_TX_HASH,
-                        OpReceipt::Deposit(OpDepositReceipt {
-                            inner: Receipt {
-                                status: true.into(),
-                                cumulative_gas_used: 10000,
-                                logs: vec![],
-                            },
-                            deposit_nonce: Some(4012991u64),
-                            deposit_receipt_version: None,
-                        }),
-                    );
-                    receipts
-                },
-                new_account_balances: HashMap::default(),
-            },
+            metadata: Metadata { block_number: 1 },
         }
     }
 
@@ -157,84 +306,18 @@ impl TestSetup {
                     self.txn_details.counter_deployment_tx.clone(),
                     self.txn_details.counter_increment_tx.clone(),
                     self.txn_details.counter_increment2_tx.clone(),
+                    // Log-emitting contracts and trigger
+                    self.txn_details.log_emitter_b_deployment_tx.clone(),
+                    self.txn_details.log_emitter_a_deployment_tx.clone(),
+                    self.txn_details.log_trigger_tx.clone(),
+                    // Balance transfer to TEST_ADDRESS
+                    self.txn_details.balance_transfer_tx.clone(),
                 ],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
             },
-            metadata: Metadata {
-                block_number: 1,
-                receipts: {
-                    let mut receipts = HashMap::default();
-                    receipts.insert(
-                        DEPOSIT_TX_HASH,
-                        OpReceipt::Deposit(OpDepositReceipt {
-                            inner: Receipt {
-                                status: true.into(),
-                                cumulative_gas_used: 31000,
-                                logs: vec![],
-                            },
-                            deposit_nonce: Some(4012992u64),
-                            deposit_receipt_version: None,
-                        }),
-                    );
-                    receipts.insert(
-                        self.txn_details.alice_eth_transfer_hash,
-                        OpReceipt::Legacy(Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 55000,
-                            logs: vec![],
-                        }),
-                    );
-                    receipts.insert(
-                        self.txn_details.counter_deployment_hash,
-                        OpReceipt::Legacy(Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 272279,
-                            logs: vec![],
-                        }),
-                    );
-                    receipts.insert(
-                        self.txn_details.counter_increment_hash,
-                        OpReceipt::Legacy(Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 272279 + 44000,
-                            logs:   vec![
-                                    alloy_primitives::Log {
-                                        address: self.txn_details.counter_address,
-                                        data: LogData::new(
-                                            vec![TEST_LOG_TOPIC_0, TEST_LOG_TOPIC_1, TEST_LOG_TOPIC_2],
-                                            bytes!("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000").into(), // 1 ETH in wei
-                                        )
-                                        .unwrap(),
-                                    },
-                                    alloy_primitives::Log {
-                                        address: TEST_ADDRESS,
-                                        data: LogData::new(
-                                            vec![TEST_LOG_TOPIC_0],
-                                            bytes!("0x0000000000000000000000000000000000000000000000000000000000000001").into(), // Value: 1
-                                        )
-                                        .unwrap(),
-                                    },
-                                ]
-                        }),
-                    );
-                    receipts.insert(
-                        self.txn_details.counter_increment2_hash,
-                        OpReceipt::Legacy(Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 272279 + 44000 + 44000,
-                            logs: vec![],
-                        }),
-                    );
-                    receipts
-                },
-                new_account_balances: {
-                    let mut map = HashMap::default();
-                    map.insert(TEST_ADDRESS, U256::from(PENDING_BALANCE));
-                    map
-                },
-            },
+            metadata: Metadata { block_number: 1 },
         }
     }
 
@@ -288,6 +371,7 @@ const DEPOSIT_SENDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead
 const DEPOSIT_TX: Bytes = bytes!(
     "0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3"
 );
+const DEPOSIT_GAS_USED: u64 = 24770;
 const DEPOSIT_TX_HASH: TxHash =
     b256!("0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548");
 
@@ -296,8 +380,6 @@ const TEST_LOG_TOPIC_0: B256 =
     b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"); // Transfer event
 const TEST_LOG_TOPIC_1: B256 =
     b256!("0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"); // From address
-const TEST_LOG_TOPIC_2: B256 =
-    b256!("0x0000000000000000000000001234567890123456789012345678901234567890"); // To address
 
 #[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
@@ -334,14 +416,18 @@ async fn test_get_pending_block() -> Result<()> {
     let second_payload = setup.create_second_payload();
     setup.send_flashblock(second_payload).await?;
 
-    // Query pending block after sending the second payload with two transactions
+    // Query pending block after sending the second payload with transactions
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Pending)
         .await?
         .expect("pending block expected");
 
     assert_eq!(block.number(), 1);
-    assert_eq!(block.transactions.hashes().len(), 6);
+    // First flashblock: 1 L1Info transaction
+    // Second flashblock: 1 DEPOSIT_TX + 1 alice ETH transfer + 1 counter deploy + 1 counter increment + 1 counter increment2
+    // + 1 LogEmitterB deploy + 1 LogEmitterA deploy + 1 log trigger + 1 balance transfer
+    // Total: 1 + 9 = 10 transactions
+    assert_eq!(block.transactions.hashes().len(), 10);
 
     Ok(())
 }
@@ -406,13 +492,13 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
 
     let receipt =
         provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?.expect("receipt expected");
-    assert_eq!(receipt.gas_used(), 21000);
+    assert_eq!(receipt.gas_used(), DEPOSIT_GAS_USED);
 
     let receipt = provider
         .get_transaction_receipt(setup.txn_details.alice_eth_transfer_hash)
         .await?
         .expect("receipt expected");
-    assert_eq!(receipt.gas_used(), 24000); // 45000 - 21000
+    assert_eq!(receipt.gas_used(), 21000);
 
     Ok(())
 }
@@ -432,8 +518,11 @@ async fn test_get_transaction_count() -> Result<()> {
     setup.send_test_payloads().await?;
 
     assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).pending().await?, 2);
-    assert_eq!(provider.get_transaction_count(deployer_addr).pending().await?, 3);
-    assert_eq!(provider.get_transaction_count(alice_addr).pending().await?, 1);
+    // Deployer has: counter deploy (0), counter increment (1), counter increment2 (2),
+    // LogEmitterB deploy (3), LogEmitterA deploy (4), log trigger (5) = nonce 6
+    assert_eq!(provider.get_transaction_count(deployer_addr).pending().await?, 6);
+    // Alice has: big ETH transfer (0), balance transfer to TEST_ADDRESS (1) = nonce 2
+    assert_eq!(provider.get_transaction_count(alice_addr).pending().await?, 2);
 
     Ok(())
 }
@@ -629,18 +718,18 @@ async fn test_get_logs_pending() -> Result<()> {
         )
         .await?;
 
-    // We should now have 2 logs from the INCREMENT_TX transaction
+    // We should now have 2 logs from the log_trigger_tx transaction
     assert_eq!(logs.len(), 2);
 
-    // Verify the first log is from COUNTER_ADDRESS
-    assert_eq!(logs[0].address(), setup.txn_details.counter_address);
+    // Verify the first log is from LogEmitterA
+    assert_eq!(logs[0].address(), setup.txn_details.log_emitter_a_address);
     assert_eq!(logs[0].topics()[0], TEST_LOG_TOPIC_0);
-    assert_eq!(logs[0].transaction_hash, Some(setup.txn_details.counter_increment_hash));
+    assert_eq!(logs[0].transaction_hash, Some(setup.txn_details.log_trigger_hash));
 
-    // Verify the second log is from TEST_ADDRESS
-    assert_eq!(logs[1].address(), TEST_ADDRESS);
+    // Verify the second log is from LogEmitterB
+    assert_eq!(logs[1].address(), setup.txn_details.log_emitter_b_address);
     assert_eq!(logs[1].topics()[0], TEST_LOG_TOPIC_0);
-    assert_eq!(logs[1].transaction_hash, Some(setup.txn_details.counter_increment_hash));
+    assert_eq!(logs[1].transaction_hash, Some(setup.txn_details.log_trigger_hash));
 
     Ok(())
 }
@@ -652,35 +741,35 @@ async fn test_get_logs_filter_by_address() -> Result<()> {
 
     setup.send_test_payloads().await?;
 
-    // Test filtering by a specific address (COUNTER_ADDRESS)
+    // Test filtering by LogEmitterA address
     let logs = provider
         .get_logs(
             &alloy_rpc_types_eth::Filter::default()
-                .address(setup.txn_details.counter_address)
+                .address(setup.txn_details.log_emitter_a_address)
                 .from_block(alloy_eips::BlockNumberOrTag::Pending)
                 .to_block(alloy_eips::BlockNumberOrTag::Pending),
         )
         .await?;
 
-    // Should get only 1 log from COUNTER_ADDRESS
+    // Should get only 1 log from LogEmitterA
     assert_eq!(logs.len(), 1);
-    assert_eq!(logs[0].address(), setup.txn_details.counter_address);
-    assert_eq!(logs[0].transaction_hash, Some(setup.txn_details.counter_increment_hash));
+    assert_eq!(logs[0].address(), setup.txn_details.log_emitter_a_address);
+    assert_eq!(logs[0].transaction_hash, Some(setup.txn_details.log_trigger_hash));
 
-    // Test filtering by TEST_ADDRESS
+    // Test filtering by LogEmitterB address
     let logs = provider
         .get_logs(
             &alloy_rpc_types_eth::Filter::default()
-                .address(TEST_ADDRESS)
+                .address(setup.txn_details.log_emitter_b_address)
                 .from_block(alloy_eips::BlockNumberOrTag::Pending)
                 .to_block(alloy_eips::BlockNumberOrTag::Pending),
         )
         .await?;
 
-    // Should get only 1 log from TEST_ADDRESS
+    // Should get only 1 log from LogEmitterB
     assert_eq!(logs.len(), 1);
-    assert_eq!(logs[0].address(), TEST_ADDRESS);
-    assert_eq!(logs[0].transaction_hash, Some(setup.txn_details.counter_increment_hash));
+    assert_eq!(logs[0].address(), setup.txn_details.log_emitter_b_address);
+    assert_eq!(logs[0].transaction_hash, Some(setup.txn_details.log_trigger_hash));
 
     Ok(())
 }
@@ -705,7 +794,7 @@ async fn test_get_logs_topic_filtering() -> Result<()> {
     assert_eq!(logs.len(), 2);
     assert!(logs.iter().all(|log| log.topics()[0] == TEST_LOG_TOPIC_0));
 
-    // Test filtering by specific topic combination - should match only the first log
+    // Test filtering by specific topic combination - should match only LogEmitterA (has 2 topics)
     let filter = alloy_rpc_types_eth::Filter::default()
         .topic1(TEST_LOG_TOPIC_1)
         .from_block(alloy_eips::BlockNumberOrTag::Pending)
@@ -714,7 +803,7 @@ async fn test_get_logs_topic_filtering() -> Result<()> {
     let logs = provider.get_logs(&filter).await?;
 
     assert_eq!(logs.len(), 1);
-    assert_eq!(logs[0].address(), setup.txn_details.counter_address);
+    assert_eq!(logs[0].address(), setup.txn_details.log_emitter_a_address);
     assert_eq!(logs[0].topics()[1], TEST_LOG_TOPIC_1);
 
     Ok(())
@@ -739,8 +828,7 @@ async fn test_get_logs_mixed_block_ranges() -> Result<()> {
     // Should now include pending logs (2 logs from our test setup)
     assert_eq!(logs.len(), 2);
     assert!(
-        logs.iter()
-            .all(|log| log.transaction_hash == Some(setup.txn_details.counter_increment_hash))
+        logs.iter().all(|log| log.transaction_hash == Some(setup.txn_details.log_trigger_hash))
     );
 
     // Test fromBlock: latest, toBlock: pending
@@ -755,8 +843,7 @@ async fn test_get_logs_mixed_block_ranges() -> Result<()> {
     // Should include pending logs (historical part is empty in our test setup)
     assert_eq!(logs.len(), 2);
     assert!(
-        logs.iter()
-            .all(|log| log.transaction_hash == Some(setup.txn_details.counter_increment_hash))
+        logs.iter().all(|log| log.transaction_hash == Some(setup.txn_details.log_trigger_hash))
     );
 
     // Test fromBlock: earliest, toBlock: pending
@@ -771,8 +858,7 @@ async fn test_get_logs_mixed_block_ranges() -> Result<()> {
     // Should include pending logs (historical part is empty in our test setup)
     assert_eq!(logs.len(), 2);
     assert!(
-        logs.iter()
-            .all(|log| log.transaction_hash == Some(setup.txn_details.counter_increment_hash))
+        logs.iter().all(|log| log.transaction_hash == Some(setup.txn_details.log_trigger_hash))
     );
 
     Ok(())
@@ -864,7 +950,7 @@ async fn test_eth_subscribe_multiple_flashblocks() -> eyre::Result<()> {
 
     let block2 = &notif2["params"]["result"];
     assert_eq!(block1["number"], block2["number"]); // Same block, incremental updates
-    assert_eq!(block2["transactions"].as_array().unwrap().len(), 6);
+    assert_eq!(block2["transactions"].as_array().unwrap().len(), 10); // 1 from first + 9 from second
 
     Ok(())
 }
@@ -1033,7 +1119,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
     let notification2 = ws_stream.next().await.unwrap()?;
     let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
     let txs2 = notif2["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs2.len(), 6);
+    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
     assert!(txs2.iter().all(|tx| tx.is_string()));
 
     Ok(())
@@ -1087,7 +1173,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     let notification2 = ws_stream.next().await.unwrap()?;
     let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
     let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs2.len(), 6);
+    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
     assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
 
     Ok(())

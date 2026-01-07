@@ -215,7 +215,7 @@ impl TestHarness {
 
 struct FlashblockBuilder<'a> {
     transactions: Vec<Bytes>,
-    receipts: HashMap<B256, OpReceipt>,
+    receipts: Option<HashMap<B256, OpReceipt>>,
     harness: &'a TestHarness,
     canonical_block_number: Option<BlockNumber>,
     index: u64,
@@ -226,7 +226,7 @@ impl<'a> FlashblockBuilder<'a> {
         Self {
             canonical_block_number: None,
             transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone()],
-            receipts: {
+            receipts: Some({
                 let mut receipts = alloy_primitives::map::HashMap::default();
                 receipts.insert(
                     L1_BLOCK_INFO_DEPOSIT_TX_HASH,
@@ -241,7 +241,7 @@ impl<'a> FlashblockBuilder<'a> {
                     }),
                 );
                 receipts
-            },
+            }),
             index: 0,
             harness,
         }
@@ -250,13 +250,13 @@ impl<'a> FlashblockBuilder<'a> {
         Self {
             canonical_block_number: None,
             transactions: Vec::new(),
-            receipts: HashMap::default(),
+            receipts: Some(HashMap::default()),
             harness,
             index,
         }
     }
 
-    fn with_receipts(&mut self, receipts: HashMap<B256, OpReceipt>) -> &mut Self {
+    fn with_receipts(&mut self, receipts: Option<HashMap<B256, OpReceipt>>) -> &mut Self {
         self.receipts = receipts;
         self
     }
@@ -269,14 +269,16 @@ impl<'a> FlashblockBuilder<'a> {
         for txn in transactions.iter() {
             cumulative_gas_used = cumulative_gas_used + txn.gas_limit();
             self.transactions.push(txn.encoded_2718().into());
-            self.receipts.insert(
-                txn.hash().clone(),
-                OpReceipt::Eip1559(Receipt {
-                    status: true.into(),
-                    cumulative_gas_used,
-                    logs: vec![],
-                }),
-            );
+            if let Some(ref mut receipts) = self.receipts {
+                receipts.insert(
+                    txn.hash().clone(),
+                    OpReceipt::Eip1559(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used,
+                        logs: vec![],
+                    }),
+                );
+            }
         }
         self
     }
@@ -322,11 +324,7 @@ impl<'a> FlashblockBuilder<'a> {
                 transactions: self.transactions.clone(),
                 blob_gas_used: Default::default(),
             },
-            metadata: Metadata {
-                block_number: canonical_block_num,
-                receipts: self.receipts.clone(),
-                new_account_balances: HashMap::default(),
-            },
+            metadata: Metadata { block_number: canonical_block_num },
         }
     }
 }
@@ -715,29 +713,26 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
 }
 
 #[tokio::test]
-async fn test_missing_receipts_will_not_process() {
+async fn test_metadata_receipts_are_optional() {
+    // Test to ensure that receipts are optional in the metadata
+    // and deposit receipts return None for nonce until the canonical block is processed
     let test = TestHarness::new().await;
 
-    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+    // Send a flashblock with no receipts (only deposit transaction)
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_receipts(None).build()).await;
 
-    let current_block = test.flashblocks.get_pending_blocks().get_block(true);
+    // Verify the block was created with the deposit transaction
+    let pending_block =
+        test.flashblocks.get_pending_blocks().get_block(true).expect("block should be created");
+    assert_eq!(pending_block.transactions.len(), 1);
 
-    test.send_flashblock(
-        FlashblockBuilder::new(&test, 1)
-            .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
-                100,
-            )])
-            .with_receipts(HashMap::default()) // Clear the receipts
-            .build(),
-    )
-    .await;
-
-    let pending_block = test.flashblocks.get_pending_blocks().get_block(true);
-
-    // When the flashblock is invalid, the chain doesn't progress
-    assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
+    // Check that the deposit transaction has the correct nonce
+    let deposit_tx = &pending_block.transactions.as_transactions().unwrap()[0];
+    assert_eq!(
+        deposit_tx.deposit_nonce,
+        Some(0),
+        "deposit_nonce should be available even when no receipts"
+    );
 }
 
 #[tokio::test]
