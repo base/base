@@ -3,7 +3,7 @@
 //! These tests verify that EIP-7702 authorization and delegation
 //! transactions work correctly in the pending/flashblocks state.
 
-use alloy_consensus::{Receipt, SignableTransaction, TxEip1559, TxEip7702};
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702};
 use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
@@ -12,13 +12,10 @@ use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_reth_test_utils::{
-    Account, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH,
-    Minimal7702Account, SignerSync,
+    Account, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, Minimal7702Account, SignerSync,
 };
 use eyre::Result;
-use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::ReceiptResponse;
-use reth_optimism_primitives::OpReceipt;
 
 /// Cumulative gas used after the base flashblock (deposit tx + contract deployment)
 /// This value must be used as the starting point for subsequent flashblocks.
@@ -29,7 +26,6 @@ struct TestSetup {
     harness: FlashblocksHarness,
     account_contract_address: Address,
     account_deploy_tx: Bytes,
-    account_deploy_hash: B256,
 }
 
 impl TestSetup {
@@ -39,10 +35,10 @@ impl TestSetup {
 
         // Deploy Minimal7702Account contract
         let deploy_data = Minimal7702Account::BYTECODE.to_vec();
-        let (account_deploy_tx, account_contract_address, account_deploy_hash) =
+        let (account_deploy_tx, account_contract_address, _) =
             deployer.create_deployment_tx(Bytes::from(deploy_data), 0)?;
 
-        Ok(Self { harness, account_contract_address, account_deploy_tx, account_deploy_hash })
+        Ok(Self { harness, account_contract_address, account_deploy_tx })
     }
 
     async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
@@ -155,38 +151,11 @@ fn create_base_flashblock(setup: &TestSetup) -> Flashblock {
             transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone(), setup.account_deploy_tx.clone()],
             ..Default::default()
         },
-        metadata: Metadata {
-            block_number: 1,
-            receipts: {
-                let mut receipts = alloy_primitives::map::HashMap::default();
-                receipts.insert(
-                    L1_BLOCK_INFO_DEPOSIT_TX_HASH,
-                    OpReceipt::Deposit(OpDepositReceipt {
-                        inner: Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 10000,
-                            logs: vec![],
-                        },
-                        deposit_nonce: Some(4012991u64),
-                        deposit_receipt_version: None,
-                    }),
-                );
-                receipts.insert(
-                    setup.account_deploy_hash,
-                    OpReceipt::Eip1559(Receipt {
-                        status: true.into(),
-                        cumulative_gas_used: 500000,
-                        logs: vec![],
-                    }),
-                );
-                receipts
-            },
-            new_account_balances: alloy_primitives::map::HashMap::default(),
-        },
+        metadata: Metadata { block_number: 1 },
     }
 }
 
-fn create_eip7702_flashblock(eip7702_tx: Bytes, tx_hash: B256, cumulative_gas: u64) -> Flashblock {
+fn create_eip7702_flashblock(eip7702_tx: Bytes, cumulative_gas: u64) -> Flashblock {
     Flashblock {
         payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
         index: 1,
@@ -202,22 +171,7 @@ fn create_eip7702_flashblock(eip7702_tx: Bytes, tx_hash: B256, cumulative_gas: u
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
         },
-        metadata: Metadata {
-            block_number: 1,
-            receipts: {
-                let mut receipts = alloy_primitives::map::HashMap::default();
-                receipts.insert(
-                    tx_hash,
-                    OpReceipt::Eip7702(Receipt {
-                        status: true.into(),
-                        cumulative_gas_used: cumulative_gas,
-                        logs: vec![],
-                    }),
-                );
-                receipts
-            },
-            new_account_balances: alloy_primitives::map::HashMap::default(),
-        },
+        metadata: Metadata { block_number: 1 },
     }
 }
 
@@ -252,8 +206,7 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
 
     // Create flashblock with the EIP-7702 transaction
     // Cumulative gas must continue from where the base flashblock left off
-    let eip7702_flashblock =
-        create_eip7702_flashblock(eip7702_tx, tx_hash, BASE_CUMULATIVE_GAS + 50000);
+    let eip7702_flashblock = create_eip7702_flashblock(eip7702_tx, BASE_CUMULATIVE_GAS + 50000);
     setup.send_flashblock(eip7702_flashblock).await?;
 
     // Query pending transaction to verify it was included
@@ -307,7 +260,6 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
 
     // Create flashblock with both transactions
     // Cumulative gas must continue from where the base flashblock left off
-    let alice_cumulative = BASE_CUMULATIVE_GAS + 50000;
     let bob_cumulative = BASE_CUMULATIVE_GAS + 100000;
     let flashblock = Flashblock {
         payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
@@ -324,30 +276,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
         },
-        metadata: Metadata {
-            block_number: 1,
-            receipts: {
-                let mut receipts = alloy_primitives::map::HashMap::default();
-                receipts.insert(
-                    tx_hash_alice,
-                    OpReceipt::Eip7702(Receipt {
-                        status: true.into(),
-                        cumulative_gas_used: alice_cumulative,
-                        logs: vec![],
-                    }),
-                );
-                receipts.insert(
-                    tx_hash_bob,
-                    OpReceipt::Eip7702(Receipt {
-                        status: true.into(),
-                        cumulative_gas_used: bob_cumulative,
-                        logs: vec![],
-                    }),
-                );
-                receipts
-            },
-            new_account_balances: alloy_primitives::map::HashMap::default(),
-        },
+        metadata: Metadata { block_number: 1 },
     };
 
     setup.send_flashblock(flashblock).await?;
@@ -388,8 +317,7 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
 
     let tx_hash = alloy_primitives::keccak256(&eip7702_tx);
     // Cumulative gas must continue from where the base flashblock left off
-    let eip7702_flashblock =
-        create_eip7702_flashblock(eip7702_tx, tx_hash, BASE_CUMULATIVE_GAS + 50000);
+    let eip7702_flashblock = create_eip7702_flashblock(eip7702_tx, BASE_CUMULATIVE_GAS + 50000);
     setup.send_flashblock(eip7702_flashblock).await?;
 
     // Query receipt from pending state
@@ -430,8 +358,7 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
     );
 
     let delegation_hash = alloy_primitives::keccak256(&delegation_tx);
-    let delegation_flashblock =
-        create_eip7702_flashblock(delegation_tx, delegation_hash, delegation_cumulative);
+    let delegation_flashblock = create_eip7702_flashblock(delegation_tx, delegation_cumulative);
     setup.send_flashblock(delegation_flashblock).await?;
 
     // Second flashblock: execute through delegated account
@@ -467,22 +394,7 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
         },
-        metadata: Metadata {
-            block_number: 1,
-            receipts: {
-                let mut receipts = alloy_primitives::map::HashMap::default();
-                receipts.insert(
-                    execution_hash,
-                    OpReceipt::Eip1559(Receipt {
-                        status: true.into(),
-                        cumulative_gas_used: execution_cumulative,
-                        logs: vec![],
-                    }),
-                );
-                receipts
-            },
-            new_account_balances: alloy_primitives::map::HashMap::default(),
-        },
+        metadata: Metadata { block_number: 1 },
     };
 
     setup.send_flashblock(execution_flashblock).await?;
