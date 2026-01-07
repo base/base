@@ -11,7 +11,7 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, BlockNumber, Bytes, Sealable, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, Sealable, map::foldhash::HashMap};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::StateOverride;
@@ -21,6 +21,7 @@ use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use op_alloy_rpc_types::Transaction;
+use rayon::prelude::*;
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
@@ -393,16 +394,28 @@ where
             let mut gas_used = 0;
             let mut next_log_index = 0;
 
-            for (idx, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.tx_hash();
+            // Parallel sender recovery - batch all ECDSA operations upfront
+            let recovery_start = Instant::now();
+            let txs_with_senders: Vec<(&OpTxEnvelope, Address)> = block
+                .body
+                .transactions
+                .par_iter()
+                .map(|tx| -> eyre::Result<(&OpTxEnvelope, Address)> {
+                    let tx_hash = tx.tx_hash();
+                    let sender = match prev_pending_blocks
+                        .as_ref()
+                        .and_then(|p| p.get_transaction_sender(&tx_hash))
+                    {
+                        Some(cached) => cached,
+                        None => tx.recover_signer()?,
+                    };
+                    Ok((tx, sender))
+                })
+                .collect::<eyre::Result<_>>()?;
+            self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
-                let sender = match prev_pending_blocks
-                    .as_ref()
-                    .and_then(|p| p.get_transaction_sender(&tx_hash))
-                {
-                    Some(sender) => sender,
-                    None => transaction.recover_signer()?,
-                };
+            for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
+                let tx_hash = transaction.tx_hash();
 
                 pending_blocks_builder.with_transaction_sender(tx_hash, sender);
                 pending_blocks_builder.increment_nonce(sender);

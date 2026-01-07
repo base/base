@@ -54,6 +54,7 @@ tracing.workspace = true
 metrics.workspace = true
 arc-swap.workspace = true
 metrics-derive.workspace = true
+rayon.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
@@ -69,8 +70,14 @@ reth-e2e-test-utils.workspace = true
 base-reth-test-utils.workspace = true
 reth-primitives-traits.workspace = true
 reth-optimism-primitives.workspace = true
+reth-transaction-pool.workspace = true
+serde_json.workspace = true
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 [[bench]]
 name = "pending_state"
+harness = false
+
+[[bench]]
+name = "sender_recovery"
 harness = false

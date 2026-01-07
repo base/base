@@ -23,6 +23,10 @@ pub struct Metrics {
     #[metric(describe = "Time taken to process a message")]
     pub block_processing_duration: Histogram,
 
+    /// Time spent on parallel sender recovery (ECDSA operations).
+    #[metric(describe = "Time spent on parallel sender recovery")]
+    pub sender_recovery_duration: Histogram,
+
     /// Number of Flashblocks that arrive in an unexpected order.
     #[metric(describe = "Number of Flashblocks that arrive in an unexpected order")]
     pub unexpected_block_order: Counter,
