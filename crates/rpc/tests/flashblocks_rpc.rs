@@ -595,7 +595,7 @@ async fn test_eth_estimate_gas() -> Result<()> {
     setup.send_test_payloads().await?;
 
     // We included a heavy spending transaction and now don't have enough funds for this request, so
-    // this eth_estimate_gas with fail
+    // this eth_estimate_gas will fail
     let res = provider
         .estimate_gas(send_estimate_gas.nonce(4))
         .block(BlockNumberOrTag::Pending.into())
