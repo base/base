@@ -460,7 +460,7 @@ async fn test_eth_call() -> Result<()> {
     setup.send_test_payloads().await?;
 
     // We included a big spending transaction in the payloads
-    // and now don't have enough funds for this request, so this eth_call with fail
+    // and now don't have enough funds for this request, so this eth_call will fail
     let res =
         provider.call(big_spend.clone().nonce(3)).block(BlockNumberOrTag::Pending.into()).await;
     assert!(res.is_err());
