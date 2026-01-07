@@ -1,5 +1,5 @@
 [package]
-name = "base-reth-cli"
+name = "base-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,3 +13,17 @@ workspace = true
 
 [dependencies]
 reth.workspace = true
+
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# Logging
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

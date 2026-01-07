@@ -1,0 +1,49 @@
+[package]
+name = "base-bin"
+description = "Base CLI"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Local
+base-cli.workspace = true
+
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# Async
+tokio = { workspace = true, features = ["full", "signal"] }
+
+# Error handling
+anyhow = "1"
+
+# Chains
+alloy-chains = "0.2"
+
+# Alloy - WebSocket provider for mempool subscriptions
+alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+alloy-rpc-types-eth.workspace = true
+
+# Async utilities
+futures-util.workspace = true
+
+# Derive
+derive_more = { workspace = true, features = ["display"] }
+
+# Logging
+tracing.workspace = true
+
+[features]
+default = []

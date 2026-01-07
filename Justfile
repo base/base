@@ -81,6 +81,10 @@ build-maxperf:
 build-node:
     cargo build --bin base-reth-node
 
+# Runs the base cli binary
+base *args:
+    cargo run -p base-bin -- {{args}}
+
 # Build the contracts used for tests
 build-contracts:
     cd crates/test-utils/contracts && forge build

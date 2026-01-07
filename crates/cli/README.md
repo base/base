@@ -1,3 +1,7 @@
-# CLI Utilities for Base Reth
+# CLI Utilities for Base
 
-Contains a set of utilities for the Base Reth node CLI.
+Contains a set of utilities for the Base.
+
+### Sigsegv Handling
+
+
