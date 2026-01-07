@@ -30,10 +30,10 @@ impl FlashblocksCanonExtension {
 
 impl BaseNodeExtension for FlashblocksCanonExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(&self, builder: OpBuilder) -> OpBuilder {
-        let flashblocks = self.config.clone();
+    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+        let flashblocks = self.config;
         let flashblocks_enabled = flashblocks.is_some();
-        let flashblocks_cell = self.cell.clone();
+        let flashblocks_cell = self.cell;
 
         builder.install_exex_if(flashblocks_enabled, "flashblocks-canon", move |mut ctx| {
             let flashblocks_cell = flashblocks_cell.clone();

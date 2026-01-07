@@ -35,7 +35,7 @@ impl TestSetup {
 
         // Deploy Minimal7702Account contract
         let deploy_data = Minimal7702Account::BYTECODE.to_vec();
-        let (account_deploy_tx, account_contract_address, _) =
+        let (account_deploy_tx, account_contract_address, _account_deploy_hash) =
             deployer.create_deployment_tx(Bytes::from(deploy_data), 0)?;
 
         Ok(Self { harness, account_contract_address, account_deploy_tx })
