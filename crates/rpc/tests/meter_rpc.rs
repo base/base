@@ -3,11 +3,15 @@
 use std::{any::Any, net::SocketAddr, sync::Arc};
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, U256, address, b256, bytes};
+use alloy_primitives::{Address, B256, Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
-use base_reth_rpc::{MeterBundleResponse, MeteringApiImpl, MeteringApiServer};
+use base_reth_rpc::{
+    AnnotatorCommand, MeterBundleResponse, MeteredTransaction, MeteringApiImpl, MeteringApiServer,
+    MeteringCache, PriorityFeeEstimator, ResourceLimits,
+};
 use base_reth_test_utils::{init_silenced_tracing, load_genesis};
 use op_alloy_consensus::OpTxEnvelope;
+use parking_lot::RwLock;
 use reth::{
     args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
     builder::{Node, NodeBuilder, NodeConfig, NodeHandle},
@@ -20,7 +24,8 @@ use reth_optimism_node::{OpNode, args::RollupArgs};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tips_core::types::Bundle;
+use tips_core::types::{Bundle, TransactionResult};
+use tokio::sync::mpsc;
 
 struct NodeContext {
     http_api_addr: SocketAddr,
@@ -407,6 +412,207 @@ async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
 
     // Bundle gas price should be weighted average: (3*21000 + 7*21000) / (21000 + 21000) = 5 gwei
     assert_eq!(response.bundle_gas_price, U256::from(5000000000u64));
+
+    Ok(())
+}
+
+/// Context for a node with metering pipeline enabled
+struct MeteringNodeContext {
+    http_api_addr: SocketAddr,
+    tx_receiver: mpsc::UnboundedReceiver<MeteredTransaction>,
+    cmd_receiver: mpsc::UnboundedReceiver<AnnotatorCommand>,
+    _node_exit_future: NodeExitFuture,
+    _node: Box<dyn Any + Sync + Send>,
+}
+
+impl MeteringNodeContext {
+    async fn rpc_client(&self) -> eyre::Result<RpcClient> {
+        let url = format!("http://{}", self.http_api_addr);
+        let client = RpcClient::new_http(url.parse()?);
+        Ok(client)
+    }
+}
+
+async fn setup_node_with_metering() -> eyre::Result<MeteringNodeContext> {
+    init_silenced_tracing();
+    let tasks = TaskManager::current();
+    let exec = tasks.executor();
+    const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
+
+    let genesis = load_genesis();
+    let chain_spec = Arc::new(
+        OpChainSpecBuilder::base_mainnet()
+            .genesis(genesis)
+            .ecotone_activated()
+            .chain(Chain::from(BASE_SEPOLIA_CHAIN_ID))
+            .build(),
+    );
+
+    let network_config = NetworkArgs {
+        discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
+        ..NetworkArgs::default()
+    };
+
+    let node_config = NodeConfig::new(chain_spec.clone())
+        .with_network(network_config.clone())
+        .with_rpc(RpcServerArgs::default().with_unused_ports().with_http())
+        .with_unused_ports();
+
+    let node = OpNode::new(RollupArgs::default());
+
+    // Create the metering channels that we'll capture for testing
+    let (tx_sender, tx_receiver) = mpsc::unbounded_channel::<MeteredTransaction>();
+    let (cmd_sender, cmd_receiver) = mpsc::unbounded_channel::<AnnotatorCommand>();
+
+    let NodeHandle { node, node_exit_future } = NodeBuilder::new(node_config.clone())
+        .testing_node(exec.clone())
+        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+        .with_components(node.components_builder())
+        .with_add_ons(node.add_ons())
+        .extend_rpc_modules(move |ctx| {
+            // Create a minimal estimator for testing
+            let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+            let limits = ResourceLimits {
+                gas_used: Some(30_000_000),
+                execution_time_us: Some(50_000),
+                state_root_time_us: None,
+                data_availability_bytes: Some(120_000),
+            };
+            let estimator =
+                Arc::new(PriorityFeeEstimator::new(cache, 0.5, limits, U256::from(1), None));
+
+            let metering_api = MeteringApiImpl::with_estimator(
+                ctx.provider().clone(),
+                estimator,
+                tx_sender.clone(),
+                cmd_sender.clone(),
+            );
+            ctx.modules.merge_configured(metering_api.into_rpc())?;
+            Ok(())
+        })
+        .launch()
+        .await?;
+
+    let http_api_addr = node
+        .rpc_server_handle()
+        .http_local_addr()
+        .ok_or_else(|| eyre::eyre!("Failed to get http api address"))?;
+
+    Ok(MeteringNodeContext {
+        http_api_addr,
+        tx_receiver,
+        cmd_receiver,
+        _node_exit_future: node_exit_future,
+        _node: Box::new(node),
+    })
+}
+
+fn test_meter_bundle_response() -> MeterBundleResponse {
+    MeterBundleResponse {
+        bundle_gas_price: U256::from(1000),
+        bundle_hash: B256::ZERO,
+        coinbase_diff: U256::from(21000),
+        eth_sent_to_coinbase: U256::ZERO,
+        gas_fees: U256::from(21000),
+        results: vec![TransactionResult {
+            coinbase_diff: U256::from(21000),
+            eth_sent_to_coinbase: U256::ZERO,
+            from_address: Address::ZERO,
+            gas_fees: U256::from(21000),
+            gas_price: U256::from(1000000000), // 1 gwei
+            gas_used: 21000,
+            to_address: Some(Address::ZERO),
+            tx_hash: B256::ZERO,
+            value: U256::ZERO,
+            execution_time_us: 500,
+        }],
+        state_block_number: 100,
+        state_flashblock_index: None,
+        total_gas_used: 21000,
+        total_execution_time_us: 500,
+    }
+}
+
+#[tokio::test]
+async fn test_set_metering_info_sends_to_annotator() -> eyre::Result<()> {
+    let mut ctx = setup_node_with_metering().await?;
+    let client = ctx.rpc_client().await?;
+
+    let tx_hash = B256::random();
+    let meter = test_meter_bundle_response();
+
+    // Call the RPC method
+    let _: () = client.request("base_setMeteringInfo", (tx_hash, meter)).await?;
+
+    // Verify the transaction was sent to the channel
+    let received = ctx.tx_receiver.try_recv()?;
+    assert_eq!(received.tx_hash, tx_hash);
+    assert_eq!(received.gas_used, 21000);
+    assert_eq!(received.execution_time_us, 500);
+    assert_eq!(received.priority_fee_per_gas, U256::from(1000000000));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_set_metering_info_with_empty_results_returns_error() -> eyre::Result<()> {
+    let ctx = setup_node_with_metering().await?;
+    let client = ctx.rpc_client().await?;
+
+    let tx_hash = B256::random();
+    let meter = MeterBundleResponse {
+        results: vec![], // Empty results should fail
+        ..test_meter_bundle_response()
+    };
+
+    // Call should fail due to empty results
+    let result: Result<(), _> = client.request("base_setMeteringInfo", (tx_hash, meter)).await;
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_set_metering_enabled_toggles_collection() -> eyre::Result<()> {
+    let mut ctx = setup_node_with_metering().await?;
+    let client = ctx.rpc_client().await?;
+
+    // Disable metering
+    let _: () = client.request("base_setMeteringEnabled", (false,)).await?;
+
+    // Try to send metering info - should be silently ignored
+    let tx_hash = B256::random();
+    let meter = test_meter_bundle_response();
+    let _: () = client.request("base_setMeteringInfo", (tx_hash, meter.clone())).await?;
+
+    // Verify nothing was sent (channel should be empty)
+    assert!(ctx.tx_receiver.try_recv().is_err());
+
+    // Re-enable metering
+    let _: () = client.request("base_setMeteringEnabled", (true,)).await?;
+
+    // Now send should work
+    let tx_hash2 = B256::random();
+    let _: () = client.request("base_setMeteringInfo", (tx_hash2, meter)).await?;
+
+    // Verify it was sent
+    let received = ctx.tx_receiver.try_recv()?;
+    assert_eq!(received.tx_hash, tx_hash2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_clear_metering_info_sends_command() -> eyre::Result<()> {
+    let mut ctx = setup_node_with_metering().await?;
+    let client = ctx.rpc_client().await?;
+
+    // Call clear
+    let _: () = client.request("base_clearMeteringInfo", ()).await?;
+
+    // Verify the command was sent
+    let received = ctx.cmd_receiver.try_recv()?;
+    assert!(matches!(received, AnnotatorCommand::ClearPending));
 
     Ok(())
 }

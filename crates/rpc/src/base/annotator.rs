@@ -319,4 +319,74 @@ mod tests {
         drop(fb_sender);
         drop(cmd_sender);
     }
+
+    #[tokio::test]
+    async fn clear_pending_command_clears_all_pending_transactions() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+        let (_tx_sender, tx_rx) = mpsc::unbounded_channel();
+        let (_fb_sender, fb_rx) = mpsc::unbounded_channel();
+        let (_cmd_sender, cmd_rx) = mpsc::unbounded_channel();
+
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
+
+        // Add some pending transactions via handle_tx_event
+        annotator.handle_tx_event(test_tx(1, 10));
+        annotator.handle_tx_event(test_tx(2, 20));
+        annotator.handle_tx_event(test_tx(3, 30));
+
+        // Verify transactions are pending
+        assert_eq!(annotator.pending_transactions.len(), 3);
+
+        // Send clear command
+        annotator.handle_command(AnnotatorCommand::ClearPending);
+
+        // Verify pending transactions are cleared
+        assert_eq!(annotator.pending_transactions.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn tx_event_stores_transaction_in_pending_map() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+        let (_tx_sender, tx_rx) = mpsc::unbounded_channel();
+        let (_fb_sender, fb_rx) = mpsc::unbounded_channel();
+        let (_cmd_sender, cmd_rx) = mpsc::unbounded_channel();
+
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
+
+        // Initially empty
+        assert_eq!(annotator.pending_transactions.len(), 0);
+
+        // Add a transaction
+        let tx = test_tx(42, 100);
+        let tx_hash = tx.tx_hash;
+        annotator.handle_tx_event(tx);
+
+        // Verify it's stored
+        assert_eq!(annotator.pending_transactions.len(), 1);
+        assert!(annotator.pending_transactions.contains_key(&tx_hash));
+    }
+
+    #[tokio::test]
+    async fn flashblock_event_moves_pending_to_cache() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+        let (_tx_sender, tx_rx) = mpsc::unbounded_channel();
+        let (_fb_sender, fb_rx) = mpsc::unbounded_channel();
+        let (_cmd_sender, cmd_rx) = mpsc::unbounded_channel();
+
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
+
+        // Add pending transactions
+        annotator.handle_tx_event(test_tx(1, 10));
+        annotator.handle_tx_event(test_tx(2, 20));
+
+        assert_eq!(annotator.pending_transactions.len(), 2);
+
+        // Simulate flashblock inclusion for tx 1
+        let event = test_flashblock(100, 0, vec![1]);
+        annotator.handle_flashblock_event(event);
+
+        // tx 1 should be moved to cache, tx 2 still pending
+        assert_eq!(annotator.pending_transactions.len(), 1);
+        assert!(cache.read().contains_block(100));
+    }
 }
