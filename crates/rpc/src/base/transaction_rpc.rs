@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(Status::Unknown, result);
 
         let tx = MockTransaction::eip1559();
-        let hash = tx.hash().clone();
+        let hash = *tx.hash();
 
         let before = rpc
             .transaction_status(hash)

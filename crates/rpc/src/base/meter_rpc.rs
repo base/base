@@ -22,7 +22,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use super::{
-    block::meter_block, meter::meter_bundle, traits::MeteringApiServer,
+    block::meter_block,
+    meter::meter_bundle,
+    traits::MeteringApiServer,
     types::{MeterBlockResponse, MeteredPriorityFeeResponse, ResourceFeeEstimateResponse},
 };
 use crate::{

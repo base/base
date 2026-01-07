@@ -94,7 +94,7 @@ fn setup_harness() -> eyre::Result<TestHarness> {
 
     reth_db_common::init::init_genesis(&factory).context("initializing genesis state")?;
 
-    let provider = BlockchainProvider::new(factory.clone()).context("creating provider")?;
+    let provider = BlockchainProvider::new(factory).context("creating provider")?;
     let header = provider
         .sealed_header(0)
         .context("fetching genesis header")?
@@ -104,7 +104,7 @@ fn setup_harness() -> eyre::Result<TestHarness> {
 }
 
 fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> {
-    Ok(tx.clone().into())
+    Ok(tx.clone())
 }
 
 fn create_parsed_bundle(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<ParsedBundle> {
@@ -176,7 +176,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
 
-    let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
         meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
@@ -253,7 +253,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
 
-    let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope_1, envelope_2])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
         meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;

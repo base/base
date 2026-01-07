@@ -181,7 +181,7 @@ impl TestSetup {
         let (counter_deployment_tx, counter_address, _) = deployer
             .create_deployment_tx(DoubleCounter::BYTECODE.clone(), 0)
             .expect("should be able to sign DoubleCounter deployment txn");
-        let counter = DoubleCounterInstance::new(counter_address.clone(), provider);
+        let counter = DoubleCounterInstance::new(counter_address, provider);
         let (increment1_tx, _) = deployer
             .sign_txn_request(counter.increment().into_transaction_request().nonce(1))
             .expect("should be able to sign increment() txn");
@@ -198,8 +198,7 @@ impl TestSetup {
                     .gas_limit(100_000)
                     .nonce(0)
                     .to(bob.address)
-                    .value(U256::from_str("999999999000000000000000").unwrap())
-                    .into(),
+                    .value(U256::from_str("999999999000000000000000").unwrap()),
             )
             .expect("should be able to sign eth transfer txn");
 
@@ -227,8 +226,7 @@ impl TestSetup {
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(100_000)
                     .nonce(5)
-                    .to(log_emitter_a_address)
-                    .into(),
+                    .to(log_emitter_a_address),
             )
             .expect("should be able to sign log trigger txn");
 
@@ -241,8 +239,7 @@ impl TestSetup {
                     .gas_limit(21_000)
                     .nonce(1)
                     .to(TEST_ADDRESS)
-                    .value(U256::from(PENDING_BALANCE))
-                    .into(),
+                    .value(U256::from(PENDING_BALANCE)),
             )
             .expect("should be able to sign balance transfer txn");
 
@@ -486,7 +483,7 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
     let provider = setup.harness.provider();
 
     let receipt = provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?;
-    assert_eq!(receipt.is_none(), true);
+    assert!(receipt.is_none());
 
     setup.send_test_payloads().await?;
 

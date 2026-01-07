@@ -327,7 +327,7 @@ mod tests {
         let (_fb_sender, fb_rx) = mpsc::unbounded_channel();
         let (_cmd_sender, cmd_rx) = mpsc::unbounded_channel();
 
-        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
+        let mut annotator = ResourceAnnotator::new(cache, tx_rx, fb_rx, cmd_rx);
 
         // Add some pending transactions via handle_tx_event
         annotator.handle_tx_event(test_tx(1, 10));
@@ -351,7 +351,7 @@ mod tests {
         let (_fb_sender, fb_rx) = mpsc::unbounded_channel();
         let (_cmd_sender, cmd_rx) = mpsc::unbounded_channel();
 
-        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx, cmd_rx);
+        let mut annotator = ResourceAnnotator::new(cache, tx_rx, fb_rx, cmd_rx);
 
         // Initially empty
         assert_eq!(annotator.pending_transactions.len(), 0);

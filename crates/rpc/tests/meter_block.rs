@@ -79,7 +79,7 @@ fn setup_harness() -> eyre::Result<TestHarness> {
 
     reth_db_common::init::init_genesis(&factory).context("initializing genesis state")?;
 
-    let provider = BlockchainProvider::new(factory.clone()).context("creating provider")?;
+    let provider = BlockchainProvider::new(factory).context("creating provider")?;
     let header = provider
         .sealed_header(0)
         .context("fetching genesis header")?
@@ -122,7 +122,7 @@ fn meter_block_empty_transactions() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![]);
 
-    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec, &block)?;
 
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
@@ -160,7 +160,7 @@ fn meter_block_single_transaction() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![tx]);
 
-    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec, &block)?;
 
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
@@ -225,7 +225,7 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![tx_1, tx_2]);
 
-    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec, &block)?;
 
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
@@ -283,7 +283,7 @@ fn meter_block_timing_consistency() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![tx]);
 
-    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec, &block)?;
 
     // Verify timing invariants
     assert!(response.signer_recovery_time_us > 0, "signer recovery time must be positive");
@@ -322,7 +322,7 @@ fn meter_block_parent_header_not_found() -> eyre::Result<()> {
     let body = OpBlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
     let block = OpBlock::new(header, body);
 
-    let result = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block);
+    let result = meter_block(harness.provider.clone(), harness.chain_spec, &block);
 
     assert!(result.is_err(), "should fail when parent header is not found");
     let err = result.unwrap_err();
@@ -365,7 +365,7 @@ fn meter_block_invalid_transaction_signature() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![op_tx]);
 
-    let result = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block);
+    let result = meter_block(harness.provider.clone(), harness.chain_spec, &block);
 
     assert!(result.is_err(), "should fail when transaction has invalid signature");
     let err = result.unwrap_err();

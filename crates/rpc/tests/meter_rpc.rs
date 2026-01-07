@@ -34,7 +34,7 @@ struct NodeContext {
 }
 
 // Helper function to create a Bundle with default fields
-fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
+const fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
     Bundle {
         txs,
         block_number,
@@ -147,7 +147,7 @@ async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
 
     let signed_tx =
         OpTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
-    let envelope: OpTxEnvelope = signed_tx.into();
+    let envelope: OpTxEnvelope = signed_tx;
 
     // Encode transaction
     let tx_bytes = Bytes::from(envelope.encoded_2718());
@@ -194,7 +194,7 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     let tx1_signed =
         OpTransactionSigned::Eip1559(tx1_inner.as_eip1559().expect("eip1559 transaction").clone());
-    let tx1_envelope: OpTxEnvelope = tx1_signed.into();
+    let tx1_envelope: OpTxEnvelope = tx1_signed;
     let tx1_bytes = Bytes::from(tx1_envelope.encoded_2718());
 
     // Second transaction from second account
@@ -214,7 +214,7 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     let tx2_signed =
         OpTransactionSigned::Eip1559(tx2_inner.as_eip1559().expect("eip1559 transaction").clone());
-    let tx2_envelope: OpTxEnvelope = tx2_signed.into();
+    let tx2_envelope: OpTxEnvelope = tx2_signed;
     let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
 
     let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
@@ -364,7 +364,7 @@ async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
 
     let signed_tx1 =
         OpTransactionSigned::Eip1559(tx1_inner.as_eip1559().expect("eip1559 transaction").clone());
-    let envelope1: OpTxEnvelope = signed_tx1.into();
+    let envelope1: OpTxEnvelope = signed_tx1;
     let tx1_bytes = Bytes::from(envelope1.encoded_2718());
 
     // Second transaction with 7 gwei gas price
@@ -381,7 +381,7 @@ async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
 
     let signed_tx2 =
         OpTransactionSigned::Eip1559(tx2_inner.as_eip1559().expect("eip1559 transaction").clone());
-    let envelope2: OpTxEnvelope = signed_tx2.into();
+    let envelope2: OpTxEnvelope = signed_tx2;
     let tx2_bytes = Bytes::from(envelope2.encoded_2718());
 
     let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
@@ -485,7 +485,7 @@ async fn setup_node_with_metering() -> eyre::Result<MeteringNodeContext> {
                 ctx.provider().clone(),
                 estimator,
                 tx_sender.clone(),
-                cmd_sender.clone(),
+                cmd_sender,
             );
             ctx.modules.merge_configured(metering_api.into_rpc())?;
             Ok(())

@@ -666,7 +666,7 @@ mod tests {
         //   - Include tx priority=10: remaining = 30-10 = 20 >= 15 ok
         //   - Include tx priority=5:  remaining = 20-10 = 10 < 15 stop
         // Threshold = 10 (the last included tx's fee)
-        let txs = vec![tx(10, 10), tx(5, 10), tx(2, 10)];
+        let txs = [tx(10, 10), tx(5, 10), tx(2, 10)];
         let txs_refs: Vec<&MeteredTransaction> = txs.iter().collect();
         let quote = compute_estimate(
             ResourceKind::GasUsed,
@@ -688,7 +688,7 @@ mod tests {
     fn compute_estimate_uncongested_resource() {
         // Limit: 100, Demand: 15
         // All transactions fit with room to spare -> return default fee
-        let txs = vec![tx(10, 10), tx(5, 10), tx(2, 10)];
+        let txs = [tx(10, 10), tx(5, 10), tx(2, 10)];
         let txs_refs: Vec<&MeteredTransaction> = txs.iter().collect();
         let quote = compute_estimate(
             ResourceKind::GasUsed,
@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn compute_estimate_demand_exceeds_limit() {
         // Demand > Limit -> Error
-        let txs = vec![tx(10, 10), tx(5, 10)];
+        let txs = [tx(10, 10), tx(5, 10)];
         let txs_refs: Vec<&MeteredTransaction> = txs.iter().collect();
         let result = compute_estimate(
             ResourceKind::GasUsed,
@@ -736,7 +736,7 @@ mod tests {
         // Transactions: priority=10 (10 gas), priority=5 (10 gas)
         // After including tx priority=10: remaining = 20 >= 20 ok
         // After including tx priority=5: remaining = 10 < 20 stop
-        let txs = vec![tx(10, 10), tx(5, 10)];
+        let txs = [tx(10, 10), tx(5, 10)];
         let txs_refs: Vec<&MeteredTransaction> = txs.iter().collect();
         let quote = compute_estimate(
             ResourceKind::GasUsed,
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn compute_estimate_single_transaction() {
         // Single tx that fits
-        let txs = vec![tx(10, 10)];
+        let txs = [tx(10, 10)];
         let txs_refs: Vec<&MeteredTransaction> = txs.iter().collect();
         let quote = compute_estimate(
             ResourceKind::GasUsed,
@@ -778,7 +778,7 @@ mod tests {
     fn compute_estimate_no_room_for_any_tx() {
         // Limit: 25, Demand: 20
         // First tx uses 10, remaining = 15 < 20 -> can't even include first tx
-        let txs = vec![tx(10, 10), tx(5, 10)];
+        let txs = [tx(10, 10), tx(5, 10)];
         let txs_refs: Vec<&MeteredTransaction> = txs.iter().collect();
         let quote = compute_estimate(
             ResourceKind::GasUsed,
@@ -858,8 +858,7 @@ mod tests {
             guard.push_transaction(1, 0, tx(10, 10));
             guard.push_transaction(1, 0, tx(5, 10));
         }
-        let mut demand = ResourceDemand::default();
-        demand.gas_used = Some(15);
+        let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };
 
         let err = estimator
             .estimate_for_block(Some(1), demand)
@@ -887,8 +886,7 @@ mod tests {
             guard.push_transaction(2, 0, tx(25, 10));
         }
 
-        let mut demand = ResourceDemand::default();
-        demand.gas_used = Some(15);
+        let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };
 
         let rolling =
             estimator.estimate_rolling(demand).expect("no error").expect("estimates available");
