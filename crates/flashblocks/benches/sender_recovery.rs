@@ -11,6 +11,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_transaction_pool::test_utils::TransactionBuilder;
+use serde_json::Value;
 
 /// Generate signed transactions from multiple unique signers.
 fn generate_transactions(count: usize) -> Vec<OpTransactionSigned> {
@@ -52,8 +53,34 @@ fn recover_senders_parallel(txs: &[OpTransactionSigned]) -> Vec<Address> {
     txs.par_iter().map(|tx| tx.recover_signer().expect("valid signature")).collect()
 }
 
+/// Load real transactions from Base mainnet blocks fixture
+fn load_real_transactions() -> Vec<OpTransactionSigned> {
+    let fixture_data = include_str!("./fixtures/base_mainnet_blocks.json");
+    let json: Value = serde_json::from_str(fixture_data).expect("valid JSON");
+
+    let mut transactions = Vec::new();
+
+    // Extract all transactions from all blocks
+    if let Some(blocks) = json["blocks"].as_array() {
+        for block in blocks {
+            if let Some(txs) = block["transactions"].as_array() {
+                for tx_value in txs {
+                    // Try direct deserialization first
+                    if let Ok(signed_tx) =
+                        serde_json::from_value::<OpTransactionSigned>(tx_value.clone())
+                    {
+                        transactions.push(signed_tx);
+                    }
+                }
+            }
+        }
+    }
+
+    transactions
+}
+
 fn sender_recovery_benches(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sender_recovery");
+    let mut group = c.benchmark_group("sender_recovery_synthetic");
 
     // Test with 30, 40, and 100 transactions as requested in issue #282
     for tx_count in [30, 40, 100] {
@@ -75,5 +102,36 @@ fn sender_recovery_benches(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, sender_recovery_benches);
+fn sender_recovery_real_txs_benches(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sender_recovery_real_txs");
+
+    // Load real Base mainnet transactions
+    let all_transactions = load_real_transactions();
+    println!("Loaded {} real transactions from Base mainnet", all_transactions.len());
+
+    // Benchmark with different batch sizes
+    for tx_count in [30, 40, 100, 500, 1000] {
+        if all_transactions.len() < tx_count {
+            continue;
+        }
+
+        let transactions: Vec<_> = all_transactions.iter().take(tx_count).cloned().collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("sequential", tx_count),
+            &transactions,
+            |b, txs| {
+                b.iter(|| recover_senders_sequential(txs));
+            },
+        );
+
+        group.bench_with_input(BenchmarkId::new("parallel", tx_count), &transactions, |b, txs| {
+            b.iter(|| recover_senders_parallel(txs));
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, sender_recovery_benches, sender_recovery_real_txs_benches);
 criterion_main!(benches);
