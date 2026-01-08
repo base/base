@@ -20,3 +20,6 @@ pub use subscription::FlashblocksSubscriber;
 
 mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
+
+mod state_builder;
+pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
