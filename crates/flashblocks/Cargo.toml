@@ -73,6 +73,7 @@ reth-primitives-traits.workspace = true
 reth-optimism-primitives.workspace = true
 reth-transaction-pool.workspace = true
 serde_json.workspace = true
+rstest.workspace = true
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 [[bench]]

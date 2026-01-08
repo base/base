@@ -1577,6 +1577,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-testing-utils",
  "reth-transaction-pool",
+ "rstest",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",

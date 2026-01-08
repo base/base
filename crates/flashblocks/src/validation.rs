@@ -400,599 +400,112 @@ impl CanonicalBlockReconciler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
 
     // ==================== FlashblockSequenceValidator Tests ====================
 
-    /// Test the first flashblock ever (bootstrap case).
-    /// When starting fresh, we expect index 0 to be valid for any block.
-    #[test]
-    fn test_first_flashblock_bootstrap() {
-        // Simulating bootstrap: latest is block 0, index 0 (initial state)
-        // Incoming is block 1, index 0 (first real flashblock)
-        let result = FlashblockSequenceValidator::validate(0, 0, 1, 0);
-        assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-    }
-
-    /// Test normal sequential flashblocks within the same block.
-    #[test]
-    fn test_next_in_sequence() {
-        // Block 100, index 2 -> Block 100, index 3
-        let result = FlashblockSequenceValidator::validate(100, 2, 100, 3);
-        assert_eq!(result, SequenceValidationResult::NextInSequence);
-
-        // Block 100, index 0 -> Block 100, index 1
-        let result = FlashblockSequenceValidator::validate(100, 0, 100, 1);
-        assert_eq!(result, SequenceValidationResult::NextInSequence);
-
-        // Large index values
-        let result = FlashblockSequenceValidator::validate(100, 999, 100, 1000);
-        assert_eq!(result, SequenceValidationResult::NextInSequence);
-    }
-
-    /// Test first flashblock of a new block.
-    #[test]
-    fn test_first_of_next_block() {
-        // Block 100, index 5 -> Block 101, index 0
-        let result = FlashblockSequenceValidator::validate(100, 5, 101, 0);
-        assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-
-        // Block 100, index 0 -> Block 101, index 0
-        let result = FlashblockSequenceValidator::validate(100, 0, 101, 0);
-        assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-
-        // Large block numbers
-        let result = FlashblockSequenceValidator::validate(999999, 10, 1000000, 0);
-        assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-    }
-
-    /// Test duplicate detection.
-    #[test]
-    fn test_duplicate() {
-        // Same block and same index
-        let result = FlashblockSequenceValidator::validate(100, 5, 100, 5);
-        assert_eq!(result, SequenceValidationResult::Duplicate);
-
-        // Duplicate at index 0
-        let result = FlashblockSequenceValidator::validate(100, 0, 100, 0);
-        assert_eq!(result, SequenceValidationResult::Duplicate);
-    }
-
-    /// Test gap detection within the same block.
-    #[test]
-    fn test_non_sequential_gap() {
-        // Skipping an index: 2 -> 4 (expected 3)
-        let result = FlashblockSequenceValidator::validate(100, 2, 100, 4);
-        assert_eq!(result, SequenceValidationResult::NonSequentialGap { expected: 3, actual: 4 });
-
-        // Large gap: 0 -> 10 (expected 1)
-        let result = FlashblockSequenceValidator::validate(100, 0, 100, 10);
-        assert_eq!(result, SequenceValidationResult::NonSequentialGap { expected: 1, actual: 10 });
-
-        // Going backwards within same block: 5 -> 3 (expected 6)
-        let result = FlashblockSequenceValidator::validate(100, 5, 100, 3);
-        assert_eq!(result, SequenceValidationResult::NonSequentialGap { expected: 6, actual: 3 });
-    }
-
-    /// Test non-zero index on a new block.
-    #[test]
-    fn test_invalid_new_block_index() {
-        // New block with non-zero index
-        let result = FlashblockSequenceValidator::validate(100, 5, 101, 1);
-        assert_eq!(
-            result,
-            SequenceValidationResult::InvalidNewBlockIndex { block_number: 101, index: 1 }
-        );
-
-        // Skipping blocks with non-zero index
-        let result = FlashblockSequenceValidator::validate(100, 5, 105, 3);
-        assert_eq!(
-            result,
-            SequenceValidationResult::InvalidNewBlockIndex { block_number: 105, index: 3 }
-        );
-
-        // Future block with index 0 is NOT first of next block (block gap)
-        let result = FlashblockSequenceValidator::validate(100, 5, 102, 0);
-        assert_eq!(
-            result,
-            SequenceValidationResult::InvalidNewBlockIndex { block_number: 102, index: 0 }
-        );
-    }
-
-    /// Test edge case: block number going backwards.
-    #[test]
-    fn test_block_number_regression() {
-        // Incoming block number is less than current
-        let result = FlashblockSequenceValidator::validate(100, 5, 99, 0);
-        assert_eq!(
-            result,
-            SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 0 }
-        );
-
-        let result = FlashblockSequenceValidator::validate(100, 5, 99, 5);
-        assert_eq!(
-            result,
-            SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 5 }
-        );
-    }
-
-    /// Test edge case: maximum u64 values.
-    #[test]
-    fn test_max_values() {
-        // Near max block number
-        let result = FlashblockSequenceValidator::validate(u64::MAX - 1, 0, u64::MAX, 0);
-        assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-
-        // Near max index
-        let result = FlashblockSequenceValidator::validate(100, u64::MAX - 1, 100, u64::MAX);
-        assert_eq!(result, SequenceValidationResult::NextInSequence);
-    }
-
-    /// Test edge case: zero block number.
-    #[test]
-    fn test_zero_block_number() {
-        // Block 0 to block 1
-        let result = FlashblockSequenceValidator::validate(0, 5, 1, 0);
-        assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-
-        // Sequential within block 0
-        let result = FlashblockSequenceValidator::validate(0, 0, 0, 1);
-        assert_eq!(result, SequenceValidationResult::NextInSequence);
-    }
-
-    /// Test that the validator is stateless and consistent.
-    #[test]
-    fn test_validator_is_stateless() {
-        // Same inputs should always produce the same output
-        for _ in 0..100 {
-            let result = FlashblockSequenceValidator::validate(100, 5, 100, 6);
-            assert_eq!(result, SequenceValidationResult::NextInSequence);
-        }
-    }
-
-    /// Test comprehensive sequence of flashblocks.
-    #[test]
-    fn test_full_sequence() {
-        // Simulate a full sequence of flashblocks across two blocks
-        let test_cases = vec![
-            // Block 100: index 0 -> 1 -> 2 -> 3
-            ((100, 0, 100, 1), SequenceValidationResult::NextInSequence),
-            ((100, 1, 100, 2), SequenceValidationResult::NextInSequence),
-            ((100, 2, 100, 3), SequenceValidationResult::NextInSequence),
-            // Block 100 -> Block 101 (first flashblock)
-            ((100, 3, 101, 0), SequenceValidationResult::FirstOfNextBlock),
-            // Block 101: index 0 -> 1
-            ((101, 0, 101, 1), SequenceValidationResult::NextInSequence),
-        ];
-
-        for ((latest_block, latest_idx, incoming_block, incoming_idx), expected) in test_cases {
-            let result = FlashblockSequenceValidator::validate(
-                latest_block,
-                latest_idx,
-                incoming_block,
-                incoming_idx,
-            );
-            assert_eq!(
-                result, expected,
-                "Failed for latest=({}, {}), incoming=({}, {})",
-                latest_block, latest_idx, incoming_block, incoming_idx
-            );
-        }
+    #[rstest]
+    // NextInSequence: consecutive indices within the same block
+    #[case(100, 2, 100, 3, SequenceValidationResult::NextInSequence)]
+    #[case(100, 0, 100, 1, SequenceValidationResult::NextInSequence)]
+    #[case(100, 999, 100, 1000, SequenceValidationResult::NextInSequence)]
+    #[case(0, 0, 0, 1, SequenceValidationResult::NextInSequence)]
+    #[case(100, u64::MAX - 1, 100, u64::MAX, SequenceValidationResult::NextInSequence)]
+    // FirstOfNextBlock: index 0 of the next block
+    #[case(0, 0, 1, 0, SequenceValidationResult::FirstOfNextBlock)]
+    #[case(100, 5, 101, 0, SequenceValidationResult::FirstOfNextBlock)]
+    #[case(100, 0, 101, 0, SequenceValidationResult::FirstOfNextBlock)]
+    #[case(999999, 10, 1000000, 0, SequenceValidationResult::FirstOfNextBlock)]
+    #[case(0, 5, 1, 0, SequenceValidationResult::FirstOfNextBlock)]
+    #[case(u64::MAX - 1, 0, u64::MAX, 0, SequenceValidationResult::FirstOfNextBlock)]
+    // Duplicate: same block and index
+    #[case(100, 5, 100, 5, SequenceValidationResult::Duplicate)]
+    #[case(100, 0, 100, 0, SequenceValidationResult::Duplicate)]
+    // NonSequentialGap: non-consecutive indices within the same block
+    #[case(100, 2, 100, 4, SequenceValidationResult::NonSequentialGap { expected: 3, actual: 4 })]
+    #[case(100, 0, 100, 10, SequenceValidationResult::NonSequentialGap { expected: 1, actual: 10 })]
+    #[case(100, 5, 100, 3, SequenceValidationResult::NonSequentialGap { expected: 6, actual: 3 })]
+    // InvalidNewBlockIndex: new block with non-zero index or block gap
+    #[case(100, 5, 101, 1, SequenceValidationResult::InvalidNewBlockIndex { block_number: 101, index: 1 })]
+    #[case(100, 5, 105, 3, SequenceValidationResult::InvalidNewBlockIndex { block_number: 105, index: 3 })]
+    #[case(100, 5, 102, 0, SequenceValidationResult::InvalidNewBlockIndex { block_number: 102, index: 0 })]
+    #[case(100, 5, 99, 0, SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 0 })]
+    #[case(100, 5, 99, 5, SequenceValidationResult::InvalidNewBlockIndex { block_number: 99, index: 5 })]
+    fn test_sequence_validator(
+        #[case] latest_block: u64,
+        #[case] latest_idx: u64,
+        #[case] incoming_block: u64,
+        #[case] incoming_idx: u64,
+        #[case] expected: SequenceValidationResult,
+    ) {
+        let result =
+            FlashblockSequenceValidator::validate(latest_block, latest_idx, incoming_block, incoming_idx);
+        assert_eq!(result, expected);
     }
 
     // ==================== ReorgDetector Tests ====================
 
-    #[test]
-    fn test_reorg_identical_transaction_sets_no_reorg() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-        let hash3 = B256::repeat_byte(0x03);
-
-        let tracked = vec![hash1, hash2, hash3];
-        let canonical = vec![hash1, hash2, hash3];
-
+    #[rstest]
+    // No reorg cases
+    #[case(&[], &[], ReorgDetectionResult::NoReorg)]
+    #[case(&[0x01], &[0x01], ReorgDetectionResult::NoReorg)]
+    #[case(&[0x01, 0x02, 0x03], &[0x01, 0x02, 0x03], ReorgDetectionResult::NoReorg)]
+    #[case(&[0x01, 0x02, 0x03], &[0x03, 0x01, 0x02], ReorgDetectionResult::NoReorg)] // order doesn't matter
+    #[case(&[0x01, 0x01, 0x02], &[0x01, 0x02], ReorgDetectionResult::NoReorg)] // duplicates deduplicated
+    // Reorg cases - different counts
+    #[case(&[0x01, 0x02, 0x03], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
+    #[case(&[0x01], &[0x01, 0x02, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 3 })]
+    #[case(&[], &[0x01], ReorgDetectionResult::ReorgDetected { tracked_count: 0, canonical_count: 1 })]
+    #[case(&[0x01], &[], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 0 })]
+    // Reorg cases - same count, different hashes
+    #[case(&[0x01, 0x02], &[0x03, 0x04], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
+    #[case(&[0x01, 0x02], &[0x01, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
+    #[case(&[0x42], &[0x43], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 1 })]
+    fn test_reorg_detector(
+        #[case] tracked_bytes: &[u8],
+        #[case] canonical_bytes: &[u8],
+        #[case] expected: ReorgDetectionResult,
+    ) {
+        let tracked: Vec<B256> = tracked_bytes.iter().map(|b| B256::repeat_byte(*b)).collect();
+        let canonical: Vec<B256> = canonical_bytes.iter().map(|b| B256::repeat_byte(*b)).collect();
         let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(result, ReorgDetectionResult::NoReorg);
-        assert!(result.is_no_reorg());
-        assert!(!result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_identical_sets_different_order_no_reorg() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-        let hash3 = B256::repeat_byte(0x03);
-
-        // Different order should still be considered equal (set comparison)
-        let tracked = vec![hash1, hash2, hash3];
-        let canonical = vec![hash3, hash1, hash2];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(result, ReorgDetectionResult::NoReorg);
-        assert!(result.is_no_reorg());
-    }
-
-    #[test]
-    fn test_reorg_different_counts_reorg_detected() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-        let hash3 = B256::repeat_byte(0x03);
-
-        let tracked = vec![hash1, hash2, hash3];
-        let canonical = vec![hash1, hash2];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 }
-        );
-        assert!(result.is_reorg());
-        assert!(!result.is_no_reorg());
-    }
-
-    #[test]
-    fn test_reorg_canonical_has_more_transactions() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-        let hash3 = B256::repeat_byte(0x03);
-
-        let tracked = vec![hash1];
-        let canonical = vec![hash1, hash2, hash3];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 3 }
-        );
-        assert!(result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_same_count_different_hashes() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-        let hash3 = B256::repeat_byte(0x03);
-        let hash4 = B256::repeat_byte(0x04);
-
-        let tracked = vec![hash1, hash2];
-        let canonical = vec![hash3, hash4];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 }
-        );
-        assert!(result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_partial_overlap_different_hashes() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-        let hash3 = B256::repeat_byte(0x03);
-
-        // One hash in common, but different overall sets
-        let tracked = vec![hash1, hash2];
-        let canonical = vec![hash1, hash3];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 }
-        );
-        assert!(result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_empty_sets_no_reorg() {
-        let tracked: Vec<B256> = vec![];
-        let canonical: Vec<B256> = vec![];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(result, ReorgDetectionResult::NoReorg);
-        assert!(result.is_no_reorg());
-    }
-
-    #[test]
-    fn test_reorg_empty_tracked_non_empty_canonical() {
-        let hash1 = B256::repeat_byte(0x01);
-
-        let tracked: Vec<B256> = vec![];
-        let canonical = vec![hash1];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 0, canonical_count: 1 }
-        );
-        assert!(result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_non_empty_tracked_empty_canonical() {
-        let hash1 = B256::repeat_byte(0x01);
-
-        let tracked = vec![hash1];
-        let canonical: Vec<B256> = vec![];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 0 }
-        );
-        assert!(result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_single_transaction_match_no_reorg() {
-        let hash = B256::repeat_byte(0x42);
-
-        let tracked = vec![hash];
-        let canonical = vec![hash];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(result, ReorgDetectionResult::NoReorg);
-        assert!(result.is_no_reorg());
-    }
-
-    #[test]
-    fn test_reorg_single_transaction_mismatch() {
-        let hash1 = B256::repeat_byte(0x42);
-        let hash2 = B256::repeat_byte(0x43);
-
-        let tracked = vec![hash1];
-        let canonical = vec![hash2];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        assert_eq!(
-            result,
-            ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 1 }
-        );
-        assert!(result.is_reorg());
-    }
-
-    #[test]
-    fn test_reorg_duplicate_hashes_are_deduplicated() {
-        let hash1 = B256::repeat_byte(0x01);
-        let hash2 = B256::repeat_byte(0x02);
-
-        // Duplicates should be deduplicated by the HashSet
-        let tracked = vec![hash1, hash1, hash2];
-        let canonical = vec![hash1, hash2];
-
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-
-        // After deduplication, both sets have 2 unique hashes
-        assert_eq!(result, ReorgDetectionResult::NoReorg);
-    }
-
-    #[test]
-    fn test_reorg_detection_result_debug_impl() {
-        let result = ReorgDetectionResult::NoReorg;
-        assert_eq!(format!("{:?}", result), "NoReorg");
-
-        let result = ReorgDetectionResult::ReorgDetected { tracked_count: 5, canonical_count: 3 };
-        assert!(format!("{:?}", result).contains("ReorgDetected"));
-        assert!(format!("{:?}", result).contains("5"));
-        assert!(format!("{:?}", result).contains("3"));
-    }
-
-    #[test]
-    fn test_reorg_detector_is_copy() {
-        let detector = ReorgDetector;
-        let _copied = detector;
-        let _also_copied = detector; // Should compile since ReorgDetector is Copy
-    }
-
-    #[test]
-    fn test_reorg_detector_default() {
-        let _detector = ReorgDetector::default();
+        assert_eq!(result, expected);
+        assert_eq!(result.is_reorg(), matches!(expected, ReorgDetectionResult::ReorgDetected { .. }));
     }
 
     // ==================== CanonicalBlockReconciler Tests ====================
 
-    /// Test that canonical catching up to pending returns CatchUp strategy.
-    #[test]
-    fn test_reconciler_canonical_catches_up_to_pending() {
-        // Canonical block equals latest pending block
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(105), // latest pending
-            105,       // canonical (equal to latest pending)
-            10,        // max depth
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::CatchUp);
-    }
-
-    /// Test that canonical passing pending returns CatchUp strategy.
-    #[test]
-    fn test_reconciler_canonical_passes_pending() {
-        // Canonical block is ahead of latest pending block
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(105), // latest pending
-            110,       // canonical (ahead of latest pending)
-            10,        // max depth
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::CatchUp);
-    }
-
-    /// Test that reorg detection returns HandleReorg strategy.
-    #[test]
-    fn test_reconciler_reorg_detected() {
-        // Canonical is behind pending but reorg detected
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(110), // latest pending
-            102,       // canonical (behind pending)
-            10,        // max depth
-            true,      // reorg detected!
-        );
-        assert_eq!(strategy, ReconciliationStrategy::HandleReorg);
-    }
-
-    /// Test that exceeding depth limit returns DepthLimitExceeded strategy.
-    #[test]
-    fn test_reconciler_depth_limit_exceeded() {
-        // Pending blocks are too far ahead of canonical
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(120), // latest pending
-            115,       // canonical
-            10,        // max depth (115 - 100 = 15 > 10)
-            false,     // no reorg
-        );
-        assert_eq!(
-            strategy,
-            ReconciliationStrategy::DepthLimitExceeded { depth: 15, max_depth: 10 }
-        );
-    }
-
-    /// Test that normal operation returns Continue strategy.
-    #[test]
-    fn test_reconciler_continue_no_issues() {
-        // Everything is fine, continue building
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(110), // latest pending
-            105,       // canonical (behind pending)
-            10,        // max depth (105 - 100 = 5 <= 10)
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::Continue);
-    }
-
-    /// Test that missing pending state returns NoPendingState strategy.
-    #[test]
-    fn test_reconciler_no_pending_state() {
-        // No pending state exists
-        let strategy = CanonicalBlockReconciler::reconcile(None, None, 100, 10, false);
-        assert_eq!(strategy, ReconciliationStrategy::NoPendingState);
-
-        // Only earliest is Some
-        let strategy = CanonicalBlockReconciler::reconcile(Some(100), None, 100, 10, false);
-        assert_eq!(strategy, ReconciliationStrategy::NoPendingState);
-
-        // Only latest is Some
-        let strategy = CanonicalBlockReconciler::reconcile(None, Some(100), 100, 10, false);
-        assert_eq!(strategy, ReconciliationStrategy::NoPendingState);
-    }
-
-    /// Test edge case: depth exactly at limit should continue.
-    #[test]
-    fn test_reconciler_depth_at_limit_continues() {
-        // Depth exactly equals max_depth (not exceeded)
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(120), // latest pending
-            110,       // canonical (110 - 100 = 10, exactly at limit)
-            10,        // max depth
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::Continue);
-    }
-
-    /// Test that reorg takes priority over depth limit.
-    #[test]
-    fn test_reconciler_reorg_priority_over_depth() {
-        // Both reorg and depth limit exceeded - reorg should take priority
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(130), // latest pending
-            120,       // canonical (120 - 100 = 20 > 10)
-            10,        // max depth
-            true,      // reorg detected!
-        );
-        // Reorg is checked before depth limit
-        assert_eq!(strategy, ReconciliationStrategy::HandleReorg);
-    }
-
-    /// Test that CatchUp takes priority over reorg.
-    #[test]
-    fn test_reconciler_catchup_priority_over_reorg() {
-        // Canonical caught up and reorg detected - CatchUp should take priority
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(105), // latest pending
-            105,       // canonical (caught up)
-            10,        // max depth
-            true,      // reorg detected (but doesn't matter, canonical caught up)
-        );
-        // CatchUp is checked before reorg
-        assert_eq!(strategy, ReconciliationStrategy::CatchUp);
-    }
-
-    /// Test with zero depth.
-    #[test]
-    fn test_reconciler_zero_depth_canonical_at_earliest() {
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(105), // latest pending
-            100,       // canonical at earliest
-            10,        // max depth
-            false,     // no reorg
-        );
-        // Canonical is behind latest, depth is 0, should continue
-        assert_eq!(strategy, ReconciliationStrategy::Continue);
-    }
-
-    /// Test with max_depth of zero (strictest setting).
-    #[test]
-    fn test_reconciler_zero_max_depth() {
-        // Any depth > 0 should exceed limit
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(105), // latest pending
-            101,       // canonical (101 - 100 = 1 > 0)
-            0,         // max depth of 0
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::DepthLimitExceeded { depth: 1, max_depth: 0 });
-
-        // Depth of 0 should still work
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest pending
-            Some(105), // latest pending
-            100,       // canonical (100 - 100 = 0, not exceeded)
-            0,         // max depth of 0
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::Continue);
-    }
-
-    /// Test that earliest equals latest (single pending block).
-    #[test]
-    fn test_reconciler_single_pending_block() {
-        // Single pending block, canonical behind
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest = latest
-            Some(100), // single pending block
-            99,        // canonical behind
-            10,        // max depth
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::Continue);
-
-        // Single pending block, canonical caught up
-        let strategy = CanonicalBlockReconciler::reconcile(
-            Some(100), // earliest = latest
-            Some(100), // single pending block
-            100,       // canonical caught up
-            10,        // max depth
-            false,     // no reorg
-        );
-        assert_eq!(strategy, ReconciliationStrategy::CatchUp);
+    #[rstest]
+    // NoPendingState
+    #[case(None, None, 100, 10, false, ReconciliationStrategy::NoPendingState)]
+    #[case(Some(100), None, 100, 10, false, ReconciliationStrategy::NoPendingState)]
+    #[case(None, Some(100), 100, 10, false, ReconciliationStrategy::NoPendingState)]
+    // CatchUp: canonical >= latest pending
+    #[case(Some(100), Some(105), 105, 10, false, ReconciliationStrategy::CatchUp)]
+    #[case(Some(100), Some(105), 110, 10, false, ReconciliationStrategy::CatchUp)]
+    #[case(Some(100), Some(100), 100, 10, false, ReconciliationStrategy::CatchUp)]
+    #[case(Some(100), Some(105), 105, 10, true, ReconciliationStrategy::CatchUp)] // catchup > reorg priority
+    // HandleReorg
+    #[case(Some(100), Some(110), 102, 10, true, ReconciliationStrategy::HandleReorg)]
+    #[case(Some(100), Some(130), 120, 10, true, ReconciliationStrategy::HandleReorg)] // reorg > depth priority
+    // DepthLimitExceeded
+    #[case(Some(100), Some(120), 115, 10, false, ReconciliationStrategy::DepthLimitExceeded { depth: 15, max_depth: 10 })]
+    #[case(Some(100), Some(105), 101, 0, false, ReconciliationStrategy::DepthLimitExceeded { depth: 1, max_depth: 0 })]
+    // Continue
+    #[case(Some(100), Some(110), 105, 10, false, ReconciliationStrategy::Continue)]
+    #[case(Some(100), Some(120), 110, 10, false, ReconciliationStrategy::Continue)] // depth exactly at limit
+    #[case(Some(100), Some(105), 100, 10, false, ReconciliationStrategy::Continue)]
+    #[case(Some(100), Some(105), 100, 0, false, ReconciliationStrategy::Continue)] // zero depth ok with max_depth=0
+    #[case(Some(100), Some(100), 99, 10, false, ReconciliationStrategy::Continue)] // single pending block
+    fn test_reconciler(
+        #[case] earliest: Option<u64>,
+        #[case] latest: Option<u64>,
+        #[case] canonical: u64,
+        #[case] max_depth: u64,
+        #[case] reorg: bool,
+        #[case] expected: ReconciliationStrategy,
+    ) {
+        let result = CanonicalBlockReconciler::reconcile(earliest, latest, canonical, max_depth, reorg);
+        assert_eq!(result, expected);
     }
 }
