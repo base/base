@@ -12,10 +12,8 @@ workspace = true
 
 [dependencies]
 # workspace
+base-bundles.workspace = true
 base-reth-flashblocks.workspace = true
-
-# base/tips
-tips-core.workspace = true
 
 # reth
 reth.workspace = true
