@@ -13,16 +13,14 @@ pub use base::{
     meter_rpc::MeteringApiImpl,
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
-    types::{
-        BaseSubscriptionKind, ExtendedSubscriptionKind, MeterBlockResponse, MeterBlockTransactions,
-        Status, TransactionStatusResponse,
-    },
+    types::{MeterBlockResponse, MeterBlockTransactions, Status, TransactionStatusResponse},
 };
 
 mod eth;
 pub use eth::{
     pubsub::{EthPubSub, EthPubSubApiServer},
     rpc::{EthApiExt, EthApiOverrideServer},
+    types::{BaseSubscriptionKind, ExtendedSubscriptionKind},
 };
 
 mod metrics;

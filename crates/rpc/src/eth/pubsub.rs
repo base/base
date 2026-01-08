@@ -26,7 +26,7 @@ use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
-use crate::{BaseSubscriptionKind, ExtendedSubscriptionKind};
+use crate::eth::types::{BaseSubscriptionKind, ExtendedSubscriptionKind};
 
 /// Eth pub-sub RPC extension for flashblocks and standard subscriptions.
 ///
