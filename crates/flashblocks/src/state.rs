@@ -24,8 +24,8 @@ use crate::{
     processor::{StateProcessor, StateUpdate},
 };
 
-// Buffer 4s of flashblocks for flashblock_sender
-const BUFFER_SIZE: usize = 20;
+// Buffer for flashblock_sender - large enough to handle processing lag
+const BUFFER_SIZE: usize = 1000;
 
 /// Manages the pending flashblock state and processes incoming updates.
 #[derive(Debug, Clone)]
