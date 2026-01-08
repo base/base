@@ -42,11 +42,11 @@ impl BaseRpcExtension {
 
 impl BaseNodeExtension for BaseRpcExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(&self, builder: OpBuilder) -> OpBuilder {
-        let flashblocks_cell = self.flashblocks_cell.clone();
-        let flashblocks = self.flashblocks.clone();
+    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+        let flashblocks_cell = self.flashblocks_cell;
+        let flashblocks = self.flashblocks;
         let metering_enabled = self.metering_enabled;
-        let sequencer_rpc = self.sequencer_rpc.clone();
+        let sequencer_rpc = self.sequencer_rpc;
 
         builder.extend_rpc_modules(move |ctx| {
             if metering_enabled {

@@ -24,7 +24,7 @@ impl TransactionTracingExtension {
 
 impl BaseNodeExtension for TransactionTracingExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(&self, builder: OpBuilder) -> OpBuilder {
+    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
         let tracing = self.config;
         builder.install_exex_if(tracing.enabled, "tracex", move |ctx| async move {
             Ok(tracex_exex(ctx, tracing.logs_enabled))
