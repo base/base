@@ -11,7 +11,6 @@ pub use base::{
     block::meter_block,
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
-    pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
     types::{
@@ -21,6 +20,9 @@ pub use base::{
 };
 
 mod eth;
-pub use eth::rpc::{EthApiExt, EthApiOverrideServer};
+pub use eth::{
+    pubsub::{EthPubSub, EthPubSubApiServer},
+    rpc::{EthApiExt, EthApiOverrideServer},
+};
 
 mod metrics;
