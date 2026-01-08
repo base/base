@@ -8,7 +8,7 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use crate::StateProcessorError;
+use crate::{ExecutionError, StateProcessorError};
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
@@ -136,7 +136,7 @@ where
                 .inner
                 .inner
                 .as_deposit_receipt()
-                .ok_or(StateProcessorError::DepositReceiptMismatch)?;
+                .ok_or(ExecutionError::DepositReceiptMismatch)?;
 
             (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
         } else {
@@ -158,7 +158,7 @@ where
         self.cumulative_gas_used = self
             .cumulative_gas_used
             .checked_add(receipt.inner.gas_used)
-            .ok_or(StateProcessorError::GasOverflow)?;
+            .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
         Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state })
@@ -194,7 +194,7 @@ where
                 self.cumulative_gas_used = self
                     .cumulative_gas_used
                     .checked_add(gas_used)
-                    .ok_or(StateProcessorError::GasOverflow)?;
+                    .ok_or(ExecutionError::GasOverflow)?;
 
                 let is_canyon_active =
                     self.chain_spec.is_canyon_active_at_timestamp(self.pending_block.timestamp);
@@ -226,7 +226,7 @@ where
                                     .map(|acc| acc.unwrap_or_default().nonce)
                             })
                             .transpose()
-                            .map_err(|_| StateProcessorError::DepositAccountLoad)?;
+                            .map_err(|_| ExecutionError::DepositAccountLoad)?;
 
                         self.receipt_builder.build_deposit_receipt(OpDepositReceipt {
                             inner: receipt,
@@ -266,7 +266,7 @@ where
                         .inner
                         .inner
                         .as_deposit_receipt()
-                        .ok_or(StateProcessorError::DepositReceiptMismatch)?;
+                        .ok_or(ExecutionError::DepositReceiptMismatch)?;
 
                     (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
                 } else {
@@ -288,11 +288,12 @@ where
 
                 Ok(ExecutedPendingTransaction { rpc_transaction, receipt: op_receipt, state })
             }
-            Err(e) => Err(StateProcessorError::TransactionExecution {
+            Err(e) => Err(ExecutionError::TransactionFailed {
                 tx_hash,
                 sender: transaction.signer(),
                 reason: format!("{:?}", e),
-            }),
+            }
+            .into()),
         }
     }
 }

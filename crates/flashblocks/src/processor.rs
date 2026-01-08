@@ -29,8 +29,8 @@ use reth_primitives::RecoveredBlock;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
-    error::{Result, StateProcessorError},
+    ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
+    ProtocolError, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -295,14 +295,14 @@ where
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
-            .map_err(|e| StateProcessorError::StateProvider(e.to_string()))?
-            .ok_or(StateProcessorError::MissingCanonicalHeader { block_number: canonical_block })?;
+            .map_err(|e| ProviderError::StateProvider(e.to_string()))?
+            .ok_or(ProviderError::MissingCanonicalHeader { block_number: canonical_block })?;
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
         let state_provider = self
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
-            .map_err(|e| StateProcessorError::StateProvider(e.to_string()))?;
+            .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
         let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
@@ -320,15 +320,15 @@ where
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
                 .first()
-                .ok_or(StateProcessorError::EmptyFlashblocks)?
+                .ok_or(ProtocolError::EmptyFlashblocks)?
                 .base
                 .clone()
-                .ok_or(StateProcessorError::MissingBase)?;
+                .ok_or(ProtocolError::MissingBase)?;
 
             let latest_flashblock = flashblocks
                 .last()
                 .cloned()
-                .ok_or(StateProcessorError::EmptyFlashblocks)?;
+                .ok_or(ProtocolError::EmptyFlashblocks)?;
 
             let transactions: Vec<Bytes> = flashblocks
                 .iter()
@@ -370,9 +370,9 @@ where
 
             let block: OpBlock = execution_payload
                 .try_into_block()
-                .map_err(|e| StateProcessorError::BlockConversion(e.to_string()))?;
+                .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
             let l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)
-                .map_err(|e| StateProcessorError::L1BlockInfo(e.to_string()))?;
+                .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()))?;
             let block_header = block.header.clone(); // prevents us from needing to clone the entire block
             let sealed_header = block_header.clone().seal(B256::ZERO); // zero block hash for flashblocks
             pending_blocks_builder.with_header(sealed_header);
@@ -388,7 +388,7 @@ where
 
             let evm_env = evm_config
                 .next_evm_env(&last_block_header, &block_env_attributes)
-                .map_err(|e| StateProcessorError::EvmEnv(e.to_string()))?;
+                .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
             let evm = evm_config.evm_with_env(db, evm_env);
 
             // Parallel sender recovery - batch all ECDSA operations upfront
@@ -405,9 +405,7 @@ where
                         .and_then(|p| p.get_transaction_sender(&tx_hash))
                     {
                         Some(cached) => cached,
-                        None => tx
-                            .recover_signer()
-                            .map_err(StateProcessorError::SenderRecovery)?,
+                        None => tx.recover_signer()?,
                     };
                     Ok((tx, sender))
                 })
