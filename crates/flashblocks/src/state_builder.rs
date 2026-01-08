@@ -8,7 +8,6 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use crate::{ExecutionError, StateProcessorError};
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
@@ -21,7 +20,7 @@ use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 
-use crate::PendingBlocks;
+use crate::{ExecutionError, PendingBlocks, StateProcessorError};
 
 /// Represents the result of executing or fetching a cached pending transaction.
 #[derive(Debug, Clone)]

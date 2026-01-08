@@ -325,10 +325,8 @@ where
                 .clone()
                 .ok_or(ProtocolError::MissingBase)?;
 
-            let latest_flashblock = flashblocks
-                .last()
-                .cloned()
-                .ok_or(ProtocolError::EmptyFlashblocks)?;
+            let latest_flashblock =
+                flashblocks.last().cloned().ok_or(ProtocolError::EmptyFlashblocks)?;
 
             let transactions: Vec<Bytes> = flashblocks
                 .iter()

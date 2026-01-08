@@ -278,10 +278,7 @@ mod tests {
     fn test_sender_recovery_from_impl() {
         let recovery_err = RecoveryError::new();
         let err: StateProcessorError = recovery_err.into();
-        assert!(matches!(
-            err,
-            StateProcessorError::Execution(ExecutionError::SenderRecovery(_))
-        ));
+        assert!(matches!(err, StateProcessorError::Execution(ExecutionError::SenderRecovery(_))));
         assert!(err.to_string().contains("sender recovery failed"));
     }
 
