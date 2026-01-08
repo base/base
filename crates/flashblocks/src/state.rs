@@ -17,7 +17,6 @@ use tokio::sync::{
     broadcast::{self, Sender},
     mpsc,
 };
-use tracing::{error, info};
 
 use crate::{
     FlashblocksAPI, FlashblocksReceiver, PendingBlocks,

@@ -28,7 +28,6 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
-use tracing::{debug, error, info, warn};
 
 use crate::{
     Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
@@ -169,7 +168,7 @@ where
                 Ok(None)
             }
             ReconciliationStrategy::HandleReorg => {
-                debug!(
+                warn!(
                     message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
                     tracked_txn_hashes = ?tracked_txn_hashes,
                     block_txn_hashes = ?block_txn_hashes,
