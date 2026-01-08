@@ -1,118 +1,49 @@
 //! Flashblock sequence validation and reorganization detection.
 //!
-//! This module provides pure, stateless validation logic for determining
-//! whether an incoming flashblock is valid in the context of the current
-//! pending state. The validator is designed to be easily unit-testable
-//! without any external dependencies.
-//!
-//! It also provides utilities for detecting chain reorganizations by comparing
-//! tracked transaction sets against canonical chain data.
+//! Provides stateless validation logic for flashblock sequencing and chain reorg detection.
 
 use std::collections::HashSet;
 
 use alloy_primitives::B256;
 
 /// Result of validating a flashblock's position in the sequence.
-///
-/// This enum represents all possible outcomes when validating whether
-/// an incoming flashblock follows the expected sequence relative to
-/// the current latest flashblock.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SequenceValidationResult {
-    /// The flashblock is the next consecutive flashblock within the current block.
-    ///
-    /// This occurs when:
-    /// - `incoming_block_number == latest_block_number`
-    /// - `incoming_index == latest_flashblock_index + 1`
+    /// Next consecutive flashblock within the current block (same block, index + 1).
     NextInSequence,
-
-    /// The flashblock is the first flashblock (index 0) of the next block.
-    ///
-    /// This occurs when:
-    /// - `incoming_block_number == latest_block_number + 1`
-    /// - `incoming_index == 0`
+    /// First flashblock (index 0) of the next block (block + 1).
     FirstOfNextBlock,
-
-    /// The flashblock has the same index as the current latest flashblock.
-    ///
-    /// This is a duplicate that should be ignored.
+    /// Duplicate flashblock (same block and index) - should be ignored.
     Duplicate,
-
-    /// The flashblock has a non-sequential index within the same block.
-    ///
-    /// This indicates a gap in the flashblock sequence, which means
-    /// some flashblocks were missed.
+    /// Non-sequential index within the same block - indicates missed flashblocks.
     NonSequentialGap {
-        /// The expected flashblock index.
+        /// Expected flashblock index.
         expected: u64,
-        /// The actual incoming flashblock index.
+        /// Actual incoming flashblock index.
         actual: u64,
     },
-
-    /// A new block was received with a non-zero flashblock index.
-    ///
-    /// The first flashblock of any new block must have index 0.
-    /// Receiving a non-zero index for a new block means we missed
-    /// the base flashblock.
+    /// New block received with non-zero index - missed the base flashblock.
     InvalidNewBlockIndex {
-        /// The block number of the incoming flashblock.
+        /// Block number of the incoming flashblock.
         block_number: u64,
         /// The invalid (non-zero) index received.
         index: u64,
     },
 }
 
-/// Pure validator for flashblock sequence ordering.
-///
-/// This validator determines whether an incoming flashblock is valid
-/// in the context of the current pending state. It is designed to be
-/// stateless and easily testable.
-///
-/// # Example
-///
-/// ```
-/// use base_reth_flashblocks::validation::{FlashblockSequenceValidator, SequenceValidationResult};
-///
-/// // Validate that flashblock index 3 follows index 2 in block 100
-/// let result = FlashblockSequenceValidator::validate(100, 2, 100, 3);
-/// assert_eq!(result, SequenceValidationResult::NextInSequence);
-///
-/// // Validate that flashblock index 0 of block 101 follows any flashblock in block 100
-/// let result = FlashblockSequenceValidator::validate(100, 5, 101, 0);
-/// assert_eq!(result, SequenceValidationResult::FirstOfNextBlock);
-/// ```
+/// Stateless validator for flashblock sequence ordering.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FlashblockSequenceValidator;
 
 impl FlashblockSequenceValidator {
     /// Validates whether an incoming flashblock follows the expected sequence.
     ///
-    /// This method implements the core validation logic for flashblock ordering:
-    ///
-    /// 1. **Next in sequence**: The incoming flashblock is the next consecutive
-    ///    flashblock within the current block (same block number, index + 1).
-    ///
-    /// 2. **First of next block**: The incoming flashblock is the first flashblock
-    ///    (index 0) of the next block (block number + 1).
-    ///
-    /// 3. **Duplicate**: The incoming flashblock has the same index as the current
-    ///    latest flashblock within the same block.
-    ///
-    /// 4. **Non-sequential gap**: The incoming flashblock has a different block number
-    ///    or a non-consecutive index within the same block.
-    ///
-    /// 5. **Invalid new block index**: A new block is received with a non-zero index.
-    ///
-    /// # Arguments
-    ///
-    /// * `latest_block_number` - The block number of the current latest flashblock.
-    /// * `latest_flashblock_index` - The index of the current latest flashblock.
-    /// * `incoming_block_number` - The block number of the incoming flashblock.
-    /// * `incoming_index` - The index of the incoming flashblock.
-    ///
-    /// # Returns
-    ///
-    /// A [`SequenceValidationResult`] indicating the validation outcome.
+    /// Returns the appropriate [`SequenceValidationResult`] based on:
+    /// - Same block, index + 1 → `NextInSequence`
+    /// - Next block, index 0 → `FirstOfNextBlock`
+    /// - Same block and index → `Duplicate`
+    /// - Same block, wrong index → `NonSequentialGap`
+    /// - Different block, non-zero index or block gap → `InvalidNewBlockIndex`
     pub const fn validate(
         latest_block_number: u64,
         latest_flashblock_index: u64,
@@ -153,16 +84,11 @@ impl FlashblockSequenceValidator {
 }
 
 /// Result of a reorganization detection check.
-///
-/// This enum represents whether a chain reorganization was detected
-/// by comparing tracked transaction hashes against canonical chain data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReorgDetectionResult {
-    /// No reorganization detected - transaction sets match exactly.
+    /// Transaction sets match exactly.
     NoReorg,
-    /// Reorganization detected - transaction sets differ.
-    ///
-    /// Contains the counts from both sets for diagnostic purposes.
+    /// Transaction sets differ (counts included for diagnostics).
     ReorgDetected {
         /// Number of transactions in the tracked (pending) set.
         tracked_count: usize,
@@ -185,64 +111,14 @@ impl ReorgDetectionResult {
     }
 }
 
-/// A pure utility for detecting chain reorganizations.
-///
-/// `ReorgDetector` compares two sets of transaction hashes to determine
-/// if a reorganization has occurred. A reorg is detected when the tracked
-/// transaction set differs from the canonical chain's transaction set,
-/// either in count or content.
-///
-/// # Example
-///
-/// ```
-/// use alloy_primitives::B256;
-/// use base_reth_flashblocks::validation::{ReorgDetector, ReorgDetectionResult};
-///
-/// let tracked = vec![B256::ZERO];
-/// let canonical = vec![B256::ZERO];
-///
-/// let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
-/// assert!(result.is_no_reorg());
-/// ```
+/// Detects chain reorganizations by comparing transaction hash sets.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ReorgDetector;
 
 impl ReorgDetector {
-    /// Detects whether a chain reorganization occurred by comparing transaction hash sets.
+    /// Compares tracked vs canonical transaction hashes to detect reorgs.
     ///
-    /// This method compares the tracked (pending) transaction hashes against the
-    /// canonical chain's transaction hashes. A reorganization is detected if:
-    /// - The number of transactions differs, or
-    /// - The sets contain different transaction hashes
-    ///
-    /// # Arguments
-    ///
-    /// * `tracked_tx_hashes` - Iterator over transaction hashes from the tracked/pending state.
-    /// * `canonical_tx_hashes` - Iterator over transaction hashes from the canonical chain.
-    ///
-    /// # Returns
-    ///
-    /// Returns [`ReorgDetectionResult::NoReorg`] if the transaction sets match exactly,
-    /// or [`ReorgDetectionResult::ReorgDetected`] with the counts if they differ.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::B256;
-    /// use base_reth_flashblocks::validation::{ReorgDetector, ReorgDetectionResult};
-    ///
-    /// // Same transactions - no reorg
-    /// let hash = B256::repeat_byte(0x42);
-    /// let tracked = vec![hash];
-    /// let canonical = vec![hash];
-    ///
-    /// match ReorgDetector::detect(tracked.iter(), canonical.iter()) {
-    ///     ReorgDetectionResult::NoReorg => println!("No reorg detected"),
-    ///     ReorgDetectionResult::ReorgDetected { tracked_count, canonical_count } => {
-    ///         println!("Reorg! tracked: {}, canonical: {}", tracked_count, canonical_count);
-    ///     }
-    /// }
-    /// ```
+    /// Returns `ReorgDetected` if counts differ or sets contain different hashes.
     pub fn detect<'a, I1, I2>(
         tracked_tx_hashes: I1,
         canonical_tx_hashes: I2,
@@ -266,103 +142,34 @@ impl ReorgDetector {
     }
 }
 
-/// Defines explicit handling approaches for reconciling pending state with canonical state.
-///
-/// When a canonical block is received, the reconciliation strategy determines
-/// how to handle the pending flashblock state based on the relationship between
-/// the canonical chain and the pending blocks.
+/// Strategy for reconciling pending state with canonical state on new canonical blocks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReconciliationStrategy {
-    /// Canonical chain has caught up to or passed the pending state.
-    ///
-    /// This occurs when the canonical block number is >= the latest pending block number.
-    /// The pending state should be cleared/reset as it's no longer ahead of canonical.
+    /// Canonical caught up or passed pending (canonical >= latest pending). Clear pending state.
     CatchUp,
-
-    /// A chain reorganization has been detected.
-    ///
-    /// This occurs when the transactions in the pending state for a given block
-    /// don't match the transactions in the canonical block. The pending state
-    /// should be rebuilt from canonical without reusing existing state.
+    /// Reorg detected (tx mismatch). Rebuild pending from canonical.
     HandleReorg,
-
-    /// The pending blocks have grown too far ahead of the canonical chain.
-    ///
-    /// This occurs when the depth (canonical_block - earliest_pending_block)
-    /// exceeds the configured maximum depth. Contains the current depth and
-    /// the configured maximum for diagnostic purposes.
+    /// Pending too far ahead of canonical.
     DepthLimitExceeded {
-        /// The current depth of pending blocks.
+        /// Current depth of pending blocks.
         depth: u64,
-        /// The configured maximum depth.
+        /// Configured maximum depth.
         max_depth: u64,
     },
-
-    /// No issues detected, continue building on existing pending state.
-    ///
-    /// This occurs when the canonical block is behind the pending state,
-    /// no reorg is detected, and depth limits are not exceeded.
+    /// No issues - continue building on pending state.
     Continue,
-
-    /// No pending state exists yet.
-    ///
-    /// This occurs when there is no pending flashblock state to reconcile.
-    /// Typically happens at startup or after the pending state has been cleared.
+    /// No pending state exists (startup or after clear).
     NoPendingState,
 }
 
-/// Reconciler for determining how to handle canonical block updates.
-///
-/// This struct encapsulates the logic for determining which [`ReconciliationStrategy`]
-/// should be used when a new canonical block is received.
-///
-/// # Example
-///
-/// ```
-/// use base_reth_flashblocks::validation::{CanonicalBlockReconciler, ReconciliationStrategy};
-///
-/// // Determine strategy when canonical catches up
-/// let strategy = CanonicalBlockReconciler::reconcile(
-///     Some(100),  // earliest pending block
-///     Some(105),  // latest pending block
-///     105,        // canonical block number (caught up)
-///     10,         // max depth
-///     false,      // no reorg detected
-/// );
-/// assert_eq!(strategy, ReconciliationStrategy::CatchUp);
-/// ```
+/// Determines reconciliation strategy for canonical block updates.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CanonicalBlockReconciler;
 
 impl CanonicalBlockReconciler {
-    /// Determines the appropriate reconciliation strategy based on the current state.
+    /// Returns the appropriate [`ReconciliationStrategy`] based on pending vs canonical state.
     ///
-    /// # Arguments
-    ///
-    /// * `pending_earliest_block` - The earliest block number in the pending state, if any.
-    /// * `pending_latest_block` - The latest block number in the pending state, if any.
-    /// * `canonical_block_number` - The block number of the new canonical block.
-    /// * `max_depth` - The maximum allowed depth between canonical and earliest pending block.
-    /// * `reorg_detected` - Whether a reorg was detected (transaction mismatch).
-    ///
-    /// # Returns
-    ///
-    /// The [`ReconciliationStrategy`] that should be used to handle this situation.
-    ///
-    /// # Strategy Selection Logic
-    ///
-    /// 1. If no pending state exists (`pending_earliest_block` or `pending_latest_block` is `None`),
-    ///    returns [`ReconciliationStrategy::NoPendingState`].
-    ///
-    /// 2. If canonical has caught up or passed pending (`canonical_block_number >= pending_latest_block`),
-    ///    returns [`ReconciliationStrategy::CatchUp`].
-    ///
-    /// 3. If a reorg is detected, returns [`ReconciliationStrategy::HandleReorg`].
-    ///
-    /// 4. If depth limit is exceeded (`canonical_block_number - pending_earliest_block > max_depth`),
-    ///    returns [`ReconciliationStrategy::DepthLimitExceeded`].
-    ///
-    /// 5. Otherwise, returns [`ReconciliationStrategy::Continue`].
+    /// Priority: `NoPendingState` → `CatchUp` → `HandleReorg` → `DepthLimitExceeded` → `Continue`
     pub const fn reconcile(
         pending_earliest_block: Option<u64>,
         pending_latest_block: Option<u64>,
@@ -399,8 +206,9 @@ impl CanonicalBlockReconciler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rstest::rstest;
+
+    use super::*;
 
     // ==================== FlashblockSequenceValidator Tests ====================
 
@@ -438,8 +246,12 @@ mod tests {
         #[case] incoming_idx: u64,
         #[case] expected: SequenceValidationResult,
     ) {
-        let result =
-            FlashblockSequenceValidator::validate(latest_block, latest_idx, incoming_block, incoming_idx);
+        let result = FlashblockSequenceValidator::validate(
+            latest_block,
+            latest_idx,
+            incoming_block,
+            incoming_idx,
+        );
         assert_eq!(result, expected);
     }
 
@@ -470,7 +282,10 @@ mod tests {
         let canonical: Vec<B256> = canonical_bytes.iter().map(|b| B256::repeat_byte(*b)).collect();
         let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
         assert_eq!(result, expected);
-        assert_eq!(result.is_reorg(), matches!(expected, ReorgDetectionResult::ReorgDetected { .. }));
+        assert_eq!(
+            result.is_reorg(),
+            matches!(expected, ReorgDetectionResult::ReorgDetected { .. })
+        );
     }
 
     // ==================== CanonicalBlockReconciler Tests ====================
@@ -505,7 +320,8 @@ mod tests {
         #[case] reorg: bool,
         #[case] expected: ReconciliationStrategy,
     ) {
-        let result = CanonicalBlockReconciler::reconcile(earliest, latest, canonical, max_depth, reorg);
+        let result =
+            CanonicalBlockReconciler::reconcile(earliest, latest, canonical, max_depth, reorg);
         assert_eq!(result, expected);
     }
 }
