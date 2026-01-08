@@ -1,7 +1,7 @@
 pub mod common;
 
 #[cfg(feature = "integration")]
-mod sync {
+mod proposer_sync {
     use std::collections::HashMap;
 
     use crate::common::{
@@ -1487,6 +1487,96 @@ mod sync {
         );
 
         tracing::info!("✓ Defense task correctly spawned for game 1: {:?}", game_addresses[1]);
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "integration")]
+mod challenger_sync {
+    use crate::common::{constants::MAX_PROVE_DURATION, TestEnvironment};
+    use alloy_primitives::{FixedBytes, U256};
+    use anyhow::{Context, Result};
+    use fault_proof::{
+        challenger::{Game, OPSuccinctChallenger},
+        contract::ProposalStatus,
+    };
+    use rand::Rng;
+    use rstest::rstest;
+
+    const M: u32 = u32::MAX;
+
+    async fn setup(
+    ) -> Result<(TestEnvironment, OPSuccinctChallenger<fault_proof::L1Provider>, U256)> {
+        use crate::common::constants::TEST_GAME_TYPE;
+        let env = TestEnvironment::setup().await?;
+        let factory = env.factory()?;
+        let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
+        let challenger = env.init_challenger().await?;
+        Ok((env, challenger, init_bond))
+    }
+
+    async fn cached_game(
+        challenger: &OPSuccinctChallenger<fault_proof::L1Provider>,
+        index: u64,
+    ) -> Result<Game> {
+        challenger
+            .get_game(U256::from(index))
+            .await
+            .with_context(|| format!("game {index} missing from cache"))
+    }
+
+    fn random_invalid_root() -> FixedBytes<32> {
+        let mut rng = rand::rng();
+        let mut bytes = [0u8; 32];
+        rng.fill(&mut bytes);
+        FixedBytes::<32>::from(bytes)
+    }
+
+    #[rstest]
+    #[case::deadline_passed(true)]
+    #[case::deadline_not_passed(false)]
+    #[tokio::test]
+    async fn test_resolution_marking(#[case] expected_should_resolve: bool) -> Result<()> {
+        let (env, challenger, init_bond) = setup().await?;
+
+        let starting_l2_block = env.anvil.starting_l2_block_number;
+        let block = starting_l2_block + 1;
+        env.create_game(random_invalid_root(), block, M, init_bond).await?;
+        let (_, game_address) = env.last_game_info().await?;
+
+        env.challenge_game(game_address).await?;
+
+        if expected_should_resolve {
+            env.warp_time(MAX_PROVE_DURATION + 1).await?;
+        }
+
+        challenger.sync_state().await?;
+
+        let game = cached_game(&challenger, 0).await?;
+        assert_eq!(game.proposal_status, ProposalStatus::Challenged);
+        assert_eq!(game.should_attempt_to_resolve, expected_should_resolve);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_no_challenge_after_deadline() -> Result<()> {
+        use crate::common::constants::MAX_CHALLENGE_DURATION;
+
+        let (env, challenger, init_bond) = setup().await?;
+
+        let starting_l2_block = env.anvil.starting_l2_block_number;
+        let block = starting_l2_block + 1;
+        env.create_game(random_invalid_root(), block, M, init_bond).await?;
+
+        env.warp_time(MAX_CHALLENGE_DURATION + 1).await?;
+
+        challenger.sync_state().await?;
+
+        let game = cached_game(&challenger, 0).await?;
+        assert!(game.is_invalid, "Game should be marked invalid");
+        assert!(!game.should_attempt_to_challenge, "Should not challenge after deadline");
 
         Ok(())
     }

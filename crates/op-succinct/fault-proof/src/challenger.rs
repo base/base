@@ -183,7 +183,7 @@ where
     ///    - Games are marked for bond claim if they are finalized and there is credit to claim.
     ///    - Games are evicted once finalized with no remaining credit or whenever resolves as
     ///      defender wins.
-    async fn sync_state(&self) -> Result<()> {
+    pub async fn sync_state(&self) -> Result<()> {
         // 1. Load new games.
         let mut next_index = {
             let state = self.state.lock().await;
@@ -244,41 +244,44 @@ where
 
                 match status {
                     GameStatus::IN_PROGRESS => {
-                        let is_game_over = match proposal_status {
-                            ProposalStatus::Challenged => now_ts >= deadline,
-                            _ => false,
-                        };
+                        let is_game_over = now_ts >= deadline;
 
-                        if proposal_status == ProposalStatus::Unchallenged {
-                            let is_parent_challenger_wins =
-                                is_parent_challenger_wins(game.parent_index, &self.factory).await?;
+                        // Determine challenge/resolve actions based on proposal status.
+                        // - Unchallenged: challenge if game is still active AND (invalid OR parent
+                        //   lost)
+                        // - Challenged: resolve if game is over AND parent resolved AND we
+                        //   challenged it
+                        let (should_attempt_to_challenge, should_attempt_to_resolve) =
+                            match proposal_status {
+                                ProposalStatus::Unchallenged => {
+                                    let should_challenge = !is_game_over && {
+                                        let parent_lost = is_parent_challenger_wins(
+                                            game.parent_index,
+                                            &self.factory,
+                                        )
+                                        .await?;
+                                        game.is_invalid || parent_lost
+                                    };
+                                    (should_challenge, false)
+                                }
+                                ProposalStatus::Challenged => {
+                                    let is_own_game = claim_data.counteredBy == signer_address;
+                                    let should_resolve = is_game_over && is_own_game && {
+                                        is_parent_resolved(game.parent_index, &self.factory).await?
+                                    };
+                                    (false, should_resolve)
+                                }
+                                _ => (false, false),
+                            };
 
-                            if !is_game_over && (game.is_invalid || is_parent_challenger_wins) {
-                                actions.push(GameSyncAction::Update {
-                                    index: game.index,
-                                    status,
-                                    proposal_status,
-                                    should_attempt_to_challenge: true,
-                                    should_attempt_to_resolve: false,
-                                    should_attempt_to_claim_bond: false,
-                                });
-                            }
-                        } else if proposal_status == ProposalStatus::Challenged {
-                            let is_parent_resolved =
-                                is_parent_resolved(game.parent_index, &self.factory).await?;
-                            let is_own_game = claim_data.counteredBy == signer_address;
-
-                            if is_game_over && is_parent_resolved && is_own_game {
-                                actions.push(GameSyncAction::Update {
-                                    index: game.index,
-                                    status,
-                                    proposal_status,
-                                    should_attempt_to_challenge: false,
-                                    should_attempt_to_resolve: true,
-                                    should_attempt_to_claim_bond: false,
-                                });
-                            }
-                        }
+                        actions.push(GameSyncAction::Update {
+                            index: game.index,
+                            status,
+                            proposal_status,
+                            should_attempt_to_challenge,
+                            should_attempt_to_resolve,
+                            should_attempt_to_claim_bond: false,
+                        });
                     }
                     GameStatus::CHALLENGER_WINS => {
                         let is_finalized =
@@ -643,6 +646,29 @@ where
         );
 
         Ok(())
+    }
+
+    // ==================== Integration Test Helpers ====================
+
+    /// Returns a copy of a game's full internal state for testing.
+    #[cfg(feature = "integration")]
+    pub async fn get_game(&self, index: U256) -> Option<Game> {
+        let state = self.state.lock().await;
+        state.games.get(&index).cloned()
+    }
+
+    /// Returns the number of cached games for testing.
+    #[cfg(feature = "integration")]
+    pub async fn cached_game_count(&self) -> usize {
+        let state = self.state.lock().await;
+        state.games.len()
+    }
+
+    /// Returns a snapshot of all cached game indices for testing.
+    #[cfg(feature = "integration")]
+    pub async fn cached_game_indices(&self) -> Vec<U256> {
+        let state = self.state.lock().await;
+        state.games.keys().cloned().collect()
     }
 }
 
