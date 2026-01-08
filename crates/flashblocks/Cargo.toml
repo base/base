@@ -50,7 +50,7 @@ futures-util.workspace = true
 
 # misc
 url.workspace = true
-eyre.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 metrics.workspace = true
 arc-swap.workspace = true

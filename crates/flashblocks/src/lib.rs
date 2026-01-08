@@ -6,6 +6,9 @@
 #[macro_use]
 extern crate tracing;
 
+mod error;
+pub use error::{Result, StateProcessorError};
+
 mod metrics;
 pub use metrics::Metrics;
 

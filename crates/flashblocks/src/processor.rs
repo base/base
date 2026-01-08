@@ -13,7 +13,6 @@ use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPa
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
-use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;
@@ -31,6 +30,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
+    error::{Result, StateProcessorError},
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -122,7 +122,7 @@ where
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         block: &RecoveredBlock<OpBlock>,
-    ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
+    ) -> Result<Option<Arc<PendingBlocks>>> {
         let pending_blocks = match &prev_pending_blocks {
             Some(pb) => pb,
             None => {
@@ -214,7 +214,7 @@ where
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
-    ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
+    ) -> Result<Option<Arc<PendingBlocks>>> {
         let pending_blocks = match &prev_pending_blocks {
             Some(pb) => pb,
             None => {
@@ -280,7 +280,7 @@ where
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &Vec<Flashblock>,
-    ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
+    ) -> Result<Option<Arc<PendingBlocks>>> {
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<&Flashblock>>::new();
         for flashblock in flashblocks {
@@ -292,14 +292,17 @@ where
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
-        let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
-            "Failed to extract header for canonical block number {}. This can be ignored if the node has recently restarted, restored from a snapshot or is still syncing.",
-            canonical_block
-        ))?;
+        let mut last_block_header = self
+            .client
+            .header_by_number(canonical_block)
+            .map_err(|e| StateProcessorError::StateProvider(e.to_string()))?
+            .ok_or(StateProcessorError::MissingCanonicalHeader { block_number: canonical_block })?;
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
-        let state_provider =
-            self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
+        let state_provider = self
+            .client
+            .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
+            .map_err(|e| StateProcessorError::StateProvider(e.to_string()))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
         let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
@@ -317,15 +320,15 @@ where
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
                 .first()
-                .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
+                .ok_or(StateProcessorError::EmptyFlashblocks)?
                 .base
                 .clone()
-                .ok_or(eyre!("first flashblock does not contain a base"))?;
+                .ok_or(StateProcessorError::MissingBase)?;
 
             let latest_flashblock = flashblocks
                 .last()
                 .cloned()
-                .ok_or(eyre!("cannot build a pending block from no flashblocks"))?;
+                .ok_or(StateProcessorError::EmptyFlashblocks)?;
 
             let transactions: Vec<Bytes> = flashblocks
                 .iter()
@@ -365,8 +368,11 @@ where
                 },
             };
 
-            let block: OpBlock = execution_payload.try_into_block()?;
-            let l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
+            let block: OpBlock = execution_payload
+                .try_into_block()
+                .map_err(|e| StateProcessorError::BlockConversion(e.to_string()))?;
+            let l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)
+                .map_err(|e| StateProcessorError::L1BlockInfo(e.to_string()))?;
             let block_header = block.header.clone(); // prevents us from needing to clone the entire block
             let sealed_header = block_header.clone().seal(B256::ZERO); // zero block hash for flashblocks
             pending_blocks_builder.with_header(sealed_header);
@@ -380,7 +386,9 @@ where
                 extra_data: base.extra_data.clone(),
             };
 
-            let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
+            let evm_env = evm_config
+                .next_evm_env(&last_block_header, &block_env_attributes)
+                .map_err(|e| StateProcessorError::EvmEnv(e.to_string()))?;
             let evm = evm_config.evm_with_env(db, evm_env);
 
             // Parallel sender recovery - batch all ECDSA operations upfront
@@ -390,18 +398,20 @@ where
                 .transactions
                 .par_iter()
                 .cloned()
-                .map(|tx| -> eyre::Result<(OpTxEnvelope, Address)> {
+                .map(|tx| -> Result<(OpTxEnvelope, Address)> {
                     let tx_hash = tx.tx_hash();
                     let sender = match prev_pending_blocks
                         .as_ref()
                         .and_then(|p| p.get_transaction_sender(&tx_hash))
                     {
                         Some(cached) => cached,
-                        None => tx.recover_signer()?,
+                        None => tx
+                            .recover_signer()
+                            .map_err(StateProcessorError::SenderRecovery)?,
                     };
                     Ok((tx, sender))
                 })
-                .collect::<eyre::Result<_>>()?;
+                .collect::<Result<_>>()?;
             self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
             let mut pending_state_builder = PendingStateBuilder::new(

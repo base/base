@@ -11,7 +11,7 @@ use alloy_rpc_types::{BlockTransactions, state::StateOverride};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_flashtypes::Flashblock;
-use eyre::eyre;
+use crate::error::{Result, StateProcessorError};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{db::Cache, state::EvmState};
@@ -122,13 +122,13 @@ impl PendingBlocksBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> eyre::Result<PendingBlocks> {
+    pub(crate) fn build(self) -> Result<PendingBlocks> {
         if self.headers.is_empty() {
-            return Err(eyre!("missing headers"));
+            return Err(StateProcessorError::MissingHeaders);
         }
 
         if self.flashblocks.is_empty() {
-            return Err(eyre!("no flashblocks"));
+            return Err(StateProcessorError::NoFlashblocks);
         }
 
         Ok(PendingBlocks {
