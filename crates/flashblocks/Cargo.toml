@@ -58,6 +58,7 @@ metrics-derive.workspace = true
 rayon.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 rand.workspace = true
 reth-db.workspace = true
 once_cell.workspace = true

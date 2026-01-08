@@ -8,7 +8,7 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use crate::error::{Result, StateProcessorError};
+use crate::StateProcessorError;
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
@@ -91,7 +91,7 @@ where
         &mut self,
         idx: usize,
         transaction: Recovered<OpTxEnvelope>,
-    ) -> Result<ExecutedPendingTransaction> {
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let tx_hash = transaction.tx_hash();
 
         let effective_gas_price = if transaction.is_deposit() {
@@ -130,7 +130,7 @@ where
         state: EvmState,
         idx: usize,
         effective_gas_price: u128,
-    ) -> Result<ExecutedPendingTransaction> {
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let deposit_receipt = receipt
                 .inner
@@ -170,7 +170,7 @@ where
         transaction: Recovered<OpTxEnvelope>,
         idx: usize,
         effective_gas_price: u128,
-    ) -> Result<ExecutedPendingTransaction> {
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let tx_hash = transaction.tx_hash();
 
         match self.evm.transact(&transaction) {

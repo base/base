@@ -4,11 +4,8 @@ use alloy_consensus::crypto::RecoveryError;
 use alloy_primitives::{Address, B256};
 use thiserror::Error;
 
-/// A type alias for `Result<T, StateProcessorError>`.
-pub type Result<T> = std::result::Result<T, StateProcessorError>;
-
 /// Errors that can occur during flashblock state processing.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum StateProcessorError {
     // ==================== Protocol Errors (Invalid Sequences) ====================
     /// Invalid flashblock sequence or ordering.
@@ -49,7 +46,7 @@ pub enum StateProcessorError {
 
     /// ECDSA signature recovery failed.
     #[error("sender recovery failed: {0}")]
-    SenderRecovery(#[from] RecoveryError),
+    SenderRecovery(String),
 
     /// Deposit transaction paired with a non-deposit receipt.
     #[error("deposit receipt mismatch: deposit transaction must have a deposit receipt")]
@@ -85,138 +82,116 @@ pub enum StateProcessorError {
     NoFlashblocks,
 }
 
+impl From<RecoveryError> for StateProcessorError {
+    fn from(err: RecoveryError) -> Self {
+        Self::SenderRecovery(err.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn test_error_display_protocol_errors() {
-        // Test InvalidFlashblockSequence
-        let err = StateProcessorError::InvalidFlashblockSequence;
-        assert_eq!(
-            err.to_string(),
-            "invalid flashblock sequence: flashblocks must be processed in order"
-        );
-
-        // Test MissingBase
-        let err = StateProcessorError::MissingBase;
-        assert_eq!(
-            err.to_string(),
-            "missing base: first flashblock in sequence must contain a base payload"
-        );
-
-        // Test EmptyFlashblocks
-        let err = StateProcessorError::EmptyFlashblocks;
-        assert_eq!(err.to_string(), "empty flashblocks: cannot build state from zero flashblocks");
+    #[rstest]
+    #[case::invalid_flashblock_sequence(
+        StateProcessorError::InvalidFlashblockSequence,
+        "invalid flashblock sequence: flashblocks must be processed in order"
+    )]
+    #[case::missing_base(
+        StateProcessorError::MissingBase,
+        "missing base: first flashblock in sequence must contain a base payload"
+    )]
+    #[case::empty_flashblocks(
+        StateProcessorError::EmptyFlashblocks,
+        "empty flashblocks: cannot build state from zero flashblocks"
+    )]
+    #[case::missing_canonical_header(
+        StateProcessorError::MissingCanonicalHeader { block_number: 12345 },
+        "missing canonical header for block 12345"
+    )]
+    #[case::state_provider(
+        StateProcessorError::StateProvider("connection failed".to_string()),
+        "state provider error: connection failed"
+    )]
+    #[case::deposit_receipt_mismatch(
+        StateProcessorError::DepositReceiptMismatch,
+        "deposit receipt mismatch: deposit transaction must have a deposit receipt"
+    )]
+    #[case::gas_overflow(
+        StateProcessorError::GasOverflow,
+        "gas overflow: cumulative gas used exceeded u64::MAX"
+    )]
+    #[case::evm_env(
+        StateProcessorError::EvmEnv("invalid chain id".to_string()),
+        "EVM environment error: invalid chain id"
+    )]
+    #[case::l1_block_info(
+        StateProcessorError::L1BlockInfo("missing l1 data".to_string()),
+        "L1 block info extraction error: missing l1 data"
+    )]
+    #[case::block_conversion(
+        StateProcessorError::BlockConversion("invalid payload".to_string()),
+        "block conversion error: invalid payload"
+    )]
+    #[case::deposit_account_load(
+        StateProcessorError::DepositAccountLoad,
+        "failed to load cache account for deposit transaction sender"
+    )]
+    #[case::missing_headers(
+        StateProcessorError::MissingHeaders,
+        "missing headers: cannot build pending blocks without header information"
+    )]
+    #[case::no_flashblocks(
+        StateProcessorError::NoFlashblocks,
+        "no flashblocks: cannot build pending blocks from empty flashblock collection"
+    )]
+    #[case::sender_recovery(
+        StateProcessorError::SenderRecovery("invalid signature".to_string()),
+        "sender recovery failed: invalid signature"
+    )]
+    fn test_error_display(#[case] error: StateProcessorError, #[case] expected: &str) {
+        assert_eq!(error.to_string(), expected);
     }
 
-    #[test]
-    fn test_error_display_operational_errors() {
-        // Test MissingCanonicalHeader
-        let err = StateProcessorError::MissingCanonicalHeader { block_number: 12345 };
-        assert_eq!(err.to_string(), "missing canonical header for block 12345");
-
-        // Test StateProvider
-        let err = StateProcessorError::StateProvider("connection failed".to_string());
-        assert_eq!(err.to_string(), "state provider error: connection failed");
-    }
-
-    #[test]
-    fn test_error_display_execution_errors() {
-        // Test TransactionExecution
-        let tx_hash = B256::ZERO;
-        let sender = Address::ZERO;
-        let err = StateProcessorError::TransactionExecution {
-            tx_hash,
-            sender,
+    #[rstest]
+    #[case::transaction_execution(
+        StateProcessorError::TransactionExecution {
+            tx_hash: B256::ZERO,
+            sender: Address::ZERO,
             reason: "out of gas".to_string(),
-        };
-        assert!(err.to_string().contains("transaction execution failed"));
-        assert!(err.to_string().contains("out of gas"));
+        },
+        &["transaction execution failed", "out of gas"]
+    )]
+    fn test_error_display_contains(#[case] error: StateProcessorError, #[case] substrings: &[&str]) {
+        let display = error.to_string();
+        for substring in substrings {
+            assert!(display.contains(substring), "expected '{display}' to contain '{substring}'");
+        }
+    }
 
-        // Test DepositReceiptMismatch
-        let err = StateProcessorError::DepositReceiptMismatch;
-        assert_eq!(
-            err.to_string(),
-            "deposit receipt mismatch: deposit transaction must have a deposit receipt"
-        );
-
-        // Test GasOverflow
-        let err = StateProcessorError::GasOverflow;
-        assert_eq!(err.to_string(), "gas overflow: cumulative gas used exceeded u64::MAX");
-
-        // Test EvmEnv
-        let err = StateProcessorError::EvmEnv("invalid chain id".to_string());
-        assert_eq!(err.to_string(), "EVM environment error: invalid chain id");
-
-        // Test L1BlockInfo
-        let err = StateProcessorError::L1BlockInfo("missing l1 data".to_string());
-        assert_eq!(err.to_string(), "L1 block info extraction error: missing l1 data");
-
-        // Test BlockConversion
-        let err = StateProcessorError::BlockConversion("invalid payload".to_string());
-        assert_eq!(err.to_string(), "block conversion error: invalid payload");
-
-        // Test DepositAccountLoad
-        let err = StateProcessorError::DepositAccountLoad;
-        assert_eq!(
-            err.to_string(),
-            "failed to load cache account for deposit transaction sender"
-        );
+    #[rstest]
+    #[case::missing_canonical_header(
+        StateProcessorError::MissingCanonicalHeader { block_number: 100 }
+    )]
+    #[case::missing_base(StateProcessorError::MissingBase)]
+    #[case::empty_flashblocks(StateProcessorError::EmptyFlashblocks)]
+    #[case::missing_headers(StateProcessorError::MissingHeaders)]
+    #[case::no_flashblocks(StateProcessorError::NoFlashblocks)]
+    #[case::gas_overflow(StateProcessorError::GasOverflow)]
+    fn test_error_debug(#[case] error: StateProcessorError) {
+        let debug_str = format!("{:?}", error);
+        assert!(!debug_str.is_empty());
     }
 
     #[test]
-    fn test_error_display_build_errors() {
-        // Test MissingHeaders
-        let err = StateProcessorError::MissingHeaders;
-        assert_eq!(
-            err.to_string(),
-            "missing headers: cannot build pending blocks without header information"
-        );
-
-        // Test NoFlashblocks
-        let err = StateProcessorError::NoFlashblocks;
-        assert_eq!(
-            err.to_string(),
-            "no flashblocks: cannot build pending blocks from empty flashblock collection"
-        );
-    }
-
-    #[test]
-    fn test_error_pattern_matching() {
-        // Test that we can pattern match on specific error variants
-        let err = StateProcessorError::MissingCanonicalHeader { block_number: 100 };
-        assert!(matches!(err, StateProcessorError::MissingCanonicalHeader { block_number: 100 }));
-
-        let err = StateProcessorError::MissingBase;
-        assert!(matches!(err, StateProcessorError::MissingBase));
-
-        let err = StateProcessorError::EmptyFlashblocks;
-        assert!(matches!(err, StateProcessorError::EmptyFlashblocks));
-
-        let err = StateProcessorError::MissingHeaders;
-        assert!(matches!(err, StateProcessorError::MissingHeaders));
-
-        let err = StateProcessorError::NoFlashblocks;
-        assert!(matches!(err, StateProcessorError::NoFlashblocks));
-    }
-
-    #[test]
-    fn test_error_debug_impl() {
-        // Verify Debug is implemented
-        let err = StateProcessorError::GasOverflow;
-        let debug_str = format!("{:?}", err);
-        assert!(debug_str.contains("GasOverflow"));
-    }
-
-    #[test]
-    fn test_result_type_alias() {
-        // Test that the Result type alias works correctly
-        fn returns_ok() -> Result<u32> {
+    fn test_error_in_result() {
+        fn returns_ok() -> Result<u32, StateProcessorError> {
             Ok(42)
         }
 
-        fn returns_err() -> Result<u32> {
+        fn returns_err() -> Result<u32, StateProcessorError> {
             Err(StateProcessorError::GasOverflow)
         }
 
@@ -228,7 +203,6 @@ mod tests {
 
     #[test]
     fn test_error_is_send_sync() {
-        // Verify the error type is Send + Sync for use in async contexts
         fn assert_send<T: Send>() {}
         fn assert_sync<T: Sync>() {}
 
@@ -238,7 +212,6 @@ mod tests {
 
     #[test]
     fn test_sender_recovery_from_impl() {
-        // Test that RecoveryError can be converted into StateProcessorError
         let recovery_err = RecoveryError::new();
         let err: StateProcessorError = recovery_err.into();
         assert!(matches!(err, StateProcessorError::SenderRecovery(_)));
