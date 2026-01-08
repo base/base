@@ -13,8 +13,8 @@ use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProvide
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
-use crate::{FlashblockTrieCache, MeteringApiServer, meter_bundle};
 use super::{block::meter_block, types::MeterBlockResponse};
+use crate::{FlashblockTrieCache, MeteringApiServer, meter_bundle};
 
 /// Implementation of the metering RPC API.
 #[derive(Debug)]
@@ -289,7 +289,7 @@ where
     }
 }
 
-impl<Provider> MeteringApiImpl<Provider>
+impl<Provider, FB> MeteringApiImpl<Provider, FB>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -300,6 +300,7 @@ where
         + Send
         + Sync
         + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
 {
     /// Internal helper to meter a block's execution
     fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {

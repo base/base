@@ -32,7 +32,6 @@ use reth::{
     },
 };
 use reth_evm::{ConfigureEvm, Evm, eth::receipt_builder::ReceiptBuilderCtx};
-use revm_database::states::bundle_state::BundleRetention;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{OpBlock, OpPrimitives};
@@ -551,8 +550,12 @@ where
                                         && transaction.is_deposit())
                                     .then(|| {
                                         evm.db_mut()
-                                            .load_account(recovered_transaction.signer())
-                                            .map(|acc| acc.info.nonce)
+                                            .load_cache_account(recovered_transaction.signer())
+                                            .map(|acc| {
+                                                acc.account_info()
+                                                    .map(|info| info.nonce)
+                                                    .unwrap_or(0)
+                                            })
                                     })
                                     .transpose()
                                     .map_err(|_| {

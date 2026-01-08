@@ -61,12 +61,14 @@ metrics-derive.workspace = true
 rayon.workspace = true
 
 [dev-dependencies]
+alloy-genesis.workspace = true
 rand.workspace = true
 revm.workspace = true
 reth-db.workspace = true
 once_cell.workspace = true
 reth-provider.workspace = true
 reth-db-common.workspace = true
+reth-optimism-node.workspace = true
 alloy-rpc-client.workspace = true
 op-alloy-consensus.workspace = true
 reth-testing-utils.workspace = true

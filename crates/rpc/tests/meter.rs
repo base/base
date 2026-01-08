@@ -14,7 +14,10 @@ use rand::{SeedableRng, rngs::StdRng};
 use reth::{
     api::NodeTypesWithDBAdapter,
     chainspec::EthChainSpec,
-    revm::db::{BundleState, Cache},
+    revm::{
+        db::{BundleState, Cache},
+        primitives::KECCAK_EMPTY,
+    },
 };
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
@@ -24,7 +27,6 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use revm::primitives::KECCAK_EMPTY;
 use tips_core::types::{Bundle, ParsedBundle};
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
@@ -426,13 +428,13 @@ fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()
     let bundle_state = BundleState::new(
         [(
             alice_address,
-            Some(revm::state::AccountInfo {
+            Some(reth::revm::state::AccountInfo {
                 balance: U256::from(1_000_000_000u64),
                 nonce: 0, // original
                 code_hash: KECCAK_EMPTY,
                 code: None,
             }),
-            Some(revm::state::AccountInfo {
+            Some(reth::revm::state::AccountInfo {
                 balance: U256::from(1_000_000_000u64),
                 nonce: 1, // pending (after first flashblock tx)
                 code_hash: KECCAK_EMPTY,
@@ -440,11 +442,12 @@ fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()
             }),
             Default::default(), // no storage changes
         )],
-        Vec::<Vec<(Address, Option<Option<revm::state::AccountInfo>>, Vec<(U256, U256)>)>>::new(),
-        Vec::<(B256, revm::bytecode::Bytecode)>::new(),
+        Vec::<Vec<(Address, Option<Option<reth::revm::state::AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+        Vec::<(B256, reth::revm::bytecode::Bytecode)>::new(),
     );
 
-    let flashblocks_state = FlashblocksState { cache: Cache::default(), bundle_state };
+    let flashblocks_state =
+        base_reth_rpc::FlashblocksState { cache: Cache::default(), bundle_state };
 
     // With correct flashblocks state, transaction should succeed
     let state_provider2 = harness

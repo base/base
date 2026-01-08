@@ -21,8 +21,6 @@ pub use engine::{EngineAddress, EngineApi, EngineProtocol, HttpEngine, IpcEngine
 mod fixtures;
 pub use fixtures::{create_provider_factory, load_genesis};
 
-pub mod flashblocks;
-
 mod flashblocks_harness;
 pub use flashblocks_harness::FlashblocksHarness;
 

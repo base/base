@@ -5,6 +5,8 @@ use std::{any::Any, net::SocketAddr, sync::Arc};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
+use arc_swap::Guard;
+use base_reth_flashblocks::{FlashblocksAPI, PendingBlocks};
 use base_reth_rpc::{MeterBundleResponse, MeteringApiImpl, MeteringApiServer};
 use base_reth_test_utils::{init_silenced_tracing, load_genesis};
 use op_alloy_consensus::OpTxEnvelope;
@@ -21,11 +23,35 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tips_core::types::Bundle;
+use tokio::sync::broadcast;
 
 struct NodeContext {
     http_api_addr: SocketAddr,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
+}
+
+/// Dummy FlashblocksAPI implementation for tests that don't need flashblock state
+struct DummyFlashblocks {
+    pending_blocks: arc_swap::ArcSwapOption<PendingBlocks>,
+}
+
+impl Default for DummyFlashblocks {
+    fn default() -> Self {
+        Self { pending_blocks: arc_swap::ArcSwapOption::new(None) }
+    }
+}
+
+impl FlashblocksAPI for DummyFlashblocks {
+    fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
+        self.pending_blocks.load()
+    }
+
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>> {
+        let (tx, rx) = broadcast::channel(1);
+        drop(tx);
+        rx
+    }
 }
 
 // Helper function to create a Bundle with default fields
@@ -84,7 +110,8 @@ async fn setup_node() -> eyre::Result<NodeContext> {
         .with_components(node.components_builder())
         .with_add_ons(node.add_ons())
         .extend_rpc_modules(move |ctx| {
-            let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+            let metering_api =
+                MeteringApiImpl::new(ctx.provider().clone(), Arc::new(DummyFlashblocks::default()));
             ctx.modules.merge_configured(metering_api.into_rpc())?;
             Ok(())
         })
