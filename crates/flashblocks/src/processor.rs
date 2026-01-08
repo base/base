@@ -200,7 +200,7 @@ where
     ) -> eyre::Result<ExecutedPendingTransaction> {
         let tx_hash = transaction.tx_hash();
 
-        match self.evm.transact(transaction.clone()) {
+        match self.evm.transact(&transaction) {
             Ok(ResultAndState { state, result }) => {
                 let gas_used = result.gas_used();
                 let mut touched_balances = HashMap::default();
