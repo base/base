@@ -143,8 +143,7 @@ where
         let tracked_txn_hashes: Vec<_> = tracked_txns.iter().map(|tx| tx.tx_hash()).collect();
         let block_txn_hashes: Vec<_> = block.body().transactions().map(|tx| tx.tx_hash()).collect();
 
-        let reorg_result =
-            ReorgDetector::detect(tracked_txn_hashes.iter(), block_txn_hashes.iter());
+        let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
         let reorg_detected = reorg_result.is_reorg();
 
         // Determine the reconciliation strategy
@@ -217,63 +216,63 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
-        match &prev_pending_blocks {
-            Some(pending_blocks) => {
-                let validation_result = FlashblockSequenceValidator::validate(
-                    pending_blocks.latest_block_number(),
-                    pending_blocks.latest_flashblock_index(),
-                    flashblock.metadata.block_number,
-                    flashblock.index,
-                );
-
-                match validation_result {
-                    SequenceValidationResult::NextInSequence
-                    | SequenceValidationResult::FirstOfNextBlock => {
-                        // We have received the next flashblock for the current block
-                        // or the first flashblock for the next block
-                        let mut flashblocks = pending_blocks.get_flashblocks();
-                        flashblocks.push(flashblock);
-                        self.build_pending_state(prev_pending_blocks, &flashblocks)
-                    }
-                    SequenceValidationResult::Duplicate => {
-                        // We have received a duplicate flashblock for the current block
-                        self.metrics.unexpected_block_order.increment(1);
-                        warn!(
-                            message = "Received duplicate Flashblock for current block, ignoring",
-                            curr_block = %pending_blocks.latest_block_number(),
-                            flashblock_index = %flashblock.index,
-                        );
-                        Ok(prev_pending_blocks)
-                    }
-                    SequenceValidationResult::InvalidNewBlockIndex { block_number, index: _ } => {
-                        // We have received a non-zero flashblock for a new block
-                        self.metrics.unexpected_block_order.increment(1);
-                        error!(
-                            message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
-                            curr_block = %pending_blocks.latest_block_number(),
-                            new_block = %block_number,
-                        );
-                        Ok(None)
-                    }
-                    SequenceValidationResult::NonSequentialGap { expected: _, actual: _ } => {
-                        // We have received a non-sequential Flashblock for the current block
-                        self.metrics.unexpected_block_order.increment(1);
-                        error!(
-                            message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
-                            curr_block = %pending_blocks.latest_block_number(),
-                            new_block = %flashblock.metadata.block_number,
-                        );
-                        Ok(None)
-                    }
-                }
-            }
+        let pending_blocks = match &prev_pending_blocks {
+            Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    self.build_pending_state(None, &vec![flashblock])
+                    return self.build_pending_state(None, &vec![flashblock]);
                 } else {
                     info!(message = "waiting for first Flashblock");
-                    Ok(None)
+                    return Ok(None);
                 }
+            }
+        };
+
+        let validation_result = FlashblockSequenceValidator::validate(
+            pending_blocks.latest_block_number(),
+            pending_blocks.latest_flashblock_index(),
+            flashblock.metadata.block_number,
+            flashblock.index,
+        );
+
+        match validation_result {
+            SequenceValidationResult::NextInSequence
+            | SequenceValidationResult::FirstOfNextBlock => {
+                // We have received the next flashblock for the current block
+                // or the first flashblock for the next block
+                let mut flashblocks = pending_blocks.get_flashblocks();
+                flashblocks.push(flashblock);
+                self.build_pending_state(prev_pending_blocks, &flashblocks)
+            }
+            SequenceValidationResult::Duplicate => {
+                // We have received a duplicate flashblock for the current block
+                self.metrics.unexpected_block_order.increment(1);
+                warn!(
+                    message = "Received duplicate Flashblock for current block, ignoring",
+                    curr_block = %pending_blocks.latest_block_number(),
+                    flashblock_index = %flashblock.index,
+                );
+                Ok(prev_pending_blocks)
+            }
+            SequenceValidationResult::InvalidNewBlockIndex { block_number, index: _ } => {
+                // We have received a non-zero flashblock for a new block
+                self.metrics.unexpected_block_order.increment(1);
+                error!(
+                    message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
+                    curr_block = %pending_blocks.latest_block_number(),
+                    new_block = %block_number,
+                );
+                Ok(None)
+            }
+            SequenceValidationResult::NonSequentialGap { expected: _, actual: _ } => {
+                // We have received a non-sequential Flashblock for the current block
+                self.metrics.unexpected_block_order.increment(1);
+                error!(
+                    message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
+                    curr_block = %pending_blocks.latest_block_number(),
+                    new_block = %flashblock.metadata.block_number,
+                );
+                Ok(None)
             }
         }
     }

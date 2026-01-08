@@ -111,22 +111,14 @@ impl ReorgDetector {
     /// Compares tracked vs canonical transaction hashes to detect reorgs.
     ///
     /// Returns `ReorgDetected` if counts differ, hashes differ, or order differs.
-    pub fn detect<'a, I1, I2>(
-        tracked_tx_hashes: I1,
-        canonical_tx_hashes: I2,
-    ) -> ReorgDetectionResult
-    where
-        I1: Iterator<Item = &'a B256>,
-        I2: Iterator<Item = &'a B256>,
-    {
-        let tracked: Vec<&B256> = tracked_tx_hashes.collect();
-        let canonical: Vec<&B256> = canonical_tx_hashes.collect();
-
-        // Check count, content, AND order - any difference indicates a reorg
-        if tracked != canonical {
+    pub fn detect(
+        tracked_tx_hashes: &[B256],
+        canonical_tx_hashes: &[B256],
+    ) -> ReorgDetectionResult {
+        if tracked_tx_hashes != canonical_tx_hashes {
             ReorgDetectionResult::ReorgDetected {
-                tracked_count: tracked.len(),
-                canonical_count: canonical.len(),
+                tracked_count: tracked_tx_hashes.len(),
+                canonical_count: canonical_tx_hashes.len(),
             }
         } else {
             ReorgDetectionResult::NoReorg
@@ -275,7 +267,7 @@ mod tests {
     ) {
         let tracked: Vec<B256> = tracked_bytes.iter().map(|b| B256::repeat_byte(*b)).collect();
         let canonical: Vec<B256> = canonical_bytes.iter().map(|b| B256::repeat_byte(*b)).collect();
-        let result = ReorgDetector::detect(tracked.iter(), canonical.iter());
+        let result = ReorgDetector::detect(&tracked, &canonical);
         assert_eq!(result, expected);
         assert_eq!(
             result.is_reorg(),
