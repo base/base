@@ -2,8 +2,6 @@
 //!
 //! Provides stateless validation logic for flashblock sequencing and chain reorg detection.
 
-use std::collections::HashSet;
-
 use alloy_primitives::B256;
 
 /// Result of validating a flashblock's position in the sequence.
@@ -118,7 +116,7 @@ pub struct ReorgDetector;
 impl ReorgDetector {
     /// Compares tracked vs canonical transaction hashes to detect reorgs.
     ///
-    /// Returns `ReorgDetected` if counts differ or sets contain different hashes.
+    /// Returns `ReorgDetected` if counts differ, hashes differ, or order differs.
     pub fn detect<'a, I1, I2>(
         tracked_tx_hashes: I1,
         canonical_tx_hashes: I2,
@@ -127,15 +125,15 @@ impl ReorgDetector {
         I1: Iterator<Item = &'a B256>,
         I2: Iterator<Item = &'a B256>,
     {
-        let tracked_set: HashSet<&B256> = tracked_tx_hashes.collect();
-        let canonical_set: HashSet<&B256> = canonical_tx_hashes.collect();
+        let tracked: Vec<&B256> = tracked_tx_hashes.collect();
+        let canonical: Vec<&B256> = canonical_tx_hashes.collect();
 
-        let tracked_count = tracked_set.len();
-        let canonical_count = canonical_set.len();
-
-        // Check both count and content - if counts differ or sets are not equal, it's a reorg
-        if tracked_count != canonical_count || tracked_set != canonical_set {
-            ReorgDetectionResult::ReorgDetected { tracked_count, canonical_count }
+        // Check count, content, AND order - any difference indicates a reorg
+        if tracked != canonical {
+            ReorgDetectionResult::ReorgDetected {
+                tracked_count: tracked.len(),
+                canonical_count: canonical.len(),
+            }
         } else {
             ReorgDetectionResult::NoReorg
         }
@@ -258,17 +256,20 @@ mod tests {
     // ==================== ReorgDetector Tests ====================
 
     #[rstest]
-    // No reorg cases
+    // No reorg cases - identical sequences
     #[case(&[], &[], ReorgDetectionResult::NoReorg)]
     #[case(&[0x01], &[0x01], ReorgDetectionResult::NoReorg)]
     #[case(&[0x01, 0x02, 0x03], &[0x01, 0x02, 0x03], ReorgDetectionResult::NoReorg)]
-    #[case(&[0x01, 0x02, 0x03], &[0x03, 0x01, 0x02], ReorgDetectionResult::NoReorg)] // order doesn't matter
-    #[case(&[0x01, 0x01, 0x02], &[0x01, 0x02], ReorgDetectionResult::NoReorg)] // duplicates deduplicated
+    #[case(&[0x01, 0x01, 0x02], &[0x01, 0x01, 0x02], ReorgDetectionResult::NoReorg)]
+    // Reorg cases - different order (order matters!)
+    #[case(&[0x01, 0x02, 0x03], &[0x03, 0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 3 })]
+    #[case(&[0x01, 0x02], &[0x02, 0x01], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
     // Reorg cases - different counts
     #[case(&[0x01, 0x02, 0x03], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
     #[case(&[0x01], &[0x01, 0x02, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 3 })]
     #[case(&[], &[0x01], ReorgDetectionResult::ReorgDetected { tracked_count: 0, canonical_count: 1 })]
     #[case(&[0x01], &[], ReorgDetectionResult::ReorgDetected { tracked_count: 1, canonical_count: 0 })]
+    #[case(&[0x01, 0x01, 0x02], &[0x01, 0x02], ReorgDetectionResult::ReorgDetected { tracked_count: 3, canonical_count: 2 })]
     // Reorg cases - same count, different hashes
     #[case(&[0x01, 0x02], &[0x03, 0x04], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
     #[case(&[0x01, 0x02], &[0x01, 0x03], ReorgDetectionResult::ReorgDetected { tracked_count: 2, canonical_count: 2 })]
