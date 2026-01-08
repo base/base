@@ -48,22 +48,16 @@ impl FlashblockSequenceValidator {
         incoming_block_number: u64,
         incoming_index: u64,
     ) -> SequenceValidationResult {
-        // Check if this is the next flashblock within the current block
-        let is_next_of_block = incoming_block_number == latest_block_number
-            && incoming_index == latest_flashblock_index + 1;
-
-        // Check if this is the first flashblock of the next block
-        let is_first_of_next_block =
-            incoming_block_number == latest_block_number + 1 && incoming_index == 0;
-
-        if is_next_of_block || is_first_of_next_block {
-            if is_next_of_block {
-                SequenceValidationResult::NextInSequence
-            } else {
-                SequenceValidationResult::FirstOfNextBlock
-            }
+        // Next flashblock within the current block
+        if incoming_block_number == latest_block_number
+            && incoming_index == latest_flashblock_index + 1
+        {
+            SequenceValidationResult::NextInSequence
+        // First flashblock of the next block
+        } else if incoming_block_number == latest_block_number + 1 && incoming_index == 0 {
+            SequenceValidationResult::FirstOfNextBlock
+        // New block with non-zero index or block gap
         } else if incoming_block_number != latest_block_number {
-            // New block with non-zero index
             SequenceValidationResult::InvalidNewBlockIndex {
                 block_number: incoming_block_number,
                 index: incoming_index,
