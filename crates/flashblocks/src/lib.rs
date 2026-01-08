@@ -24,7 +24,7 @@ pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 mod state_builder;
 pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
 
-pub mod validation;
+mod validation;
 pub use validation::{
     CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
     ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
