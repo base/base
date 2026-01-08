@@ -116,7 +116,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         );
         anchorStateRegistry = AnchorStateRegistry(address(proxy));
 
-        // Create a new access manager with 1 hour permissionless timeout.
+        // Create a new access manager with a 2 week permissionless timeout.
         accessManager = new AccessManager(2 weeks, IDisputeGameFactory(address(factory)));
         accessManager.setProposer(proposer, true);
         accessManager.setChallenger(challenger, true);
@@ -209,8 +209,14 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         assertEq(game.rootClaim().raw(), rootClaim.raw());
         assertEq(game.maxChallengeDuration().raw(), maxChallengeDuration.raw());
         assertEq(game.maxProveDuration().raw(), maxProveDuration.raw());
-        assertEq(address(game.disputeGameFactory()), address(factory));
         assertEq(game.l2BlockNumber(), l2BlockNumber);
+        assertEq(game.createdAt().raw(), block.timestamp);
+        assertEq(game.extraData(), abi.encodePacked(l2BlockNumber, parentIndex));
+        assertEq(game.parentIndex(), parentIndex);
+        assertEq(address(game.anchorStateRegistry()), address(anchorStateRegistry));
+        assertEq(address(game.accessManager()), address(accessManager));
+        assertEq(address(game.disputeGameFactory()), address(factory));
+        assertTrue(game.wasRespectedGameTypeWhenCreated());
 
         // The parent's block number was 1000.
         assertEq(game.startingBlockNumber(), 1000);
@@ -268,10 +274,17 @@ contract OPSuccinctFaultDisputeGameTest is Test {
 
         // Proposer gets the bond back.
         vm.warp(game.resolvedAt().raw() + portal.disputeGameFinalityDelaySeconds() + 1 seconds);
+
+        // Returns normal mode credit
+        assertEq(game.credit(proposer), 1 ether);
+
         game.claimCredit(proposer);
+
+        assertEq(game.credit(proposer), 0);
 
         // Check final state
         assertEq(uint8(game.status()), uint8(GameStatus.DEFENDER_WINS));
+        assertTrue(game.gameOver());
         // The contract should have paid back the proposer.
         assertEq(address(game).balance, 0);
         // Proposer posted 1 ether, so they get it back.
