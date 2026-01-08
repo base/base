@@ -5,7 +5,8 @@ use std::{any::Any, net::SocketAddr, sync::Arc};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
-use base_reth_rpc::{MeterBundleResponse, MeteringApiImpl, MeteringApiServer};
+use base_bundles::{Bundle, MeterBundleResponse};
+use base_reth_rpc::{MeteringApiImpl, MeteringApiServer};
 use base_reth_test_utils::{init_silenced_tracing, load_genesis};
 use op_alloy_consensus::OpTxEnvelope;
 use reth::{
@@ -20,7 +21,6 @@ use reth_optimism_node::{OpNode, args::RollupArgs};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tips_core::types::Bundle;
 
 struct NodeContext {
     http_api_addr: SocketAddr,

@@ -2,15 +2,13 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
 use alloy_primitives::{B256, U256};
+use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use eyre::{Result as EyreResult, eyre};
 use reth::revm::db::State;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
-use tips_core::types::{BundleExtensions, BundleTxs, ParsedBundle};
-
-use crate::TransactionResult;
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 

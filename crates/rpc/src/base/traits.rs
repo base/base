@@ -2,9 +2,10 @@
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, TxHash};
+use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{Bundle, MeterBlockResponse, MeterBundleResponse, TransactionStatusResponse};
+use crate::{MeterBlockResponse, TransactionStatusResponse};
 
 /// RPC API for transaction metering
 #[rpc(server, namespace = "base")]

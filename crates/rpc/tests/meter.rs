@@ -6,6 +6,7 @@ use alloy_consensus::crypto::secp256k1::public_key_to_address;
 use alloy_eips::Encodable2718;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use base_bundles::{Bundle, ParsedBundle};
 use base_reth_rpc::meter_bundle;
 use base_reth_test_utils::create_provider_factory;
 use eyre::Context;
@@ -20,7 +21,6 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tips_core::types::{Bundle, ParsedBundle};
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
 

@@ -1614,6 +1614,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-sol-macro",
  "alloy-sol-types",
+ "base-bundles",
  "base-flashtypes",
  "base-reth-flashblocks",
  "base-reth-test-utils",
@@ -1646,7 +1647,6 @@ dependencies = [
  "reth-transaction-pool",
  "serde",
  "serde_json",
- "tips-core",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.28.0",
@@ -11528,24 +11528,6 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
-name = "tips-core"
-version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=b1dfde6a5c8f603f19f9309ca6dc015bad260b44#b1dfde6a5c8f603f19f9309ca6dc015bad260b44"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-serde",
- "op-alloy-consensus",
- "op-alloy-flz",
- "serde",
- "tracing",
- "tracing-subscriber 0.3.22",
- "uuid",
-]
 
 [[package]]
 name = "tokio"
