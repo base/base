@@ -1491,6 +1491,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-bundles"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-serde",
+ "alloy-signer-local",
+ "op-alloy-consensus",
+ "op-alloy-flz",
+ "op-alloy-rpc-types",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "base-flashtypes"
 version = "0.2.1"
 dependencies = [
