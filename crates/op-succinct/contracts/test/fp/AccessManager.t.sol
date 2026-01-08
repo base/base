@@ -108,6 +108,7 @@ contract AccessManagerTest is Test {
         vm.prank(owner);
         accessManager.setProposer(address(0), true);
 
+        assertTrue(accessManager.isProposalPermissionlessMode());
         assertTrue(accessManager.isAllowedProposer(proposer1));
         assertTrue(accessManager.isAllowedProposer(randomUser));
         assertTrue(accessManager.isAllowedProposer(address(0x9999)));
