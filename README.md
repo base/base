@@ -1,4 +1,4 @@
-![Base](logo.png)
+![Base](assets/logo.png)
 
 # Base Reth Node
 
