@@ -70,9 +70,7 @@ where
     F: Future<Output = ()>,
 {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
     };
 
     tokio::select! {
@@ -123,9 +121,7 @@ where
     F: Future<Output = eyre::Result<()>>,
 {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
+        tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
     };
 
     tokio::select! {

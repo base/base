@@ -168,7 +168,7 @@ impl LoggingArgs {
     /// assert_eq!(args.log_level(), tracing::Level::DEBUG);
     /// ```
     #[inline]
-    pub fn log_level(&self) -> tracing::Level {
+    pub const fn log_level(&self) -> tracing::Level {
         match self.verbosity {
             0 => tracing::Level::WARN,
             1 => tracing::Level::INFO,
@@ -191,7 +191,7 @@ impl LoggingArgs {
     /// assert_eq!(args.log_level_filter(), LevelFilter::WARN);
     /// ```
     #[inline]
-    pub fn log_level_filter(&self) -> tracing::level_filters::LevelFilter {
+    pub const fn log_level_filter(&self) -> tracing::level_filters::LevelFilter {
         match self.verbosity {
             0 => tracing::level_filters::LevelFilter::WARN,
             1 => tracing::level_filters::LevelFilter::INFO,
@@ -314,10 +314,8 @@ mod tests {
         let args = LoggingArgs::default();
         assert!(!args.has_file_logging());
 
-        let args = LoggingArgs {
-            log_file: Some(PathBuf::from("/tmp/test.log")),
-            ..Default::default()
-        };
+        let args =
+            LoggingArgs { log_file: Some(PathBuf::from("/tmp/test.log")), ..Default::default() };
         assert!(args.has_file_logging());
     }
 
