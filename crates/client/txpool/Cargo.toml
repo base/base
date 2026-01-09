@@ -1,6 +1,6 @@
 [package]
-name = "base-tracex"
-description = "A transaction tracing execution extension for reth"
+name = "base-txpool"
+description = "Txpool extensions for Base"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

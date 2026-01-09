@@ -1,3 +1,4 @@
 target/
 .idea/
 integration_logs/
+.DS_Store

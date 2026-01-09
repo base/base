@@ -1,9 +1,9 @@
-[submodule "crates/test-utils/contracts/lib/forge-std"]
-	path = crates/test-utils/contracts/lib/forge-std
+[submodule "crates/client/test-utils/contracts/lib/forge-std"]
+	path = crates/client/test-utils/contracts/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
-[submodule "crates/test-utils/contracts/lib/solmate"]
-	path = crates/test-utils/contracts/lib/solmate
+[submodule "crates/client/test-utils/contracts/lib/solmate"]
+	path = crates/client/test-utils/contracts/lib/solmate
 	url = https://github.com/transmissions11/solmate
-[submodule "crates/test-utils/contracts/lib/openzeppelin-contracts"]
-	path = crates/test-utils/contracts/lib/openzeppelin-contracts
+[submodule "crates/client/test-utils/contracts/lib/openzeppelin-contracts"]
+	path = crates/client/test-utils/contracts/lib/openzeppelin-contracts
 	url = https://github.com/OpenZeppelin/openzeppelin-contracts

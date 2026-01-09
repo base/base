@@ -8,7 +8,7 @@ repository = "https://github.com/base/node-reth"
 
 [workspace]
 resolver = "2"
-members = ["bin/*", "crates/*"]
+members = ["bin/*", "crates/client/*", "crates/shared/*"]
 default-members = ["bin/node"]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -50,17 +50,18 @@ lto = "fat"
 codegen-units = 1
 
 [workspace.dependencies]
-# local
-base-bundles = { path = "crates/bundles" }
-base-access-lists = { path = "crates/access-lists" }
-base-reth-cli = { path = "crates/cli" }
-base-reth-rpc = { path = "crates/rpc" }
-base-reth-rpc-types = { path = "crates/reth-rpc-types" }
-base-tracex = { path = "crates/tracex" }
-base-reth-runner = { path = "crates/runner" }
-base-flashtypes = { path = "crates/flashtypes" }
-base-reth-test-utils = { path = "crates/test-utils" }
-base-reth-flashblocks = { path = "crates/flashblocks" }
+# Shared
+base-access-lists = { path = "crates/shared/access-lists" }
+base-flashtypes = { path = "crates/shared/flashtypes" }
+# Client
+base-bundles = { path = "crates/client/bundles" }
+base-reth-cli = { path = "crates/client/cli" }
+base-reth-rpc = { path = "crates/client/rpc" }
+base-reth-rpc-types = { path = "crates/client/reth-rpc-types" }
+base-txpool = { path = "crates/client/txpool" }
+base-reth-runner = { path = "crates/client/runner" }
+base-reth-test-utils = { path = "crates/client/test-utils" }
+base-reth-flashblocks = { path = "crates/client/flashblocks" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
