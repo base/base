@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
 use alloy_primitives::{B256, U256};
+use alloy_rpc_types::state::StateOverride;
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use eyre::{Result as EyreResult, eyre};
 use reth::revm::db::State;
@@ -14,8 +15,12 @@ const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a state provider, chain spec, decoded transactions, block header, and bundle metadata,
+/// Takes a state provider, chain spec, decoded transactions, block header, bundle metadata, and optional state overrides,
 /// and executes transactions in sequence to measure gas usage and execution time.
+///
+/// Note: The state_overrides parameter is currently unused. The correct approach is to use the header
+/// from the latest pending flashblock, which ensures the state provider already includes all committed
+/// flashblock transactions (including updated nonces).
 ///
 /// Returns a tuple of:
 /// - Vector of transaction results
@@ -28,6 +33,7 @@ pub fn meter_bundle<SP>(
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
+    _state_overrides: Option<StateOverride>,
 ) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
 where
     SP: reth_provider::StateProvider,

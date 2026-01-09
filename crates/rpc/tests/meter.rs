@@ -137,7 +137,13 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
     let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+        meter_bundle(
+            state_provider,
+            harness.chain_spec.clone(),
+            parsed_bundle,
+            &harness.header,
+            None,
+        )?;
 
     assert!(results.is_empty());
     assert_eq!(total_gas_used, 0);
@@ -179,7 +185,13 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+        meter_bundle(
+            state_provider,
+            harness.chain_spec.clone(),
+            parsed_bundle,
+            &harness.header,
+            None,
+        )?;
 
     assert_eq!(results.len(), 1);
     let result = &results[0];
@@ -256,7 +268,13 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+        meter_bundle(
+            state_provider,
+            harness.chain_spec.clone(),
+            parsed_bundle,
+            &harness.header,
+            None,
+        )?;
 
     assert_eq!(results.len(), 2);
     assert!(total_execution_time > 0);

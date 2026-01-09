@@ -5,7 +5,10 @@ use std::{any::Any, net::SocketAddr, sync::Arc};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
+use alloy_rpc_types::state::StateOverride;
+use arc_swap::Guard;
 use base_bundles::{Bundle, MeterBundleResponse};
+use base_reth_flashblocks::{FlashblocksAPI, PendingBlocks};
 use base_reth_rpc::{MeteringApiImpl, MeteringApiServer};
 use base_reth_test_utils::{init_silenced_tracing, load_genesis};
 use op_alloy_consensus::OpTxEnvelope;
@@ -21,6 +24,23 @@ use reth_optimism_node::{OpNode, args::RollupArgs};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::test_utils::TransactionBuilder;
+use tokio::sync::broadcast;
+
+/// Mock FlashblocksAPI implementation for testing
+#[derive(Debug, Clone)]
+struct MockFlashblocksAPI;
+
+impl FlashblocksAPI for MockFlashblocksAPI {
+    fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
+        Guard::from_inner(arc_swap::Guard::into_inner(
+            arc_swap::ArcSwapOption::<PendingBlocks>::new(None).load(),
+        ))
+    }
+
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>> {
+        broadcast::channel(1).1
+    }
+}
 
 struct NodeContext {
     http_api_addr: SocketAddr,
@@ -84,7 +104,8 @@ async fn setup_node() -> eyre::Result<NodeContext> {
         .with_components(node.components_builder())
         .with_add_ons(node.add_ons())
         .extend_rpc_modules(move |ctx| {
-            let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+            let mock_flashblocks = Arc::new(MockFlashblocksAPI);
+            let metering_api = MeteringApiImpl::new(ctx.provider().clone(), mock_flashblocks);
             ctx.modules.merge_configured(metering_api.into_rpc())?;
             Ok(())
         })

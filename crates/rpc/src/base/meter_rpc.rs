@@ -1,11 +1,15 @@
-use alloy_consensus::Header;
+use std::sync::Arc;
+
+use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
+use base_reth_flashblocks::FlashblocksAPI;
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
+use reth_primitives_traits::SealedHeader;
 use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProviderFactory};
 use tracing::{error, info};
 
@@ -15,11 +19,12 @@ use super::{
 
 /// Implementation of the metering RPC API
 #[derive(Debug)]
-pub struct MeteringApiImpl<Provider> {
+pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
+    flashblocks_state: Arc<FB>,
 }
 
-impl<Provider> MeteringApiImpl<Provider>
+impl<Provider, FB> MeteringApiImpl<Provider, FB>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -29,13 +34,13 @@ where
         + Clone,
 {
     /// Creates a new instance of MeteringApi
-    pub const fn new(provider: Provider) -> Self {
-        Self { provider }
+    pub const fn new(provider: Provider, flashblocks_state: Arc<FB>) -> Self {
+        Self { provider, flashblocks_state }
     }
 }
 
 #[async_trait]
-impl<Provider> MeteringApiServer for MeteringApiImpl<Provider>
+impl<Provider, FB> MeteringApiServer for MeteringApiImpl<Provider, FB>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -46,6 +51,7 @@ where
         + Send
         + Sync
         + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
 {
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
         info!(
@@ -54,24 +60,33 @@ where
             "Starting bundle metering"
         );
 
-        // Get the latest header
-        let header = self
-            .provider
-            .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
-            .map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get latest header: {}", e),
-                    None::<()>,
-                )
-            })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    "Latest block not found".to_string(),
-                    None::<()>,
-                )
-            })?;
+        // Get pending blocks from flashblocks to get the latest header including pending state
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+
+        // Use the latest pending header if available, otherwise fallback to latest finalized
+        let header: SealedHeader<Header> = if let Some(ref pb) = *pending_blocks {
+            info!("Using pending block header for bundle metering");
+            let latest_header: Sealed<Header> = pb.latest_header();
+            SealedHeader::new(latest_header.inner().clone(), latest_header.hash())
+        } else {
+            info!("No pending blocks, using latest finalized header for bundle metering");
+            self.provider
+                .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
+                .map_err(|e| {
+                    jsonrpsee::types::ErrorObjectOwned::owned(
+                        jsonrpsee::types::ErrorCode::InternalError.code(),
+                        format!("Failed to get latest header: {}", e),
+                        None::<()>,
+                    )
+                })?
+                .ok_or_else(|| {
+                    jsonrpsee::types::ErrorObjectOwned::owned(
+                        jsonrpsee::types::ErrorCode::InternalError.code(),
+                        "Latest block not found".to_string(),
+                        None::<()>,
+                    )
+                })?
+        };
 
         let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(
@@ -81,8 +96,9 @@ where
             )
         })?;
 
-        // Get state provider for the block
-        let state_provider = self.provider.state_by_block_hash(header.hash()).map_err(|e| {
+        // Get state provider for the parent block (to simulate on top of)
+        let parent_hash = header.parent_hash;
+        let state_provider = self.provider.state_by_block_hash(parent_hash).map_err(|e| {
             error!(error = %e, "Failed to get state provider");
             jsonrpsee::types::ErrorObjectOwned::owned(
                 jsonrpsee::types::ErrorCode::InternalError.code(),
@@ -92,8 +108,9 @@ where
         })?;
 
         // Meter bundle using utility function
+        // The state provider already includes all committed flashblock state
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, self.provider.chain_spec(), parsed_bundle, &header)
+            meter_bundle(state_provider, self.provider.chain_spec(), parsed_bundle, &header, None)
                 .map_err(|e| {
                     error!(error = %e, "Bundle metering failed");
                     jsonrpsee::types::ErrorObjectOwned::owned(
@@ -209,7 +226,7 @@ where
     }
 }
 
-impl<Provider> MeteringApiImpl<Provider>
+impl<Provider, FB> MeteringApiImpl<Provider, FB>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -220,6 +237,7 @@ where
         + Send
         + Sync
         + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
 {
     /// Internal helper to meter a block's execution
     fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {
