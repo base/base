@@ -4,13 +4,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod base;
-pub use base::{
-    block::meter_block,
-    meter::meter_bundle,
-    meter_rpc::MeteringApiImpl,
-    traits::MeteringApiServer,
-    types::{MeterBlockResponse, MeterBlockTransactions},
-};
 
 mod eth;
 pub use eth::{

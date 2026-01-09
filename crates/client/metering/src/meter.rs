@@ -1,3 +1,5 @@
+//! Bundle metering logic.
+
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};

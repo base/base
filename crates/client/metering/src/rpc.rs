@@ -1,3 +1,5 @@
+//! Implementation of the metering RPC API.
+
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
@@ -9,8 +11,8 @@ use reth_optimism_primitives::OpBlock;
 use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProviderFactory};
 use tracing::{error, info};
 
-use super::{
-    block::meter_block, meter::meter_bundle, traits::MeteringApiServer, types::MeterBlockResponse,
+use crate::{
+    MeterBlockResponse, block::meter_block, meter::meter_bundle, traits::MeteringApiServer,
 };
 
 /// Implementation of the metering RPC API

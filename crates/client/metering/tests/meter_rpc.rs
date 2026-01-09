@@ -6,7 +6,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
 use base_bundles::{Bundle, MeterBundleResponse};
-use base_reth_rpc::{MeteringApiImpl, MeteringApiServer};
+use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_test_utils::{init_silenced_tracing, load_genesis};
 use op_alloy_consensus::OpTxEnvelope;
 use reth::{
@@ -106,8 +106,7 @@ async fn test_meter_bundle_empty() -> eyre::Result<()> {
 
     let bundle = create_bundle(vec![], 0, None);
 
-    let response: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle,)).await?;
+    let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
     assert_eq!(response.results.len(), 0);
     assert_eq!(response.total_gas_used, 0);
@@ -149,8 +148,7 @@ async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
 
     let bundle = create_bundle(vec![tx_bytes], 0, None);
 
-    let response: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle,)).await?;
+    let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
     assert_eq!(response.results.len(), 1);
     assert_eq!(response.total_gas_used, 21_000);
@@ -214,8 +212,7 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-    let response: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle,)).await?;
+    let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
     assert_eq!(response.results.len(), 2);
     assert_eq!(response.total_gas_used, 42_000);
@@ -247,7 +244,7 @@ async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
         None,
     );
 
-    let result: Result<crate::MeterBundleResponse, _> =
+    let result: Result<MeterBundleResponse, _> =
         client.request("base_meterBundle", (bundle,)).await;
 
     assert!(result.is_err());
@@ -263,8 +260,7 @@ async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
     // Metering always uses the latest block state, regardless of bundle.block_number
     let bundle = create_bundle(vec![], 0, None);
 
-    let response: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle,)).await?;
+    let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
     // Should return the latest block number (genesis block 0)
     assert_eq!(response.state_block_number, 0);
@@ -280,14 +276,12 @@ async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
     // Even if bundle.block_number is different, it should use the latest block
     // In this test, we specify block_number=0 in the bundle
     let bundle1 = create_bundle(vec![], 0, None);
-    let response1: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle1,)).await?;
+    let response1: MeterBundleResponse = client.request("base_meterBundle", (bundle1,)).await?;
 
     // Try with a different bundle.block_number (999 - arbitrary value)
     // Since we can't create future blocks, we use a different value to show it's ignored
     let bundle2 = create_bundle(vec![], 999, None);
-    let response2: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle2,)).await?;
+    let response2: MeterBundleResponse = client.request("base_meterBundle", (bundle2,)).await?;
 
     // Both should return the same state_block_number (the latest block)
     // because the implementation always uses Latest, not bundle.block_number
@@ -308,8 +302,7 @@ async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
     let custom_timestamp = 1234567890;
     let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
 
-    let response: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle,)).await?;
+    let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
     // Verify the request succeeded with custom timestamp
     assert_eq!(response.results.len(), 0);
@@ -327,8 +320,7 @@ async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
     // any block_number value should work (it's only used for bundle validity in TIPS)
     let bundle = create_bundle(vec![], 999999, None);
 
-    let response: crate::MeterBundleResponse =
-        client.request("base_meterBundle", (bundle,)).await?;
+    let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
     // Should succeed and use the latest block (genesis block 0)
     assert_eq!(response.state_block_number, 0);

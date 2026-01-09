@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_consensus::{BlockHeader, Header, crypto::secp256k1::public_key_to_address};
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
-use base_reth_rpc::meter_block;
+use base_reth_metering::meter_block;
 use base_reth_test_utils::create_provider_factory;
 use eyre::Context;
 use rand::{SeedableRng, rngs::StdRng};

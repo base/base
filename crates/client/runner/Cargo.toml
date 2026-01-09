@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 # internal
 base-reth-flashblocks.workspace = true
+base-reth-metering.workspace = true
 base-reth-rpc.workspace = true
 base-txpool.workspace = true
 
