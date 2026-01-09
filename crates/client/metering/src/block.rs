@@ -1,3 +1,5 @@
+//! Block metering logic.
+
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
@@ -11,7 +13,7 @@ use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 
-use super::types::{MeterBlockResponse, MeterBlockTransactions};
+use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 
 /// Re-executes a block and meters execution time, state root calculation time, and total time.
 ///
