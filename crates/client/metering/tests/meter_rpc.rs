@@ -1,32 +1,17 @@
 //! Integration tests covering the Metering RPC surface area.
 
-use std::{any::Any, net::SocketAddr, sync::Arc};
-
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, U256, address, b256, bytes};
+use alloy_primitives::{B256, Bytes, U256, bytes, hex::FromHex};
 use alloy_rpc_client::RpcClient;
 use base_bundles::{Bundle, MeterBundleResponse};
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
-use base_reth_test_utils::{init_silenced_tracing, load_genesis};
+use base_reth_test_utils::{BASE_CHAIN_ID, OpAddOns, OpBuilder, TestHarness};
 use op_alloy_consensus::OpTxEnvelope;
-use reth::{
-    args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
-    builder::{Node, NodeBuilder, NodeConfig, NodeHandle},
-    chainspec::Chain,
-    core::exit::NodeExitFuture,
-    tasks::TaskManager,
-};
-use reth_optimism_chainspec::OpChainSpecBuilder;
-use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth::builder::NodeHandle;
+use reth_e2e_test_utils::Adapter;
+use reth_optimism_node::OpNode;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_provider::providers::BlockchainProvider;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-
-struct NodeContext {
-    http_api_addr: SocketAddr,
-    _node_exit_future: NodeExitFuture,
-    _node: Box<dyn Any + Sync + Send>,
-}
 
 // Helper function to create a Bundle with default fields
 fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
@@ -43,66 +28,29 @@ fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>)
     }
 }
 
-impl NodeContext {
-    async fn rpc_client(&self) -> eyre::Result<RpcClient> {
-        let url = format!("http://{}", self.http_api_addr);
-        let client = RpcClient::new_http(url.parse()?);
-        Ok(client)
-    }
-}
-
-async fn setup_node() -> eyre::Result<NodeContext> {
-    init_silenced_tracing();
-    let tasks = TaskManager::current();
-    let exec = tasks.executor();
-    const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
-
-    let genesis = load_genesis();
-    let chain_spec = Arc::new(
-        OpChainSpecBuilder::base_mainnet()
-            .genesis(genesis)
-            .ecotone_activated()
-            .chain(Chain::from(BASE_SEPOLIA_CHAIN_ID))
-            .build(),
-    );
-
-    let network_config = NetworkArgs {
-        discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
-        ..NetworkArgs::default()
-    };
-
-    let node_config = NodeConfig::new(chain_spec.clone())
-        .with_network(network_config.clone())
-        .with_rpc(RpcServerArgs::default().with_unused_ports().with_http())
-        .with_unused_ports();
-
-    let node = OpNode::new(RollupArgs::default());
-
-    let NodeHandle { node, node_exit_future } = NodeBuilder::new(node_config.clone())
-        .testing_node(exec.clone())
-        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
-        .with_components(node.components_builder())
-        .with_add_ons(node.add_ons())
+/// Custom launcher that adds the MeteringApiImpl RPC extension.
+async fn metering_launcher(
+    builder: OpBuilder,
+) -> eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>> {
+    let launcher = builder.engine_api_launcher();
+    builder
         .extend_rpc_modules(move |ctx| {
             let metering_api = MeteringApiImpl::new(ctx.provider().clone());
             ctx.modules.merge_configured(metering_api.into_rpc())?;
             Ok(())
         })
-        .launch()
-        .await?;
+        .launch_with(launcher)
+        .await
+}
 
-    let http_api_addr = node
-        .rpc_server_handle()
-        .http_local_addr()
-        .ok_or_else(|| eyre::eyre!("Failed to get http api address"))?;
-
-    Ok(NodeContext { http_api_addr, _node_exit_future: node_exit_future, _node: Box::new(node) })
+async fn setup_harness() -> eyre::Result<TestHarness> {
+    TestHarness::with_launcher(metering_launcher).await
 }
 
 #[tokio::test]
 async fn test_meter_bundle_empty() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
 
     let bundle = create_bundle(vec![], 0, None);
 
@@ -118,21 +66,18 @@ async fn test_meter_bundle_empty() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
+    let accounts = harness.accounts();
 
-    // Use a funded account from genesis.json
-    // Account: 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
-    // Private key from common test accounts (Hardhat account #0)
-    let sender_address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
-    let sender_secret = b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    let alice_signer = B256::from_hex(accounts.alice.private_key)?;
 
-    // Build a transaction
+    // Build a transaction using Alice's account
     let tx = TransactionBuilder::default()
-        .signer(sender_secret)
-        .chain_id(84532)
+        .signer(alice_signer)
+        .chain_id(BASE_CHAIN_ID)
         .nonce(0)
-        .to(address!("0x1111111111111111111111111111111111111111"))
+        .to(alloy_primitives::address!("0x1111111111111111111111111111111111111111"))
         .value(1000)
         .gas_limit(21_000)
         .max_fee_per_gas(1_000_000_000) // 1 gwei
@@ -155,8 +100,11 @@ async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
     assert!(response.total_execution_time_us > 0);
 
     let result = &response.results[0];
-    assert_eq!(result.from_address, sender_address);
-    assert_eq!(result.to_address, Some(address!("0x1111111111111111111111111111111111111111")));
+    assert_eq!(result.from_address, accounts.alice.address);
+    assert_eq!(
+        result.to_address,
+        Some(alloy_primitives::address!("0x1111111111111111111111111111111111111111"))
+    );
     assert_eq!(result.gas_used, 21_000);
     assert_eq!(result.gas_price, 1_000_000_000);
     assert!(result.execution_time_us > 0);
@@ -166,19 +114,19 @@ async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
+    let accounts = harness.accounts();
 
-    // Use funded accounts from genesis.json
-    // Hardhat account #0 and #1
-    let address1 = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
-    let secret1 = b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+    let alice_signer = B256::from_hex(accounts.alice.private_key)?;
+    let bob_signer = B256::from_hex(accounts.bob.private_key)?;
 
+    // First transaction from Alice
     let tx1_inner = TransactionBuilder::default()
-        .signer(secret1)
-        .chain_id(84532)
+        .signer(alice_signer)
+        .chain_id(BASE_CHAIN_ID)
         .nonce(0)
-        .to(address!("0x1111111111111111111111111111111111111111"))
+        .to(alloy_primitives::address!("0x1111111111111111111111111111111111111111"))
         .value(1000)
         .gas_limit(21_000)
         .max_fee_per_gas(1_000_000_000)
@@ -190,15 +138,12 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
     let tx1_envelope: OpTxEnvelope = tx1_signed.into();
     let tx1_bytes = Bytes::from(tx1_envelope.encoded_2718());
 
-    // Second transaction from second account
-    let address2 = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
-    let secret2 = b256!("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
-
+    // Second transaction from Bob
     let tx2_inner = TransactionBuilder::default()
-        .signer(secret2)
-        .chain_id(84532)
+        .signer(bob_signer)
+        .chain_id(BASE_CHAIN_ID)
         .nonce(0)
-        .to(address!("0x2222222222222222222222222222222222222222"))
+        .to(alloy_primitives::address!("0x2222222222222222222222222222222222222222"))
         .value(2000)
         .gas_limit(21_000)
         .max_fee_per_gas(2_000_000_000)
@@ -220,13 +165,13 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     // Check first transaction
     let result1 = &response.results[0];
-    assert_eq!(result1.from_address, address1);
+    assert_eq!(result1.from_address, accounts.alice.address);
     assert_eq!(result1.gas_used, 21_000);
     assert_eq!(result1.gas_price, 1_000_000_000);
 
     // Check second transaction
     let result2 = &response.results[1];
-    assert_eq!(result2.from_address, address2);
+    assert_eq!(result2.from_address, accounts.bob.address);
     assert_eq!(result2.gas_used, 21_000);
     assert_eq!(result2.gas_price, 2_000_000_000);
 
@@ -235,8 +180,8 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
 
     let bundle = create_bundle(
         vec![bytes!("0xdeadbeef")], // Invalid transaction data
@@ -254,8 +199,8 @@ async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
 
     // Metering always uses the latest block state, regardless of bundle.block_number
     let bundle = create_bundle(vec![], 0, None);
@@ -270,8 +215,8 @@ async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
 
     // Even if bundle.block_number is different, it should use the latest block
     // In this test, we specify block_number=0 in the bundle
@@ -293,8 +238,8 @@ async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
 
     // Test that bundle.min_timestamp is used for simulation.
     // The timestamp affects block.timestamp in the EVM during simulation but is not
@@ -313,8 +258,8 @@ async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
 
     // Since we now ignore bundle.block_number and always use the latest block,
     // any block_number value should work (it's only used for bundle validity in TIPS)
@@ -330,19 +275,19 @@ async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
-    let node = setup_node().await?;
-    let client = node.rpc_client().await?;
+    let harness = setup_harness().await?;
+    let client = RpcClient::new_http(harness.rpc_url().parse()?);
+    let accounts = harness.accounts();
 
-    // Use two funded accounts from genesis.json with different gas prices
-    let secret1 = b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
-    let secret2 = b256!("0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d");
+    let alice_signer = B256::from_hex(accounts.alice.private_key)?;
+    let bob_signer = B256::from_hex(accounts.bob.private_key)?;
 
-    // First transaction with 3 gwei gas price
+    // First transaction with 3 gwei gas price from Alice
     let tx1_inner = TransactionBuilder::default()
-        .signer(secret1)
-        .chain_id(84532)
+        .signer(alice_signer)
+        .chain_id(BASE_CHAIN_ID)
         .nonce(0)
-        .to(address!("0x1111111111111111111111111111111111111111"))
+        .to(alloy_primitives::address!("0x1111111111111111111111111111111111111111"))
         .value(1000)
         .gas_limit(21_000)
         .max_fee_per_gas(3_000_000_000) // 3 gwei
@@ -354,12 +299,12 @@ async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
     let envelope1: OpTxEnvelope = signed_tx1.into();
     let tx1_bytes = Bytes::from(envelope1.encoded_2718());
 
-    // Second transaction with 7 gwei gas price
+    // Second transaction with 7 gwei gas price from Bob
     let tx2_inner = TransactionBuilder::default()
-        .signer(secret2)
-        .chain_id(84532)
+        .signer(bob_signer)
+        .chain_id(BASE_CHAIN_ID)
         .nonce(0)
-        .to(address!("0x2222222222222222222222222222222222222222"))
+        .to(alloy_primitives::address!("0x2222222222222222222222222222222222222222"))
         .value(2000)
         .gas_limit(21_000)
         .max_fee_per_gas(7_000_000_000) // 7 gwei

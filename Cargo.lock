@@ -1662,6 +1662,7 @@ dependencies = [
  "reth",
  "reth-db",
  "reth-db-common",
+ "reth-e2e-test-utils",
  "reth-evm",
  "reth-optimism-chainspec",
  "reth-optimism-evm",
