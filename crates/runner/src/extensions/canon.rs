@@ -1,18 +1,19 @@
-//! Contains the [FlashblocksCanonExtension] which wires up the `flashblocks-canon`
-//! execution extension on the Base node builder.
+//! Contains the [FlashblocksCanonExtension] which wires up the canonical block
+//! subscription for flashblocks on the Base node builder.
 
 use std::sync::Arc;
 
 use base_reth_flashblocks::FlashblocksState;
-use futures_util::TryStreamExt;
-use reth_exex::ExExEvent;
+use reth::providers::CanonStateSubscriptions;
+use tokio::sync::broadcast::error::RecvError;
+use tracing::{info, warn};
 
 use crate::{
     BaseNodeConfig, FlashblocksConfig,
     extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, OpBuilder},
 };
 
-/// Helper struct that wires the Flashblocks canon ExEx into the node builder.
+/// Helper struct that wires the Flashblocks canonical subscription into the node builder.
 #[derive(Debug, Clone)]
 pub struct FlashblocksCanonExtension {
     /// Shared Flashblocks state cache.
@@ -35,34 +36,50 @@ impl BaseNodeExtension for FlashblocksCanonExtension {
         let flashblocks_enabled = flashblocks.is_some();
         let flashblocks_cell = self.cell;
 
-        builder.install_exex_if(flashblocks_enabled, "flashblocks-canon", move |mut ctx| {
-            let flashblocks_cell = flashblocks_cell.clone();
-            async move {
-                let fb_config =
-                    flashblocks.as_ref().expect("flashblocks config checked above").clone();
-                let fb = flashblocks_cell
-                    .get_or_init(|| {
-                        Arc::new(FlashblocksState::new(
-                            ctx.provider().clone(),
-                            fb_config.max_pending_blocks_depth,
-                        ))
-                    })
-                    .clone();
+        if !flashblocks_enabled {
+            return builder;
+        }
 
-                Ok(async move {
-                    while let Some(note) = ctx.notifications.try_next().await? {
-                        if let Some(committed) = note.committed_chain() {
-                            let tip = committed.tip().num_hash();
+        builder.extend_rpc_modules(move |ctx| {
+            let fb_config = flashblocks.as_ref().expect("checked above").clone();
+
+            let fb = flashblocks_cell
+                .get_or_init(|| {
+                    Arc::new(FlashblocksState::new(
+                        ctx.provider().clone(),
+                        fb_config.max_pending_blocks_depth,
+                    ))
+                })
+                .clone();
+
+            // Subscribe to canonical state notifications
+            info!(message = "Starting flashblocks canonical subscription");
+            let mut receiver = ctx.provider().subscribe_to_canonical_state();
+            tokio::spawn(async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok(notification) => {
+                            let committed = notification.committed();
                             let chain = Arc::unwrap_or_clone(committed);
                             for (_, block) in chain.into_blocks() {
                                 fb.on_canonical_block_received(block);
                             }
-                            let _ = ctx.events.send(ExExEvent::FinishedHeight(tip));
+                        }
+                        Err(RecvError::Lagged(n)) => {
+                            warn!(
+                                message = "Canonical subscription lagged",
+                                missed_notifications = n
+                            );
+                        }
+                        Err(RecvError::Closed) => {
+                            warn!(message = "Canonical state subscription ended");
+                            break;
                         }
                     }
-                    Ok(())
-                })
-            }
+                }
+            });
+
+            Ok(())
         })
     }
 }

@@ -1674,9 +1674,9 @@ dependencies = [
  "once_cell",
  "reth",
  "reth-db",
- "reth-exex",
  "reth-optimism-chainspec",
  "reth-optimism-node",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -1713,7 +1713,6 @@ dependencies = [
  "reth",
  "reth-db",
  "reth-e2e-test-utils",
- "reth-exex",
  "reth-ipc",
  "reth-node-core",
  "reth-optimism-chainspec",
@@ -1728,6 +1727,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower",
+ "tracing",
  "tracing-subscriber 0.3.22",
  "url",
 ]
