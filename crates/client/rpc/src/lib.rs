@@ -8,9 +8,8 @@ pub use base::{
     block::meter_block,
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
-    traits::{MeteringApiServer, TransactionStatusApiServer},
-    transaction_rpc::TransactionStatusApiImpl,
-    types::{MeterBlockResponse, MeterBlockTransactions, Status, TransactionStatusResponse},
+    traits::MeteringApiServer,
+    types::{MeterBlockResponse, MeterBlockTransactions},
 };
 
 mod eth;
