@@ -53,9 +53,9 @@ codegen-units = 1
 # Shared
 base-access-lists = { path = "crates/shared/access-lists" }
 base-flashtypes = { path = "crates/shared/flashtypes" }
+base-reth-cli = { path = "crates/shared/cli" }
 # Client
 base-bundles = { path = "crates/client/bundles" }
-base-reth-cli = { path = "crates/client/cli" }
 base-reth-rpc = { path = "crates/client/rpc" }
 base-reth-rpc-types = { path = "crates/client/reth-rpc-types" }
 base-txpool = { path = "crates/client/txpool" }
