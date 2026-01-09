@@ -15,7 +15,6 @@ workspace = true
 alloy-primitives.workspace = true
 alloy-eip7928 = {workspace = true, features = ["serde", "rlp"]}
 alloy-rlp = {workspace = true, features = ["derive"]}
-reth-evm.workspace = true
 tracing.workspace = true
 revm.workspace = true
 serde.workspace = true
@@ -29,4 +28,9 @@ alloy-consensus.workspace = true
 alloy-contract.workspace = true
 alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
+reth-evm.workspace = true
 serde_json.workspace = true
+
+[[test]]
+name = "builder"
+path = "tests/builder/main.rs"

@@ -3,19 +3,22 @@
 use std::{collections::HashMap, sync::Arc};
 
 use alloy_consensus::Header;
-use alloy_primitives::{Address, B256, U256};
+pub use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_macro::sol;
-use base_fbal::{FBALBuilderDb, FlashblockAccessList, FlashblockAccessListBuilder};
-use eyre::Result;
-use op_revm::OpTransaction;
+pub use alloy_sol_types::SolCall;
+use base_fbal::FBALBuilderDb;
+pub use base_fbal::FlashblockAccessList;
+pub use eyre::Result;
+pub use op_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::OpEvmConfig;
-use revm::{
-    DatabaseCommit,
-    context::{TxEnv, result::ResultAndState},
-    database::InMemoryDB,
-    state::AccountInfo,
+use revm::{DatabaseCommit, context::result::ResultAndState, database::InMemoryDB};
+pub use revm::{
+    context::TxEnv,
+    interpreter::instructions::utility::IntoAddress,
+    primitives::ONE_ETHER,
+    state::{AccountInfo, Bytecode},
 };
 
 mod delegatecall;
@@ -68,18 +71,26 @@ sol!(
     concat!(env!("CARGO_MANIFEST_DIR"), "/../test-utils/contracts/out/Proxy.sol/Logic2.json")
 );
 
+/// Chain ID for Base Sepolia
 pub const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
 
-fn execute_txns_build_access_list(
+/// Executes a list of transactions and builds a FlashblockAccessList tracking all
+/// account and storage changes across all transactions.
+///
+/// Uses a single FBALBuilderDb instance that wraps the underlying InMemoryDB,
+/// calling set_index() before each transaction to track which txn caused which change.
+pub fn execute_txns_build_access_list(
     txs: Vec<OpTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {
     let chain_spec = Arc::new(OpChainSpec::from_genesis(
-        serde_json::from_str(include_str!("../../test-utils/assets/genesis.json")).unwrap(),
+        serde_json::from_str(include_str!("../../../test-utils/assets/genesis.json")).unwrap(),
     ));
     let evm_config = OpEvmConfig::optimism(chain_spec.clone());
     let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
+
+    // Set up the underlying InMemoryDB with any overrides
     let mut db = InMemoryDB::default();
     if let Some(overrides) = acc_overrides {
         for (address, info) in overrides {
@@ -94,23 +105,23 @@ fn execute_txns_build_access_list(
         }
     }
 
-    let mut access_list_builder = FlashblockAccessListBuilder::new();
+    // Create a single FBALBuilderDb that wraps the InMemoryDB for all transactions
+    let mut fbal_db = FBALBuilderDb::new(db);
+    let max_tx_index = txs.len().saturating_sub(1);
 
-    let max_tx_index = txs.len() - 1;
-    for tx in txs.into_iter() {
-        let mut fbal_db = FBALBuilderDb::new(db);
+    for (i, tx) in txs.into_iter().enumerate() {
+        // Set the transaction index before executing each transaction
+        fbal_db.set_index(i as u64);
 
         let evm_env = evm_config.evm_env(&header).unwrap();
-        let mut evm = evm_config.evm_with_env(fbal_db, evm_env);
+        let mut evm = evm_config.evm_with_env(&mut fbal_db, evm_env);
         let ResultAndState { state, .. } = evm.transact(tx).unwrap();
 
-        evm.db_mut().commit(state);
-        fbal_db = evm.into_db();
-
-        let (tx_list, inner_db) = fbal_db.finish()?;
-        db = inner_db;
-        access_list_builder.merge(tx_list);
+        // Commit the state changes to our FBALBuilderDb
+        fbal_db.commit(state);
     }
 
+    // Finish and build the access list
+    let access_list_builder = fbal_db.finish()?;
     Ok(access_list_builder.build(0, max_tx_index as u64))
 }

@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256};
 use revm::{
     Database, DatabaseCommit,
-    primitives::{HashMap, StorageKey, StorageValue},
+    primitives::{HashMap, KECCAK_EMPTY, StorageKey, StorageValue},
     state::{Account, AccountInfo, Bytecode},
 };
 use tracing::error;
@@ -81,13 +81,21 @@ where
                     }
                 }
                 None => {
-                    changes.balance_changes.insert(self.index, account.info.balance);
-                    changes.nonce_changes.insert(self.index, account.info.nonce);
-                    let bytecode = match account.info.code.clone() {
-                        Some(code) => code,
-                        None => self.db.code_by_hash(account.info.code_hash)?,
-                    };
-                    changes.code_changes.insert(self.index, bytecode);
+                    // For new accounts, only record changes if they differ from defaults
+                    if !account.info.balance.is_zero() {
+                        changes.balance_changes.insert(self.index, account.info.balance);
+                    }
+                    if account.info.nonce != 0 {
+                        changes.nonce_changes.insert(self.index, account.info.nonce);
+                    }
+                    // Only record code changes if the account actually has code
+                    if account.info.code_hash != KECCAK_EMPTY {
+                        let bytecode = match account.info.code.clone() {
+                            Some(code) => code,
+                            None => self.db.code_by_hash(account.info.code_hash)?,
+                        };
+                        changes.code_changes.insert(self.index, bytecode);
+                    }
                 }
             }
 
@@ -106,13 +114,14 @@ where
         Ok(())
     }
 
-    /// Consumes the database and returns the access list and the inner database back
-    pub fn finish(self) -> Result<(FlashblockAccessListBuilder, DB), <Self as Database>::Error> {
+    /// Consumes the database and returns the access list back as well as the most recent
+    /// error during commiting if any
+    pub fn finish(self) -> Result<FlashblockAccessListBuilder, <Self as Database>::Error> {
         if let Some(e) = self.error {
             return Err(e);
         }
 
-        Ok((self.access_list, self.db))
+        Ok(self.access_list)
     }
 }
 

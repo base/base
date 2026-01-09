@@ -2,18 +2,9 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::{B256, TxKind, U256};
-use alloy_sol_types::SolCall;
-use op_revm::OpTransaction;
-use revm::{
-    context::TxEnv,
-    interpreter::instructions::utility::IntoAddress,
-    primitives::ONE_ETHER,
-    state::{AccountInfo, Bytecode},
-};
-
 use super::{
-    BASE_SEPOLIA_CHAIN_ID, ContractFactory, SimpleStorage, execute_txns_build_access_list,
+    AccountInfo, B256, BASE_SEPOLIA_CHAIN_ID, Bytecode, ContractFactory, IntoAddress, ONE_ETHER,
+    OpTransaction, SimpleStorage, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
 #[test]
@@ -55,10 +46,11 @@ fn test_create_deployment_tracked() {
         )
         .build_fill();
 
-    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None);
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None)
+        .expect("access list build should succeed");
 
     // Verify factory is in the access list
-    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address() == factory);
+    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address == factory);
     assert!(factory_entry.is_some(), "Factory should be in access list");
 
     // The factory's nonce should change (CREATE increments deployer nonce)
@@ -69,7 +61,7 @@ fn test_create_deployment_tracked() {
     let deployed_entry = access_list
         .account_changes
         .iter()
-        .find(|ac| !ac.code_changes.is_empty() && ac.address() != factory);
+        .find(|ac| !ac.code_changes.is_empty() && ac.address != factory);
     assert!(deployed_entry.is_some(), "Deployed contract should have code change");
 
     let deployed_changes = deployed_entry.unwrap();
@@ -78,8 +70,6 @@ fn test_create_deployment_tracked() {
     // Verify the deployed bytecode matches SimpleStorage's deployed bytecode
     let code_change = &deployed_changes.code_changes[0];
     assert!(!code_change.new_code.is_empty(), "Deployed code should not be empty");
-
-    dbg!(&access_list);
 }
 
 #[test]
@@ -123,17 +113,18 @@ fn test_create2_deployment_tracked() {
         )
         .build_fill();
 
-    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None);
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None)
+        .expect("access list build should succeed");
 
     // Verify factory is in the access list
-    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address() == factory);
+    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address == factory);
     assert!(factory_entry.is_some(), "Factory should be in access list");
 
     // Find the deployed contract - it should have a code change
     let deployed_entry = access_list
         .account_changes
         .iter()
-        .find(|ac| !ac.code_changes.is_empty() && ac.address() != factory);
+        .find(|ac| !ac.code_changes.is_empty() && ac.address != factory);
     assert!(deployed_entry.is_some(), "Deployed contract should have code change");
 
     let deployed_changes = deployed_entry.unwrap();
@@ -142,8 +133,6 @@ fn test_create2_deployment_tracked() {
     // Verify the deployed bytecode is present
     let code_change = &deployed_changes.code_changes[0];
     assert!(!code_change.new_code.is_empty(), "Deployed code should not be empty");
-
-    dbg!(&access_list);
 }
 
 #[test]
@@ -188,17 +177,18 @@ fn test_create_and_immediate_call() {
         )
         .build_fill();
 
-    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None);
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None)
+        .expect("access list build should succeed");
 
     // Verify factory is in the access list
-    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address() == factory);
+    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address == factory);
     assert!(factory_entry.is_some(), "Factory should be in access list");
 
     // Find the deployed contract - it should have both code change AND storage change
     let deployed_entry = access_list
         .account_changes
         .iter()
-        .find(|ac| !ac.code_changes.is_empty() && ac.address() != factory);
+        .find(|ac| !ac.code_changes.is_empty() && ac.address != factory);
     assert!(deployed_entry.is_some(), "Deployed contract should have code change");
 
     let deployed_changes = deployed_entry.unwrap();
@@ -215,12 +205,6 @@ fn test_create_and_immediate_call() {
 
     // Verify the storage slot is 0 and value is 42
     let storage_change = &deployed_changes.storage_changes[0];
-    assert_eq!(storage_change.slot, B256::ZERO, "Storage slot should be 0");
-    assert_eq!(
-        storage_change.changes[0].new_value,
-        B256::from(U256::from(42)),
-        "Storage value should be 42"
-    );
-
-    dbg!(&access_list);
+    assert_eq!(storage_change.slot, U256::ZERO, "Storage slot should be 0");
+    assert_eq!(storage_change.changes[0].new_value, U256::from(42), "Storage value should be 42");
 }

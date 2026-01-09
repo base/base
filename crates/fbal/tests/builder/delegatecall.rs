@@ -2,17 +2,10 @@
 
 use std::collections::HashMap;
 
-use alloy_primitives::{B256, TxKind, U256};
-use alloy_sol_types::SolCall;
-use op_revm::OpTransaction;
-use revm::{
-    context::TxEnv,
-    interpreter::instructions::utility::IntoAddress,
-    primitives::ONE_ETHER,
-    state::{AccountInfo, Bytecode},
+use super::{
+    AccountInfo, BASE_SEPOLIA_CHAIN_ID, Bytecode, IntoAddress, Logic, Logic2, ONE_ETHER,
+    OpTransaction, Proxy, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
-
-use super::{BASE_SEPOLIA_CHAIN_ID, Logic, Logic2, Proxy, execute_txns_build_access_list};
 
 #[test]
 /// Tests that DELEGATECALL storage changes are tracked on the calling contract (Proxy),
@@ -58,7 +51,8 @@ fn test_delegatecall_storage_tracked_on_caller() {
         vec![tx],
         Some(overrides),
         Some(HashMap::from([(proxy_addr, HashMap::from([(U256::ZERO, logic_addr.into_word())]))])),
-    );
+    )
+    .expect("access list build should succeed");
 
     // Verify that proxy is in touched accounts
     let proxy_changes = access_list
@@ -69,7 +63,7 @@ fn test_delegatecall_storage_tracked_on_caller() {
 
     // Verify storage change for slot 1 is on the PROXY, not the logic contract
     // Slot 1 is where `value` is stored
-    let slot_1 = B256::from(U256::from(1));
+    let slot_1 = U256::from(1);
     let has_slot_1_change = proxy_changes.storage_changes.iter().any(|sc| sc.slot == slot_1);
     assert!(has_slot_1_change, "Proxy should have storage change for slot 1 (value)");
 
@@ -133,7 +127,8 @@ fn test_delegatecall_read_tracked_on_caller() {
         vec![set_tx, get_tx],
         Some(overrides),
         Some(HashMap::from([(proxy_addr, HashMap::from([(U256::ZERO, logic_addr.into_word())]))])),
-    );
+    )
+    .expect("access list build should succeed");
 
     // Verify proxy has storage reads recorded
     let proxy_changes = access_list
@@ -143,7 +138,7 @@ fn test_delegatecall_read_tracked_on_caller() {
         .expect("Proxy should be in account changes");
 
     // Slot 1 should have been read (for getValue)
-    let slot_1 = B256::from(U256::from(1));
+    let slot_1 = U256::from(1);
     let has_slot_1_read = proxy_changes.storage_reads.iter().any(|sr| *sr == slot_1);
     assert!(has_slot_1_read, "Proxy should have storage read for slot 1");
 
@@ -214,7 +209,8 @@ fn test_delegatecall_chain() {
         .build_fill();
 
     let access_list =
-        execute_txns_build_access_list(vec![tx], Some(overrides), Some(storage_overrides));
+        execute_txns_build_access_list(vec![tx], Some(overrides), Some(storage_overrides))
+            .expect("access list build should succeed");
 
     // Verify all three addresses are in touched accounts
     assert!(
@@ -237,7 +233,7 @@ fn test_delegatecall_chain() {
         .find(|ac| ac.address == proxy_addr)
         .expect("Proxy should have account changes");
 
-    let slot_1 = B256::from(U256::from(1));
+    let slot_1 = U256::from(1);
     let has_value_change = proxy_changes.storage_changes.iter().any(|sc| sc.slot == slot_1);
     assert!(has_value_change, "Proxy should have storage change for slot 1 (value)");
 
