@@ -107,6 +107,7 @@ Depending on the one you choose, you must provide the corresponding environment 
 | `AGG_CYCLE_LIMIT` | The cycle limit to use for aggregation proofs. | `1,000,000,000,000` |
 | `AGG_GAS_LIMIT` | The gas limit to use for aggregation proofs. | `1,000,000,000,000` |
 | `WHITELIST` | The list of prover addresses that are allowed to bid on proof requests. | `` |
+| `BACKUP_PATH` | Path to backup file for persisting proposer state across restarts. Enables faster recovery by restoring cached state instead of re-syncing from the factory. | (disabled) |
 
 ```env
 # Required Configuration
@@ -131,6 +132,7 @@ AGG_PROOF_STRATEGY=reserved      # Set to hosted to use hosted proof strategy
 PROPOSAL_INTERVAL_IN_BLOCKS=1800 # Number of L2 blocks between proposals
 FETCH_INTERVAL=30                # Polling interval in seconds
 PROPOSER_METRICS_PORT=9000       # The port to expose metrics on
+BACKUP_PATH=                     # persist state across restarts (e.g. /backup/proposer_state.json)
 ```
 
 ### Configuration Steps

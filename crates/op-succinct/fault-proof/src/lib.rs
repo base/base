@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod challenger;
 pub mod config;
 pub mod contract;

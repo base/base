@@ -962,6 +962,7 @@ mod integration {
             &env.deployed.anchor_state_registry,
             &env.deployed.factory,
             env.game_type,
+            None,
         )
         .await?;
 

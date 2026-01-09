@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -34,6 +35,13 @@ func TestFaultProofProposer_RestartRecovery_MultipleRestarts(gt *testing.T) {
 	cfg := opspresets.FastFinalityFPProposerConfig()
 	cfg.ProposalIntervalInBlocks = 40
 	runRecoveryTest(gt, cfg, 3, utils.ShortTimeout())
+}
+
+func TestFaultProofProposer_RestartRecovery_WithBackup(gt *testing.T) {
+	cfg := opspresets.DefaultFPProposerConfig()
+	cfg.ProposalIntervalInBlocks = 40
+	cfg.BackupPath = filepath.Join(gt.TempDir(), "proposer_backup.json")
+	runRecoveryTest(gt, cfg, 2, utils.ShortTimeout())
 }
 
 func runRecoveryTest(gt *testing.T, cfg opspresets.FPProposerConfig, restartCount int, timeout time.Duration) {

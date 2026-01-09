@@ -201,6 +201,7 @@ impl TestEnvironment {
             &self.deployed.anchor_state_registry,
             &self.deployed.factory,
             self.game_type,
+            None,
         )
         .await
     }
@@ -549,6 +550,7 @@ pub fn init_logging() {
             std::env::var("RUST_LOG").unwrap_or("info".to_string()).parse().unwrap_or(Level::INFO);
 
         let filter = Targets::new().with_targets([
+            ("backup", level),
             ("integration", level),
             ("sync", level),
             ("fault_proof", level),
