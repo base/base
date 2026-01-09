@@ -59,17 +59,17 @@ where
         changes: HashMap<Address, Account>,
     ) -> Result<(), <DB as Database>::Error> {
         for (address, account) in changes.iter() {
-            let changes = self.access_list.changes.entry(*address).or_default();
+            let account_changes = self.access_list.changes.entry(*address).or_default();
 
             // Update balance, nonce, and code
             match self.db.basic(*address)? {
                 Some(prev) => {
                     if prev.balance != account.info.balance {
-                        changes.balance_changes.insert(self.index, account.info.balance);
+                        account_changes.balance_changes.insert(self.index, account.info.balance);
                     }
 
                     if prev.nonce != account.info.nonce {
-                        changes.nonce_changes.insert(self.index, account.info.nonce);
+                        account_changes.nonce_changes.insert(self.index, account.info.nonce);
                     }
 
                     if prev.code_hash != account.info.code_hash {
@@ -77,16 +77,16 @@ where
                             Some(code) => code,
                             None => self.db.code_by_hash(account.info.code_hash)?,
                         };
-                        changes.code_changes.insert(self.index, bytecode);
+                        account_changes.code_changes.insert(self.index, bytecode);
                     }
                 }
                 None => {
                     // For new accounts, only record changes if they differ from defaults
                     if !account.info.balance.is_zero() {
-                        changes.balance_changes.insert(self.index, account.info.balance);
+                        account_changes.balance_changes.insert(self.index, account.info.balance);
                     }
                     if account.info.nonce != 0 {
-                        changes.nonce_changes.insert(self.index, account.info.nonce);
+                        account_changes.nonce_changes.insert(self.index, account.info.nonce);
                     }
                     // Only record code changes if the account actually has code
                     if account.info.code_hash != KECCAK_EMPTY {
@@ -94,7 +94,7 @@ where
                             Some(code) => code,
                             None => self.db.code_by_hash(account.info.code_hash)?,
                         };
-                        changes.code_changes.insert(self.index, bytecode);
+                        account_changes.code_changes.insert(self.index, bytecode);
                     }
                 }
             }
@@ -105,7 +105,7 @@ where
                 let new = value.present_value;
 
                 if prev != new {
-                    changes.storage_changes.entry(*slot).or_default().insert(self.index, new);
+                    account_changes.storage_changes.entry(*slot).or_default().insert(self.index, new);
                 }
             }
         }
