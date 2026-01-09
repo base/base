@@ -11,10 +11,9 @@ use lru::LruCache;
 use reth::{
     api::{BlockBody, NodePrimitives},
     core::primitives::{AlloyBlockHeader, transaction::TxHashRef},
-    providers::Chain,
+    providers::{CanonStateNotification, Chain},
     transaction_pool::{FullTransactionEvent, PoolTransaction},
 };
-use reth_exex::{ExExEvent, ExExNotification};
 use reth_tracing::tracing::{debug, info};
 
 use crate::{EventLog, Pool, TxEvent};
@@ -67,24 +66,18 @@ impl Tracker {
         }
     }
 
-    /// Parse [`ExExNotification`]s and update the tracker.
+    /// Parse [`CanonStateNotification`]s and update the tracker.
     pub fn handle_notification<N: NodePrimitives>(
         &mut self,
-        notification: ExExNotification<N>,
-    ) -> ExExEvent {
+        notification: CanonStateNotification<N>,
+    ) {
         match notification {
-            ExExNotification::ChainCommitted { new } => {
+            CanonStateNotification::Commit { new } => {
                 self.track_committed_chain(&new);
-                ExExEvent::FinishedHeight(new.tip().num_hash())
             }
-            ExExNotification::ChainReorged { old: _, new } => {
+            CanonStateNotification::Reorg { old: _, new } => {
                 debug!(target: "tracex", tip = ?new.tip().number(), "Chain reorg detected");
                 self.track_committed_chain(&new);
-                ExExEvent::FinishedHeight(new.tip().num_hash())
-            }
-            ExExNotification::ChainReverted { old } => {
-                debug!(target: "tracex", old_tip = ?old.tip().number(), "Chain reverted");
-                ExExEvent::FinishedHeight(old.tip().num_hash())
             }
         }
     }

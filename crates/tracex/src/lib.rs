@@ -7,7 +7,7 @@ mod events;
 pub use events::{EventLog, Pool, TxEvent};
 
 mod exex;
-pub use exex::tracex_exex;
+pub use exex::start_tracex;
 
 mod tracker;
 pub use tracker::Tracker;

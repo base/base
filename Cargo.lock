@@ -1739,12 +1739,10 @@ dependencies = [
  "alloy-primitives",
  "chrono",
  "derive_more",
- "eyre",
  "futures",
  "lru 0.16.2",
  "metrics",
  "reth",
- "reth-exex",
  "reth-tracing",
  "tokio",
 ]

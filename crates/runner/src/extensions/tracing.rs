@@ -1,14 +1,14 @@
 //! Contains the [TransactionTracingExtension] which wires up the `tracex`
-//! execution extension on the Base node builder.
+//! subscription on the Base node builder.
 
-use base_tracex::tracex_exex;
+use base_tracex::start_tracex;
 
 use crate::{
     BaseNodeConfig, TracingConfig,
     extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder},
 };
 
-/// Helper struct that wires the transaction tracing ExEx into the node builder.
+/// Helper struct that wires the transaction tracing subscription into the node builder.
 #[derive(Debug, Clone, Copy)]
 pub struct TransactionTracingExtension {
     /// Transaction tracing configuration flags.
@@ -26,8 +26,14 @@ impl BaseNodeExtension for TransactionTracingExtension {
     /// Applies the extension to the supplied builder.
     fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
         let tracing = self.config;
-        builder.install_exex_if(tracing.enabled, "tracex", move |ctx| async move {
-            Ok(tracex_exex(ctx, tracing.logs_enabled))
+
+        if !tracing.enabled {
+            return builder;
+        }
+
+        builder.extend_rpc_modules(move |ctx| {
+            start_tracex(ctx.pool().clone(), ctx.provider().clone(), tracing.logs_enabled);
+            Ok(())
         })
     }
 }
