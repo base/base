@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
-use base_reth_flashblocks::FlashblocksAPI;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, async_trait},
@@ -26,7 +25,10 @@ use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
-use crate::eth::types::{BaseSubscriptionKind, ExtendedSubscriptionKind};
+use crate::{
+    FlashblocksAPI,
+    rpc::types::{BaseSubscriptionKind, ExtendedSubscriptionKind},
+};
 
 /// Eth pub-sub RPC extension for flashblocks and standard subscriptions.
 ///
