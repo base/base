@@ -14,7 +14,7 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 
 fn main() {
     // Step 1: Initialize versioning so logs / telemetry report the right build info.
-    base_reth_cli::Version::init();
+    base_cli_utils::Version::init();
 
     // Step 2: Parse CLI arguments and hand execution to the Optimism node runner.
     use clap::Parser;
