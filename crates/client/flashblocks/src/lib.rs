@@ -37,3 +37,9 @@ pub use validation::{
     CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
     ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
 };
+
+mod rpc;
+pub use rpc::{
+    BaseSubscriptionKind, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
+    ExtendedSubscriptionKind,
+};
