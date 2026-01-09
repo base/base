@@ -5,9 +5,10 @@
 
 pub mod cli;
 
-use base_reth_runner::{
-    BaseNodeRunner, BaseRpcExtension, FlashblocksCanonExtension, TransactionTracingExtension,
-};
+use base_reth_flashblocks::FlashblocksCanonExtension;
+use base_reth_rpc::BaseRpcExtension;
+use base_reth_runner::BaseNodeRunner;
+use base_txpool::TransactionTracingExtension;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();

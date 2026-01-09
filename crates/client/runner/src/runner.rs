@@ -1,5 +1,6 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
+use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension};
 use eyre::Result;
 use reth::{
     builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig},
@@ -8,10 +9,7 @@ use reth::{
 use reth_optimism_node::OpNode;
 use tracing::info;
 
-use crate::{
-    BaseNodeBuilder, BaseNodeConfig, BaseNodeHandle,
-    extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension},
-};
+use crate::{BaseNodeBuilder, BaseNodeConfig, BaseNodeHandle};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]

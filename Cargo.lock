@@ -1681,6 +1681,7 @@ name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
  "base-cli-utils",
+ "base-primitives",
  "base-reth-runner",
  "clap",
  "once_cell",

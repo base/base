@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use base_reth_runner::{BaseNodeConfig, FlashblocksConfig, RunnerFlashblocksCell, TracingConfig};
+use base_primitives::{FlashblocksConfig, TracingConfig};
+use base_reth_runner::{BaseNodeConfig, RunnerFlashblocksCell};
 use once_cell::sync::OnceCell;
 use reth_optimism_node::args::RollupArgs;
 

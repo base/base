@@ -14,10 +14,3 @@ pub use runner::BaseNodeRunner;
 
 mod config;
 pub use config::{BaseNodeConfig, RunnerFlashblocksCell};
-
-mod extensions;
-pub use extensions::{
-    BaseNodeExtension, BaseRpcConfig, BaseRpcExtension, ConfigurableBaseNodeExtension,
-    FlashblocksCanonConfig, FlashblocksCanonExtension, FlashblocksCell, FlashblocksConfig,
-    OpBuilder, OpProvider, TracingConfig, TransactionTracingConfig, TransactionTracingExtension,
-};
