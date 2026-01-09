@@ -24,7 +24,9 @@ pub enum ProtocolError {
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum ProviderError {
     /// Missing canonical header for a given block number.
-    #[error("missing canonical header for block {block_number}. This can be ignored if the node has recently restarted, restored from a snapshot or is still syncing.")]
+    #[error(
+        "missing canonical header for block {block_number}. This can be ignored if the node has recently restarted, restored from a snapshot or is still syncing."
+    )]
     MissingCanonicalHeader {
         /// The block number for which the header is missing.
         block_number: u64,
@@ -240,11 +242,11 @@ mod tests {
 
     #[test]
     fn test_error_in_result() {
-        fn returns_ok() -> Result<u32, StateProcessorError> {
+        fn returns_ok() -> Result<u32> {
             Ok(42)
         }
 
-        fn returns_err() -> Result<u32, StateProcessorError> {
+        fn returns_err() -> Result<u32> {
             Err(ExecutionError::GasOverflow.into())
         }
 
