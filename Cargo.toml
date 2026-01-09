@@ -52,7 +52,7 @@ codegen-units = 1
 [workspace.dependencies]
 # local
 base-bundles = { path = "crates/bundles" }
-base-fbal = { path = "crates/fbal" }
+base-access-lists = { path = "crates/access-lists" }
 base-reth-cli = { path = "crates/cli" }
 base-reth-rpc = { path = "crates/rpc" }
 base-reth-rpc-types = { path = "crates/reth-rpc-types" }

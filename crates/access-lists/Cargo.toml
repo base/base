@@ -1,5 +1,5 @@
 [package]
-name = "base-fbal"
+name = "base-access-lists"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
