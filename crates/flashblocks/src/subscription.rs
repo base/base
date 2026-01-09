@@ -6,7 +6,6 @@ use base_flashtypes::Flashblock;
 use futures_util::{SinkExt as _, StreamExt};
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{error, info, trace, warn};
 use url::Url;
 
 use crate::{FlashblocksReceiver, Metrics};
