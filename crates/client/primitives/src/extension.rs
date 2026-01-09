@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use eyre::Result;
 
-use crate::{BaseNodeConfig, extensions::OpBuilder};
+use crate::OpBuilder;
 
 /// A node builder extension that can apply additional wiring to the builder.
 pub trait BaseNodeExtension: Send + Sync + Debug {
@@ -12,8 +12,8 @@ pub trait BaseNodeExtension: Send + Sync + Debug {
     fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder;
 }
 
-/// An extension that can be constructed from [`BaseNodeConfig`].
-pub trait ConfigurableBaseNodeExtension: BaseNodeExtension + Sized + 'static {
+/// An extension that can be constructed from a configuration type.
+pub trait ConfigurableBaseNodeExtension<C>: BaseNodeExtension + Sized + 'static {
     /// Builds the extension from the node config.
-    fn build(config: &BaseNodeConfig) -> Result<Self>;
+    fn build(config: &C) -> Result<Self>;
 }

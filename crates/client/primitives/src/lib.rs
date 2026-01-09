@@ -3,14 +3,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod context;
-pub use context::BaseNodeBuilder;
-
-mod handle;
-pub use handle::BaseNodeHandle;
-
-mod runner;
-pub use runner::BaseNodeRunner;
-
 mod config;
-pub use config::{BaseNodeConfig, RunnerFlashblocksCell};
+pub use config::{FlashblocksConfig, TracingConfig};
+
+mod extension;
+pub use extension::{BaseNodeExtension, ConfigurableBaseNodeExtension};
+
+mod types;
+pub use types::{OpBuilder, OpProvider};

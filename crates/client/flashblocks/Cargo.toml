@@ -14,9 +14,11 @@ workspace = true
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
+base-primitives.workspace = true
 
 # reth
 reth.workspace = true
+reth-exex.workspace = true
 reth-evm.workspace = true
 reth-primitives.workspace = true
 reth-rpc.workspace = true
@@ -56,6 +58,8 @@ jsonrpsee-types.workspace = true
 serde.workspace = true
 
 # misc
+eyre.workspace = true
+once_cell.workspace = true
 url.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

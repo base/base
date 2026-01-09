@@ -1,9 +1,7 @@
-//! Type aliases
+//! Type aliases for the OP node builder.
 
 use std::sync::Arc;
 
-use base_reth_flashblocks::FlashblocksState;
-use once_cell::sync::OnceCell;
 use reth::{
     api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
     builder::{Node, NodeBuilderWithComponents, WithLaunchContext},
@@ -22,6 +20,3 @@ pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<Data
 /// OP Builder is a [`WithLaunchContext`] reth node builder.
 pub type OpBuilder =
     WithLaunchContext<NodeBuilderWithComponents<OpNodeTypes, OpComponentsBuilder, OpAddOns>>;
-
-/// The flashblocks cell holds the [`FlashblocksState`].
-pub type FlashblocksCell = Arc<OnceCell<Arc<FlashblocksState<OpProvider>>>>;

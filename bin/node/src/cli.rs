@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use base_reth_runner::{BaseNodeConfig, FlashblocksCell, FlashblocksConfig, TracingConfig};
+use base_primitives::{FlashblocksConfig, TracingConfig};
+use base_reth_runner::{BaseNodeConfig, RunnerFlashblocksCell};
 use once_cell::sync::OnceCell;
 use reth_optimism_node::args::RollupArgs;
 
@@ -52,7 +53,7 @@ impl Args {
 
 impl From<Args> for BaseNodeConfig {
     fn from(args: Args) -> Self {
-        let flashblocks_cell: FlashblocksCell = Arc::new(OnceCell::new());
+        let flashblocks_cell: RunnerFlashblocksCell = Arc::new(OnceCell::new());
         let flashblocks = args.websocket_url.map(|websocket_url| FlashblocksConfig {
             websocket_url,
             max_pending_blocks_depth: args.max_pending_blocks_depth,

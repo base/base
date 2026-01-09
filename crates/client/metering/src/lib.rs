@@ -6,6 +6,9 @@
 mod block;
 pub use block::meter_block;
 
+mod extension;
+pub use extension::{MeteringRpcConfig, MeteringRpcExtension};
+
 mod meter;
 pub use meter::meter_bundle;
 

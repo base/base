@@ -1,0 +1,21 @@
+[package]
+name = "base-primitives"
+description = "Primitive types and traits for Base node runner extensions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth.workspace = true
+reth-db.workspace = true
+reth-optimism-node.workspace = true
+
+# misc
+eyre.workspace = true
