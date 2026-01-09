@@ -1717,6 +1717,7 @@ dependencies = [
  "reth-optimism-chainspec",
  "reth-optimism-node",
  "tracing",
+ "url",
 ]
 
 [[package]]
