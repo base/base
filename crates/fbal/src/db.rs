@@ -105,7 +105,11 @@ where
                 let new = value.present_value;
 
                 if prev != new {
-                    account_changes.storage_changes.entry(*slot).or_default().insert(self.index, new);
+                    account_changes
+                        .storage_changes
+                        .entry(*slot)
+                        .or_default()
+                        .insert(self.index, new);
                 }
             }
         }
