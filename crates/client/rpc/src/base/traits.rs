@@ -1,11 +1,11 @@
 //! Traits for the RPC module.
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, TxHash};
+use alloy_primitives::B256;
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{MeterBlockResponse, TransactionStatusResponse};
+use crate::MeterBlockResponse;
 
 /// RPC API for transaction metering
 #[rpc(server, namespace = "base")]
@@ -42,12 +42,4 @@ pub trait MeteringApi {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<MeterBlockResponse>;
-}
-
-/// RPC API for transaction status
-#[rpc(server, namespace = "base")]
-pub trait TransactionStatusApi {
-    /// Gets the status of a transaction
-    #[method(name = "transactionStatus")]
-    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
 }

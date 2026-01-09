@@ -3,14 +3,16 @@
 <a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
-Base's transaction tracing execution extension for `reth`. It subscribes to mempool events and chain notifications to track how long a transaction spends in each stage of the lifecycle before it is included, dropped, or replaced.
+Base-specific transaction pool extensions for `reth`, including transaction tracing and RPC endpoints.
 
 ## Overview
 
-- Hooks into the Base node as an execution extension (`ExEx`) so tracing runs alongside normal block production.
-- Records pending/queued transitions, replacements, drops, and block inclusion for every tracked transaction.
-- Keeps an event log per transaction with optional `info`-level logging to surface lifecycle transitions.
-- Emits histogram metrics for mempool residency by event type to help spot latency regressions.
+This crate provides:
+
+- **Transaction Tracing ExEx**: An execution extension that subscribes to mempool events and chain notifications to track how long a transaction spends in each stage of the lifecycle before it is included, dropped, or replaced.
+- **Transaction Status RPC**: An RPC API (`txpool_transactionStatus`) to query the current status and lifecycle events of a transaction by hash.
+- **Tracker**: Core tracking logic for recording pending/queued transitions, replacements, drops, and block inclusion.
+- **Metrics**: Histogram metrics for mempool residency by event type to help spot latency regressions.
 
 ## Usage
 

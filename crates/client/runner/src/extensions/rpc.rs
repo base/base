@@ -5,8 +5,9 @@ use std::sync::Arc;
 use base_reth_flashblocks::{FlashblocksState, FlashblocksSubscriber};
 use base_reth_rpc::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, MeteringApiImpl,
-    MeteringApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
+    MeteringApiServer,
 };
+use base_txpool::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use tracing::info;
 use url::Url;
 

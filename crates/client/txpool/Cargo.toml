@@ -16,9 +16,13 @@ workspace = true
 reth.workspace = true
 reth-exex.workspace = true
 reth-tracing.workspace = true
+reth-transaction-pool.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
 
 # async
 tokio.workspace = true
@@ -30,3 +34,10 @@ eyre.workspace = true
 chrono.workspace = true
 metrics.workspace = true
 derive_more = { workspace = true, features = ["display"] }
+tracing.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+httpmock.workspace = true
+serde_json.workspace = true
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }

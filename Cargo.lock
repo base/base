@@ -1654,7 +1654,6 @@ dependencies = [
  "base-reth-test-utils",
  "eyre",
  "futures-util",
- "httpmock",
  "jsonrpsee",
  "jsonrpsee-types",
  "metrics",
@@ -1775,12 +1774,18 @@ dependencies = [
  "derive_more",
  "eyre",
  "futures",
+ "httpmock",
+ "jsonrpsee",
  "lru 0.16.3",
  "metrics",
  "reth",
  "reth-exex",
  "reth-tracing",
+ "reth-transaction-pool",
+ "serde",
+ "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

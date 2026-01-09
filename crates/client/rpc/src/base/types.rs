@@ -1,25 +1,7 @@
-//! Types for the transaction status rpc
+//! Types for the RPC module.
 
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
-
-/// The status of a transaction.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub enum Status {
-    /// Transaction is not known to the node.
-    Unknown,
-    /// Transaction is known to the node (in mempool or confirmed).
-    Known,
-}
-
-/// Response containing the status of a transaction.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub struct TransactionStatusResponse {
-    /// The status of the queried transaction.
-    pub status: Status,
-}
-
-// Block metering types
 
 /// Response for block metering RPC calls.
 /// Contains the block hash plus timing information for EVM execution and state root calculation.

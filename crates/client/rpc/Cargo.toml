@@ -23,7 +23,6 @@ reth-evm.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 reth-rpc.workspace = true
 reth-rpc-eth-api.workspace = true
 
@@ -71,7 +70,6 @@ serde_json.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 base-reth-test-utils.workspace = true
-httpmock.workspace = true
 futures-util.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true

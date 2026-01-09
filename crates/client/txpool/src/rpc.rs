@@ -4,13 +4,37 @@ use alloy_primitives::TxHash;
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
+    proc_macros::rpc,
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_transaction_pool::TransactionPool;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::{Status, TransactionStatusApiServer, TransactionStatusResponse};
+/// The status of a transaction.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub enum Status {
+    /// Transaction is not known to the node.
+    Unknown,
+    /// Transaction is known to the node (in mempool or confirmed).
+    Known,
+}
+
+/// Response containing the status of a transaction.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct TransactionStatusResponse {
+    /// The status of the queried transaction.
+    pub status: Status,
+}
+
+/// RPC API for transaction status
+#[rpc(server, namespace = "base")]
+pub trait TransactionStatusApi {
+    /// Gets the status of a transaction
+    #[method(name = "transactionStatus")]
+    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
+}
 
 /// Implementation of the transaction status RPC API.
 #[derive(Debug)]
@@ -79,7 +103,6 @@ mod tests {
     use serde_json::{self, json};
 
     use super::*;
-    use crate::Status;
 
     #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {
