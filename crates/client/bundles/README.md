@@ -50,7 +50,3 @@ let senders = parsed.senders();
 let total_gas = parsed.gas_limit();
 let da_bytes = parsed.da_size();
 ```
-
-## License
-
-Licensed under the MIT license, as found in [`LICENSE`](../../LICENSE).

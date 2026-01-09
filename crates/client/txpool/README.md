@@ -1,4 +1,4 @@
-# `base-tracex`
+# `base-txpool`
 
 <a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -34,7 +34,3 @@ let builder = TransactionTracingExtension::new(tracing).apply(builder);
 ## Metrics
 
 The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When the in-memory log reaches its limit (20,000 transactions), an `overflowed` event is recorded so dashboards can alert on data loss.
-
-## License
-
-Licensed under the MIT license, as found in [`LICENSE`](../../LICENSE).

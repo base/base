@@ -83,7 +83,7 @@ build-node:
 
 # Build the contracts used for tests
 build-contracts:
-    cd crates/test-utils/contracts && forge build
+    cd crates/client/test-utils/contracts && forge build
 
 # Cleans the workspace
 clean:

@@ -1,7 +1,7 @@
 //! Contains the [TransactionTracingExtension] which wires up the `tracex`
 //! execution extension on the Base node builder.
 
-use base_tracex::tracex_exex;
+use base_txpool::tracex_exex;
 
 use crate::{
     BaseNodeConfig, TracingConfig,
