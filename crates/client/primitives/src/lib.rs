@@ -10,4 +10,4 @@ mod extension;
 pub use extension::{BaseNodeExtension, ConfigurableBaseNodeExtension};
 
 mod types;
-pub use types::{FlashblocksCell, OpBuilder, OpProvider};
+pub use types::{OpBuilder, OpProvider};

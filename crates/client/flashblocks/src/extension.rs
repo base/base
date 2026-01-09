@@ -4,13 +4,16 @@
 use std::sync::Arc;
 
 use base_primitives::{
-    BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, FlashblocksConfig,
-    OpBuilder, OpProvider,
+    BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksConfig, OpBuilder, OpProvider,
 };
 use futures_util::TryStreamExt;
+use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
 
 use crate::FlashblocksState;
+
+/// The flashblocks cell holds a shared state reference.
+pub type FlashblocksCell<T> = Arc<OnceCell<Arc<T>>>;
 
 /// Helper struct that wires the Flashblocks canon ExEx into the node builder.
 #[derive(Debug, Clone)]

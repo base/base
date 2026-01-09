@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use once_cell::sync::OnceCell;
 use reth::{
     api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
     builder::{Node, NodeBuilderWithComponents, WithLaunchContext},
@@ -21,8 +20,3 @@ pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<Data
 /// OP Builder is a [`WithLaunchContext`] reth node builder.
 pub type OpBuilder =
     WithLaunchContext<NodeBuilderWithComponents<OpNodeTypes, OpComponentsBuilder, OpAddOns>>;
-
-/// The flashblocks cell holds a shared state reference.
-///
-/// Uses a type parameter to avoid depending on the flashblocks crate.
-pub type FlashblocksCell<T> = Arc<OnceCell<Arc<T>>>;

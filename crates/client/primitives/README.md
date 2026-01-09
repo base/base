@@ -13,7 +13,6 @@ Primitive types and traits for Base node runner extensions. Provides configurati
 - **`ConfigurableBaseNodeExtension`**: Trait for extensions that can be constructed from a configuration type.
 - **`OpBuilder`**: Type alias for the OP node builder with launch context.
 - **`OpProvider`**: Type alias for the blockchain provider instance.
-- **`FlashblocksCell`**: Shared state cell for flashblocks state references.
 
 ## Usage
 

@@ -1572,7 +1572,6 @@ name = "base-primitives"
 version = "0.2.1"
 dependencies = [
  "eyre",
- "once_cell",
  "reth",
  "reth-db",
  "reth-optimism-node",

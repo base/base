@@ -4,15 +4,14 @@
 use std::sync::Arc;
 
 use base_primitives::{
-    BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, FlashblocksConfig,
-    OpBuilder, OpProvider,
+    BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksConfig, OpBuilder, OpProvider,
 };
 use tracing::info;
 use url::Url;
 
 use crate::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksState,
-    FlashblocksSubscriber,
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksCell,
+    FlashblocksState, FlashblocksSubscriber,
 };
 
 /// Helper struct that wires the flashblocks RPC into the node builder.

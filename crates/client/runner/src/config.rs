@@ -1,7 +1,7 @@
 //! Contains the Base node configuration structures.
 
-use base_primitives::{FlashblocksCell, FlashblocksConfig, OpProvider, TracingConfig};
-use base_reth_flashblocks::{FlashblocksCanonConfig, FlashblocksState};
+use base_primitives::{FlashblocksConfig, OpProvider, TracingConfig};
+use base_reth_flashblocks::{FlashblocksCanonConfig, FlashblocksCell, FlashblocksState};
 use base_reth_metering::MeteringRpcConfig;
 use base_txpool::{TransactionStatusRpcConfig, TransactionTracingConfig};
 use reth_optimism_node::args::RollupArgs;
