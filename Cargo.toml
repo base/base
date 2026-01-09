@@ -56,6 +56,7 @@ base-flashtypes = { path = "crates/shared/flashtypes" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
 # Client
 base-bundles = { path = "crates/client/bundles" }
+base-reth-metering = { path = "crates/client/metering" }
 base-reth-rpc = { path = "crates/client/rpc" }
 base-reth-rpc-types = { path = "crates/client/reth-rpc-types" }
 base-txpool = { path = "crates/client/txpool" }

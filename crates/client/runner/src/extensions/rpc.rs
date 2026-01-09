@@ -3,10 +3,8 @@
 use std::sync::Arc;
 
 use base_reth_flashblocks::{FlashblocksState, FlashblocksSubscriber};
-use base_reth_rpc::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, MeteringApiImpl,
-    MeteringApiServer,
-};
+use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
+use base_reth_rpc::{EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer};
 use base_txpool::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use tracing::info;
 use url::Url;

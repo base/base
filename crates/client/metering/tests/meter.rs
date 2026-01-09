@@ -7,7 +7,7 @@ use alloy_eips::Encodable2718;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use base_bundles::{Bundle, ParsedBundle};
-use base_reth_rpc::meter_bundle;
+use base_reth_metering::meter_bundle;
 use base_reth_test_utils::create_provider_factory;
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;

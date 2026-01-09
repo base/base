@@ -12,23 +12,15 @@ workspace = true
 
 [dependencies]
 # workspace
-base-bundles.workspace = true
 base-reth-flashblocks.workspace = true
 
 # reth
 reth.workspace = true
-reth-provider.workspace = true
-reth-primitives-traits.workspace = true
-reth-evm.workspace = true
-reth-optimism-evm.workspace = true
-reth-optimism-chainspec.workspace = true
-reth-optimism-primitives.workspace = true
 reth-rpc.workspace = true
 reth-rpc-eth-api.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
-alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
@@ -47,13 +39,14 @@ jsonrpsee-types.workspace = true
 
 # misc
 tracing.workspace = true
-eyre.workspace = true
 serde.workspace = true
 metrics.workspace = true
 metrics-derive.workspace = true
 
 [dev-dependencies]
+alloy-consensus.workspace = true
 base-flashtypes.workspace = true
+eyre.workspace = true
 reth-optimism-primitives.workspace = true
 op-alloy-consensus.workspace = true
 alloy-genesis.workspace = true
