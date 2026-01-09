@@ -1545,6 +1545,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-cli-utils"
+version = "0.2.1"
+dependencies = [
+ "reth",
+]
+
+[[package]]
 name = "base-flashtypes"
 version = "0.2.1"
 dependencies = [
@@ -1558,13 +1565,6 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "base-reth-cli"
-version = "0.2.1"
-dependencies = [
- "reth",
 ]
 
 [[package]]
@@ -1667,7 +1667,7 @@ dependencies = [
 name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
- "base-reth-cli",
+ "base-cli-utils",
  "base-reth-runner",
  "clap",
  "once_cell",
