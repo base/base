@@ -6,6 +6,11 @@
 #[macro_use]
 extern crate tracing;
 
+mod error;
+pub use error::{
+    BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
+};
+
 mod metrics;
 pub use metrics::Metrics;
 

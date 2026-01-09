@@ -8,7 +8,6 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use eyre::eyre;
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
@@ -21,7 +20,7 @@ use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 
-use crate::PendingBlocks;
+use crate::{ExecutionError, PendingBlocks, StateProcessorError};
 
 /// Represents the result of executing or fetching a cached pending transaction.
 #[derive(Debug, Clone)]
@@ -91,7 +90,7 @@ where
         &mut self,
         idx: usize,
         transaction: Recovered<OpTxEnvelope>,
-    ) -> eyre::Result<ExecutedPendingTransaction> {
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let tx_hash = transaction.tx_hash();
 
         let effective_gas_price = if transaction.is_deposit() {
@@ -130,13 +129,13 @@ where
         state: EvmState,
         idx: usize,
         effective_gas_price: u128,
-    ) -> eyre::Result<ExecutedPendingTransaction> {
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let deposit_receipt = receipt
                 .inner
                 .inner
                 .as_deposit_receipt()
-                .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
+                .ok_or(ExecutionError::DepositReceiptMismatch)?;
 
             (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
         } else {
@@ -158,7 +157,7 @@ where
         self.cumulative_gas_used = self
             .cumulative_gas_used
             .checked_add(receipt.inner.gas_used)
-            .ok_or(eyre!("cumulative gas used overflow"))?;
+            .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
         Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state })
@@ -170,7 +169,7 @@ where
         transaction: Recovered<OpTxEnvelope>,
         idx: usize,
         effective_gas_price: u128,
-    ) -> eyre::Result<ExecutedPendingTransaction> {
+    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let tx_hash = transaction.tx_hash();
 
         match self.evm.transact(&transaction) {
@@ -194,7 +193,7 @@ where
                 self.cumulative_gas_used = self
                     .cumulative_gas_used
                     .checked_add(gas_used)
-                    .ok_or(eyre!("cumulative gas used overflow"))?;
+                    .ok_or(ExecutionError::GasOverflow)?;
 
                 let is_canyon_active =
                     self.chain_spec.is_canyon_active_at_timestamp(self.pending_block.timestamp);
@@ -226,7 +225,7 @@ where
                                     .map(|acc| acc.unwrap_or_default().nonce)
                             })
                             .transpose()
-                            .map_err(|_| eyre!("failed to load cache account for depositor"))?;
+                            .map_err(|_| ExecutionError::DepositAccountLoad)?;
 
                         self.receipt_builder.build_deposit_receipt(OpDepositReceipt {
                             inner: receipt,
@@ -266,7 +265,7 @@ where
                         .inner
                         .inner
                         .as_deposit_receipt()
-                        .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
+                        .ok_or(ExecutionError::DepositReceiptMismatch)?;
 
                     (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
                 } else {
@@ -288,12 +287,12 @@ where
 
                 Ok(ExecutedPendingTransaction { rpc_transaction, receipt: op_receipt, state })
             }
-            Err(e) => Err(eyre!(
-                "failed to execute transaction: {:?} tx_hash: {:?} sender: {:?}",
-                e,
+            Err(e) => Err(ExecutionError::TransactionFailed {
                 tx_hash,
-                transaction.signer()
-            )),
+                sender: transaction.signer(),
+                reason: format!("{:?}", e),
+            }
+            .into()),
         }
     }
 }

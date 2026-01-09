@@ -8,16 +8,16 @@ pub use base::{
     block::meter_block,
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
-    pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
-    types::{
-        BaseSubscriptionKind, ExtendedSubscriptionKind, MeterBlockResponse, MeterBlockTransactions,
-        Status, TransactionStatusResponse,
-    },
+    types::{MeterBlockResponse, MeterBlockTransactions, Status, TransactionStatusResponse},
 };
 
 mod eth;
-pub use eth::rpc::{EthApiExt, EthApiOverrideServer};
+pub use eth::{
+    pubsub::{EthPubSub, EthPubSubApiServer},
+    rpc::{EthApiExt, EthApiOverrideServer},
+    types::{BaseSubscriptionKind, ExtendedSubscriptionKind},
+};
 
 mod metrics;
