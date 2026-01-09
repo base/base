@@ -112,6 +112,27 @@ pub enum ProposerGauge {
         message = "Total number of network call timeouts"
     )]
     NetworkCallTimeout,
+    // Backup metrics
+    #[strum(
+        serialize = "op_succinct_fp_backup_save_success",
+        message = "Total number of successful backup saves"
+    )]
+    BackupSaveSuccess,
+    #[strum(
+        serialize = "op_succinct_fp_backup_save_error",
+        message = "Total number of backup save errors"
+    )]
+    BackupSaveError,
+    #[strum(
+        serialize = "op_succinct_fp_backup_restore_success",
+        message = "Total number of successful backup restores"
+    )]
+    BackupRestoreSuccess,
+    #[strum(
+        serialize = "op_succinct_fp_backup_restore_error",
+        message = "Total number of backup restore errors"
+    )]
+    BackupRestoreError,
 }
 
 impl MetricsGauge for ProposerGauge {}

@@ -1,4 +1,5 @@
 use alloy_sol_macro::sol;
+use serde::{Deserialize, Serialize};
 
 sol! {
     type GameType is uint32;
@@ -136,7 +137,8 @@ sol! {
         function respectedGameType() external view returns (GameType);
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
     /// @notice The current status of the dispute game.
     enum GameStatus {
         // The game is currently in progress, and has not been resolved.
@@ -147,7 +149,7 @@ sol! {
         DEFENDER_WINS
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
     enum ProposalStatus {
         // The initial state of a new proposal.
         Unchallenged,
