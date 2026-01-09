@@ -54,10 +54,8 @@ Base Reth Node is a Reth-based Ethereum node implementation, specifically tailor
 ├── LICENSE           # MIT License
 ├── README.md         # This file
 ├── crates/
-│   ├── node/         # Main node application logic
-│   ├── tracex/        # Transaction tracing utilities
-│   ├── flashblocks-rpc/ # RPC server for Flashblocks integration
-│   └── metering/     # Simulation-based resource metering
+│   ├── client/       # Node client crates (cli, rpc, flashblocks, txpool, etc.)
+│   └── shared/       # Shared library crates (access-lists, flashtypes)
 ├── justfile          # Command runner for development tasks
 └── .github/
     └── workflows/
