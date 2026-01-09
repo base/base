@@ -1,12 +1,9 @@
-//! Contains the [TransactionTracingExtension] which wires up the `tracex`
+//! Contains the [`TransactionTracingExtension`] which wires up the `tracex`
 //! execution extension on the Base node builder.
 
-use base_txpool::tracex_exex;
+use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder, TracingConfig};
 
-use crate::{
-    BaseNodeConfig, TracingConfig,
-    extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder},
-};
+use crate::tracex_exex;
 
 /// Helper struct that wires the transaction tracing ExEx into the node builder.
 #[derive(Debug, Clone, Copy)]
@@ -17,8 +14,8 @@ pub struct TransactionTracingExtension {
 
 impl TransactionTracingExtension {
     /// Creates a new transaction tracing extension helper.
-    pub const fn new(config: &BaseNodeConfig) -> Self {
-        Self { config: config.tracing }
+    pub const fn new(config: TracingConfig) -> Self {
+        Self { config }
     }
 }
 
@@ -32,8 +29,16 @@ impl BaseNodeExtension for TransactionTracingExtension {
     }
 }
 
-impl ConfigurableBaseNodeExtension for TransactionTracingExtension {
-    fn build(config: &BaseNodeConfig) -> eyre::Result<Self> {
-        Ok(Self::new(config))
+/// Configuration trait for [`TransactionTracingExtension`].
+///
+/// Types implementing this trait can be used to construct a [`TransactionTracingExtension`].
+pub trait TransactionTracingConfig {
+    /// Returns the tracing configuration.
+    fn tracing(&self) -> &TracingConfig;
+}
+
+impl<C: TransactionTracingConfig> ConfigurableBaseNodeExtension<C> for TransactionTracingExtension {
+    fn build(config: &C) -> eyre::Result<Self> {
+        Ok(Self::new(*config.tracing()))
     }
 }

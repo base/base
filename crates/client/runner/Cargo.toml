@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # internal
+base-primitives.workspace = true
 base-reth-flashblocks.workspace = true
 base-reth-metering.workspace = true
 base-txpool.workspace = true
@@ -20,14 +21,11 @@ base-txpool.workspace = true
 # reth
 reth.workspace = true
 reth-db.workspace = true
-reth-exex.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
 
 # misc
 eyre.workspace = true
 futures-util.workspace = true
-once_cell.workspace = true
 tracing.workspace = true
-url.workspace = true
 derive_more = { workspace = true, features = ["debug"] }

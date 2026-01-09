@@ -36,7 +36,7 @@ impl BaseNodeRunner {
     /// Registers a new builder extension constructed from the node configuration.
     pub fn install_ext<E>(&mut self) -> Result<()>
     where
-        E: ConfigurableBaseNodeExtension,
+        E: ConfigurableBaseNodeExtension<BaseNodeConfig>,
     {
         let extension = E::build(&self.config)?;
         self.extensions.push(Box::new(extension));

@@ -1,8 +1,13 @@
 //! Contains the Base node configuration structures.
 
+use base_primitives::{FlashblocksCell, FlashblocksConfig, OpProvider, TracingConfig};
+use base_reth_flashblocks::{FlashblocksCanonConfig, FlashblocksState};
+use base_reth_rpc::BaseRpcConfig;
+use base_txpool::TransactionTracingConfig;
 use reth_optimism_node::args::RollupArgs;
 
-use crate::extensions::FlashblocksCell;
+/// Concrete type alias for the flashblocks cell used in the runner.
+pub type RunnerFlashblocksCell = FlashblocksCell<FlashblocksState<OpProvider>>;
 
 /// Captures the pieces of CLI configuration that the node logic cares about.
 #[derive(Debug, Clone)]
@@ -16,7 +21,7 @@ pub struct BaseNodeConfig {
     /// Indicates whether the metering RPC surface should be installed.
     pub metering_enabled: bool,
     /// Shared Flashblocks state cache.
-    pub flashblocks_cell: FlashblocksCell,
+    pub flashblocks_cell: RunnerFlashblocksCell,
 }
 
 impl BaseNodeConfig {
@@ -26,20 +31,39 @@ impl BaseNodeConfig {
     }
 }
 
-/// Flashblocks-specific configuration knobs.
-#[derive(Debug, Clone)]
-pub struct FlashblocksConfig {
-    /// The websocket endpoint that streams flashblock updates.
-    pub websocket_url: String,
-    /// Maximum number of pending flashblocks to retain in memory.
-    pub max_pending_blocks_depth: u64,
+// Implement configuration traits for BaseNodeConfig so it can be used
+// with ConfigurableBaseNodeExtension
+
+impl FlashblocksCanonConfig for BaseNodeConfig {
+    fn flashblocks_cell(&self) -> &FlashblocksCell<FlashblocksState<OpProvider>> {
+        &self.flashblocks_cell
+    }
+
+    fn flashblocks(&self) -> Option<&FlashblocksConfig> {
+        self.flashblocks.as_ref()
+    }
 }
 
-/// Transaction tracing toggles.
-#[derive(Debug, Clone, Copy)]
-pub struct TracingConfig {
-    /// Enables the transaction tracing ExEx.
-    pub enabled: bool,
-    /// Emits `info`-level logs for the tracing ExEx when enabled.
-    pub logs_enabled: bool,
+impl TransactionTracingConfig for BaseNodeConfig {
+    fn tracing(&self) -> &TracingConfig {
+        &self.tracing
+    }
+}
+
+impl BaseRpcConfig for BaseNodeConfig {
+    fn flashblocks_cell(&self) -> &FlashblocksCell<FlashblocksState<OpProvider>> {
+        &self.flashblocks_cell
+    }
+
+    fn flashblocks(&self) -> Option<&FlashblocksConfig> {
+        self.flashblocks.as_ref()
+    }
+
+    fn metering_enabled(&self) -> bool {
+        self.metering_enabled
+    }
+
+    fn sequencer_rpc(&self) -> Option<&str> {
+        self.rollup_args.sequencer.as_deref()
+    }
 }

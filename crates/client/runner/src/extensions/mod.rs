@@ -3,17 +3,13 @@
 //! Builder extensions for the node nicely modularizes parts
 //! of the node building process.
 
-mod extension;
-pub use extension::{BaseNodeExtension, ConfigurableBaseNodeExtension};
+// Re-export extension traits and types from base-primitives
+pub use base_primitives::{
+    BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, FlashblocksConfig,
+    OpBuilder, OpProvider, TracingConfig,
+};
 
-mod canon;
-pub use canon::FlashblocksCanonExtension;
-
-mod rpc;
-pub use rpc::BaseRpcExtension;
-
-mod tracing;
-pub use tracing::TransactionTracingExtension;
-
-mod types;
-pub use types::{FlashblocksCell, OpBuilder, OpProvider};
+// Re-export extension implementations from domain crates
+pub use base_reth_flashblocks::{FlashblocksCanonConfig, FlashblocksCanonExtension};
+pub use base_reth_rpc::{BaseRpcConfig, BaseRpcExtension};
+pub use base_txpool::{TransactionTracingConfig, TransactionTracingExtension};

@@ -43,3 +43,6 @@ pub use rpc::{
     BaseSubscriptionKind, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
     ExtendedSubscriptionKind,
 };
+
+mod extension;
+pub use extension::{FlashblocksCanonConfig, FlashblocksCanonExtension};

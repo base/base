@@ -1,30 +1,33 @@
-//! Contains the [FlashblocksCanonExtension] which wires up the `flashblocks-canon`
+//! Contains the [`FlashblocksCanonExtension`] which wires up the `flashblocks-canon`
 //! execution extension on the Base node builder.
 
 use std::sync::Arc;
 
-use base_reth_flashblocks::FlashblocksState;
+use base_primitives::{
+    BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, FlashblocksConfig,
+    OpBuilder, OpProvider,
+};
 use futures_util::TryStreamExt;
 use reth_exex::ExExEvent;
 
-use crate::{
-    BaseNodeConfig, FlashblocksConfig,
-    extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, OpBuilder},
-};
+use crate::FlashblocksState;
 
 /// Helper struct that wires the Flashblocks canon ExEx into the node builder.
 #[derive(Debug, Clone)]
 pub struct FlashblocksCanonExtension {
     /// Shared Flashblocks state cache.
-    pub cell: FlashblocksCell,
+    pub cell: FlashblocksCell<FlashblocksState<OpProvider>>,
     /// Optional Flashblocks configuration.
     pub config: Option<FlashblocksConfig>,
 }
 
 impl FlashblocksCanonExtension {
     /// Create a new Flashblocks canon extension helper.
-    pub fn new(config: &BaseNodeConfig) -> Self {
-        Self { cell: config.flashblocks_cell.clone(), config: config.flashblocks.clone() }
+    pub const fn new(
+        cell: FlashblocksCell<FlashblocksState<OpProvider>>,
+        config: Option<FlashblocksConfig>,
+    ) -> Self {
+        Self { cell, config }
     }
 }
 
@@ -67,8 +70,18 @@ impl BaseNodeExtension for FlashblocksCanonExtension {
     }
 }
 
-impl ConfigurableBaseNodeExtension for FlashblocksCanonExtension {
-    fn build(config: &BaseNodeConfig) -> eyre::Result<Self> {
-        Ok(Self::new(config))
+/// Configuration trait for [`FlashblocksCanonExtension`].
+///
+/// Types implementing this trait can be used to construct a [`FlashblocksCanonExtension`].
+pub trait FlashblocksCanonConfig {
+    /// Returns the shared flashblocks cell.
+    fn flashblocks_cell(&self) -> &FlashblocksCell<FlashblocksState<OpProvider>>;
+    /// Returns the flashblocks configuration if enabled.
+    fn flashblocks(&self) -> Option<&FlashblocksConfig>;
+}
+
+impl<C: FlashblocksCanonConfig> ConfigurableBaseNodeExtension<C> for FlashblocksCanonExtension {
+    fn build(config: &C) -> eyre::Result<Self> {
+        Ok(Self::new(config.flashblocks_cell().clone(), config.flashblocks().cloned()))
     }
 }

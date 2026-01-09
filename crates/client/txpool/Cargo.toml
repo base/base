@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# workspace
+base-primitives.workspace = true
+
 # reth
 reth.workspace = true
 reth-exex.workspace = true

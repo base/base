@@ -16,3 +16,6 @@ pub use rpc::{
 
 mod tracker;
 pub use tracker::Tracker;
+
+mod extension;
+pub use extension::{TransactionTracingConfig, TransactionTracingExtension};
