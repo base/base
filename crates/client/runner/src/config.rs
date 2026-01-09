@@ -2,9 +2,10 @@
 
 use base_primitives::{FlashblocksCell, FlashblocksConfig, OpProvider, TracingConfig};
 use base_reth_flashblocks::{FlashblocksCanonConfig, FlashblocksState};
-use base_reth_rpc::BaseRpcConfig;
 use base_txpool::TransactionTracingConfig;
 use reth_optimism_node::args::RollupArgs;
+
+use crate::extensions::BaseRpcConfig;
 
 /// Concrete type alias for the flashblocks cell used in the runner.
 pub type RunnerFlashblocksCell = FlashblocksCell<FlashblocksState<OpProvider>>;

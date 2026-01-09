@@ -6,8 +6,7 @@
 pub mod cli;
 
 use base_reth_flashblocks::FlashblocksCanonExtension;
-use base_reth_rpc::BaseRpcExtension;
-use base_reth_runner::BaseNodeRunner;
+use base_reth_runner::{BaseNodeRunner, BaseRpcExtension};
 use base_txpool::TransactionTracingExtension;
 
 #[global_allocator]

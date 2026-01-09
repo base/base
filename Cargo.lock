@@ -1682,7 +1682,9 @@ version = "0.2.1"
 dependencies = [
  "base-cli-utils",
  "base-primitives",
+ "base-reth-flashblocks",
  "base-reth-runner",
+ "base-txpool",
  "clap",
  "once_cell",
  "reth-cli-util",
@@ -1714,6 +1716,7 @@ dependencies = [
  "reth-optimism-chainspec",
  "reth-optimism-node",
  "tracing",
+ "url",
 ]
 
 [[package]]
