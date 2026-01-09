@@ -1654,6 +1654,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-client",
  "base-bundles",
+ "base-primitives",
  "base-reth-test-utils",
  "eyre",
  "jsonrpsee",
@@ -1683,6 +1684,7 @@ dependencies = [
  "base-cli-utils",
  "base-primitives",
  "base-reth-flashblocks",
+ "base-reth-metering",
  "base-reth-runner",
  "base-txpool",
  "clap",
@@ -1716,7 +1718,6 @@ dependencies = [
  "reth-optimism-chainspec",
  "reth-optimism-node",
  "tracing",
- "url",
 ]
 
 [[package]]

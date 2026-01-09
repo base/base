@@ -28,5 +28,4 @@ reth-optimism-chainspec.workspace = true
 eyre.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
-url.workspace = true
 derive_more = { workspace = true, features = ["debug"] }

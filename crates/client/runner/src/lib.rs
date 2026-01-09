@@ -14,6 +14,3 @@ pub use runner::BaseNodeRunner;
 
 mod config;
 pub use config::{BaseNodeConfig, RunnerFlashblocksCell};
-
-mod extensions;
-pub use extensions::{BaseRpcConfig, BaseRpcExtension};

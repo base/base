@@ -46,3 +46,6 @@ pub use rpc::{
 
 mod extension;
 pub use extension::{FlashblocksCanonConfig, FlashblocksCanonExtension};
+
+mod rpc_extension;
+pub use rpc_extension::FlashblocksRpcExtension;

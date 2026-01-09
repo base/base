@@ -17,6 +17,7 @@ workspace = true
 base-cli-utils.workspace = true
 base-primitives.workspace = true
 base-reth-flashblocks.workspace = true
+base-reth-metering.workspace = true
 base-reth-runner.workspace = true
 base-txpool.workspace = true
 

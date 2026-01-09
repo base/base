@@ -2,10 +2,9 @@
 
 use base_primitives::{FlashblocksCell, FlashblocksConfig, OpProvider, TracingConfig};
 use base_reth_flashblocks::{FlashblocksCanonConfig, FlashblocksState};
-use base_txpool::TransactionTracingConfig;
+use base_reth_metering::MeteringRpcConfig;
+use base_txpool::{TransactionStatusRpcConfig, TransactionTracingConfig};
 use reth_optimism_node::args::RollupArgs;
-
-use crate::extensions::BaseRpcConfig;
 
 /// Concrete type alias for the flashblocks cell used in the runner.
 pub type RunnerFlashblocksCell = FlashblocksCell<FlashblocksState<OpProvider>>;
@@ -51,19 +50,13 @@ impl TransactionTracingConfig for BaseNodeConfig {
     }
 }
 
-impl BaseRpcConfig for BaseNodeConfig {
-    fn flashblocks_cell(&self) -> &FlashblocksCell<FlashblocksState<OpProvider>> {
-        &self.flashblocks_cell
-    }
-
-    fn flashblocks(&self) -> Option<&FlashblocksConfig> {
-        self.flashblocks.as_ref()
-    }
-
+impl MeteringRpcConfig for BaseNodeConfig {
     fn metering_enabled(&self) -> bool {
         self.metering_enabled
     }
+}
 
+impl TransactionStatusRpcConfig for BaseNodeConfig {
     fn sequencer_rpc(&self) -> Option<&str> {
         self.rollup_args.sequencer.as_deref()
     }
