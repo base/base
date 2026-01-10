@@ -2,7 +2,7 @@
 
 use alloy_consensus::{SignableTransaction, Transaction};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bytes, FixedBytes, TxHash, address, hex};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::Result;
@@ -59,6 +59,13 @@ impl Account {
         let key_fixed: FixedBytes<32> = FixedBytes::from_slice(&key_bytes);
         PrivateKeySigner::from_bytes(&key_fixed)
             .expect("should be able to build the PrivateKeySigner")
+    }
+
+    /// Returns the private key as a B256 for use with TransactionBuilder.
+    pub fn signer_b256(&self) -> B256 {
+        let key_bytes =
+            hex::decode(self.private_key()).expect("should be able to decode private key");
+        B256::from_slice(&key_bytes)
     }
 
     /// Constructs a signed CREATE transaction with a given nonce and

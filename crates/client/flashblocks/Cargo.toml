@@ -82,7 +82,6 @@ alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
 alloy-contract.workspace = true
 op-alloy-consensus.workspace = true
-reth-testing-utils.workspace = true
 reth-tracing.workspace = true
 reth-optimism-node.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

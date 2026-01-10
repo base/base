@@ -5,6 +5,7 @@ use std::time::Duration;
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_client_primitives::BaseNodeExtension;
@@ -97,6 +98,12 @@ impl TestHarness {
     /// Websocket URL for subscribing to JSON-RPC notifications.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.node.ws_api_addr)
+    }
+
+    /// Return a JSON-RPC client connected to the harness node.
+    pub fn rpc_client(&self) -> Result<RpcClient> {
+        let url = self.rpc_url().parse()?;
+        Ok(RpcClient::new_http(url))
     }
 
     /// Build a block using the provided transactions and push it through the engine.
