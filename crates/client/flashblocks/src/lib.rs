@@ -32,6 +32,9 @@ pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 mod state_builder;
 pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
 
+mod receipt_builder;
+pub use receipt_builder::{ReceiptBuildError, UnifiedReceiptBuilder};
+
 mod validation;
 pub use validation::{
     CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
