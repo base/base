@@ -3,6 +3,9 @@
 use std::sync::Arc;
 
 use base_flashtypes::Flashblock;
+use base_reth_test_utils::{
+    OpAddOns, OpBuilder, TestHarness, default_launcher, init_silenced_tracing,
+};
 use derive_more::Deref;
 use eyre::Result;
 use futures_util::Future;
@@ -10,14 +13,7 @@ use reth::builder::NodeHandle;
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_node::OpNode;
 
-use crate::{
-    harness::TestHarness,
-    init_silenced_tracing,
-    node::{
-        FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, OpAddOns, OpBuilder,
-        default_launcher,
-    },
-};
+use super::{FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState};
 
 /// Helper that exposes [`TestHarness`] conveniences plus Flashblocks helpers.
 #[derive(Debug, Deref)]

@@ -19,9 +19,8 @@ use alloy_sol_types::{SolConstructor, SolValue};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_test_utils::{
-    FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
-};
+use base_reth_flashblocks::test_utils::FlashblocksHarness;
+use base_reth_test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy};
 use eyre::Result;
 struct Erc20TestSetup {
     harness: FlashblocksHarness,

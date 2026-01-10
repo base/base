@@ -55,7 +55,7 @@ impl TestHarness {
     }
 
     /// Build a harness from an already-running [`LocalNode`].
-    pub(crate) async fn from_node(node: LocalNode) -> Result<Self> {
+    pub async fn from_node(node: LocalNode) -> Result<Self> {
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
 

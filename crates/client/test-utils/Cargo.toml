@@ -12,10 +12,6 @@ description = "Common integration test utilities for node-reth crates"
 workspace = true
 
 [dependencies]
-# Project
-base-flashtypes.workspace = true
-base-reth-flashblocks.workspace = true
-
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
@@ -27,7 +23,6 @@ reth-primitives-traits.workspace = true
 reth-db.workspace = true
 reth-e2e-test-utils.workspace = true
 reth-node-core.workspace = true
-reth-exex.workspace = true
 reth-tracing.workspace = true
 reth-rpc-layer.workspace = true
 reth-ipc.workspace = true
@@ -54,7 +49,6 @@ op-alloy-network.workspace = true
 
 # tokio
 tokio.workspace = true
-tokio-stream.workspace = true
 
 # async
 futures-util.workspace = true
@@ -63,11 +57,9 @@ futures-util.workspace = true
 jsonrpsee.workspace = true
 
 # misc
-derive_more = { workspace = true, features = ["deref"] }
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 eyre.workspace = true
-once_cell.workspace = true
 url.workspace = true
 chrono.workspace = true
 

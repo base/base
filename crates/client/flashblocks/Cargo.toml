@@ -11,6 +11,16 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+test-utils = [
+    "dep:base-reth-test-utils",
+    "dep:reth-e2e-test-utils",
+    "dep:reth-optimism-node",
+    "dep:reth-provider",
+    "dep:derive_more",
+]
+
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
@@ -68,7 +78,15 @@ arc-swap.workspace = true
 metrics-derive.workspace = true
 rayon.workspace = true
 
+# test-utils feature dependencies
+base-reth-test-utils = { workspace = true, optional = true }
+reth-e2e-test-utils = { workspace = true, optional = true }
+reth-optimism-node = { workspace = true, optional = true }
+reth-provider = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["deref"], optional = true }
+
 [dev-dependencies]
+base-reth-flashblocks = { path = ".", features = ["test-utils"] }
 rstest.workspace = true
 rand.workspace = true
 eyre.workspace = true

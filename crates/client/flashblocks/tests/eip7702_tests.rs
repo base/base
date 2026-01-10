@@ -11,9 +11,8 @@ use alloy_sol_types::SolCall;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_test_utils::{
-    Account, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, Minimal7702Account, SignerSync,
-};
+use base_reth_flashblocks::test_utils::FlashblocksHarness;
+use base_reth_test_utils::{Account, L1_BLOCK_INFO_DEPOSIT_TX, Minimal7702Account, SignerSync};
 use eyre::Result;
 use op_alloy_network::ReceiptResponse;
 

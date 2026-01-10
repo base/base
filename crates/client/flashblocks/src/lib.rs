@@ -49,3 +49,6 @@ pub use extension::{FlashblocksCanonConfig, FlashblocksCanonExtension, Flashbloc
 
 mod rpc_extension;
 pub use rpc_extension::FlashblocksRpcExtension;
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
