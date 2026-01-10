@@ -1,7 +1,7 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool features
 //! (tracing ExEx and status RPC) on the Base node builder.
 
-use base_client_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
+use base_client_primitives::{BaseNodeExtension, OpBuilder};
 use tracing::info;
 
 use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_exex};
@@ -50,21 +50,5 @@ impl BaseNodeExtension for TxPoolExtension {
             ctx.modules.merge_configured(proxy_api.into_rpc())?;
             Ok(())
         })
-    }
-}
-
-/// Configuration trait for [`TxPoolExtension`].
-///
-/// Types implementing this trait can be used to construct a [`TxPoolExtension`].
-pub trait TxPoolExtensionConfig {
-    /// Returns the tracing configuration.
-    fn tracing(&self) -> &TracingConfig;
-    /// Returns the sequencer RPC URL if configured.
-    fn sequencer_rpc(&self) -> Option<&str>;
-}
-
-impl<C: TxPoolExtensionConfig> ConfigurableBaseNodeExtension<C> for TxPoolExtension {
-    fn build(config: &C) -> eyre::Result<Self> {
-        Ok(Self::new(*config.tracing(), config.sequencer_rpc().map(String::from)))
     }
 }

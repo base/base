@@ -18,4 +18,4 @@ mod tracker;
 pub use tracker::Tracker;
 
 mod extension;
-pub use extension::{TracingConfig, TxPoolExtension, TxPoolExtensionConfig};
+pub use extension::{TracingConfig, TxPoolExtension};

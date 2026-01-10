@@ -7,7 +7,7 @@ mod block;
 pub use block::meter_block;
 
 mod extension;
-pub use extension::{MeteringExtension, MeteringExtensionConfig};
+pub use extension::MeteringExtension;
 
 mod meter;
 pub use meter::meter_bundle;

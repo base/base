@@ -58,7 +58,6 @@ jsonrpsee-types.workspace = true
 serde.workspace = true
 
 # misc
-eyre.workspace = true
 once_cell.workspace = true
 url.workspace = true
 thiserror.workspace = true

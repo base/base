@@ -1558,20 +1558,6 @@ dependencies = [
 name = "base-client-primitives"
 version = "0.2.1"
 dependencies = [
- "eyre",
- "reth",
- "reth-db",
- "reth-optimism-node",
-]
-
-[[package]]
-name = "base-client-runner"
-version = "0.2.1"
-dependencies = [
- "base-client-primitives",
- "base-flashblocks",
- "base-metering",
- "base-txpool",
  "derive_more",
  "eyre",
  "futures-util",
@@ -1702,7 +1688,7 @@ name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
  "base-cli-utils",
- "base-client-runner",
+ "base-client-primitives",
  "base-flashblocks",
  "base-metering",
  "base-txpool",

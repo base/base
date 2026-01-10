@@ -4,7 +4,13 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod extension;
-pub use extension::{BaseNodeExtension, ConfigurableBaseNodeExtension};
+pub use extension::BaseNodeExtension;
+
+mod handle;
+pub use handle::BaseNodeHandle;
+
+mod runner;
+pub use runner::BaseNodeRunner;
 
 mod types;
-pub use types::{OpBuilder, OpProvider};
+pub use types::{BaseNodeBuilder, OpBuilder, OpProvider};

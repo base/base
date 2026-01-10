@@ -16,6 +16,10 @@ workspace = true
 reth.workspace = true
 reth-db.workspace = true
 reth-optimism-node.workspace = true
+reth-optimism-chainspec.workspace = true
 
 # misc
 eyre.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+derive_more = { workspace = true, features = ["debug"] }

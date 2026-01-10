@@ -3,9 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_primitives::{
-    BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder, OpProvider,
-};
+use base_client_primitives::{BaseNodeExtension, OpBuilder, OpProvider};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
@@ -122,21 +120,5 @@ impl BaseNodeExtension for FlashblocksExtension {
 
             Ok(())
         })
-    }
-}
-
-/// Configuration trait for [`FlashblocksExtension`].
-///
-/// Types implementing this trait can be used to construct a [`FlashblocksExtension`].
-pub trait FlashblocksExtensionConfig {
-    /// Returns the shared flashblocks cell.
-    fn flashblocks_cell(&self) -> &FlashblocksCell<FlashblocksState<OpProvider>>;
-    /// Returns the flashblocks configuration if enabled.
-    fn flashblocks(&self) -> Option<&FlashblocksConfig>;
-}
-
-impl<C: FlashblocksExtensionConfig> ConfigurableBaseNodeExtension<C> for FlashblocksExtension {
-    fn build(config: &C) -> eyre::Result<Self> {
-        Ok(Self::new(config.flashblocks_cell().clone(), config.flashblocks().cloned()))
     }
 }

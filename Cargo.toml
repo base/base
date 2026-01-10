@@ -60,7 +60,6 @@ base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-client-primitives = { path = "crates/client/client-primitives" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
-base-client-runner = { path = "crates/client/client-runner" }
 base-test-utils = { path = "crates/client/test-utils" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 

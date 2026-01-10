@@ -45,6 +45,4 @@ pub use rpc::{
 };
 
 mod extension;
-pub use extension::{
-    FlashblocksCell, FlashblocksConfig, FlashblocksExtension, FlashblocksExtensionConfig,
-};
+pub use extension::{FlashblocksCell, FlashblocksConfig, FlashblocksExtension};
