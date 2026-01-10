@@ -1548,7 +1548,11 @@ dependencies = [
 name = "base-cli-utils"
 version = "0.2.1"
 dependencies = [
+ "clap",
+ "eyre",
  "reth",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
