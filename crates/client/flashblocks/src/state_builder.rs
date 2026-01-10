@@ -52,7 +52,7 @@ where
     ChainSpec: OpHardforks,
 {
     /// Creates a new pending state builder.
-    pub fn new(
+    pub const fn new(
         chain_spec: ChainSpec,
         evm: E,
         pending_block: Block<OpTxEnvelope, Header>,

@@ -38,12 +38,12 @@ pub struct UnifiedReceiptBuilder<C> {
 
 impl<C> UnifiedReceiptBuilder<C> {
     /// Creates a new unified receipt builder with the given chain specification.
-    pub fn new(chain_spec: C) -> Self {
+    pub const fn new(chain_spec: C) -> Self {
         Self { chain_spec }
     }
 
     /// Returns a reference to the chain specification.
-    pub fn chain_spec(&self) -> &C {
+    pub const fn chain_spec(&self) -> &C {
         &self.chain_spec
     }
 }
