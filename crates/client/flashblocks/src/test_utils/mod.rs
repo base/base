@@ -4,23 +4,24 @@
 //! It is gated behind the `test-utils` feature flag.
 
 mod harness;
-pub use harness::FlashblocksHarness;
-
 use std::{
     fmt,
     sync::{Arc, Mutex},
 };
 
+use base_flashtypes::Flashblock;
 use base_reth_test_utils::{
     LocalNode, LocalNodeProvider, OpAddOns, OpBuilder, default_launcher, init_silenced_tracing,
 };
 use eyre::Result;
 use futures_util::Future;
+pub use harness::FlashblocksHarness;
 use once_cell::sync::OnceCell;
 use reth::builder::NodeHandle;
 use reth_e2e_test_utils::Adapter;
 use reth_exex::ExExEvent;
 use reth_optimism_node::OpNode;
+use reth_provider::CanonStateSubscriptions;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 
@@ -28,9 +29,6 @@ use crate::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
     FlashblocksState,
 };
-
-use base_flashtypes::Flashblock;
-use reth_provider::CanonStateSubscriptions;
 
 /// Convenience alias for the Flashblocks state backing the local node.
 pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;

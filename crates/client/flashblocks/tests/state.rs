@@ -11,8 +11,9 @@ use alloy_rpc_types_engine::PayloadId;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_flashblocks::{FlashblocksAPI, FlashblocksState, PendingBlocksAPI};
-use base_reth_flashblocks::test_utils::FlashblocksHarness;
+use base_reth_flashblocks::{
+    FlashblocksAPI, FlashblocksState, PendingBlocksAPI, test_utils::FlashblocksHarness,
+};
 use base_reth_test_utils::{
     L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNodeProvider, TestAccounts,
 };
