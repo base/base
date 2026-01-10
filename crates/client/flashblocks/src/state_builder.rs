@@ -221,10 +221,13 @@ where
                     meta,
                 };
 
-                let op_receipt =
-                    OpRpcReceiptBuilder::new(self.receipt_builder.chain_spec(), input, &mut self.l1_block_info)
-                        .unwrap()
-                        .build();
+                let op_receipt = OpRpcReceiptBuilder::new(
+                    self.receipt_builder.chain_spec(),
+                    input,
+                    &mut self.l1_block_info,
+                )
+                .unwrap()
+                .build();
                 self.next_log_index += receipt.logs().len();
 
                 let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {

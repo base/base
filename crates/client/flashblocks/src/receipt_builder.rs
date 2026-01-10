@@ -85,13 +85,7 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
         E: Evm,
         E::DB: Database,
     {
-        let ctx = ReceiptBuilderCtx {
-            tx: transaction,
-            evm,
-            result,
-            state,
-            cumulative_gas_used,
-        };
+        let ctx = ReceiptBuilderCtx { tx: transaction, evm, result, state, cumulative_gas_used };
 
         match self.inner.build_receipt(ctx) {
             Ok(receipt) => Ok(receipt),
@@ -148,9 +142,11 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use reth_optimism_chainspec::OpChainSpecBuilder;
     use std::sync::Arc;
+
+    use reth_optimism_chainspec::OpChainSpecBuilder;
+
+    use super::*;
 
     #[test]
     fn test_unified_receipt_builder_creation() {
