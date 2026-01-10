@@ -2,7 +2,7 @@
 
 A library to build and process Flashblock-level Access Lists (FBALs).
 
-See the [spec](https://github.com/base/node-reth/blob/main/docs/specs/access-lists.md) for more details.
+See the [spec](../../../docs/specs/access-lists.md) for more details.
 
 ## Overview
 
