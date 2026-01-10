@@ -5,18 +5,11 @@ use std::sync::Arc;
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
-use futures_util::Future;
-use reth::builder::NodeHandle;
-use reth_e2e_test_utils::Adapter;
-use reth_optimism_node::OpNode;
 
 use crate::{
     harness::TestHarness,
     init_silenced_tracing,
-    node::{
-        FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, OpAddOns, OpBuilder,
-        default_launcher,
-    },
+    node::{FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState},
 };
 
 /// Helper that exposes [`TestHarness`] conveniences plus Flashblocks helpers.
@@ -30,33 +23,15 @@ pub struct FlashblocksHarness {
 impl FlashblocksHarness {
     /// Launch a flashblocks-enabled harness with the default launcher.
     pub async fn new() -> Result<Self> {
-        Self::with_launcher(default_launcher).await
+        init_silenced_tracing();
+        let flash_node = FlashblocksLocalNode::new().await?;
+        Self::from_flashblocks_node(flash_node).await
     }
 
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::manual_canonical_with_launcher(default_launcher).await
-    }
-
-    /// Launch the harness using a custom node launcher.
-    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
         init_silenced_tracing();
-        let flash_node = FlashblocksLocalNode::with_launcher(launcher).await?;
-        Self::from_flashblocks_node(flash_node).await
-    }
-
-    /// Launch the harness with a custom launcher while disabling automatic canonical processing.
-    pub async fn manual_canonical_with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        init_silenced_tracing();
-        let flash_node = FlashblocksLocalNode::with_manual_canonical_launcher(launcher).await?;
+        let flash_node = FlashblocksLocalNode::manual_canonical().await?;
         Self::from_flashblocks_node(flash_node).await
     }
 
@@ -68,22 +43,6 @@ impl FlashblocksHarness {
     /// Send a single flashblock through the harness.
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
         self.parts.send(flashblock).await
-    }
-
-    /// Send a batch of flashblocks sequentially, awaiting each confirmation.
-    pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>
-    where
-        I: IntoIterator<Item = Flashblock>,
-    {
-        for flashblock in flashblocks {
-            self.send_flashblock(flashblock).await?;
-        }
-        Ok(())
-    }
-
-    /// Consume the flashblocks harness and return the underlying [`TestHarness`].
-    pub fn into_inner(self) -> TestHarness {
-        self.inner
     }
 
     async fn from_flashblocks_node(flash_node: FlashblocksLocalNode) -> Result<Self> {

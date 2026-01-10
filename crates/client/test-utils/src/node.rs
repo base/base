@@ -405,31 +405,13 @@ impl fmt::Debug for FlashblocksLocalNode {
 impl FlashblocksLocalNode {
     /// Launch a flashblocks-enabled node using the default launcher.
     pub async fn new() -> Result<Self> {
-        Self::with_launcher(default_launcher).await
+        Self::with_launcher_inner(default_launcher, true).await
     }
 
     /// Builds a flashblocks-enabled node with canonical block streaming disabled so tests can call
     /// `FlashblocksState::on_canonical_block_received` at precise points.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::with_manual_canonical_launcher(default_launcher).await
-    }
-
-    /// Launch a flashblocks-enabled node with a custom launcher and canonical processing enabled.
-    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        Self::with_launcher_inner(launcher, true).await
-    }
-
-    /// Same as [`Self::with_launcher`] but leaves canonical processing to the caller.
-    pub async fn with_manual_canonical_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        Self::with_launcher_inner(launcher, false).await
+        Self::with_launcher_inner(default_launcher, false).await
     }
 
     async fn with_launcher_inner<L, LRet>(launcher: L, process_canonical: bool) -> Result<Self>
@@ -458,10 +440,5 @@ impl FlashblocksLocalNode {
     /// Split the wrapper into the underlying node plus flashblocks parts.
     pub fn into_parts(self) -> (LocalNode, FlashblocksParts) {
         (self.node, self.parts)
-    }
-
-    /// Borrow the underlying [`LocalNode`].
-    pub fn as_node(&self) -> &LocalNode {
-        &self.node
     }
 }
