@@ -14,7 +14,7 @@ use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_test_utils::{DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX};
+use base_test_utils::{DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX};
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};

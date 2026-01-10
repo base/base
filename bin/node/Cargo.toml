@@ -15,10 +15,10 @@ workspace = true
 [dependencies]
 # internal
 base-cli-utils.workspace = true
-base-primitives.workspace = true
-base-reth-flashblocks.workspace = true
-base-reth-metering.workspace = true
-base-reth-runner.workspace = true
+base-client-primitives.workspace = true
+base-flashblocks.workspace = true
+base-metering.workspace = true
+base-client-runner.workspace = true
 base-txpool.workspace = true
 
 # reth

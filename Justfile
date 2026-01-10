@@ -108,4 +108,4 @@ benches:
 
 # Runs flashblocks pending state benchmarks
 bench-flashblocks:
-    cargo bench -p base-reth-flashblocks --bench pending_state
+    cargo bench -p base-flashblocks --bench pending_state

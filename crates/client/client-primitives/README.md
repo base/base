@@ -26,7 +26,7 @@ base-primitives = { git = "https://github.com/base/node-reth" }
 Implement a custom node extension:
 
 ```rust,ignore
-use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
+use base_client_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
 use eyre::Result;
 
 #[derive(Debug)]
@@ -51,7 +51,7 @@ impl ConfigurableBaseNodeExtension<MyConfig> for MyExtension {
 Use configuration types:
 
 ```rust,ignore
-use base_primitives::{FlashblocksConfig, TracingConfig};
+use base_client_primitives::{FlashblocksConfig, TracingConfig};
 
 let flashblocks_config = FlashblocksConfig {
     websocket_url: "ws://localhost:8545".to_string(),

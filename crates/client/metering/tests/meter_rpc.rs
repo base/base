@@ -6,8 +6,8 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
 use base_bundles::{Bundle, MeterBundleResponse};
-use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
-use base_reth_test_utils::{init_silenced_tracing, load_genesis};
+use base_metering::{MeteringApiImpl, MeteringApiServer};
+use base_test_utils::{init_silenced_tracing, load_genesis};
 use op_alloy_consensus::OpTxEnvelope;
 use reth::{
     args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},

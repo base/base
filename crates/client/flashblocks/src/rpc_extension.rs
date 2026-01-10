@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_primitives::{
+use base_client_primitives::{
     BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksConfig, OpBuilder, OpProvider,
 };
 use tracing::info;

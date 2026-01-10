@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-primitives.workspace = true
+base-client-primitives.workspace = true
 
 # reth
 reth.workspace = true

@@ -1,7 +1,7 @@
 //! Contains the [`TransactionStatusRpcExtension`] which wires up the transaction status
 //! RPC surface on the Base node builder.
 
-use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
+use base_client_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
 
 use crate::{TransactionStatusApiImpl, TransactionStatusApiServer};
 

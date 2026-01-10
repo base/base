@@ -19,7 +19,7 @@ use alloy_sol_types::{SolConstructor, SolValue};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_test_utils::{
+use base_test_utils::{
     FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
 };
 use eyre::Result;

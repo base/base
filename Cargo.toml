@@ -52,17 +52,17 @@ codegen-units = 1
 [workspace.dependencies]
 # Shared
 base-access-lists = { path = "crates/shared/access-lists" }
-base-flashtypes = { path = "crates/shared/flashtypes" }
-base-cli-utils = { path = "crates/shared/cli-utils" }
-# Client
-base-primitives = { path = "crates/client/primitives" }
 base-bundles = { path = "crates/shared/bundles" }
-base-reth-metering = { path = "crates/client/metering" }
-base-reth-rpc-types = { path = "crates/client/reth-rpc-types" }
+base-cli-utils = { path = "crates/shared/cli-utils" }
+base-flashtypes = { path = "crates/shared/flashtypes" }
+base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
+# Client
+base-client-primitives = { path = "crates/client/client-primitives" }
+base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
-base-reth-runner = { path = "crates/client/runner" }
-base-reth-test-utils = { path = "crates/client/test-utils" }
-base-reth-flashblocks = { path = "crates/client/flashblocks" }
+base-client-runner = { path = "crates/client/client-runner" }
+base-test-utils = { path = "crates/client/test-utils" }
+base-flashblocks = { path = "crates/client/flashblocks" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }

@@ -1,4 +1,4 @@
-# `base-reth-runner`
+# `base-client-runner`
 
 <a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -27,13 +27,13 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-reth-runner = { git = "https://github.com/base/node-reth" }
+base-client-runner = { git = "https://github.com/base/node-reth" }
 ```
 
 Build and run a Base node:
 
 ```rust,ignore
-use base_reth_runner::{BaseNodeBuilder, BaseNodeConfig, FlashblocksConfig};
+use base_client_runner::{BaseNodeBuilder, BaseNodeConfig, FlashblocksConfig};
 
 let config = BaseNodeConfig {
     flashblocks: FlashblocksConfig {

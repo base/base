@@ -1,5 +1,5 @@
 [package]
-name = "base-reth-test-utils"
+name = "base-test-utils"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # Project
 base-flashtypes.workspace = true
-base-reth-flashblocks.workspace = true
+base-flashblocks.workspace = true
 
 # reth
 reth.workspace = true

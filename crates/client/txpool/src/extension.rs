@@ -1,7 +1,9 @@
 //! Contains the [`TransactionTracingExtension`] which wires up the `tracex`
 //! execution extension on the Base node builder.
 
-use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder, TracingConfig};
+use base_client_primitives::{
+    BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder, TracingConfig,
+};
 
 use crate::tracex_exex;
 

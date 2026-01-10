@@ -1,6 +1,6 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension};
+use base_client_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension};
 use eyre::Result;
 use reth::{
     builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig},

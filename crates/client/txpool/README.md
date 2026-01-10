@@ -27,7 +27,7 @@ cargo run -p node --release -- \
 From code, wire the ExEx into the node builder:
 
 ```rust,ignore
-use base_reth_runner::{TracingConfig, extensions::TransactionTracingExtension};
+use base_client_runner::{TracingConfig, extensions::TransactionTracingExtension};
 
 let tracing = TracingConfig { enabled: true, logs_enabled: true };
 let builder = TransactionTracingExtension::new(tracing).apply(builder);
