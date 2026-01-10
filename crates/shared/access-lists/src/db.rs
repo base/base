@@ -17,7 +17,7 @@ where
 {
     /// Underlying CacheDB
     db: DB,
-    /// Transaction index of the txn being currently executed
+    /// Transaction index of the transaction currently being executed
     index: u64,
     /// Builder for the access list
     access_list: FlashblockAccessListBuilder,
@@ -47,7 +47,7 @@ where
         &mut self.db
     }
 
-    /// Sets the transaction index of the txn being currently executed
+    /// Sets the transaction index of the transaction currently being executed
     pub fn set_index(&mut self, index: u64) {
         self.index = index;
     }
@@ -119,7 +119,7 @@ where
     }
 
     /// Consumes the database and returns the access list back as well as the most recent
-    /// error during commiting if any
+    /// error during committing if any
     pub fn finish(self) -> Result<FlashblockAccessListBuilder, <Self as Database>::Error> {
         if let Some(e) = self.error {
             return Err(e);
