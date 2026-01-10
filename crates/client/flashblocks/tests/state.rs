@@ -4,17 +4,15 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use alloy_primitives::{
-    Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::foldhash::HashMap,
-};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState, PendingBlocksAPI};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_test_utils::{
-    FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNodeProvider,
-    TestAccounts,
+    Account, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH,
+    LocalNodeProvider,
 };
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::BlockResponse;
@@ -24,26 +22,17 @@ use reth::{
     transaction_pool::test_utils::TransactionBuilder,
 };
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
-use reth_primitives_traits::{Account, Block as BlockT, RecoveredBlock};
+use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use tokio::time::sleep;
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
 // so it can be processed by the state processor
 const SLEEP_TIME: u64 = 10;
 
-#[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
-enum User {
-    Alice,
-    Bob,
-    Charlie,
-}
-
 struct TestHarness {
     node: FlashblocksHarness,
     flashblocks: Arc<FlashblocksState<LocalNodeProvider>>,
     provider: LocalNodeProvider,
-    user_to_address: HashMap<User, Address>,
-    user_to_private_key: HashMap<User, B256>,
 }
 
 impl TestHarness {
@@ -64,67 +53,43 @@ impl TestHarness {
             .expect("able to recover block");
         flashblocks.on_canonical_block_received(genesis_block);
 
-        let accounts: TestAccounts = node.accounts().clone();
-
-        let mut user_to_address = HashMap::default();
-        user_to_address.insert(User::Alice, accounts.alice.address);
-        user_to_address.insert(User::Bob, accounts.bob.address);
-        user_to_address.insert(User::Charlie, accounts.charlie.address);
-
-        let mut user_to_private_key = HashMap::default();
-        user_to_private_key
-            .insert(User::Alice, Self::decode_private_key(accounts.alice.private_key));
-        user_to_private_key.insert(User::Bob, Self::decode_private_key(accounts.bob.private_key));
-        user_to_private_key
-            .insert(User::Charlie, Self::decode_private_key(accounts.charlie.private_key));
-
-        Self { node, flashblocks, provider, user_to_address, user_to_private_key }
+        Self { node, flashblocks, provider }
     }
 
-    fn decode_private_key(key: &str) -> B256 {
-        B256::from_hex(key).expect("valid hex-encoded key")
+    fn decode_private_key(account: Account) -> B256 {
+        B256::from_hex(account.private_key()).expect("valid hex-encoded key")
     }
 
-    fn address(&self, u: User) -> Address {
-        assert!(self.user_to_address.contains_key(&u));
-        self.user_to_address[&u]
-    }
-
-    fn signer(&self, u: User) -> B256 {
-        assert!(self.user_to_private_key.contains_key(&u));
-        self.user_to_private_key[&u]
-    }
-
-    fn canonical_account(&self, u: User) -> Account {
+    fn canonical_account(&self, account: Account) -> RethAccount {
         self.provider
-            .basic_account(&self.address(u))
+            .basic_account(&account.address())
             .expect("can lookup account state")
             .expect("should be existing account state")
     }
 
-    fn canonical_balance(&self, u: User) -> U256 {
-        self.canonical_account(u).balance
+    fn canonical_balance(&self, account: Account) -> U256 {
+        self.canonical_account(account).balance
     }
 
-    fn expected_pending_balance(&self, u: User, delta: u128) -> U256 {
-        self.canonical_balance(u) + U256::from(delta)
+    fn expected_pending_balance(&self, account: Account, delta: u128) -> U256 {
+        self.canonical_balance(account) + U256::from(delta)
     }
 
-    fn account_state(&self, u: User) -> Account {
-        let basic_account = self.canonical_account(u);
+    fn account_state(&self, account: Account) -> RethAccount {
+        let basic_account = self.canonical_account(account);
 
         let nonce = self
             .flashblocks
             .get_pending_blocks()
-            .get_transaction_count(self.address(u))
+            .get_transaction_count(account.address())
             .to::<u64>();
         let balance = self
             .flashblocks
             .get_pending_blocks()
-            .get_balance(self.address(u))
+            .get_balance(account.address())
             .unwrap_or(basic_account.balance);
 
-        Account {
+        RethAccount {
             nonce: nonce + basic_account.nonce,
             balance,
             bytecode_hash: basic_account.bytecode_hash,
@@ -133,14 +98,14 @@ impl TestHarness {
 
     fn build_transaction_to_send_eth(
         &self,
-        from: User,
-        to: User,
+        from: Account,
+        to: Account,
         amount: u128,
     ) -> OpTransactionSigned {
         let txn = TransactionBuilder::default()
-            .signer(self.signer(from))
+            .signer(Self::decode_private_key(from))
             .chain_id(self.provider.chain_spec().chain_id())
-            .to(self.address(to))
+            .to(to.address())
             .nonce(self.account_state(from).nonce)
             .value(amount)
             .gas_limit(21_000)
@@ -156,15 +121,15 @@ impl TestHarness {
 
     fn build_transaction_to_send_eth_with_nonce(
         &self,
-        from: User,
-        to: User,
+        from: Account,
+        to: Account,
         amount: u128,
         nonce: u64,
     ) -> OpTransactionSigned {
         let txn = TransactionBuilder::default()
-            .signer(self.signer(from))
+            .signer(Self::decode_private_key(from))
             .chain_id(self.provider.chain_spec().chain_id())
-            .to(self.address(to))
+            .to(to.address())
             .nonce(nonce)
             .value(amount)
             .gas_limit(21_000)
@@ -351,14 +316,14 @@ async fn test_state_overrides_persisted_across_flashblocks() {
             .get_pending_blocks()
             .get_state_overrides()
             .unwrap()
-            .contains_key(&test.address(User::Alice))
+            .contains_key(&Account::Alice.address())
     );
 
     test.send_flashblock(
         FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100_000,
             )])
             .build(),
@@ -376,14 +341,14 @@ async fn test_state_overrides_persisted_across_flashblocks() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 100_000)
+        test.expected_pending_balance(Account::Bob, 100_000)
     );
 
     test.send_flashblock(FlashblockBuilder::new(&test, 2).build()).await;
@@ -394,14 +359,14 @@ async fn test_state_overrides_persisted_across_flashblocks() {
         .get_state_overrides()
         .expect("should be set from txn execution in flashblock index 1");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 100_000)
+        test.expected_pending_balance(Account::Bob, 100_000)
     );
 }
 
@@ -429,14 +394,14 @@ async fn test_state_overrides_persisted_across_blocks() {
             .get_pending_blocks()
             .get_state_overrides()
             .unwrap()
-            .contains_key(&test.address(User::Alice))
+            .contains_key(&Account::Alice.address())
     );
 
     test.send_flashblock(
         FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100_000,
             )])
             .build(),
@@ -454,14 +419,14 @@ async fn test_state_overrides_persisted_across_blocks() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 100_000)
+        test.expected_pending_balance(Account::Bob, 100_000)
     );
 
     test.send_flashblock(
@@ -496,15 +461,15 @@ async fn test_state_overrides_persisted_across_blocks() {
             .get_pending_blocks()
             .get_state_overrides()
             .unwrap()
-            .contains_key(&test.address(User::Alice))
+            .contains_key(&Account::Alice.address())
     );
 
     test.send_flashblock(
         FlashblockBuilder::new(&test, 1)
             .with_canonical_block_number(initial_block_number)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100_000,
             )])
             .build(),
@@ -517,14 +482,14 @@ async fn test_state_overrides_persisted_across_blocks() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 200_000)
+        test.expected_pending_balance(Account::Bob, 200_000)
     );
 }
 
@@ -549,14 +514,14 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
             .get_pending_blocks()
             .get_state_overrides()
             .unwrap()
-            .contains_key(&test.address(User::Alice))
+            .contains_key(&Account::Alice.address())
     );
 
     test.send_flashblock(
         FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100_000,
             )])
             .build(),
@@ -573,14 +538,14 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 100_000)
+        test.expected_pending_balance(Account::Bob, 100_000)
     );
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
@@ -589,8 +554,8 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         FlashblockBuilder::new(&test, 1)
             .with_canonical_block_number(1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100_000,
             )])
             .build(),
@@ -607,19 +572,19 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 200_000)
+        test.expected_pending_balance(Account::Bob, 200_000)
     );
 
     test.new_canonical_block(vec![test.build_transaction_to_send_eth_with_nonce(
-        User::Alice,
-        User::Bob,
+        Account::Alice,
+        Account::Bob,
         100,
         0,
     )])
@@ -636,14 +601,14 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&test.address(User::Alice)).is_some());
+    assert!(overrides.get(&Account::Alice.address()).is_some());
     assert_eq!(
         overrides
-            .get(&test.address(User::Bob))
+            .get(&Account::Bob.address())
             .expect("should be set as txn receiver")
             .balance
             .expect("should be changed due to receiving funds"),
-        test.expected_pending_balance(User::Bob, 100_000)
+        test.expected_pending_balance(Account::Bob, 100_000)
     );
 }
 
@@ -660,8 +625,8 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     test.send_flashblock(
         FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100,
             )])
             .build(),
@@ -669,25 +634,25 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     .await;
 
     let pending_nonce =
-        test.provider.basic_account(&test.address(User::Alice)).unwrap().unwrap().nonce
+        test.provider.basic_account(&Account::Alice.address()).unwrap().unwrap().nonce
             + test
                 .flashblocks
                 .get_pending_blocks()
-                .get_transaction_count(test.address(User::Alice))
+                .get_transaction_count(Account::Alice.address())
                 .to::<u64>();
     assert_eq!(pending_nonce, 1);
 
     test.new_canonical_block_without_processing(vec![
-        test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0),
+        test.build_transaction_to_send_eth_with_nonce(Account::Alice, Account::Bob, 100, 0),
     ])
     .await;
 
     let pending_nonce =
-        test.provider.basic_account(&test.address(User::Alice)).unwrap().unwrap().nonce
+        test.provider.basic_account(&Account::Alice.address()).unwrap().unwrap().nonce
             + test
                 .flashblocks
                 .get_pending_blocks()
-                .get_transaction_count(test.address(User::Alice))
+                .get_transaction_count(Account::Alice.address())
                 .to::<u64>();
 
     // This is 2, because canon block has reached the underlying chain
@@ -702,12 +667,12 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     let canon_block = test.flashblocks.get_pending_blocks().get_canonical_block_number();
     let canon_state_provider = test.provider.state_by_block_number_or_tag(canon_block).unwrap();
     let canon_nonce =
-        canon_state_provider.account_nonce(&test.address(User::Alice)).unwrap().unwrap();
+        canon_state_provider.account_nonce(&Account::Alice.address()).unwrap().unwrap();
     let pending_nonce = canon_nonce
         + test
             .flashblocks
             .get_pending_blocks()
-            .get_transaction_count(test.address(User::Alice))
+            .get_transaction_count(Account::Alice.address())
             .to::<u64>();
     assert_eq!(pending_nonce, 1);
 }
@@ -798,8 +763,8 @@ async fn test_non_sequential_payload_clears_pending_state() {
     test.send_flashblock(
         FlashblockBuilder::new(&test, 3)
             .with_transactions(vec![test.build_transaction_to_send_eth(
-                User::Alice,
-                User::Bob,
+                Account::Alice,
+                Account::Bob,
                 100,
             )])
             .build(),
@@ -817,8 +782,8 @@ async fn test_duplicate_flashblock_ignored() {
 
     let fb = FlashblockBuilder::new(&test, 1)
         .with_transactions(vec![test.build_transaction_to_send_eth(
-            User::Alice,
-            User::Bob,
+            Account::Alice,
+            Account::Bob,
             100_000,
         )])
         .build();
@@ -841,8 +806,12 @@ async fn test_progress_canonical_blocks_without_flashblocks() {
     assert_eq!(genesis_block.transaction_count(), 0);
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
-    test.new_canonical_block(vec![test.build_transaction_to_send_eth(User::Alice, User::Bob, 100)])
-        .await;
+    test.new_canonical_block(vec![test.build_transaction_to_send_eth(
+        Account::Alice,
+        Account::Bob,
+        100,
+    )])
+    .await;
 
     let block_one = test.node.latest_block();
     assert_eq!(block_one.number, 1);
@@ -850,8 +819,8 @@ async fn test_progress_canonical_blocks_without_flashblocks() {
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
     test.new_canonical_block(vec![
-        test.build_transaction_to_send_eth(User::Bob, User::Charlie, 100),
-        test.build_transaction_to_send_eth(User::Charlie, User::Alice, 1000),
+        test.build_transaction_to_send_eth(Account::Bob, Account::Charlie, 100),
+        test.build_transaction_to_send_eth(Account::Charlie, Account::Alice, 1000),
     ])
     .await;
 

@@ -4,7 +4,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod accounts;
-pub use accounts::{ALICE, Account, BOB, CHARLIE, DEPLOYER, TestAccount, TestAccounts};
+pub use accounts::Account;
 
 mod constants;
 pub use constants::{

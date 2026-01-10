@@ -12,7 +12,7 @@ use base_flashblocks::{FlashblocksAPI, FlashblocksReceiver, FlashblocksState};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_test_utils::{LocalNodeProvider, TestAccounts, TestHarness};
+use base_test_utils::{Account, LocalNodeProvider, TestHarness};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
@@ -56,7 +56,7 @@ impl BenchSetup {
         let flashblocks = tx_counts
             .iter()
             .map(|count| {
-                let txs = sample_transactions(&provider, harness.accounts(), *count);
+                let txs = sample_transactions(&provider, *count);
                 let blocks = build_flashblocks(&canonical_block, &txs);
                 (format!("pending_state_{}_txs", count), blocks)
             })
@@ -260,12 +260,8 @@ fn transaction_flashblock(
     }
 }
 
-fn sample_transactions(
-    provider: &LocalNodeProvider,
-    accounts: &TestAccounts,
-    count: usize,
-) -> Vec<OpTransactionSigned> {
-    let signer = B256::from_hex(accounts.alice.private_key).expect("valid private key hex");
+fn sample_transactions(provider: &LocalNodeProvider, count: usize) -> Vec<OpTransactionSigned> {
+    let signer = B256::from_hex(Account::Alice.private_key()).expect("valid private key hex");
     let chain_id = provider.chain_spec().chain_id();
 
     (0..count as u64)
@@ -273,7 +269,7 @@ fn sample_transactions(
             let txn = TransactionBuilder::default()
                 .signer(signer)
                 .chain_id(chain_id)
-                .to(accounts.bob.address)
+                .to(Account::Bob.address())
                 .nonce(nonce)
                 .value(1_000_000_000u128)
                 .gas_limit(TX_GAS_USED)

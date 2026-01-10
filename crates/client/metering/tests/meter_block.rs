@@ -2,13 +2,12 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, Header, crypto::secp256k1::public_key_to_address};
+use alloy_consensus::{BlockHeader, Header};
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, hex::FromHex};
 use base_metering::meter_block;
-use base_test_utils::create_provider_factory;
+use base_test_utils::{Account, create_provider_factory};
 use eyre::Context;
-use rand::{SeedableRng, rngs::StdRng};
 use reth::{api::NodeTypesWithDBAdapter, chainspec::EthChainSpec};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
@@ -16,16 +15,9 @@ use reth_optimism_node::OpNode;
 use reth_optimism_primitives::{OpBlock, OpBlockBody, OpTransactionSigned};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, providers::BlockchainProvider};
-use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
-
-#[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
-enum User {
-    Alice,
-    Bob,
-}
 
 #[derive(Debug, Clone)]
 struct TestHarness {
@@ -34,47 +26,36 @@ struct TestHarness {
     genesis_header_number: u64,
     genesis_header_timestamp: u64,
     chain_spec: Arc<OpChainSpec>,
-    user_to_private_key: std::collections::HashMap<User, B256>,
 }
 
 impl TestHarness {
-    fn signer(&self, u: User) -> B256 {
-        self.user_to_private_key[&u]
+    fn signer(&self, account: Account) -> B256 {
+        B256::from_hex(account.private_key()).expect("valid private key hex")
     }
 }
 
-fn create_chain_spec(seed: u64) -> (Arc<OpChainSpec>, std::collections::HashMap<User, B256>) {
-    let keys = generate_keys(&mut StdRng::seed_from_u64(seed), 2);
-
-    let mut private_keys = std::collections::HashMap::new();
-
-    let alice_key = keys[0];
-    let alice_address = public_key_to_address(alice_key.public_key());
-    let alice_secret = B256::from(alice_key.secret_bytes());
-    private_keys.insert(User::Alice, alice_secret);
-
-    let bob_key = keys[1];
-    let bob_address = public_key_to_address(bob_key.public_key());
-    let bob_secret = B256::from(bob_key.secret_bytes());
-    private_keys.insert(User::Bob, bob_secret);
-
+fn create_chain_spec() -> Arc<OpChainSpec> {
     let genesis = BASE_MAINNET
         .genesis
         .clone()
-        .extend_accounts(vec![
-            (alice_address, GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64))),
-            (bob_address, GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64))),
-        ])
+        .extend_accounts(
+            Account::all()
+                .into_iter()
+                .map(|a| {
+                    (
+                        a.address(),
+                        GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
         .with_gas_limit(100_000_000);
 
-    let spec =
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build());
-
-    (spec, private_keys)
+    Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build())
 }
 
 fn setup_harness() -> eyre::Result<TestHarness> {
-    let (chain_spec, user_to_private_key) = create_chain_spec(1337);
+    let chain_spec = create_chain_spec();
     let factory = create_provider_factory::<OpNode>(chain_spec.clone());
 
     reth_db_common::init::init_genesis(&factory).context("initializing genesis state")?;
@@ -91,7 +72,6 @@ fn setup_harness() -> eyre::Result<TestHarness> {
         genesis_header_number: header.number(),
         genesis_header_timestamp: header.timestamp(),
         chain_spec,
-        user_to_private_key,
     })
 }
 
@@ -144,7 +124,7 @@ fn meter_block_single_transaction() -> eyre::Result<()> {
 
     let to = Address::random();
     let signed_tx = TransactionBuilder::default()
-        .signer(harness.signer(User::Alice))
+        .signer(harness.signer(Account::Alice))
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to)
@@ -191,7 +171,7 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
 
     // Create first transaction from Alice
     let signed_tx_1 = TransactionBuilder::default()
-        .signer(harness.signer(User::Alice))
+        .signer(harness.signer(Account::Alice))
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to_1)
@@ -208,7 +188,7 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
 
     // Create second transaction from Bob
     let signed_tx_2 = TransactionBuilder::default()
-        .signer(harness.signer(User::Bob))
+        .signer(harness.signer(Account::Bob))
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to_2)
@@ -268,7 +248,7 @@ fn meter_block_timing_consistency() -> eyre::Result<()> {
 
     // Create a block with one transaction
     let signed_tx = TransactionBuilder::default()
-        .signer(harness.signer(User::Alice))
+        .signer(harness.signer(Account::Alice))
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(Address::random())

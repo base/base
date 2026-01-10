@@ -23,7 +23,7 @@ use tokio::time::sleep;
 
 use crate::{
     BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
-    NODE_STARTUP_DELAY_MS, TestAccounts,
+    NODE_STARTUP_DELAY_MS,
     engine::{EngineApi, IpcEngine},
     node::{LocalNode, LocalNodeProvider, OpAddOns, OpBuilder, default_launcher},
     tracing::init_silenced_tracing,
@@ -34,7 +34,6 @@ use crate::{
 pub struct TestHarness {
     node: LocalNode,
     engine: EngineApi<IpcEngine>,
-    accounts: TestAccounts,
 }
 
 impl TestHarness {
@@ -57,21 +56,15 @@ impl TestHarness {
     /// Build a harness from an already-running [`LocalNode`].
     pub(crate) async fn from_node(node: LocalNode) -> Result<Self> {
         let engine = node.engine_api()?;
-        let accounts = TestAccounts::new();
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
 
-        Ok(Self { node, engine, accounts })
+        Ok(Self { node, engine })
     }
 
     /// Return an Optimism JSON-RPC provider connected to the harness node.
     pub fn provider(&self) -> RootProvider<Optimism> {
         self.node.provider().expect("provider should always be available after node initialization")
-    }
-
-    /// Access the deterministic test accounts backing the harness.
-    pub fn accounts(&self) -> &TestAccounts {
-        &self.accounts
     }
 
     /// Access the low-level blockchain provider for direct database queries.
@@ -195,18 +188,17 @@ mod tests {
     use alloy_provider::Provider;
 
     use super::*;
+    use crate::Account;
+
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
         let harness = TestHarness::new().await?;
-
-        assert_eq!(harness.accounts().alice.name, "Alice");
-        assert_eq!(harness.accounts().bob.name, "Bob");
 
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
         assert_eq!(chain_id, crate::BASE_CHAIN_ID);
 
-        let alice_balance = provider.get_balance(harness.accounts().alice.address).await?;
+        let alice_balance = provider.get_balance(Account::Alice.address()).await?;
         assert!(alice_balance > U256::ZERO);
 
         let block_number = provider.get_block_number().await?;

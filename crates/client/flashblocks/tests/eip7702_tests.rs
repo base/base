@@ -31,7 +31,7 @@ struct TestSetup {
 impl TestSetup {
     async fn new() -> Result<Self> {
         let harness = FlashblocksHarness::new().await?;
-        let deployer = &harness.accounts().deployer;
+        let deployer = Account::Deployer;
 
         // Deploy Minimal7702Account contract
         let deploy_data = Minimal7702Account::BYTECODE.to_vec();
@@ -52,14 +52,6 @@ impl TestSetup {
     fn chain_id(&self) -> u64 {
         84532 // Base Sepolia chain ID (matches test harness)
     }
-
-    fn alice(&self) -> &Account {
-        &self.harness.accounts().alice
-    }
-
-    fn bob(&self) -> &Account {
-        &self.harness.accounts().bob
-    }
 }
 
 /// Build an EIP-7702 authorization for delegating to a contract
@@ -67,7 +59,7 @@ fn build_authorization(
     chain_id: u64,
     contract_address: Address,
     nonce: u64,
-    account: &Account,
+    account: Account,
 ) -> alloy_eips::eip7702::SignedAuthorization {
     let auth = Authorization { chain_id: U256::from(chain_id), address: contract_address, nonce };
 
@@ -83,7 +75,7 @@ fn build_eip7702_tx(
     value: U256,
     input: Bytes,
     authorization_list: Vec<alloy_eips::eip7702::SignedAuthorization>,
-    account: &Account,
+    account: Account,
 ) -> Bytes {
     let tx = TxEip7702 {
         chain_id,
@@ -111,7 +103,7 @@ fn build_eip1559_tx(
     to: Address,
     value: U256,
     input: Bytes,
-    account: &Account,
+    account: Account,
 ) -> Bytes {
     let tx = TxEip1559 {
         chain_id,
@@ -187,7 +179,7 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
     setup.send_flashblock(base_payload).await?;
 
     // Create authorization for Alice to delegate to the Minimal7702Account contract
-    let auth = build_authorization(chain_id, setup.account_contract_address, 0, setup.alice());
+    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
 
     // Build EIP-7702 transaction with authorization
     // This delegates Alice's EOA to execute code from Minimal7702Account
@@ -195,11 +187,11 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
     let eip7702_tx = build_eip7702_tx(
         chain_id,
         0,
-        setup.alice().address,
+        Account::Alice.address(),
         U256::ZERO,
         Bytes::from(increment_call.abi_encode()),
         vec![auth],
-        setup.alice(),
+        Account::Alice,
     );
 
     let tx_hash = alloy_primitives::keccak256(&eip7702_tx);
@@ -230,29 +222,29 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
 
     // Create authorizations for both Alice and Bob
     let auth_alice =
-        build_authorization(chain_id, setup.account_contract_address, 0, setup.alice());
-    let auth_bob = build_authorization(chain_id, setup.account_contract_address, 0, setup.bob());
+        build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
+    let auth_bob = build_authorization(chain_id, setup.account_contract_address, 0, Account::Bob);
 
     // Build EIP-7702 transactions
     let increment_call = Minimal7702Account::incrementCall {};
     let tx_alice = build_eip7702_tx(
         chain_id,
         0,
-        setup.alice().address,
+        Account::Alice.address(),
         U256::ZERO,
         Bytes::from(increment_call.abi_encode()),
         vec![auth_alice],
-        setup.alice(),
+        Account::Alice,
     );
 
     let tx_bob = build_eip7702_tx(
         chain_id,
         0,
-        setup.bob().address,
+        Account::Bob.address(),
         U256::ZERO,
         Bytes::from(increment_call.abi_encode()),
         vec![auth_bob],
-        setup.bob(),
+        Account::Bob,
     );
 
     let tx_hash_alice = alloy_primitives::keccak256(&tx_alice);
@@ -303,16 +295,16 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
     setup.send_flashblock(base_payload).await?;
 
     // Create and send EIP-7702 transaction
-    let auth = build_authorization(chain_id, setup.account_contract_address, 0, setup.alice());
+    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
     let increment_call = Minimal7702Account::incrementCall {};
     let eip7702_tx = build_eip7702_tx(
         chain_id,
         0,
-        setup.alice().address,
+        Account::Alice.address(),
         U256::ZERO,
         Bytes::from(increment_call.abi_encode()),
         vec![auth],
-        setup.alice(),
+        Account::Alice,
     );
 
     let tx_hash = alloy_primitives::keccak256(&eip7702_tx);
@@ -346,15 +338,15 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
     let delegation_gas = 30000;
     let delegation_cumulative = BASE_CUMULATIVE_GAS + delegation_gas;
 
-    let auth = build_authorization(chain_id, setup.account_contract_address, 0, setup.alice());
+    let auth = build_authorization(chain_id, setup.account_contract_address, 0, Account::Alice);
     let delegation_tx = build_eip7702_tx(
         chain_id,
         0,
-        setup.alice().address,
+        Account::Alice.address(),
         U256::ZERO,
         Bytes::new(), // Empty input - just setting up delegation
         vec![auth],
-        setup.alice(),
+        Account::Alice,
     );
 
     let delegation_hash = alloy_primitives::keccak256(&delegation_tx);
@@ -372,10 +364,10 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
     let execution_tx = build_eip1559_tx(
         chain_id,
         1, // incremented nonce
-        setup.alice().address,
+        Account::Alice.address(),
         U256::ZERO,
         Bytes::from(increment_call.abi_encode()),
-        setup.alice(),
+        Account::Alice,
     );
 
     let execution_hash = alloy_primitives::keccak256(&execution_tx);
