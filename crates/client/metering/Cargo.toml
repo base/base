@@ -11,6 +11,9 @@ description = "Metering RPC for Base node"
 [lints]
 workspace = true
 
+[package.metadata.cargo-udeps.ignore]
+development = ["reth-e2e-test-utils"]
+
 [dependencies]
 # workspace
 base-bundles.workspace = true
@@ -40,6 +43,7 @@ serde.workspace = true
 
 [dev-dependencies]
 base-test-utils.workspace = true
+reth-e2e-test-utils.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-db-common.workspace = true
 reth-optimism-node.workspace = true

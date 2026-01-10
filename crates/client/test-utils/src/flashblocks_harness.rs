@@ -1,15 +1,17 @@
 //! Flashblocks-aware wrapper around [`TestHarness`] that wires in the custom RPC modules.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
+use tokio::time::sleep;
 
 use crate::{
+    NODE_STARTUP_DELAY_MS,
     harness::TestHarness,
     init_silenced_tracing,
-    node::{FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState},
+    node::{FlashblocksParts, FlashblocksTestExtension, LocalFlashblocksState, LocalNode},
 };
 
 /// Helper that exposes [`TestHarness`] conveniences plus Flashblocks helpers.
@@ -21,18 +23,14 @@ pub struct FlashblocksHarness {
 }
 
 impl FlashblocksHarness {
-    /// Launch a flashblocks-enabled harness with the default launcher.
+    /// Launch a flashblocks-enabled harness with automatic canonical processing.
     pub async fn new() -> Result<Self> {
-        init_silenced_tracing();
-        let flash_node = FlashblocksLocalNode::new().await?;
-        Self::from_flashblocks_node(flash_node).await
+        Self::with_options(true).await
     }
 
     /// Launch the harness configured for manual canonical progression.
     pub async fn manual_canonical() -> Result<Self> {
-        init_silenced_tracing();
-        let flash_node = FlashblocksLocalNode::manual_canonical().await?;
-        Self::from_flashblocks_node(flash_node).await
+        Self::with_options(false).await
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
@@ -45,9 +43,25 @@ impl FlashblocksHarness {
         self.parts.send(flashblock).await
     }
 
-    async fn from_flashblocks_node(flash_node: FlashblocksLocalNode) -> Result<Self> {
-        let (node, parts) = flash_node.into_parts();
-        let inner = TestHarness::from_node(node).await?;
+    async fn with_options(process_canonical: bool) -> Result<Self> {
+        init_silenced_tracing();
+
+        // Create the extension and keep a reference to get parts after launch
+        let extension = FlashblocksTestExtension::new(process_canonical);
+        let parts_source = extension.clone();
+
+        // Launch the node with the flashblocks extension
+        let node = LocalNode::new(vec![Box::new(extension)]).await?;
+        let engine = node.engine_api()?;
+
+        sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
+
+        // Get the parts from the extension after node launch
+        let parts = parts_source.parts()?;
+
+        // Create harness by building it directly (avoiding TestHarnessBuilder since we already have node)
+        let inner = TestHarness::from_parts(node, engine);
+
         Ok(Self { inner, parts })
     }
 }

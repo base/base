@@ -88,7 +88,6 @@ reth-optimism-node.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio-tungstenite.workspace = true
 tracing-subscriber.workspace = true
-reth-e2e-test-utils.workspace = true
 base-test-utils.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true

@@ -7,16 +7,11 @@ use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_client_primitives::BaseNodeExtension;
 use eyre::{Result, eyre};
-use futures_util::Future;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth::{
-    builder::NodeHandle,
-    providers::{BlockNumReader, BlockReader, ChainSpecProvider},
-};
-use reth_e2e_test_utils::Adapter;
-use reth_optimism_node::OpNode;
+use reth::providers::{BlockNumReader, BlockReader, ChainSpecProvider};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
@@ -25,9 +20,39 @@ use crate::{
     BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
     NODE_STARTUP_DELAY_MS,
     engine::{EngineApi, IpcEngine},
-    node::{LocalNode, LocalNodeProvider, OpAddOns, OpBuilder, default_launcher},
+    node::{LocalNode, LocalNodeProvider},
     tracing::init_silenced_tracing,
 };
+
+/// Builder for configuring and launching a test harness.
+#[derive(Debug, Default)]
+pub struct TestHarnessBuilder {
+    extensions: Vec<Box<dyn BaseNodeExtension>>,
+}
+
+impl TestHarnessBuilder {
+    /// Create a new builder with no extensions.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an extension to be applied during node launch.
+    pub fn with_extension(mut self, ext: impl BaseNodeExtension + 'static) -> Self {
+        self.extensions.push(Box::new(ext));
+        self
+    }
+
+    /// Build and launch the test harness.
+    pub async fn build(self) -> Result<TestHarness> {
+        init_silenced_tracing();
+        let node = LocalNode::new(self.extensions).await?;
+        let engine = node.engine_api()?;
+
+        sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
+
+        Ok(TestHarness { node, engine })
+    }
+}
 
 /// High-level façade that bundles a local node, engine API client, and common helpers.
 #[derive(Debug)]
@@ -37,29 +62,21 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    /// Launch a new harness using the default launcher configuration.
+    /// Launch a new harness using the default configuration (no extensions).
     pub async fn new() -> Result<Self> {
-        Self::with_launcher(default_launcher).await
+        TestHarnessBuilder::new().build().await
     }
 
-    /// Launch the harness with a custom node launcher (e.g. to tweak components).
-    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        init_silenced_tracing();
-        let node = LocalNode::new(launcher).await?;
-        Self::from_node(node).await
+    /// Create a builder for configuring the test harness with extensions.
+    pub fn builder() -> TestHarnessBuilder {
+        TestHarnessBuilder::new()
     }
 
-    /// Build a harness from an already-running [`LocalNode`].
-    pub(crate) async fn from_node(node: LocalNode) -> Result<Self> {
-        let engine = node.engine_api()?;
-
-        sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
-
-        Ok(Self { node, engine })
+    /// Create a harness from pre-built parts.
+    ///
+    /// This is useful when you need to capture extension state before building the harness.
+    pub(crate) fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
+        Self { node, engine }
     }
 
     /// Return an Optimism JSON-RPC provider connected to the harness node.

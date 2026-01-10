@@ -4,36 +4,32 @@ use std::{
     any::Any,
     fmt,
     net::SocketAddr,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
+use base_client_primitives::{BaseNodeExtension, OpBuilder, OpProvider};
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
     FlashblocksState,
 };
 use base_flashtypes::Flashblock;
 use eyre::Result;
-use futures_util::Future;
 use once_cell::sync::OnceCell;
 use op_alloy_network::Optimism;
 use reth::{
-    api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
     args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
-    builder::{
-        Node, NodeBuilder, NodeBuilderWithComponents, NodeConfig, NodeHandle, WithLaunchContext,
-    },
+    builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig, NodeHandle, TreeConfig},
     core::exit::NodeExitFuture,
+    providers::providers::BlockchainProvider,
     tasks::TaskManager,
 };
 use reth_db::{
-    ClientVersion, DatabaseEnv, init_db,
-    mdbx::DatabaseArguments,
-    test_utils::{ERROR_DB_CREATION, TempDatabase, tempdir_path},
+    ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
-use reth_e2e_test_utils::{Adapter, TmpDB};
 use reth_exex::ExExEvent;
 use reth_node_core::{
     args::DatadirArgs,
@@ -41,14 +37,14 @@ use reth_node_core::{
 };
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{OpNode, args::RollupArgs};
-use reth_provider::{CanonStateSubscriptions, providers::BlockchainProvider};
+use reth_provider::CanonStateSubscriptions;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 
 use crate::engine::EngineApi;
 
 /// Convenience alias for the local blockchain provider type.
-pub type LocalNodeProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>;
+pub type LocalNodeProvider = OpProvider;
 /// Convenience alias for the Flashblocks state backing the local node.
 pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
 
@@ -61,6 +57,14 @@ pub struct LocalNode {
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _task_manager: TaskManager,
+    _db_path: PathBuf,
+}
+
+impl Drop for LocalNode {
+    fn drop(&mut self) {
+        // Clean up the temporary database directory
+        let _ = std::fs::remove_dir_all(&self._db_path);
+    }
 }
 
 impl fmt::Debug for LocalNode {
@@ -101,12 +105,16 @@ impl FlashblocksParts {
     }
 }
 
-#[derive(Clone)]
-struct FlashblocksNodeExtensions {
-    inner: Arc<FlashblocksNodeExtensionsInner>,
+/// Test extension for flashblocks functionality.
+///
+/// This extension wires up the flashblocks ExEx and RPC modules for testing,
+/// with optional control over canonical block processing.
+#[derive(Clone, Debug)]
+pub struct FlashblocksTestExtension {
+    inner: Arc<FlashblocksTestExtensionInner>,
 }
 
-struct FlashblocksNodeExtensionsInner {
+struct FlashblocksTestExtensionInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     #[allow(clippy::type_complexity)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
@@ -114,10 +122,22 @@ struct FlashblocksNodeExtensionsInner {
     process_canonical: bool,
 }
 
-impl FlashblocksNodeExtensions {
-    fn new(process_canonical: bool) -> Self {
+impl fmt::Debug for FlashblocksTestExtensionInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlashblocksTestExtensionInner")
+            .field("process_canonical", &self.process_canonical)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FlashblocksTestExtension {
+    /// Create a new flashblocks test extension.
+    ///
+    /// If `process_canonical` is true, canonical blocks are automatically processed.
+    /// Set to false for tests that need manual control over canonical block timing.
+    pub fn new(process_canonical: bool) -> Self {
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
-        let inner = FlashblocksNodeExtensionsInner {
+        let inner = FlashblocksTestExtensionInner {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
             fb_cell: Arc::new(OnceCell::new()),
@@ -126,7 +146,17 @@ impl FlashblocksNodeExtensions {
         Self { inner: Arc::new(inner) }
     }
 
-    fn apply(&self, builder: OpBuilder) -> OpBuilder {
+    /// Get the flashblocks parts after the node has been launched.
+    pub fn parts(&self) -> Result<FlashblocksParts> {
+        let state = self.inner.fb_cell.get().ok_or_else(|| {
+            eyre::eyre!("FlashblocksState should be initialized during node launch")
+        })?;
+        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: state.clone() })
+    }
+}
+
+impl BaseNodeExtension for FlashblocksTestExtension {
+    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
         let fb_cell = self.inner.fb_cell.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
@@ -136,7 +166,6 @@ impl FlashblocksNodeExtensions {
         builder
             .install_exex("flashblocks-canon", move |mut ctx| {
                 let fb_cell = fb_cell_for_exex.clone();
-                let process_canonical = process_canonical;
                 async move {
                     let provider = ctx.provider().clone();
                     let fb = init_flashblocks_state(&fb_cell, &provider);
@@ -202,53 +231,12 @@ impl FlashblocksNodeExtensions {
                 Ok(())
             })
     }
-
-    fn wrap_launcher<L, LRet>(&self, launcher: L) -> impl FnOnce(OpBuilder) -> LRet
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-    {
-        let extensions = self.clone();
-        move |builder| {
-            let builder = extensions.apply(builder);
-            launcher(builder)
-        }
-    }
-
-    fn parts(&self) -> Result<FlashblocksParts> {
-        let state = self.inner.fb_cell.get().ok_or_else(|| {
-            eyre::eyre!("FlashblocksState should be initialized during node launch")
-        })?;
-        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: state.clone() })
-    }
-}
-
-/// Optimism node types used for the local harness.
-pub type OpTypes =
-    FullNodeTypesAdapter<OpNode, TmpDB, BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>>;
-/// Builder that wires up the concrete node components.
-pub type OpComponentsBuilder = <OpNode as Node<OpTypes>>::ComponentsBuilder;
-/// Additional services attached to the node builder.
-pub type OpAddOns = <OpNode as Node<OpTypes>>::AddOns;
-/// Launcher builder used by the harness to customize node startup.
-pub type OpBuilder =
-    WithLaunchContext<NodeBuilderWithComponents<OpTypes, OpComponentsBuilder, OpAddOns>>;
-
-/// Default launcher that is reused across the harness and integration tests.
-pub async fn default_launcher(
-    builder: OpBuilder,
-) -> eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>> {
-    let launcher = builder.engine_api_launcher();
-    builder.launch_with(launcher).await
 }
 
 impl LocalNode {
-    /// Launch a new local node using the provided launcher function.
-    pub async fn new<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        build_node(launcher).await
+    /// Launch a new local node with the provided extensions.
+    pub async fn new(extensions: Vec<Box<dyn BaseNodeExtension>>) -> Result<Self> {
+        build_node(extensions).await
     }
 
     /// Creates a test database with a smaller map size to reduce memory usage.
@@ -258,7 +246,9 @@ impl LocalNode {
     /// `ENOMEM` errors when running parallel tests with `cargo test`, as the
     /// default 8 TB size can cause memory exhaustion when multiple test processes
     /// run concurrently.
-    fn create_test_database() -> Result<Arc<TempDatabase<DatabaseEnv>>> {
+    ///
+    /// Returns the database wrapped in Arc and the path for cleanup.
+    fn create_test_database() -> Result<(Arc<DatabaseEnv>, PathBuf)> {
         let default_size = 100 * 1024 * 1024; // 100 MB
         Self::create_test_database_with_size(default_size)
     }
@@ -268,13 +258,13 @@ impl LocalNode {
     /// # Arguments
     ///
     /// * `max_size` - Maximum map size in bytes.
-    fn create_test_database_with_size(max_size: usize) -> Result<Arc<TempDatabase<DatabaseEnv>>> {
+    fn create_test_database_with_size(max_size: usize) -> Result<(Arc<DatabaseEnv>, PathBuf)> {
         let path = tempdir_path();
-        let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
+        let emsg = format!("Failed to create test database at {path:?}");
         let args =
             DatabaseArguments::new(ClientVersion::default()).with_geometry_max_size(Some(max_size));
         let db = init_db(&path, args).expect(&emsg);
-        Ok(Arc::new(TempDatabase::new(db, path)))
+        Ok((Arc::new(db), path))
     }
 
     /// Create an HTTP provider pointed at the node's public RPC endpoint.
@@ -300,11 +290,7 @@ impl LocalNode {
     }
 }
 
-async fn build_node<L, LRet>(launcher: L) -> Result<LocalNode>
-where
-    L: FnOnce(OpBuilder) -> LRet,
-    LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-{
+async fn build_node(extensions: Vec<Box<dyn BaseNodeExtension>>) -> Result<LocalNode> {
     let tasks = TaskManager::current();
     let exec = tasks.executor();
 
@@ -327,10 +313,9 @@ where
         RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
     rpc_args.auth_ipc_path = unique_ipc_path;
 
-    let node = OpNode::new(RollupArgs::default());
+    let op_node = OpNode::new(RollupArgs::default());
 
-    let temp_db = LocalNode::create_test_database()?;
-    let db_path = temp_db.path().to_path_buf();
+    let (db, db_path) = LocalNode::create_test_database()?;
 
     let mut node_config = NodeConfig::new(chain_spec.clone())
         .with_network(network_config)
@@ -342,14 +327,35 @@ where
         node_config.with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
     let builder = NodeBuilder::new(node_config.clone())
-        .with_database(temp_db)
+        .with_database(db)
         .with_launch_context(exec.clone())
         .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
-        .with_components(node.components_builder())
-        .with_add_ons(node.add_ons());
+        .with_components(op_node.components())
+        .with_add_ons(op_node.add_ons())
+        .on_component_initialized(move |_ctx| Ok(()));
 
-    let NodeHandle { node: node_handle, node_exit_future } =
-        builder.launch_with_fn(launcher).await?;
+    // Apply all extensions
+    let builder =
+        extensions.into_iter().fold(builder, |builder, extension| extension.apply(builder));
+
+    // Launch with EngineNodeLauncher
+    let NodeHandle { node: node_handle, node_exit_future } = builder
+        .launch_with_fn(|builder| {
+            let engine_tree_config = TreeConfig::default()
+                .with_persistence_threshold(builder.config().engine.persistence_threshold)
+                .with_memory_block_buffer_target(
+                    builder.config().engine.memory_block_buffer_target,
+                );
+
+            let launcher = EngineNodeLauncher::new(
+                builder.task_executor().clone(),
+                builder.config().datadir(),
+                engine_tree_config,
+            );
+
+            builder.launch_with(launcher)
+        })
+        .await?;
 
     let http_api_addr = node_handle
         .rpc_server_handle()
@@ -372,6 +378,7 @@ where
         _node_exit_future: node_exit_future,
         _node: Box::new(node_handle),
         _task_manager: tasks,
+        _db_path: db_path,
     })
 }
 
@@ -403,27 +410,22 @@ impl fmt::Debug for FlashblocksLocalNode {
 }
 
 impl FlashblocksLocalNode {
-    /// Launch a flashblocks-enabled node using the default launcher.
+    /// Launch a flashblocks-enabled node using the default configuration.
     pub async fn new() -> Result<Self> {
-        Self::with_launcher_inner(default_launcher, true).await
+        Self::with_options(true).await
     }
 
     /// Builds a flashblocks-enabled node with canonical block streaming disabled so tests can call
     /// `FlashblocksState::on_canonical_block_received` at precise points.
     pub async fn manual_canonical() -> Result<Self> {
-        Self::with_launcher_inner(default_launcher, false).await
+        Self::with_options(false).await
     }
 
-    async fn with_launcher_inner<L, LRet>(launcher: L, process_canonical: bool) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        let extensions = FlashblocksNodeExtensions::new(process_canonical);
-        let wrapped_launcher = extensions.wrap_launcher(launcher);
-        let node = LocalNode::new(wrapped_launcher).await?;
-
-        let parts = extensions.parts()?;
+    async fn with_options(process_canonical: bool) -> Result<Self> {
+        let extension = FlashblocksTestExtension::new(process_canonical);
+        let parts_source = extension.clone();
+        let node = LocalNode::new(vec![Box::new(extension)]).await?;
+        let parts = parts_source.parts()?;
         Ok(Self { node, parts })
     }
 

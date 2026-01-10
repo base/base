@@ -25,12 +25,14 @@ mod flashblocks_harness;
 pub use flashblocks_harness::FlashblocksHarness;
 
 mod harness;
-pub use harness::TestHarness;
+pub use harness::{TestHarness, TestHarnessBuilder};
 
 mod node;
+// Re-export BaseNodeExtension for extension authors
+pub use base_client_primitives::BaseNodeExtension;
 pub use node::{
-    FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, LocalNode, LocalNodeProvider,
-    OpAddOns, OpBuilder, OpComponentsBuilder, OpTypes, default_launcher,
+    FlashblocksLocalNode, FlashblocksParts, FlashblocksTestExtension, LocalFlashblocksState,
+    LocalNode, LocalNodeProvider,
 };
 
 mod tracing;

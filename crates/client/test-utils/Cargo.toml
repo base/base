@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # Project
+base-client-primitives.workspace = true
 base-flashtypes.workspace = true
 base-flashblocks.workspace = true
 
@@ -24,8 +25,7 @@ reth-optimism-primitives.workspace = true
 reth-optimism-rpc = { workspace = true, features = ["client"] }
 reth-provider.workspace = true
 reth-primitives-traits.workspace = true
-reth-db.workspace = true
-reth-e2e-test-utils.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
 reth-node-core.workspace = true
 reth-exex.workspace = true
 reth-tracing.workspace = true
@@ -55,9 +55,6 @@ op-alloy-network.workspace = true
 # tokio
 tokio.workspace = true
 tokio-stream.workspace = true
-
-# async
-futures-util.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
