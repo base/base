@@ -14,11 +14,8 @@ pub use rpc::{
     Status, TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
 };
 
-mod rpc_extension;
-pub use rpc_extension::{TransactionStatusRpcConfig, TransactionStatusRpcExtension};
-
 mod tracker;
 pub use tracker::Tracker;
 
 mod extension;
-pub use extension::{TransactionTracingConfig, TransactionTracingExtension};
+pub use extension::{TracingConfig, TxPoolExtension, TxPoolExtensionConfig};

@@ -1702,7 +1702,6 @@ name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
  "base-cli-utils",
- "base-client-primitives",
  "base-client-runner",
  "base-flashblocks",
  "base-metering",

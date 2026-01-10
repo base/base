@@ -11,15 +11,14 @@ Base-specific node launcher that wires together the Optimism node components, ex
 - **`BaseNodeRunner`**: Runs the Base node with all configured extensions.
 - **`BaseNodeHandle`**: Handle to the running node, providing access to providers and state.
 - **`BaseNodeConfig`**: Configuration options for the Base node.
-- **`FlashblocksConfig`**: Configuration for flashblocks WebSocket subscription.
-- **`TracingConfig`**: Configuration for transaction tracing extension.
 
 ## Extensions
 
-- **`BaseNodeExtension`**: Core extension trait for adding functionality to the node.
-- **`BaseRpcExtension`**: Extension for adding custom RPC methods.
-- **`FlashblocksCanonExtension`**: Extension for canonical block reconciliation with flashblocks.
-- **`TransactionTracingExtension`**: Extension for transaction lifecycle tracing.
+Each feature crate provides a single `BaseNodeExtension` that combines all functionality for that feature:
+
+- **`FlashblocksExtension`** (from `base-flashblocks`): Combines canon ExEx and RPC for flashblocks.
+- **`TxPoolExtension`** (from `base-txpool`): Combines transaction tracing ExEx and status RPC.
+- **`MeteringExtension`** (from `base-metering`): Provides metering RPC.
 
 ## Usage
 
@@ -33,21 +32,17 @@ base-client-runner = { git = "https://github.com/base/node-reth" }
 Build and run a Base node:
 
 ```rust,ignore
-use base_client_runner::{BaseNodeBuilder, BaseNodeConfig, FlashblocksConfig};
+use base_client_runner::BaseNodeRunner;
+use base_flashblocks::FlashblocksExtension;
+use base_metering::MeteringExtension;
+use base_txpool::TxPoolExtension;
 
-let config = BaseNodeConfig {
-    flashblocks: FlashblocksConfig {
-        enabled: true,
-        url: "wss://flashblocks.base.org".to_string(),
-    },
-    ..Default::default()
-};
+let mut runner = BaseNodeRunner::new(args);
+runner.install_ext::<TxPoolExtension>()?;
+runner.install_ext::<MeteringExtension>()?;
+runner.install_ext::<FlashblocksExtension>()?;
 
-let node = BaseNodeBuilder::new(config)
-    .with_flashblocks()
-    .with_transaction_tracing()
-    .build()
-    .await?;
+let handle = runner.run(builder);
 ```
 
 ## License

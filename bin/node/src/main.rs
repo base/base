@@ -6,9 +6,9 @@
 pub mod cli;
 
 use base_client_runner::BaseNodeRunner;
-use base_flashblocks::{FlashblocksCanonExtension, FlashblocksRpcExtension};
-use base_metering::MeteringRpcExtension;
-use base_txpool::{TransactionStatusRpcExtension, TransactionTracingExtension};
+use base_flashblocks::FlashblocksExtension;
+use base_metering::MeteringExtension;
+use base_txpool::TxPoolExtension;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -26,14 +26,10 @@ fn main() {
     cli.run(|builder, args| async move {
         let mut runner = BaseNodeRunner::new(args);
 
-        // ExEx extensions
-        runner.install_ext::<FlashblocksCanonExtension>()?;
-        runner.install_ext::<TransactionTracingExtension>()?;
-
-        // RPC extensions (FlashblocksRpcExtension must be last - uses replace_configured)
-        runner.install_ext::<MeteringRpcExtension>()?;
-        runner.install_ext::<TransactionStatusRpcExtension>()?;
-        runner.install_ext::<FlashblocksRpcExtension>()?;
+        // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
+        runner.install_ext::<TxPoolExtension>()?;
+        runner.install_ext::<MeteringExtension>()?;
+        runner.install_ext::<FlashblocksExtension>()?;
 
         let handle = runner.run(builder);
         handle.await

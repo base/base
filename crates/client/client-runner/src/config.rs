@@ -1,9 +1,11 @@
 //! Contains the Base node configuration structures.
 
-use base_client_primitives::{FlashblocksConfig, OpProvider, TracingConfig};
-use base_flashblocks::{FlashblocksCanonConfig, FlashblocksCell, FlashblocksState};
-use base_metering::MeteringRpcConfig;
-use base_txpool::{TransactionStatusRpcConfig, TransactionTracingConfig};
+use base_client_primitives::OpProvider;
+use base_flashblocks::{
+    FlashblocksCell, FlashblocksConfig, FlashblocksExtensionConfig, FlashblocksState,
+};
+use base_metering::MeteringExtensionConfig;
+use base_txpool::{TracingConfig, TxPoolExtensionConfig};
 use reth_optimism_node::args::RollupArgs;
 
 /// Concrete type alias for the flashblocks cell used in the runner.
@@ -34,7 +36,7 @@ impl BaseNodeConfig {
 // Implement configuration traits for BaseNodeConfig so it can be used
 // with ConfigurableBaseNodeExtension
 
-impl FlashblocksCanonConfig for BaseNodeConfig {
+impl FlashblocksExtensionConfig for BaseNodeConfig {
     fn flashblocks_cell(&self) -> &FlashblocksCell<FlashblocksState<OpProvider>> {
         &self.flashblocks_cell
     }
@@ -44,20 +46,18 @@ impl FlashblocksCanonConfig for BaseNodeConfig {
     }
 }
 
-impl TransactionTracingConfig for BaseNodeConfig {
+impl TxPoolExtensionConfig for BaseNodeConfig {
     fn tracing(&self) -> &TracingConfig {
         &self.tracing
     }
-}
 
-impl MeteringRpcConfig for BaseNodeConfig {
-    fn metering_enabled(&self) -> bool {
-        self.metering_enabled
+    fn sequencer_rpc(&self) -> Option<&str> {
+        self.rollup_args.sequencer.as_deref()
     }
 }
 
-impl TransactionStatusRpcConfig for BaseNodeConfig {
-    fn sequencer_rpc(&self) -> Option<&str> {
-        self.rollup_args.sequencer.as_deref()
+impl MeteringExtensionConfig for BaseNodeConfig {
+    fn metering_enabled(&self) -> bool {
+        self.metering_enabled
     }
 }

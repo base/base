@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use base_client_primitives::{FlashblocksConfig, TracingConfig};
 use base_client_runner::{BaseNodeConfig, RunnerFlashblocksCell};
+use base_flashblocks::FlashblocksConfig;
+use base_txpool::TracingConfig;
 use once_cell::sync::OnceCell;
 use reth_optimism_node::args::RollupArgs;
 
