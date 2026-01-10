@@ -2,6 +2,8 @@
 
 A library to build and process Flashblock-level Access Lists (FBALs).
 
+See the [spec](../../../docs/specs/access-lists.md) for more details.
+
 ## Overview
 
 This crate provides types and utilities for tracking account and storage changes during EVM transaction execution, producing access lists that can be used by downstream consumers to understand exactly what state was read or modified.
