@@ -74,45 +74,60 @@ impl AccountChangesBuilder {
     }
 
     /// Consumes the builder and produces [`AccountChanges`]
+    ///
+    /// Sorting per FAL spec: storage keys lexicographic, block_access_index ascending
     pub fn build(mut self, address: Address) -> AccountChanges {
+        let mut storage_changes: Vec<_> = self
+            .storage_changes
+            .drain()
+            .map(|(slot, sc)| {
+                let mut changes: Vec<_> = sc
+                    .into_iter()
+                    .map(|(tx_idx, val)| StorageChange {
+                        block_access_index: tx_idx,
+                        new_value: val.into(),
+                    })
+                    .collect();
+                changes.sort_unstable_by_key(|c| c.block_access_index);
+                SlotChanges { slot: slot.into(), changes }
+            })
+            .collect();
+        storage_changes.sort_unstable_by_key(|sc| sc.slot);
+
+        let mut storage_reads: Vec<_> = self.storage_reads.into_iter().collect();
+        storage_reads.sort_unstable();
+
+        let mut balance_changes: Vec<_> = self
+            .balance_changes
+            .into_iter()
+            .map(|(tx_idx, val)| BalanceChange { block_access_index: tx_idx, post_balance: val })
+            .collect();
+        balance_changes.sort_unstable_by_key(|c| c.block_access_index);
+
+        let mut nonce_changes: Vec<_> = self
+            .nonce_changes
+            .into_iter()
+            .map(|(tx_idx, val)| NonceChange { block_access_index: tx_idx, new_nonce: val })
+            .collect();
+        nonce_changes.sort_unstable_by_key(|c| c.block_access_index);
+
+        let mut code_changes: Vec<_> = self
+            .code_changes
+            .into_iter()
+            .map(|(tx_idx, bc)| CodeChange {
+                block_access_index: tx_idx,
+                new_code: bc.original_bytes(),
+            })
+            .collect();
+        code_changes.sort_unstable_by_key(|c| c.block_access_index);
+
         AccountChanges {
             address,
-            storage_changes: self
-                .storage_changes
-                .drain()
-                .map(|(slot, sc)| SlotChanges {
-                    slot: slot.into(),
-                    changes: sc
-                        .into_iter()
-                        .map(|(tx_idx, val)| StorageChange {
-                            block_access_index: tx_idx,
-                            new_value: val.into(),
-                        })
-                        .collect(),
-                })
-                .collect(),
-            storage_reads: self.storage_reads.into_iter().collect(),
-            balance_changes: self
-                .balance_changes
-                .into_iter()
-                .map(|(tx_idx, val)| BalanceChange {
-                    block_access_index: tx_idx,
-                    post_balance: val,
-                })
-                .collect(),
-            nonce_changes: self
-                .nonce_changes
-                .into_iter()
-                .map(|(tx_idx, val)| NonceChange { block_access_index: tx_idx, new_nonce: val })
-                .collect(),
-            code_changes: self
-                .code_changes
-                .into_iter()
-                .map(|(tx_idx, bc)| CodeChange {
-                    block_access_index: tx_idx,
-                    new_code: bc.original_bytes(),
-                })
-                .collect(),
+            storage_changes,
+            storage_reads,
+            balance_changes,
+            nonce_changes,
+            code_changes,
         }
     }
 }

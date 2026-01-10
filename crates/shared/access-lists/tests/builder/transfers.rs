@@ -166,3 +166,88 @@ fn test_multiple_transfers() {
         assert!(tx_indices.contains(&i), "Tx index {} should be present in nonce changes", i);
     }
 }
+
+#[test]
+fn test_zero_value_self_transfer() {
+    let sender = U256::from(0xDEAD).into_address();
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+
+    let tx = OpTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(sender)
+                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .kind(TxKind::Call(sender))
+                .value(U256::ZERO)
+                .gas_price(0)
+                .gas_priority_fee(None)
+                .max_fee_per_gas(0)
+                .gas_limit(21_100),
+        )
+        .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None)
+        .expect("access list build should succeed");
+
+    let sender_entry = access_list.account_changes.iter().find(|ac| ac.address == sender);
+    assert!(sender_entry.is_some(), "Sender should be in access list for zero-value self-transfer");
+
+    let sender_changes = sender_entry.unwrap();
+    assert!(!sender_changes.nonce_changes.is_empty(), "Sender should have nonce change");
+    assert!(
+        sender_changes.balance_changes.is_empty(),
+        "Zero-value self-transfer should NOT record balance change"
+    );
+}
+
+#[test]
+fn test_zero_value_transfer_with_gas() {
+    let sender = U256::from(0xDEAD).into_address();
+    let recipient = U256::from(0xBEEF).into_address();
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+
+    let tx = OpTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(sender)
+                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .kind(TxKind::Call(recipient))
+                .value(U256::ZERO)
+                .gas_price(1000)
+                .gas_priority_fee(Some(1_000))
+                .max_fee_per_gas(1_000)
+                .gas_limit(21_100),
+        )
+        .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides), None)
+        .expect("access list build should succeed");
+
+    let sender_entry = access_list.account_changes.iter().find(|ac| ac.address == sender);
+    assert!(sender_entry.is_some(), "Sender should be in access list");
+
+    let sender_changes = sender_entry.unwrap();
+    assert!(!sender_changes.nonce_changes.is_empty(), "Sender should have nonce change");
+    assert!(
+        !sender_changes.balance_changes.is_empty(),
+        "Sender should have balance change due to gas payment"
+    );
+
+    let recipient_entry = access_list.account_changes.iter().find(|ac| ac.address == recipient);
+    assert!(recipient_entry.is_some(), "Recipient should be in access list");
+    let recipient_changes = recipient_entry.unwrap();
+    assert!(
+        recipient_changes.balance_changes.is_empty(),
+        "Recipient should NOT have balance change for zero-value transfer"
+    );
+
+    let fee_recipients: Vec<_> = access_list
+        .account_changes
+        .iter()
+        .filter(|ac| ac.address != sender && ac.address != recipient)
+        .filter(|ac| !ac.balance_changes.is_empty())
+        .collect();
+    assert!(!fee_recipients.is_empty(), "Fee vault should have balance change from gas");
+}
