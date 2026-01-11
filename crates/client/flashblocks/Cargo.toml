@@ -11,6 +11,9 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-utils = [ "base-test-utils", "derive_more", "eyre" ]
+
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
@@ -67,7 +70,13 @@ arc-swap.workspace = true
 metrics-derive.workspace = true
 rayon.workspace = true
 
+# Optional test-utils dependencies
+base-test-utils = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["deref"], optional = true }
+eyre = { workspace = true, optional = true }
+
 [dev-dependencies]
+base-flashblocks = { path = ".", features = ["test-utils"] }
 rstest.workspace = true
 rand.workspace = true
 eyre.workspace = true
@@ -87,7 +96,6 @@ reth-optimism-node.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio-tungstenite.workspace = true
 tracing-subscriber.workspace = true
-base-test-utils.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
 criterion = { version = "0.5", features = ["async_tokio"] }

@@ -22,19 +22,13 @@ pub use engine::{EngineAddress, EngineApi, EngineProtocol, HttpEngine, IpcEngine
 mod fixtures;
 pub use fixtures::{create_provider_factory, load_chain_spec};
 
-mod flashblocks_harness;
-pub use flashblocks_harness::FlashblocksHarness;
-
 mod harness;
 pub use harness::{TestHarness, TestHarnessBuilder};
 
 mod node;
 // Re-export BaseNodeExtension for extension authors
 pub use base_client_primitives::BaseNodeExtension;
-pub use node::{
-    FlashblocksLocalNode, FlashblocksParts, FlashblocksTestExtension, LocalFlashblocksState,
-    LocalNode, LocalNodeProvider,
-};
+pub use node::{LocalNode, LocalNodeProvider};
 
 mod tracing;
 // Re-export signer traits for use in tests

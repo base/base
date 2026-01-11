@@ -95,7 +95,7 @@ impl TestHarness {
     /// Create a harness from pre-built parts.
     ///
     /// This is useful when you need to capture extension state before building the harness.
-    pub(crate) fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
+    pub fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
         Self { node, engine }
     }
 

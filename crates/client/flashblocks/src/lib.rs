@@ -46,3 +46,6 @@ pub use rpc::{
 
 mod extension;
 pub use extension::{FlashblocksCell, FlashblocksConfig, FlashblocksExtension};
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_harness;
