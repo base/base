@@ -1,41 +1,17 @@
 //! Integration tests for block metering functionality.
 
-use std::sync::Arc;
-
 use alloy_consensus::{BlockHeader, Header};
-use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256};
 use base_metering::{MeteringExtension, meter_block};
-use base_test_utils::{Account, TestHarness};
+use base_test_utils::{Account, TestHarness, load_chain_spec};
 use reth::chainspec::EthChainSpec;
-use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
 use reth_optimism_primitives::{OpBlock, OpBlockBody, OpTransactionSigned};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::HeaderProvider;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 
-fn create_chain_spec() -> Arc<OpChainSpec> {
-    let genesis = BASE_MAINNET
-        .genesis
-        .clone()
-        .extend_accounts(
-            Account::all()
-                .into_iter()
-                .map(|a| {
-                    (
-                        a.address(),
-                        GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-        .with_gas_limit(100_000_000);
-
-    Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build())
-}
-
 async fn setup() -> eyre::Result<TestHarness> {
-    let chain_spec = create_chain_spec();
+    let chain_spec = load_chain_spec();
     TestHarness::builder()
         .with_chain_spec(chain_spec)
         .with_extension(MeteringExtension::new(true))

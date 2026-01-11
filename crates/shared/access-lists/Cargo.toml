@@ -22,14 +22,13 @@ serde.workspace = true
 [dev-dependencies]
 op-revm.workspace = true
 eyre.workspace = true
-reth-optimism-chainspec.workspace = true
 reth-optimism-evm.workspace = true
 alloy-consensus.workspace = true
 alloy-contract.workspace = true
 alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
 reth-evm.workspace = true
-serde_json.workspace = true
+base-test-utils.workspace = true
 
 [[test]]
 name = "builder"

@@ -2,18 +2,42 @@
 
 use std::sync::Arc;
 
-use alloy_genesis::Genesis;
+use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_primitives::U256;
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
     test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
 };
+use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
+
+use crate::Account;
 
 /// Loads the shared test genesis configuration.
 pub fn load_genesis() -> Genesis {
     serde_json::from_str(include_str!("../assets/genesis.json")).unwrap()
+}
+
+/// Creates a test chain spec with pre-funded test accounts.
+/// Uses the shared genesis.json (Base Sepolia) as the base configuration.
+pub fn load_chain_spec() -> Arc<OpChainSpec> {
+    let genesis = load_genesis()
+        .extend_accounts(
+            Account::all()
+                .into_iter()
+                .map(|a| {
+                    (
+                        a.address(),
+                        GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .with_gas_limit(100_000_000);
+
+    Arc::new(OpChainSpec::from_genesis(genesis))
 }
 
 /// Creates a provider factory for tests with the given chain spec.

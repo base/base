@@ -1,6 +1,6 @@
 //! Tests for ensuring the access list is built properly
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use alloy_consensus::Header;
 pub use alloy_primitives::{Address, B256, TxKind, U256};
@@ -8,10 +8,10 @@ use alloy_sol_macro::sol;
 pub use alloy_sol_types::SolCall;
 use base_access_lists::FBALBuilderDb;
 pub use base_access_lists::FlashblockAccessList;
+use base_test_utils::load_chain_spec;
 pub use eyre::Result;
 pub use op_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm};
-use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::OpEvmConfig;
 use revm::{DatabaseCommit, context::result::ResultAndState, database::InMemoryDB};
 pub use revm::{
@@ -93,10 +93,7 @@ pub fn execute_txns_build_access_list(
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {
-    let chain_spec = Arc::new(OpChainSpec::from_genesis(
-        serde_json::from_str(include_str!("../../../../client/test-utils/assets/genesis.json"))
-            .unwrap(),
-    ));
+    let chain_spec = load_chain_spec();
     let evm_config = OpEvmConfig::optimism(chain_spec.clone());
     let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
 

@@ -1515,14 +1515,13 @@ dependencies = [
  "alloy-rlp",
  "alloy-sol-macro",
  "alloy-sol-types",
+ "base-test-utils",
  "eyre",
  "op-revm",
  "reth-evm",
- "reth-optimism-chainspec",
  "reth-optimism-evm",
  "revm",
  "serde",
- "serde_json",
  "tracing",
 ]
 

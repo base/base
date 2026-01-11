@@ -1,43 +1,19 @@
 //! Integration tests covering the Metering logic surface area.
 
-use std::sync::Arc;
-
 use alloy_eips::Encodable2718;
-use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 use base_bundles::{Bundle, ParsedBundle};
 use base_metering::{MeteringExtension, meter_bundle};
-use base_test_utils::{Account, TestHarness};
+use base_test_utils::{Account, TestHarness, load_chain_spec};
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use reth::chainspec::EthChainSpec;
-use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_transaction_pool::test_utils::TransactionBuilder;
 
-fn create_chain_spec() -> Arc<OpChainSpec> {
-    let genesis = BASE_MAINNET
-        .genesis
-        .clone()
-        .extend_accounts(
-            Account::all()
-                .into_iter()
-                .map(|a| {
-                    (
-                        a.address(),
-                        GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-        .with_gas_limit(100_000_000);
-
-    Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build())
-}
-
 async fn setup() -> eyre::Result<TestHarness> {
-    let chain_spec = create_chain_spec();
+    let chain_spec = load_chain_spec();
     TestHarness::builder()
         .with_chain_spec(chain_spec)
         .with_extension(MeteringExtension::new(true))
