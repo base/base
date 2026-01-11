@@ -1658,7 +1658,6 @@ dependencies = [
  "alloy-rpc-client",
  "base-bundles",
  "base-primitives",
- "base-reth-metering",
  "base-reth-test-utils",
  "eyre",
  "jsonrpsee",
