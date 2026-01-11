@@ -19,13 +19,14 @@ use rayon::prelude::*;
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
-    revm::{State, database::StateProviderDatabase, db::CacheDB},
+    revm::{State, database::StateProviderDatabase},
 };
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
+use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
@@ -304,12 +305,17 @@ where
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
-        let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
+        // Track state changes across flashblocks, accumulating bundle state
+        // from previous pending blocks if available.
         let mut db = match &prev_pending_blocks {
-            Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
-            None => CacheDB::new(state),
+            Some(pending_blocks) => State::builder()
+                .with_database(state_provider_db)
+                .with_bundle_update()
+                .with_bundle_prestate(pending_blocks.get_bundle_state())
+                .build(),
+            None => State::builder().with_database(state_provider_db).with_bundle_update().build(),
         };
 
         let mut state_overrides =
@@ -446,8 +452,10 @@ where
             last_block_header = block_header;
         }
 
+        // Extract the accumulated bundle state for state root calculation
+        db.merge_transitions(BundleRetention::Reverts);
+        pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
-        pending_blocks_builder.with_db_cache(db.cache);
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
