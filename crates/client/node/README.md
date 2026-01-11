@@ -28,7 +28,7 @@ base-client-primitives = { git = "https://github.com/base/node-reth" }
 Implement a custom node extension:
 
 ```rust,ignore
-use base_client_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
+use base_client_node::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder};
 use eyre::Result;
 
 #[derive(Debug)]

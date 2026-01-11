@@ -11,11 +11,11 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
+use base_client_node::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
 use base_flashblocks::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};

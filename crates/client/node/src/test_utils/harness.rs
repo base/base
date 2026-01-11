@@ -8,7 +8,6 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_client_primitives::BaseNodeExtension;
 use eyre::{Result, eyre};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -19,11 +18,14 @@ use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
 
 use crate::{
-    BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
-    NODE_STARTUP_DELAY_MS,
-    engine::{EngineApi, IpcEngine},
-    node::{LocalNode, LocalNodeProvider},
-    tracing::init_silenced_tracing,
+    BaseNodeExtension,
+    test_utils::{
+        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
+        NODE_STARTUP_DELAY_MS,
+        engine::{EngineApi, IpcEngine},
+        node::{LocalNode, LocalNodeProvider},
+        tracing::init_silenced_tracing,
+    },
 };
 
 /// Builder for configuring and launching a test harness.
@@ -60,7 +62,7 @@ impl TestHarnessBuilder {
         let chain_spec = match self.chain_spec {
             Some(spec) => spec,
             None => {
-                let genesis = crate::build_test_genesis();
+                let genesis = crate::test_utils::build_test_genesis();
                 Arc::new(OpChainSpec::from_genesis(genesis))
             }
         };
@@ -241,7 +243,7 @@ mod tests {
     use alloy_provider::Provider;
 
     use super::*;
-    use crate::Account;
+    use crate::test_utils::Account;
 
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
@@ -249,7 +251,7 @@ mod tests {
 
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
-        assert_eq!(chain_id, crate::DEVNET_CHAIN_ID);
+        assert_eq!(chain_id, crate::test_utils::DEVNET_CHAIN_ID);
 
         let alice_balance = provider.get_balance(Account::Alice.address()).await?;
         assert!(alice_balance > U256::ZERO);

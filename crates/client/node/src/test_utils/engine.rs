@@ -21,7 +21,7 @@ use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
 use url::Url;
 
-use crate::DEFAULT_JWT_SECRET;
+use crate::test_utils::DEFAULT_JWT_SECRET;
 
 /// Describes how to reach the Engine API endpoint.
 #[derive(Clone, Debug)]

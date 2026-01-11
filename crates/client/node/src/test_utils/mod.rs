@@ -1,7 +1,10 @@
-#![doc = include_str!("../README.md")]
-#![doc(issue_tracker_base_url = "https://github.com/base/node-reth/issues/")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+//! Test utilities for integration testing.
+//!
+//! This module provides testing infrastructure including:
+//! - [`TestHarness`] and [`TestHarnessBuilder`] - Unified test harness for node and engine.
+//! - [`LocalNode`] and [`LocalNodeProvider`] - Local node setup.
+//! - [`EngineApi`] with [`HttpEngine`] and [`IpcEngine`] - Engine API client.
+//! - Test constants and fixtures.
 
 // Re-export from base-primitives for backwards compatibility
 pub use base_primitives::{
@@ -26,8 +29,6 @@ mod harness;
 pub use harness::{TestHarness, TestHarnessBuilder};
 
 mod node;
-// Re-export BaseNodeExtension for extension authors
-pub use base_client_primitives::BaseNodeExtension;
 pub use node::{LocalNode, LocalNodeProvider};
 
 mod tracing;

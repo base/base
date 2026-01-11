@@ -1,7 +1,7 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool features
 //! (tracing ExEx and status RPC) on the Base node builder.
 
-use base_client_primitives::{BaseNodeExtension, OpBuilder};
+use base_client_node::{BaseNodeExtension, OpBuilder};
 use tracing::info;
 
 use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_exex};

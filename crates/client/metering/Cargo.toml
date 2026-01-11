@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-client-primitives.workspace = true
+base-client-node.workspace = true
 
 # reth
 reth.workspace = true
@@ -39,7 +39,7 @@ eyre.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-base-test-utils.workspace = true
+base-client-node = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-db-common.workspace = true
 reth-optimism-node.workspace = true

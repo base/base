@@ -1,7 +1,7 @@
 //! Contains the [`MeteringExtension`] which wires up the metering RPC surface
 //! on the Base node builder.
 
-use base_client_primitives::{BaseNodeExtension, OpBuilder};
+use base_client_node::{BaseNodeExtension, OpBuilder};
 use tracing::info;
 
 use crate::{MeteringApiImpl, MeteringApiServer};

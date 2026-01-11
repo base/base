@@ -4,7 +4,6 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use base_client_primitives::{BaseNodeExtension, OpProvider};
 use eyre::Result;
 use op_alloy_network::Optimism;
 use reth::{
@@ -24,7 +23,7 @@ use reth_node_core::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{OpNode, args::RollupArgs};
 
-use crate::engine::EngineApi;
+use crate::{BaseNodeExtension, OpProvider, test_utils::engine::EngineApi};
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = OpProvider;
@@ -169,8 +168,8 @@ impl LocalNode {
     }
 
     /// Build an Engine API client that talks to the node's IPC endpoint.
-    pub fn engine_api(&self) -> Result<EngineApi<crate::engine::IpcEngine>> {
-        EngineApi::<crate::engine::IpcEngine>::new(self.engine_ipc_path.clone())
+    pub fn engine_api(&self) -> Result<EngineApi<crate::test_utils::engine::IpcEngine>> {
+        EngineApi::<crate::test_utils::engine::IpcEngine>::new(self.engine_ipc_path.clone())
     }
 
     /// Clone the underlying blockchain provider so callers can inspect chain state.

@@ -2,8 +2,8 @@
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_primitives::{Address, B256};
+use base_client_node::test_utils::{Account, TestHarness, load_chain_spec};
 use base_metering::{MeteringExtension, meter_block};
-use base_test_utils::{Account, TestHarness, load_chain_spec};
 use reth::chainspec::EthChainSpec;
 use reth_optimism_primitives::{OpBlock, OpBlockBody, OpTransactionSigned};
 use reth_primitives_traits::Block as BlockT;

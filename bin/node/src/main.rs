@@ -7,7 +7,7 @@ pub mod cli;
 
 use std::sync::Arc;
 
-use base_client_primitives::{BaseNodeRunner, OpProvider};
+use base_client_node::{BaseNodeRunner, OpProvider};
 use base_flashblocks::{FlashblocksCell, FlashblocksExtension, FlashblocksState};
 use base_metering::MeteringExtension;
 use base_txpool::TxPoolExtension;

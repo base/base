@@ -3,8 +3,8 @@
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 use base_bundles::{Bundle, ParsedBundle};
+use base_client_node::test_utils::{Account, TestHarness, load_chain_spec};
 use base_metering::{MeteringExtension, meter_bundle};
-use base_test_utils::{Account, TestHarness, load_chain_spec};
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use reth::chainspec::EthChainSpec;

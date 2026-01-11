@@ -58,10 +58,9 @@ base-flashtypes = { path = "crates/shared/flashtypes" }
 base-primitives = { path = "crates/shared/primitives" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 # Client
-base-client-primitives = { path = "crates/client/client-primitives" }
+base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
-base-test-utils = { path = "crates/client/test-utils" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 
 # reth

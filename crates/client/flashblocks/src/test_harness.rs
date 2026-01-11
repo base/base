@@ -12,12 +12,14 @@ use std::{
     time::Duration,
 };
 
-use base_client_primitives::BaseNodeExtension;
-use base_flashtypes::Flashblock;
-use base_test_utils::{
-    LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
-    init_silenced_tracing,
+use base_client_node::{
+    BaseNodeExtension,
+    test_utils::{
+        LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
+        init_silenced_tracing,
+    },
 };
+use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
 use once_cell::sync::OnceCell;
@@ -113,10 +115,7 @@ impl FlashblocksTestExtension {
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
-    fn apply(
-        self: Box<Self>,
-        builder: base_client_primitives::OpBuilder,
-    ) -> base_client_primitives::OpBuilder {
+    fn apply(self: Box<Self>, builder: base_client_node::OpBuilder) -> base_client_node::OpBuilder {
         let fb_cell = self.inner.fb_cell.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;

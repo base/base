@@ -12,12 +12,18 @@ repository.workspace = true
 workspace = true
 
 [features]
-test-utils = [ "base-test-utils", "derive_more", "eyre" ]
+test-utils = [
+	"base-client-node/test-utils",
+	"derive_more",
+	"eyre",
+	"reth-evm/test-utils",
+	"reth-primitives/test-utils",
+]
 
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
-base-client-primitives.workspace = true
+base-client-node.workspace = true
 
 # reth
 reth.workspace = true
@@ -71,7 +77,6 @@ metrics-derive.workspace = true
 rayon.workspace = true
 
 # Optional test-utils dependencies
-base-test-utils = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref"], optional = true }
 eyre = { workspace = true, optional = true }
 

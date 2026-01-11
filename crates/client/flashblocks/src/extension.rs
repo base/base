@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_primitives::{BaseNodeExtension, OpBuilder, OpProvider};
+use base_client_node::{BaseNodeExtension, OpBuilder, OpProvider};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
