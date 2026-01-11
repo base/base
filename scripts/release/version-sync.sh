@@ -8,7 +8,8 @@
 #   GH_TOKEN - GitHub token for creating PRs (required in CI)
 #   DRY_RUN  - Set to "true" to skip git push and PR creation
 
-set -euo pipefail
+# shellcheck source=common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 BRANCH_NAME="${1:-}"
 
@@ -17,29 +18,6 @@ if [[ -z "$BRANCH_NAME" ]]; then
     echo "Example: $0 releases/v1.0.0"
     exit 1
 fi
-
-# Parse version from branch name
-parse_branch_version() {
-    local branch="$1"
-    if [[ "$branch" =~ ^releases/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-        echo "${BASH_REMATCH[1]}"
-    else
-        echo "Error: Invalid branch name format: $branch" >&2
-        echo "Expected: releases/v<major>.<minor>.<patch>" >&2
-        return 1
-    fi
-}
-
-# Get current version from Cargo.toml
-get_cargo_version() {
-    cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version'
-}
-
-# Check if a sync PR already exists
-check_existing_pr() {
-    local sync_branch="$1"
-    gh pr list --head "$sync_branch" --state open --json number --jq '.[0].number // empty' 2>/dev/null || true
-}
 
 # Main logic
 main() {
@@ -72,8 +50,7 @@ main() {
     fi
 
     # Configure git
-    git config user.name "github-actions[bot]"
-    git config user.email "github-actions[bot]@users.noreply.github.com"
+    configure_git
 
     # Create sync branch
     git checkout -b "$SYNC_BRANCH"
@@ -113,7 +90,7 @@ Auto-generated PR to sync Cargo.toml version with release branch.
 - **Release branch**: \`$BRANCH_NAME\`
 - **Target version**: \`$BRANCH_VERSION\`
 
-Once merged, the Release RC workflow will automatically build a release candidate Docker image.
+Once merged, run the **Create Release** workflow to build a release candidate.
 EOF
 )"
 

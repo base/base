@@ -2,7 +2,7 @@
 
 ## Overview
 
-We use release branches to build and test release candidates (RCs) before publishing final releases.
+We use release branches and manual tag creation to build and test release candidates (RCs) before publishing final releases.
 
 ## How it works
 
@@ -14,31 +14,51 @@ Create a branch with the naming convention `releases/v<version>`:
 - **Patch releases**: branch off an existing release branch
 
 When you push the branch, a workflow automatically:
-- Updates all `Cargo.toml` versions to match the branch version
-- Commits and pushes the version bump
+- Creates a PR to update all `Cargo.toml` versions to match the branch version
+- Merge the PR before creating releases
 
-### 2. RC builds (automatic)
+### 2. Create release candidates
 
-Every push to the release branch triggers an RC build:
-- Builds multi-arch Docker images (amd64 + arm64)
-- Tags the image as `v1.0.0-rc.1`, `v1.0.0-rc.2`, etc.
-- Creates a matching git tag
-
-If you need fixes, just merge PRs into the release branch. Each merge bumps the RC number.
-
-### 3. Publish the release
-
-Once you're happy with an RC, run the **Release Publish** workflow manually with the release branch name.
+Run the **Create Release** workflow manually:
+- Select your release branch (e.g., `releases/v1.0.0`)
+- Choose `rc` as the release type
 
 This will:
-- Re-tag the latest RC image as the final version (e.g., `v1.0.0`)
-- Create a GitHub release with auto-generated notes
-- Tag the commit as `v1.0.0`
+- Automatically determine the next RC number (rc.1, rc.2, etc.)
+- Create and push a tag (e.g., `v1.0.0-rc.1`)
+- Trigger the Release workflow
+
+### 3. Release workflow (automatic)
+
+When a tag is pushed, the Release workflow automatically:
+- Runs CI checks (build, test, docker)
+- Builds multi-arch Docker images (amd64 + arm64)
+- Publishes to GHCR with appropriate tags
+- Creates a GitHub release with auto-generated changelog
+
+If you need fixes, merge PRs into the release branch and create another RC.
+
+### 4. Publish final release
+
+Once you're happy with an RC, run the **Create Release** workflow again:
+- Select your release branch
+- Choose `final` as the release type
+
+This will:
+- Create the final version tag (e.g., `v1.0.0`)
+- Trigger the Release workflow
+- Docker images are tagged as `v1.0.0`, `1.0`, `1`, and `latest`
 
 ## Quick reference
 
-| Action | Trigger |
-|--------|---------|
-| Version sync | Branch creation (`releases/v*`) |
-| RC build | Any push to `releases/v*` |
-| Final release | Manual workflow dispatch |
+| Action | How to trigger |
+|--------|----------------|
+| Version sync | Automatic on branch creation (`releases/v*`) |
+| RC build | Run "Create Release" workflow with `rc` type |
+| Final release | Run "Create Release" workflow with `final` type |
+
+## Workflows
+
+- **Release Version Sync** - Creates PR to update Cargo.toml on release branch creation
+- **Create Release** - Manual workflow to create RC or final tags
+- **Release** - Triggered on tag push, builds Docker and creates GitHub release

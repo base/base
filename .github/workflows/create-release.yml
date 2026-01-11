@@ -1,0 +1,54 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: 'Release branch (e.g., releases/v1.0.0)'
+        required: true
+        type: string
+      release_type:
+        description: 'Release type'
+        required: true
+        type: choice
+        options:
+          - rc
+          - final
+        default: rc
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create and push tag
+        run: |
+          ./scripts/release/create-tag.sh "${{ inputs.release_branch }}" "${{ inputs.release_type }}"
+
+      - name: Summary
+        run: |
+          TAG_FILE="${{ runner.temp }}/release_tag"
+          if [[ -f "$TAG_FILE" ]]; then
+            TAG=$(cat "$TAG_FILE")
+            echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Type**: ${{ inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The [Release workflow](../actions/workflows/release.yml) will now build and publish this release." >> $GITHUB_STEP_SUMMARY
+          fi
