@@ -29,18 +29,18 @@ test-utils = [
 	"reth-db/test-utils",
 	"reth-ipc",
 	"reth-node-core",
+	"reth-optimism-node/test-utils",
 	"reth-optimism-rpc",
 	"reth-primitives-traits",
+	"reth-primitives-traits?/test-utils",
 	"reth-provider",
+	"reth-provider?/test-utils",
 	"reth-rpc-layer",
 	"reth-tracing",
 	"tokio",
 	"tower",
 	"tracing-subscriber",
 	"url",
-	"reth-optimism-node/test-utils",
-	"reth-primitives-traits?/test-utils",
-	"reth-provider?/test-utils"
 ]
 
 [dependencies]
