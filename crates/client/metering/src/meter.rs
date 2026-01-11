@@ -104,8 +104,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::MeteringTestContext;
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256};
     use base_bundles::{Bundle, ParsedBundle};
@@ -117,13 +115,15 @@ mod tests {
     use reth_provider::StateProviderFactory;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
+    use super::*;
+    use crate::test_utils::MeteringTestContext;
+
     fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> {
         Ok(tx.clone().into())
     }
 
     fn create_parsed_bundle(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<ParsedBundle> {
-        let txs: Vec<Bytes> =
-            envelopes.iter().map(|env| Bytes::from(env.encoded_2718())).collect();
+        let txs: Vec<Bytes> = envelopes.iter().map(|env| Bytes::from(env.encoded_2718())).collect();
 
         let bundle = Bundle {
             txs,

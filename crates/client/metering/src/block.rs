@@ -137,13 +137,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::MeteringTestContext;
     use alloy_primitives::Address;
     use base_reth_test_utils::{ALICE, BOB};
     use reth::chainspec::EthChainSpec;
     use reth_optimism_primitives::OpBlockBody;
     use reth_transaction_pool::test_utils::TransactionBuilder;
+
+    use super::*;
+    use crate::test_utils::MeteringTestContext;
 
     fn create_block_with_transactions(
         ctx: &MeteringTestContext,
