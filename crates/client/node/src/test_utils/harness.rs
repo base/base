@@ -18,7 +18,7 @@ use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
 
 use crate::{
-    BaseNodeExtension,
+    BaseNodeExtension, FromExtensionConfig,
     test_utils::{
         BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
         NODE_STARTUP_DELAY_MS,
@@ -41,7 +41,15 @@ impl TestHarnessBuilder {
         Self::default()
     }
 
-    /// Add an extension to be applied during node launch.
+    /// Add an extension to be applied during node launch using its config type.
+    pub fn with_ext<T: FromExtensionConfig + 'static>(mut self, config: T::Config) -> Self {
+        self.extensions.push(Box::new(T::from_config(config)));
+        self
+    }
+
+    /// Add a pre-constructed extension to be applied during node launch.
+    ///
+    /// Prefer [`with_ext`](Self::with_ext) for simpler configuration.
     pub fn with_extension(mut self, ext: impl BaseNodeExtension + 'static) -> Self {
         self.extensions.push(Box::new(ext));
         self

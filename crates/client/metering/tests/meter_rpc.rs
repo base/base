@@ -27,8 +27,7 @@ fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>)
 
 /// Set up a test harness with the metering extension and return an RPC client.
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-    let harness =
-        TestHarness::builder().with_extension(MeteringExtension::new(true)).build().await?;
+    let harness = TestHarness::builder().with_ext::<MeteringExtension>(true).build().await?;
 
     let client = harness.rpc_client()?;
     Ok((harness, client))

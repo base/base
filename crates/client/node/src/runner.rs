@@ -8,7 +8,7 @@ use reth::{
 use reth_optimism_node::{OpNode, args::RollupArgs};
 use tracing::info;
 
-use crate::{BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle};
+use crate::{BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]
@@ -26,8 +26,8 @@ impl BaseNodeRunner {
     }
 
     /// Registers a new builder extension.
-    pub fn install_ext(&mut self, extension: Box<dyn BaseNodeExtension>) {
-        self.extensions.push(extension);
+    pub fn install_ext<T: FromExtensionConfig + 'static>(&mut self, config: T::Config) {
+        self.extensions.push(Box::new(T::from_config(config)));
     }
 
     /// Applies all Base-specific wiring to the supplied builder, launches the node, and returns a

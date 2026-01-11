@@ -5,13 +5,10 @@
 
 pub mod cli;
 
-use std::sync::Arc;
-
-use base_client_node::{BaseNodeRunner, OpProvider};
-use base_flashblocks::{FlashblocksCell, FlashblocksExtension, FlashblocksState};
+use base_client_node::BaseNodeRunner;
+use base_flashblocks::FlashblocksExtension;
 use base_metering::MeteringExtension;
 use base_txpool::TxPoolExtension;
-use once_cell::sync::OnceCell;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -27,15 +24,12 @@ fn main() {
 
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
-        let flashblocks_cell: FlashblocksCell<FlashblocksState<OpProvider>> =
-            Arc::new(OnceCell::new());
-
         let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
-        runner.install_ext(Box::new(TxPoolExtension::new(args.clone().into())));
-        runner.install_ext(Box::new(MeteringExtension::new(args.enable_metering)));
-        runner.install_ext(Box::new(FlashblocksExtension::new(flashblocks_cell, args.into())));
+        runner.install_ext::<TxPoolExtension>(args.clone().into());
+        runner.install_ext::<MeteringExtension>(args.enable_metering);
+        runner.install_ext::<FlashblocksExtension>(args.into());
 
         let handle = runner.run(builder);
         handle.await

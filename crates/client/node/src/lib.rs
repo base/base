@@ -4,7 +4,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod extension;
-pub use extension::BaseNodeExtension;
+pub use extension::{BaseNodeExtension, FromExtensionConfig};
 
 mod handle;
 pub use handle::BaseNodeHandle;

@@ -16,7 +16,7 @@ async fn setup() -> eyre::Result<TestHarness> {
     let chain_spec = load_chain_spec();
     TestHarness::builder()
         .with_chain_spec(chain_spec)
-        .with_extension(MeteringExtension::new(true))
+        .with_ext::<MeteringExtension>(true)
         .build()
         .await
 }

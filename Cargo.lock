@@ -1733,7 +1733,6 @@ dependencies = [
  "base-metering",
  "base-txpool",
  "clap",
- "once_cell",
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",

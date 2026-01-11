@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseNodeExtension, OpBuilder, OpProvider};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder, OpProvider};
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
@@ -31,9 +31,9 @@ pub struct FlashblocksConfig {
 #[derive(Debug, Clone)]
 pub struct FlashblocksExtension {
     /// Shared Flashblocks state cache.
-    pub cell: FlashblocksCell<FlashblocksState<OpProvider>>,
+    cell: FlashblocksCell<FlashblocksState<OpProvider>>,
     /// Optional Flashblocks configuration.
-    pub config: Option<FlashblocksConfig>,
+    config: Option<FlashblocksConfig>,
 }
 
 impl FlashblocksExtension {
@@ -120,5 +120,13 @@ impl BaseNodeExtension for FlashblocksExtension {
 
             Ok(())
         })
+    }
+}
+
+impl FromExtensionConfig for FlashblocksExtension {
+    type Config = Option<FlashblocksConfig>;
+
+    fn from_config(config: Self::Config) -> Self {
+        Self::new(Arc::new(OnceCell::new()), config)
     }
 }

@@ -1,7 +1,7 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool features
 //! (tracing ExEx and status RPC) on the Base node builder.
 
-use base_client_node::{BaseNodeExtension, OpBuilder};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
 use tracing::info;
 
 use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_exex};
@@ -26,8 +26,7 @@ pub struct TxPoolExtension {
 
 impl TxPoolExtension {
     /// Creates a new transaction pool extension helper.
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn new(config: TxpoolConfig) -> Self {
+    pub const fn new(config: TxpoolConfig) -> Self {
         Self { config }
     }
 }
@@ -53,5 +52,13 @@ impl BaseNodeExtension for TxPoolExtension {
             ctx.modules.merge_configured(proxy_api.into_rpc())?;
             Ok(())
         })
+    }
+}
+
+impl FromExtensionConfig for TxPoolExtension {
+    type Config = TxpoolConfig;
+
+    fn from_config(config: Self::Config) -> Self {
+        Self::new(config)
     }
 }
