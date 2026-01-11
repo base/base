@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::Encodable2718;
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, Bytes, U256, hex::FromHex, keccak256};
+use alloy_primitives::{Address, Bytes, U256, keccak256};
 use base_bundles::{Bundle, ParsedBundle};
 use base_metering::meter_bundle;
 use base_test_utils::{Account, create_provider_factory};
@@ -26,12 +26,6 @@ struct TestHarness {
     provider: BlockchainProvider<NodeTypes>,
     header: SealedHeader,
     chain_spec: Arc<OpChainSpec>,
-}
-
-impl TestHarness {
-    fn signer(&self, account: Account) -> B256 {
-        B256::from_hex(account.private_key()).expect("valid private key hex")
-    }
 }
 
 fn create_chain_spec() -> Arc<OpChainSpec> {
@@ -121,7 +115,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
 
     let to = Address::random();
     let signed_tx = TransactionBuilder::default()
-        .signer(harness.signer(Account::Alice))
+        .signer(Account::Alice.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to)
@@ -179,7 +173,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     // Create first transaction
     let signed_tx_1 = TransactionBuilder::default()
-        .signer(harness.signer(Account::Alice))
+        .signer(Account::Alice.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to_1)
@@ -195,7 +189,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     // Create second transaction
     let signed_tx_2 = TransactionBuilder::default()
-        .signer(harness.signer(Account::Bob))
+        .signer(Account::Bob.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to_2)

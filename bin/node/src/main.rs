@@ -27,11 +27,9 @@ fn main() {
 
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
-        // Create shared flashblocks cell
         let flashblocks_cell: FlashblocksCell<FlashblocksState<OpProvider>> =
             Arc::new(OnceCell::new());
 
-        // Extract values needed for extensions before moving rollup_args
         let sequencer_rpc = args.rollup_args.sequencer.clone();
         let tracing_config = args.tracing_config();
         let metering_enabled = args.enable_metering;

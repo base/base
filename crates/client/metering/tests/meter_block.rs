@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, U256, hex::FromHex};
+use alloy_primitives::{Address, B256, U256};
 use base_metering::meter_block;
 use base_test_utils::{Account, create_provider_factory};
 use eyre::Context;
@@ -26,12 +26,6 @@ struct TestHarness {
     genesis_header_number: u64,
     genesis_header_timestamp: u64,
     chain_spec: Arc<OpChainSpec>,
-}
-
-impl TestHarness {
-    fn signer(&self, account: Account) -> B256 {
-        B256::from_hex(account.private_key()).expect("valid private key hex")
-    }
 }
 
 fn create_chain_spec() -> Arc<OpChainSpec> {
@@ -124,7 +118,7 @@ fn meter_block_single_transaction() -> eyre::Result<()> {
 
     let to = Address::random();
     let signed_tx = TransactionBuilder::default()
-        .signer(harness.signer(Account::Alice))
+        .signer(Account::Alice.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to)
@@ -171,7 +165,7 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
 
     // Create first transaction from Alice
     let signed_tx_1 = TransactionBuilder::default()
-        .signer(harness.signer(Account::Alice))
+        .signer(Account::Alice.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to_1)
@@ -188,7 +182,7 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
 
     // Create second transaction from Bob
     let signed_tx_2 = TransactionBuilder::default()
-        .signer(harness.signer(Account::Bob))
+        .signer(Account::Bob.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(to_2)
@@ -248,7 +242,7 @@ fn meter_block_timing_consistency() -> eyre::Result<()> {
 
     // Create a block with one transaction
     let signed_tx = TransactionBuilder::default()
-        .signer(harness.signer(Account::Alice))
+        .signer(Account::Alice.signer_b256())
         .chain_id(harness.chain_spec.chain_id())
         .nonce(0)
         .to(Address::random())

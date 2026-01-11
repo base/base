@@ -44,24 +44,6 @@ Base Reth Node is a Reth-based Ethereum node implementation, specifically tailor
 > [node-reth image](https://github.com/base/node/pkgs/container/node-reth). This image bundles vanilla Reth and Base Reth and can be toggled with
 > `NODE_TYPE=base` or `NODE_TYPE=vanilla`
 
-## Repository Structure
-
-```
-.
-├── Cargo.toml        # Rust workspace and package definitions
-├── Cargo.lock        # Dependency lockfile
-├── Dockerfile        # For building the Docker image
-├── LICENSE           # MIT License
-├── README.md         # This file
-├── crates/
-│   ├── client/       # Node client crates (cli, rpc, flashblocks, txpool, etc.)
-│   └── shared/       # Shared library crates (access-lists, flashtypes)
-├── justfile          # Command runner for development tasks
-└── .github/
-    └── workflows/
-        └── ci.yml    # GitHub Actions CI configuration
-```
-
 ## Prerequisites
 
 - **Rust:** Version 1.85 or later (as specified in `Cargo.toml`). You can install Rust using [rustup](https://rustup.rs/).

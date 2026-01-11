@@ -246,27 +246,6 @@ use base_test_utils::{
 };
 ```
 
-## File Structure
-
-```text
-test-utils/
-├── src/
-│   ├── lib.rs                 # Public API and re-exports
-│   ├── accounts.rs            # Test account definitions
-│   ├── constants.rs           # Shared constants (chain ID, timing, etc.)
-│   ├── contracts.rs           # Solidity contract bindings
-│   ├── engine.rs              # EngineApi (CL wrapper)
-│   ├── fixtures.rs            # Genesis loading, provider factories
-│   ├── flashblocks_harness.rs # FlashblocksHarness + helpers
-│   ├── harness.rs             # TestHarness (orchestration)
-│   ├── node.rs                # LocalNode (EL wrapper)
-│   └── tracing.rs             # Tracing initialization helpers
-├── assets/
-│   └── genesis.json           # Base Sepolia genesis
-├── contracts/                 # Solidity sources + compiled artifacts
-└── Cargo.toml
-```
-
 ## Usage in Other Crates
 
 Add to `dev-dependencies`:
