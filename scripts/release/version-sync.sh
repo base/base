@@ -19,20 +19,16 @@ if [[ -z "$BRANCH_NAME" ]]; then
     exit 1
 fi
 
-# Main logic
 main() {
     echo "=== Release Version Sync ==="
     echo "Branch: $BRANCH_NAME"
 
-    # Parse version from branch name
     BRANCH_VERSION=$(parse_branch_version "$BRANCH_NAME")
     echo "Target version: $BRANCH_VERSION"
 
-    # Get current Cargo.toml version
     CURRENT_VERSION=$(get_cargo_version)
     echo "Current Cargo.toml version: $CURRENT_VERSION"
 
-    # Check if sync is needed
     if [[ "$CURRENT_VERSION" == "$BRANCH_VERSION" ]]; then
         echo "Version already matches. No sync needed."
         exit 0
@@ -42,30 +38,23 @@ main() {
 
     SYNC_BRANCH="release-version-sync/v${BRANCH_VERSION}"
 
-    # Check for existing PR
     EXISTING_PR=$(check_existing_pr "$SYNC_BRANCH")
     if [[ -n "$EXISTING_PR" ]]; then
         echo "Sync PR #$EXISTING_PR already exists. Skipping."
         exit 0
     fi
 
-    # Configure git
     configure_git
-
-    # Create sync branch
     git checkout -b "$SYNC_BRANCH"
 
-    # Update version in Cargo.toml (use compatible sed syntax for macOS/Linux)
+    # Use compatible sed syntax for macOS/Linux
     if [[ "$OSTYPE" == "darwin"* ]]; then
         sed -i '' "s/^version = \".*\"/version = \"$BRANCH_VERSION\"/" Cargo.toml
     else
         sed -i "s/^version = \".*\"/version = \"$BRANCH_VERSION\"/" Cargo.toml
     fi
 
-    # Update Cargo.lock
     cargo update --workspace
-
-    # Commit changes
     git add Cargo.toml Cargo.lock
     git commit -m "chore(release): set version to $BRANCH_VERSION"
 
@@ -74,10 +63,8 @@ main() {
         exit 0
     fi
 
-    # Push sync branch
     git push origin "$SYNC_BRANCH"
 
-    # Create PR
     gh pr create \
         --base "$BRANCH_NAME" \
         --head "$SYNC_BRANCH" \
