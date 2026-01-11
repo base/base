@@ -57,6 +57,9 @@ parking_lot.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true
+tokio.workspace = true
+indexmap.workspace = true
+metrics.workspace = true
 
 # test-utils feature dependencies (optional)
 base-reth-test-utils = { workspace = true, optional = true }

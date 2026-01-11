@@ -1,10 +1,13 @@
 //! Implementation of the metering RPC API.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, TxHash, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::core::{RpcResult, async_trait};
 use op_alloy_flz::flz_compress_len;
@@ -12,19 +15,34 @@ use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
 use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProviderFactory};
-use tracing::{error, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    MeterBlockResponse, MeteredPriorityFeeResponse, PriorityFeeEstimator, ResourceDemand,
-    ResourceFeeEstimateResponse, block::meter_block, meter::meter_bundle, traits::MeteringApiServer,
+    AnnotatorCommand, MeterBlockResponse, MeteredPriorityFeeResponse, MeteredTransaction,
+    PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse, block::meter_block,
+    meter::meter_bundle, traits::MeteringApiServer,
 };
 
 /// Implementation of the metering RPC API
-#[derive(Debug)]
 pub struct MeteringApiImpl<Provider> {
     provider: Provider,
     /// Optional priority fee estimator for `meteredPriorityFeePerGas`.
     priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
+    /// Channel to send metered transactions to the annotator.
+    tx_sender: Option<mpsc::UnboundedSender<MeteredTransaction>>,
+    /// Channel to send commands to the annotator.
+    command_sender: Option<mpsc::UnboundedSender<AnnotatorCommand>>,
+    /// Whether metering data collection is enabled.
+    metering_enabled: Arc<AtomicBool>,
+}
+
+impl<Provider> std::fmt::Debug for MeteringApiImpl<Provider> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeteringApiImpl")
+            .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl<Provider> MeteringApiImpl<Provider>
@@ -37,13 +55,30 @@ where
         + Clone,
 {
     /// Creates a new instance of MeteringApi without priority fee estimation.
-    pub const fn new(provider: Provider) -> Self {
-        Self { provider, priority_fee_estimator: None }
+    pub fn new(provider: Provider) -> Self {
+        Self {
+            provider,
+            priority_fee_estimator: None,
+            tx_sender: None,
+            command_sender: None,
+            metering_enabled: Arc::new(AtomicBool::new(true)),
+        }
     }
 
     /// Creates a new instance with priority fee estimation enabled.
-    pub fn with_estimator(provider: Provider, estimator: Arc<PriorityFeeEstimator>) -> Self {
-        Self { provider, priority_fee_estimator: Some(estimator) }
+    pub fn with_estimator(
+        provider: Provider,
+        estimator: Arc<PriorityFeeEstimator>,
+        tx_sender: mpsc::UnboundedSender<MeteredTransaction>,
+        command_sender: mpsc::UnboundedSender<AnnotatorCommand>,
+    ) -> Self {
+        Self {
+            provider,
+            priority_fee_estimator: Some(estimator),
+            tx_sender: Some(tx_sender),
+            command_sender: Some(command_sender),
+            metering_enabled: Arc::new(AtomicBool::new(true)),
+        }
     }
 }
 
@@ -292,6 +327,75 @@ where
             blocks_sampled: estimate.blocks_sampled as u64,
             resource_estimates,
         })
+    }
+
+    async fn set_metering_info(
+        &self,
+        tx_hash: TxHash,
+        meter: MeterBundleResponse,
+    ) -> RpcResult<()> {
+        if !self.metering_enabled.load(Ordering::Relaxed) {
+            debug!(%tx_hash, "Ignoring metering info - metering disabled");
+            return Ok(());
+        }
+
+        let Some(tx_sender) = &self.tx_sender else {
+            warn!(%tx_hash, "Ignoring metering info - no annotator configured");
+            return Ok(());
+        };
+
+        // Extract the first transaction's data if available
+        let result = meter.results.first();
+        let (priority_fee, gas_used, execution_time_us) = match result {
+            Some(r) => (r.gas_price, r.gas_used, r.execution_time_us),
+            None => (U256::ZERO, 0, 0),
+        };
+
+        // DA bytes are not available in the response, would need to be computed
+        // from raw transaction data. For now, use 0.
+        let da_bytes = 0u64;
+
+        let metered_tx = MeteredTransaction {
+            tx_hash,
+            priority_fee_per_gas: priority_fee,
+            gas_used,
+            execution_time_us,
+            state_root_time_us: 0, // Not tracked in bundle response
+            data_availability_bytes: da_bytes,
+        };
+
+        if tx_sender.send(metered_tx).is_err() {
+            warn!(%tx_hash, "Annotator channel closed - cannot store metering info");
+        } else {
+            debug!(%tx_hash, "Stored metering info for transaction");
+        }
+
+        Ok(())
+    }
+
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()> {
+        let previous = self.metering_enabled.swap(enabled, Ordering::Relaxed);
+        info!(
+            previous = previous,
+            enabled = enabled,
+            "Metering data collection state changed"
+        );
+        Ok(())
+    }
+
+    async fn clear_metering_info(&self) -> RpcResult<()> {
+        let Some(command_sender) = &self.command_sender else {
+            warn!("Cannot clear metering info - no annotator configured");
+            return Ok(());
+        };
+
+        if command_sender.send(AnnotatorCommand::ClearPending).is_err() {
+            warn!("Annotator channel closed - cannot clear metering info");
+        } else {
+            info!("Cleared pending metering info");
+        }
+
+        Ok(())
     }
 }
 
