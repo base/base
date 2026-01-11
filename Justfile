@@ -94,6 +94,10 @@ check-udeps: build-contracts
   @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
   cargo +nightly udeps --workspace --all-features --all-targets
 
+# Checks that shared crates don't depend on client crates
+check-crate-deps:
+    ./scripts/check-crate-deps.sh
+
 # Watches tests
 watch-test: build-contracts
     cargo watch -x test
