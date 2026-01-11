@@ -6,10 +6,12 @@ use std::sync::Arc;
 use alloy_primitives::U256;
 use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
 use parking_lot::RwLock;
+use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::{
-    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceLimits,
+    AnnotatorCommand, FlashblockInclusion, MeteredTransaction, MeteringApiImpl, MeteringApiServer,
+    MeteringCache, PriorityFeeEstimator, ResourceAnnotator, ResourceLimits,
 };
 
 /// Resource limits configuration for priority fee estimation.
@@ -136,13 +138,34 @@ impl BaseNodeExtension for MeteringExtension {
 
                 let cache = Arc::new(RwLock::new(MeteringCache::new(cache_size)));
                 let estimator = Arc::new(PriorityFeeEstimator::new(
-                    cache,
+                    cache.clone(),
                     percentile,
                     resource_limits,
                     default_fee,
                 ));
 
-                MeteringApiImpl::with_estimator(ctx.provider().clone(), estimator)
+                // Create channels for the annotator
+                let (tx_sender, tx_receiver) = mpsc::unbounded_channel::<MeteredTransaction>();
+                let (flashblock_sender, flashblock_receiver) =
+                    mpsc::unbounded_channel::<FlashblockInclusion>();
+                let (cmd_sender, cmd_receiver) = mpsc::unbounded_channel::<AnnotatorCommand>();
+
+                // Spawn the annotator
+                let annotator =
+                    ResourceAnnotator::new(cache, tx_receiver, flashblock_receiver, cmd_receiver);
+                tokio::spawn(annotator.run());
+
+                // Note: flashblock_sender would need to be connected to the flashblocks feed
+                // For now, it's created but not used - the ingestion flow will be completed
+                // in a future PR that integrates with the flashblocks websocket.
+                drop(flashblock_sender);
+
+                MeteringApiImpl::with_estimator(
+                    ctx.provider().clone(),
+                    estimator,
+                    tx_sender,
+                    cmd_sender,
+                )
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
                 MeteringApiImpl::new(ctx.provider().clone())
