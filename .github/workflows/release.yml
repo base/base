@@ -228,19 +228,12 @@ jobs:
           docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
 
       - name: Create GitHub Release
+        if: steps.tags.outputs.is_rc == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          REGISTRY_IMAGE: ${{ env.REGISTRY_IMAGE }}
         run: |
           TAG="${{ steps.tags.outputs.tag }}"
-          IS_RC="${{ steps.tags.outputs.is_rc }}"
-
-          PRERELEASE_FLAG=""
-          if [[ "$IS_RC" == "true" ]]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
-
-          ./scripts/release/publish.sh "$TAG" $PRERELEASE_FLAG
+          gh release create "$TAG" --title "$TAG" --generate-notes
 
       - name: Summary
         run: |

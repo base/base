@@ -51,13 +51,13 @@ main() {
             exit 1
         fi
 
-        # Verify final tag doesn't already exist
-        if tag_exists "$TAG"; then
-            echo "Error: Release tag $TAG already exists"
-            exit 1
-        fi
-
         echo "Creating final release tag: $TAG"
+    fi
+
+    # Verify tag doesn't already exist
+    if tag_exists "$TAG"; then
+        echo "Error: Release tag $TAG already exists"
+        exit 1
     fi
 
     # Configure git and create tag
