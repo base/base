@@ -90,6 +90,7 @@ reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
     "op",
 ] }

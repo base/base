@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::U256;
 use parking_lot::RwLock;
+use reth_optimism_payload_builder::config::OpDAConfig;
 
 use crate::cache::{MeteredTransaction, MeteringCache};
 
@@ -261,6 +262,10 @@ pub struct PriorityFeeEstimator {
     percentile: f64,
     limits: ResourceLimits,
     default_priority_fee: U256,
+    /// Optional shared DA config from the miner RPC. When set, the estimator uses
+    /// `max_da_block_size` from this config instead of `limits.data_availability_bytes`.
+    /// This allows dynamic updates via `miner_setMaxDASize`.
+    da_config: Option<OpDAConfig>,
 }
 
 impl PriorityFeeEstimator {
@@ -272,18 +277,32 @@ impl PriorityFeeEstimator {
     ///   to use for the recommended fee.
     /// - `limits`: Configured resource capacity limits.
     /// - `default_priority_fee`: Fee to return when a resource is not congested.
+    /// - `da_config`: Optional shared DA config for dynamic DA limit updates.
     pub const fn new(
         cache: Arc<RwLock<MeteringCache>>,
         percentile: f64,
         limits: ResourceLimits,
         default_priority_fee: U256,
+        da_config: Option<OpDAConfig>,
     ) -> Self {
-        Self { cache, percentile, limits, default_priority_fee }
+        Self { cache, percentile, limits, default_priority_fee, da_config }
     }
 
-    /// Returns the limit for the given resource kind.
+    /// Returns the current DA block size limit, preferring the dynamic `OpDAConfig` value
+    /// if available, otherwise falling back to the static limit.
+    pub fn max_da_block_size(&self) -> Option<u64> {
+        self.da_config
+            .as_ref()
+            .and_then(|c| c.max_da_block_size())
+            .or(self.limits.data_availability_bytes)
+    }
+
+    /// Returns the limit for the given resource kind, using dynamic config where available.
     fn limit_for(&self, resource: ResourceKind) -> Option<u128> {
-        self.limits.limit_for(resource)
+        match resource {
+            ResourceKind::DataAvailability => self.max_da_block_size().map(|v| v as u128),
+            _ => self.limits.limit_for(resource),
+        }
     }
 
     /// Returns fee estimates for the provided block. If `block_number` is `None`
@@ -806,7 +825,7 @@ mod tests {
         limits: ResourceLimits,
     ) -> (Arc<RwLock<MeteringCache>>, PriorityFeeEstimator) {
         let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
-        let estimator = PriorityFeeEstimator::new(cache.clone(), 0.5, limits, DEFAULT_FEE);
+        let estimator = PriorityFeeEstimator::new(cache.clone(), 0.5, limits, DEFAULT_FEE, None);
         (cache, estimator)
     }
 

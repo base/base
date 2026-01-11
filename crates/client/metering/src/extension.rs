@@ -138,7 +138,7 @@ impl BaseNodeExtension for MeteringRpcExtension {
 
                 let cache = Arc::new(RwLock::new(MeteringCache::new(cache_size)));
                 let estimator =
-                    Arc::new(PriorityFeeEstimator::new(cache.clone(), percentile, resource_limits, default_fee));
+                    Arc::new(PriorityFeeEstimator::new(cache.clone(), percentile, resource_limits, default_fee, None));
 
                 // Create channels for the annotator
                 let (tx_sender, tx_receiver) = mpsc::unbounded_channel::<MeteredTransaction>();
