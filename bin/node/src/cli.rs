@@ -1,7 +1,7 @@
 //! Contains the CLI arguments
 
 use base_flashblocks::FlashblocksConfig;
-use base_txpool::TracingConfig;
+use base_txpool::TxpoolConfig;
 use reth_optimism_node::args::RollupArgs;
 
 /// CLI Arguments
@@ -46,20 +46,23 @@ impl Args {
     pub const fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
     }
+}
 
-    /// Build FlashblocksConfig from CLI args.
-    pub fn flashblocks_config(&self) -> Option<FlashblocksConfig> {
-        self.websocket_url.as_ref().map(|url| FlashblocksConfig {
-            websocket_url: url.clone(),
-            max_pending_blocks_depth: self.max_pending_blocks_depth,
+impl From<Args> for Option<FlashblocksConfig> {
+    fn from(args: Args) -> Self {
+        args.websocket_url.map(|url| FlashblocksConfig {
+            websocket_url: url,
+            max_pending_blocks_depth: args.max_pending_blocks_depth,
         })
     }
+}
 
-    /// Build TracingConfig from CLI args.
-    pub const fn tracing_config(&self) -> TracingConfig {
-        TracingConfig {
-            enabled: self.enable_transaction_tracing,
-            logs_enabled: self.enable_transaction_tracing_logs,
+impl From<Args> for TxpoolConfig {
+    fn from(args: Args) -> Self {
+        Self {
+            tracing_enabled: args.enable_transaction_tracing,
+            tracing_logs_enabled: args.enable_transaction_tracing_logs,
+            sequencer_rpc: args.rollup_args.sequencer,
         }
     }
 }

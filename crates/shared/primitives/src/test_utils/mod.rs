@@ -4,7 +4,7 @@ mod accounts;
 pub use accounts::Account;
 
 mod genesis;
-pub use genesis::{DEVNET_CHAIN_ID, build_test_genesis};
+pub use genesis::{DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis};
 
 mod contracts;
 pub use contracts::{

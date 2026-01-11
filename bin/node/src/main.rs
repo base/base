@@ -30,15 +30,14 @@ fn main() {
         let flashblocks_cell: FlashblocksCell<FlashblocksState<OpProvider>> =
             Arc::new(OnceCell::new());
 
-        let sequencer_rpc = args.rollup_args.sequencer.clone();
-        let tracing_config = args.tracing_config();
+        let txpool_config = args.clone().into();
         let metering_enabled = args.enable_metering;
-        let flashblocks_config = args.flashblocks_config();
+        let flashblocks_config = args.clone().into();
 
         let mut runner = BaseNodeRunner::new(args.rollup_args);
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
-        runner.install_ext(Box::new(TxPoolExtension::new(tracing_config, sequencer_rpc)));
+        runner.install_ext(Box::new(TxPoolExtension::new(txpool_config)));
         runner.install_ext(Box::new(MeteringExtension::new(metering_enabled)));
         runner
             .install_ext(Box::new(FlashblocksExtension::new(flashblocks_cell, flashblocks_config)));

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::U256;
+use alloy_primitives::{U256, utils::Unit};
 use base_primitives::{Account, build_test_genesis};
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
@@ -14,21 +14,23 @@ use reth_db::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
 
+use crate::test_utils::{GENESIS_GAS_LIMIT, TEST_ACCOUNT_BALANCE_ETH};
+
 /// Creates a test chain spec with pre-funded test accounts.
 pub fn load_chain_spec() -> Arc<OpChainSpec> {
+    let test_account_balance: U256 =
+        Unit::ETHER.wei().saturating_mul(U256::from(TEST_ACCOUNT_BALANCE_ETH));
+
     let genesis = build_test_genesis()
         .extend_accounts(
             Account::all()
                 .into_iter()
                 .map(|a| {
-                    (
-                        a.address(),
-                        GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
-                    )
+                    (a.address(), GenesisAccount::default().with_balance(test_account_balance))
                 })
                 .collect::<Vec<_>>(),
         )
-        .with_gas_limit(100_000_000);
+        .with_gas_limit(GENESIS_GAS_LIMIT);
 
     Arc::new(OpChainSpec::from_genesis(genesis))
 }

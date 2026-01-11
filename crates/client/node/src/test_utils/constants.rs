@@ -10,6 +10,11 @@ pub const BLOCK_TIME_SECONDS: u64 = 2;
 /// Gas limit for test blocks.
 pub const GAS_LIMIT: u64 = 200_000_000;
 
+// Test Account Balances
+
+/// Balance in ETH for test accounts in fixtures.
+pub const TEST_ACCOUNT_BALANCE_ETH: u64 = 100;
+
 // Timing / Delays
 
 /// Delay in milliseconds to wait for node startup.
@@ -20,8 +25,7 @@ pub const BLOCK_BUILD_DELAY_MS: u64 = 100;
 // Engine API
 
 /// All-zeros secret for local testing only.
-pub const DEFAULT_JWT_SECRET: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000000";
+pub const DEFAULT_JWT_SECRET: B256 = B256::ZERO;
 
 // L1 Block Info (OP Stack)
 

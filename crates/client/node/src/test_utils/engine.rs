@@ -97,7 +97,7 @@ impl EngineApi<HttpEngine> {
     /// Build a new HTTP-backed Engine API client from the provided URL.
     pub fn new(engine_url: String) -> Result<Self> {
         let url: Url = engine_url.parse()?;
-        let jwt_secret: JwtSecret = DEFAULT_JWT_SECRET.parse()?;
+        let jwt_secret = JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string())?;
 
         Ok(Self { address: EngineAddress::Http(url), jwt_secret, _phantom: PhantomData })
     }
@@ -106,7 +106,7 @@ impl EngineApi<HttpEngine> {
 impl EngineApi<IpcEngine> {
     /// Build a new IPC-backed Engine API client using the IPC socket path.
     pub fn new(path: String) -> Result<Self> {
-        let jwt_secret: JwtSecret = DEFAULT_JWT_SECRET.parse()?;
+        let jwt_secret = JwtSecret::from_hex(DEFAULT_JWT_SECRET.to_string())?;
 
         Ok(Self { address: EngineAddress::Ipc(path), jwt_secret, _phantom: PhantomData })
     }

@@ -27,10 +27,14 @@ cargo run -p node --release -- \
 From code, wire the extension into the node builder:
 
 ```rust,ignore
-use base_txpool::{TracingConfig, TxPoolExtension};
+use base_txpool::{TxpoolConfig, TxPoolExtension};
 
-let tracing = TracingConfig { enabled: true, logs_enabled: true };
-let ext = TxPoolExtension::new(tracing, None);
+let config = TxpoolConfig {
+    tracing_enabled: true,
+    tracing_logs_enabled: true,
+    sequencer_rpc: None,
+};
+let ext = TxPoolExtension::new(config);
 let builder = Box::new(ext).apply(builder);
 ```
 

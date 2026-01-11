@@ -8,15 +8,16 @@
 
 // Re-export from base-primitives for backwards compatibility
 pub use base_primitives::{
-    AccessListContract, Account, ContractFactory, DEVNET_CHAIN_ID, DoubleCounter, Logic, Logic2,
-    Minimal7702Account, MockERC20, Proxy, SimpleStorage, TransparentUpgradeableProxy,
-    build_test_genesis,
+    AccessListContract, Account, ContractFactory, DEVNET_CHAIN_ID, DoubleCounter,
+    GENESIS_GAS_LIMIT, Logic, Logic2, Minimal7702Account, MockERC20, Proxy, SimpleStorage,
+    TransparentUpgradeableProxy, build_test_genesis,
 };
 
 mod constants;
 pub use constants::{
     BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, DEFAULT_JWT_SECRET, GAS_LIMIT,
     L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, NODE_STARTUP_DELAY_MS, NamedChain,
+    TEST_ACCOUNT_BALANCE_ETH,
 };
 
 mod engine;

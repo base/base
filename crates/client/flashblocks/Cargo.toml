@@ -14,8 +14,8 @@ workspace = true
 [features]
 test-utils = [
 	"base-client-node/test-utils",
-	"derive_more",
-	"eyre",
+	"dep:derive_more",
+	"dep:eyre",
 	"reth-evm/test-utils",
 	"reth-primitives/test-utils",
 ]

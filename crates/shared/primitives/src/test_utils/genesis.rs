@@ -10,6 +10,9 @@ use super::Account;
 /// Chain ID for devnet test network.
 pub const DEVNET_CHAIN_ID: u64 = 84538453;
 
+/// Gas limit for genesis block configuration.
+pub const GENESIS_GAS_LIMIT: u64 = 100_000_000;
+
 /// Builds a test genesis configuration programmatically.
 ///
 /// Creates a Base Sepolia-like genesis with:
@@ -84,7 +87,7 @@ pub fn build_test_genesis() -> Genesis {
     Genesis {
         config,
         alloc,
-        gas_limit: 100_000_000,
+        gas_limit: GENESIS_GAS_LIMIT,
         difficulty: U256::ZERO,
         nonce: 0,
         timestamp: 0,

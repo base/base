@@ -13,34 +13,36 @@ workspace = true
 
 [features]
 test-utils = [
-	"alloy-eips",
-	"alloy-genesis",
-	"alloy-primitives",
-	"alloy-provider",
-	"alloy-rpc-client",
-	"alloy-rpc-types",
-	"alloy-rpc-types-engine",
-	"alloy-signer",
 	"base-primitives/test-utils",
-	"chrono",
-	"jsonrpsee",
-	"op-alloy-network",
-	"op-alloy-rpc-types-engine",
+	"dep:alloy-eips",
+	"dep:alloy-genesis",
+	"dep:alloy-primitives",
+	"dep:alloy-provider",
+	"dep:alloy-rpc-client",
+	"dep:alloy-rpc-types",
+	"dep:alloy-rpc-types-engine",
+	"dep:alloy-signer",
+	"dep:base-primitives",
+	"dep:chrono",
+	"dep:jsonrpsee",
+	"dep:op-alloy-network",
+	"dep:op-alloy-rpc-types-engine",
+	"dep:reth-ipc",
+	"dep:reth-node-core",
+	"dep:reth-optimism-primitives",
+	"dep:reth-optimism-rpc",
+	"dep:reth-primitives-traits",
+	"dep:reth-provider",
+	"dep:reth-rpc-layer",
+	"dep:reth-tracing",
+	"dep:tokio",
+	"dep:tower",
+	"dep:tracing-subscriber",
+	"dep:url",
 	"reth-db/test-utils",
-	"reth-ipc",
-	"reth-node-core",
 	"reth-optimism-node/test-utils",
-	"reth-optimism-rpc",
-	"reth-primitives-traits",
 	"reth-primitives-traits?/test-utils",
-	"reth-provider",
 	"reth-provider?/test-utils",
-	"reth-rpc-layer",
-	"reth-tracing",
-	"tokio",
-	"tower",
-	"tracing-subscriber",
-	"url",
 ]
 
 [dependencies]
@@ -59,7 +61,7 @@ reth-provider = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 reth-optimism-rpc = { workspace = true, features = ["client"], optional = true }
-reth-optimism-primitives.workspace = true
+reth-optimism-primitives = { workspace = true, optional = true }
 
 # alloy
 alloy-primitives = { workspace = true, optional = true }
