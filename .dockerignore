@@ -1,1 +1,27 @@
+# Git
+.git/
+.github/
+.gitignore
+.gitmodules
+
+# Build artifacts
 target/
+integration_logs/
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Documentation
+*.md
+assets/
+
+# CI/Dev tools
+.config/
+Justfile
+lychee.toml
+rustfmt.toml
+
+# Misc
+.dockerignore

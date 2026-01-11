@@ -1,4 +1,5 @@
 target/
 .idea/
+.vscode/
 integration_logs/
 .DS_Store

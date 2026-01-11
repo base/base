@@ -2,6 +2,8 @@
 
 # Base Reth Node
 
+![CI](https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg)
+
 > [!WARNING]
 > This repository is for development purposes. For production deployments, please use the releases referenced in [base/node](https://github.com/base/node/releases).
 
