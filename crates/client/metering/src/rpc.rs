@@ -289,6 +289,7 @@ where
                 // Estimate DA bytes from transaction (placeholder - would need actual tx bytes)
                 let da_bytes = 0u64; // Will be improved in later PRs
                 MeteredTransaction {
+                    tx_hash: tx.tx_hash,
                     priority_fee_per_gas: U256::ZERO, // Will compute from tx
                     gas_used: tx.gas_used,
                     execution_time_us: tx.execution_time_us,

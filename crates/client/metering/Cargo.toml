@@ -37,6 +37,7 @@ jsonrpsee.workspace = true
 op-alloy-flz.workspace = true
 
 # misc
+parking_lot.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true

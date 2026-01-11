@@ -77,9 +77,15 @@ Meters a bundle and returns a recommended priority fee based on recent block con
 
 **Algorithm:**
 1. Meter the bundle to get resource consumption (gas, execution time, DA bytes)
-2. Meter the latest block to get historical transaction data
-3. For each resource type, run the estimation algorithm:
-   - Walk from highest-paying transactions, subtracting usage from remaining capacity
-   - Stop when adding another tx would leave less room than the bundle needs
-   - The last included tx's fee is the threshold
-4. Return the maximum fee across all resources as `priorityFee`
+2. Use cached metering data from the latest block (populated by ingestion pipeline)
+3. For each flashblock within the block:
+   - For each resource type, run the estimation algorithm:
+     - Walk from highest-paying transactions, subtracting usage from remaining capacity
+     - Stop when adding another tx would leave less room than the bundle needs
+     - The last included tx's fee is the threshold
+   - For "use-it-or-lose-it" resources (execution time), aggregate usage across all flashblocks
+4. Take the maximum fee across all flashblocks for each resource
+5. Return the maximum fee across all resources as `priorityFee`
+
+Note: The cache must be populated by the ingestion pipeline for estimates to be available.
+Currently returns `blocksSampled: 1` since estimation uses a single block.
