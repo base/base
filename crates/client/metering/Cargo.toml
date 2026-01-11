@@ -56,7 +56,18 @@ reth-e2e-test-utils = { workspace = true, optional = true }
 reth-optimism-node = { workspace = true, optional = true }
 
 [dev-dependencies]
+# These are also optional deps (for test-utils feature), but listed here
+# so they're available to #[cfg(test)] code in src/ via #[cfg(any(test, feature = "test-utils"))]
+base-reth-test-utils.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-db-common.workspace = true
+reth-e2e-test-utils.workspace = true
+reth-optimism-node.workspace = true
+
+# Self-reference to enable test-utils for integration tests in tests/
+# (integration tests are separate crates where #[cfg(test)] doesn't apply to the library)
 base-reth-metering = { path = ".", features = ["test-utils"] }
+
 reth-testing-utils.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 alloy-genesis.workspace = true
