@@ -234,13 +234,13 @@ impl BaseNodeExtension for FlashblocksTestExtension {
 }
 
 impl LocalNode {
-    /// Launch a new local node with the provided extensions.
-    pub async fn new(extensions: Vec<Box<dyn BaseNodeExtension>>) -> Result<Self> {
+    /// Launch a new local node with the provided extensions and chain spec.
+    pub async fn new(
+        extensions: Vec<Box<dyn BaseNodeExtension>>,
+        chain_spec: Arc<OpChainSpec>,
+    ) -> Result<Self> {
         let tasks = TaskManager::current();
         let exec = tasks.executor();
-
-        let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json"))?;
-        let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
         let network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -399,9 +399,13 @@ impl FlashblocksLocalNode {
     }
 
     async fn with_options(process_canonical: bool) -> Result<Self> {
+        // Load default chain spec
+        let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json"))?;
+        let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
+
         let extension = FlashblocksTestExtension::new(process_canonical);
         let parts_source = extension.clone();
-        let node = LocalNode::new(vec![Box::new(extension)]).await?;
+        let node = LocalNode::new(vec![Box::new(extension)], chain_spec).await?;
         let parts = parts_source.parts()?;
         Ok(Self { node, parts })
     }

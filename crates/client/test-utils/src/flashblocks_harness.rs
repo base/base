@@ -2,9 +2,11 @@
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_genesis::Genesis;
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
+use reth_optimism_chainspec::OpChainSpec;
 use tokio::time::sleep;
 
 use crate::{
@@ -46,12 +48,16 @@ impl FlashblocksHarness {
     async fn with_options(process_canonical: bool) -> Result<Self> {
         init_silenced_tracing();
 
+        // Load default chain spec
+        let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json"))?;
+        let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
+
         // Create the extension and keep a reference to get parts after launch
         let extension = FlashblocksTestExtension::new(process_canonical);
         let parts_source = extension.clone();
 
         // Launch the node with the flashblocks extension
-        let node = LocalNode::new(vec![Box::new(extension)]).await?;
+        let node = LocalNode::new(vec![Box::new(extension)], chain_spec).await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

@@ -1,8 +1,9 @@
 //! Unified test harness combining node and engine helpers, plus optional flashblocks adapter.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
+use alloy_genesis::Genesis;
 use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
@@ -13,6 +14,7 @@ use eyre::{Result, eyre};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::providers::{BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
@@ -29,6 +31,7 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
+    chain_spec: Option<Arc<OpChainSpec>>,
 }
 
 impl TestHarnessBuilder {
@@ -43,10 +46,28 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Set a custom chain spec for the test harness.
+    ///
+    /// If not provided, the default genesis from `assets/genesis.json` is used.
+    pub fn with_chain_spec(mut self, chain_spec: Arc<OpChainSpec>) -> Self {
+        self.chain_spec = Some(chain_spec);
+        self
+    }
+
     /// Build and launch the test harness.
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
-        let node = LocalNode::new(self.extensions).await?;
+
+        let chain_spec = match self.chain_spec {
+            Some(spec) => spec,
+            None => {
+                let genesis: Genesis =
+                    serde_json::from_str(include_str!("../assets/genesis.json"))?;
+                Arc::new(OpChainSpec::from_genesis(genesis))
+            }
+        };
+
+        let node = LocalNode::new(self.extensions, chain_spec).await?;
         let engine = node.engine_api()?;
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
@@ -203,6 +224,11 @@ impl TestHarness {
             .expect("able to load canonical block")
             .expect("canonical block exists");
         BlockT::try_into_recovered(block).expect("able to recover canonical block")
+    }
+
+    /// Return the chain specification used by the harness.
+    pub fn chain_spec(&self) -> Arc<OpChainSpec> {
+        self.node.blockchain_provider().chain_spec()
     }
 }
 
