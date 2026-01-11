@@ -11,26 +11,40 @@ use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
+use revm_database::states::bundle_state::BundleRetention;
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
+/// Output from metering a bundle of transactions
+#[derive(Debug)]
+pub struct MeterBundleOutput {
+    /// Transaction results with individual metrics
+    pub results: Vec<TransactionResult>,
+    /// Total gas used by all transactions
+    pub total_gas_used: u64,
+    /// Total gas fees paid by all transactions
+    pub total_gas_fees: U256,
+    /// Bundle hash
+    pub bundle_hash: B256,
+    /// Total time in microseconds (includes transaction execution and state root calculation)
+    pub total_time_us: u128,
+    /// State root calculation time in microseconds
+    pub state_root_time_us: u128,
+}
+
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a state provider, chain spec, decoded transactions, block header, and bundle metadata,
-/// and executes transactions in sequence to measure gas usage and execution time.
+/// Takes a state provider, chain spec, parsed bundle, and block header,
+/// then executes transactions in sequence to measure gas usage and execution time.
 ///
-/// Returns a tuple of:
-/// - Vector of transaction results
-/// - Total gas used
-/// - Total gas fees paid
-/// - Bundle hash
-/// - Total execution time in microseconds
+/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics,
+/// including separate timing for state root calculation.
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
-) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
+) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
 {
@@ -58,7 +72,7 @@ where
     let mut total_gas_used = 0u64;
     let mut total_gas_fees = U256::ZERO;
 
-    let execution_start = Instant::now();
+    let total_start = Instant::now();
     {
         let evm_config = OpEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
@@ -85,7 +99,7 @@ where
 
             results.push(TransactionResult {
                 coinbase_diff: gas_fees,
-                eth_sent_to_coinbase: U256::from(0),
+                eth_sent_to_coinbase: U256::ZERO,
                 from_address: from,
                 gas_fees,
                 gas_price: U256::from(gas_price),
@@ -97,9 +111,26 @@ where
             });
         }
     }
-    let total_execution_time = execution_start.elapsed().as_micros();
 
-    Ok((results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time))
+    // Calculate state root and measure its calculation time
+    db.merge_transitions(BundleRetention::Reverts);
+    let bundle_update = db.take_bundle();
+    let state_provider = db.database.as_ref();
+
+    let state_root_start = Instant::now();
+    let hashed_state = state_provider.hashed_post_state(&bundle_update);
+    let _ = state_provider.state_root_with_updates(hashed_state)?;
+    let state_root_time_us = state_root_start.elapsed().as_micros();
+    let total_time_us = total_start.elapsed().as_micros();
+
+    Ok(MeterBundleOutput {
+        results,
+        total_gas_used,
+        total_gas_fees,
+        bundle_hash,
+        total_time_us,
+        state_root_time_us,
+    })
 }
 
 #[cfg(test)]
@@ -146,15 +177,15 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
-        let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
 
-        assert!(results.is_empty());
-        assert_eq!(total_gas_used, 0);
-        assert_eq!(total_gas_fees, U256::ZERO);
+        assert!(output.results.is_empty());
+        assert_eq!(output.total_gas_used, 0);
+        assert_eq!(output.total_gas_fees, U256::ZERO);
         // Even empty bundles have some EVM setup overhead
-        assert!(total_execution_time > 0);
-        assert_eq!(bundle_hash, keccak256([]));
+        assert!(output.total_time_us > 0);
+        assert!(output.state_root_time_us > 0);
+        assert_eq!(output.bundle_hash, keccak256([]));
 
         Ok(())
     }
@@ -189,12 +220,12 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
 
-        assert_eq!(results.len(), 1);
-        let result = &results[0];
-        assert!(total_execution_time > 0);
+        assert_eq!(output.results.len(), 1);
+        let result = &output.results[0];
+        assert!(output.total_time_us > 0);
+        assert!(output.state_root_time_us > 0);
 
         assert_eq!(result.from_address, Account::Alice.address());
         assert_eq!(result.to_address, Some(to));
@@ -203,12 +234,12 @@ mod tests {
         assert_eq!(result.gas_used, 21_000);
         assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
-        assert_eq!(total_gas_used, 21_000);
-        assert_eq!(total_gas_fees, U256::from(21_000) * U256::from(10));
+        assert_eq!(output.total_gas_used, 21_000);
+        assert_eq!(output.total_gas_fees, U256::from(21_000) * U256::from(10));
 
         let mut concatenated = Vec::with_capacity(32);
         concatenated.extend_from_slice(tx_hash.as_slice());
-        assert_eq!(bundle_hash, keccak256(concatenated));
+        assert_eq!(output.bundle_hash, keccak256(concatenated));
 
         assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
 
@@ -266,14 +297,14 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
 
-        let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
 
-        assert_eq!(results.len(), 2);
-        assert!(total_execution_time > 0);
+        assert_eq!(output.results.len(), 2);
+        assert!(output.total_time_us > 0);
+        assert!(output.state_root_time_us > 0);
 
         // Check first transaction
-        let result_1 = &results[0];
+        let result_1 = &output.results[0];
         assert_eq!(result_1.from_address, Account::Alice.address());
         assert_eq!(result_1.to_address, Some(to_1));
         assert_eq!(result_1.tx_hash, tx_hash_1);
@@ -282,7 +313,7 @@ mod tests {
         assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
         // Check second transaction
-        let result_2 = &results[1];
+        let result_2 = &output.results[1];
         assert_eq!(result_2.from_address, Account::Bob.address());
         assert_eq!(result_2.to_address, Some(to_2));
         assert_eq!(result_2.tx_hash, tx_hash_2);
@@ -291,19 +322,65 @@ mod tests {
         assert_eq!(result_2.coinbase_diff, U256::from(21_000) * U256::from(15),);
 
         // Check aggregated values
-        assert_eq!(total_gas_used, 42_000);
+        assert_eq!(output.total_gas_used, 42_000);
         let expected_total_fees =
             U256::from(21_000) * U256::from(10) + U256::from(21_000) * U256::from(15);
-        assert_eq!(total_gas_fees, expected_total_fees);
+        assert_eq!(output.total_gas_fees, expected_total_fees);
 
         // Check bundle hash includes both transactions
         let mut concatenated = Vec::with_capacity(64);
         concatenated.extend_from_slice(tx_hash_1.as_slice());
         concatenated.extend_from_slice(tx_hash_2.as_slice());
-        assert_eq!(bundle_hash, keccak256(concatenated));
+        assert_eq!(output.bundle_hash, keccak256(concatenated));
 
         assert!(result_1.execution_time_us > 0, "execution_time_us should be greater than zero");
         assert!(result_2.execution_time_us > 0, "execution_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    /// Test that state_root_time_us is always <= total_time_us
+    #[tokio::test]
+    async fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let to = Address::random();
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(to)
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+
+        // Verify invariant: total time must include state root time
+        assert!(
+            output.total_time_us >= output.state_root_time_us,
+            "total_time_us ({}) should be >= state_root_time_us ({})",
+            output.total_time_us,
+            output.state_root_time_us
+        );
+
+        // State root time should be non-zero
+        assert!(output.state_root_time_us > 0, "state_root_time_us should be greater than zero");
 
         Ok(())
     }
