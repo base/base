@@ -8,7 +8,7 @@ use alloy_sol_macro::sol;
 pub use alloy_sol_types::SolCall;
 use base_access_lists::FBALBuilderDb;
 pub use base_access_lists::FlashblockAccessList;
-use base_test_utils::load_chain_spec;
+use base_test_utils::{BASE_CHAIN_ID, load_chain_spec};
 pub use eyre::Result;
 pub use op_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm};
@@ -80,8 +80,8 @@ sol!(
     )
 );
 
-/// Chain ID for Base Sepolia
-pub const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
+/// Chain ID for Base Sepolia (re-export from test-utils for convenience)
+pub const BASE_SEPOLIA_CHAIN_ID: u64 = BASE_CHAIN_ID;
 
 /// Executes a list of transactions and builds a FlashblockAccessList tracking all
 /// account and storage changes across all transactions.

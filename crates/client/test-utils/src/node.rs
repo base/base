@@ -8,7 +8,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_client_primitives::{BaseNodeExtension, OpBuilder, OpProvider};
@@ -399,8 +398,8 @@ impl FlashblocksLocalNode {
     }
 
     async fn with_options(process_canonical: bool) -> Result<Self> {
-        // Load default chain spec
-        let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json"))?;
+        // Build default chain spec programmatically
+        let genesis = crate::build_test_genesis();
         let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
         let extension = FlashblocksTestExtension::new(process_canonical);

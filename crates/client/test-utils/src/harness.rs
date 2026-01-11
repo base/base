@@ -3,7 +3,6 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
-use alloy_genesis::Genesis;
 use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
@@ -48,7 +47,7 @@ impl TestHarnessBuilder {
 
     /// Set a custom chain spec for the test harness.
     ///
-    /// If not provided, the default genesis from `assets/genesis.json` is used.
+    /// If not provided, the default genesis is built programmatically.
     pub fn with_chain_spec(mut self, chain_spec: Arc<OpChainSpec>) -> Self {
         self.chain_spec = Some(chain_spec);
         self
@@ -61,8 +60,7 @@ impl TestHarnessBuilder {
         let chain_spec = match self.chain_spec {
             Some(spec) => spec,
             None => {
-                let genesis: Genesis =
-                    serde_json::from_str(include_str!("../assets/genesis.json"))?;
+                let genesis = crate::build_test_genesis();
                 Arc::new(OpChainSpec::from_genesis(genesis))
             }
         };
@@ -229,6 +227,11 @@ impl TestHarness {
     /// Return the chain specification used by the harness.
     pub fn chain_spec(&self) -> Arc<OpChainSpec> {
         self.node.blockchain_provider().chain_spec()
+    }
+
+    /// Return the chain ID used by the harness.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_spec().chain().id()
     }
 }
 

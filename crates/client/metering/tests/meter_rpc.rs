@@ -52,7 +52,7 @@ async fn test_meter_bundle_empty() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
-    let (_harness, client) = setup().await?;
+    let (harness, client) = setup().await?;
 
     let sender_address = Account::Alice.address();
     let sender_secret = Account::Alice.signer_b256();
@@ -60,7 +60,7 @@ async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
     // Build a transaction
     let tx = TransactionBuilder::default()
         .signer(sender_secret)
-        .chain_id(84532)
+        .chain_id(harness.chain_id())
         .nonce(0)
         .to(address!("0x1111111111111111111111111111111111111111"))
         .value(1000)
@@ -96,14 +96,14 @@ async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
-    let (_harness, client) = setup().await?;
+    let (harness, client) = setup().await?;
 
     let address1 = Account::Alice.address();
     let secret1 = Account::Alice.signer_b256();
 
     let tx1_inner = TransactionBuilder::default()
         .signer(secret1)
-        .chain_id(84532)
+        .chain_id(harness.chain_id())
         .nonce(0)
         .to(address!("0x1111111111111111111111111111111111111111"))
         .value(1000)
@@ -123,7 +123,7 @@ async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     let tx2_inner = TransactionBuilder::default()
         .signer(secret2)
-        .chain_id(84532)
+        .chain_id(harness.chain_id())
         .nonce(0)
         .to(address!("0x2222222222222222222222222222222222222222"))
         .value(2000)
@@ -252,7 +252,7 @@ async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
-    let (_harness, client) = setup().await?;
+    let (harness, client) = setup().await?;
 
     let secret1 = Account::Alice.signer_b256();
     let secret2 = Account::Bob.signer_b256();
@@ -260,7 +260,7 @@ async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
     // First transaction with 3 gwei gas price
     let tx1_inner = TransactionBuilder::default()
         .signer(secret1)
-        .chain_id(84532)
+        .chain_id(harness.chain_id())
         .nonce(0)
         .to(address!("0x1111111111111111111111111111111111111111"))
         .value(1000)
@@ -277,7 +277,7 @@ async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
     // Second transaction with 7 gwei gas price
     let tx2_inner = TransactionBuilder::default()
         .signer(secret2)
-        .chain_id(84532)
+        .chain_id(harness.chain_id())
         .nonce(0)
         .to(address!("0x2222222222222222222222222222222222222222"))
         .value(2000)

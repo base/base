@@ -2,7 +2,6 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_genesis::Genesis;
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
@@ -48,8 +47,8 @@ impl FlashblocksHarness {
     async fn with_options(process_canonical: bool) -> Result<Self> {
         init_silenced_tracing();
 
-        // Load default chain spec
-        let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json"))?;
+        // Build default chain spec programmatically
+        let genesis = crate::build_test_genesis();
         let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
         // Create the extension and keep a reference to get parts after launch

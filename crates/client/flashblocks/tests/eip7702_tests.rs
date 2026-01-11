@@ -48,10 +48,6 @@ impl TestSetup {
     fn provider(&self) -> alloy_provider::RootProvider<op_alloy_network::Optimism> {
         self.harness.provider()
     }
-
-    fn chain_id(&self) -> u64 {
-        84532 // Base Sepolia chain ID (matches test harness)
-    }
 }
 
 /// Build an EIP-7702 authorization for delegating to a contract
@@ -172,7 +168,7 @@ fn create_eip7702_flashblock(eip7702_tx: Bytes, cumulative_gas: u64) -> Flashblo
 #[tokio::test]
 async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
     let setup = TestSetup::new().await?;
-    let chain_id = setup.chain_id();
+    let chain_id = setup.harness.chain_id();
 
     // Send base flashblock with contract deployment
     let base_payload = create_base_flashblock(&setup);
@@ -214,7 +210,7 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
 #[tokio::test]
 async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
     let setup = TestSetup::new().await?;
-    let chain_id = setup.chain_id();
+    let chain_id = setup.harness.chain_id();
 
     // Send base flashblock with contract deployment
     let base_payload = create_base_flashblock(&setup);
@@ -288,7 +284,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
 #[tokio::test]
 async fn test_eip7702_pending_receipt() -> Result<()> {
     let setup = TestSetup::new().await?;
-    let chain_id = setup.chain_id();
+    let chain_id = setup.harness.chain_id();
 
     // Send base flashblock with contract deployment
     let base_payload = create_base_flashblock(&setup);
@@ -327,7 +323,7 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
 #[tokio::test]
 async fn test_eip7702_delegation_then_execution() -> Result<()> {
     let setup = TestSetup::new().await?;
-    let chain_id = setup.chain_id();
+    let chain_id = setup.harness.chain_id();
 
     // Send base flashblock with contract deployment
     let base_payload = create_base_flashblock(&setup);

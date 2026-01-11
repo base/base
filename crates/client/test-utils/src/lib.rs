@@ -19,7 +19,7 @@ mod engine;
 pub use engine::{EngineAddress, EngineApi, EngineProtocol, HttpEngine, IpcEngine};
 
 mod fixtures;
-pub use fixtures::{create_provider_factory, load_chain_spec, load_genesis};
+pub use fixtures::{build_test_genesis, create_provider_factory, load_chain_spec};
 
 mod flashblocks_harness;
 pub use flashblocks_harness::FlashblocksHarness;
