@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use base_reth_flashblocks::FlashblocksState;
 use base_reth_test_utils::{OpAddOns, OpBuilder, create_provider_factory, load_genesis};
 use eyre::Context;
 use reth::{api::NodeTypesWithDBAdapter, builder::NodeHandle};
@@ -77,7 +78,12 @@ pub async fn metering_launcher(
     let launcher = builder.engine_api_launcher();
     builder
         .extend_rpc_modules(|ctx| {
-            let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+            // Create a FlashblocksState for the metering API.
+            // In tests, flashblocks won't be receiving updates, so metering will
+            // fall back to canonical state.
+            let fb_state =
+                Arc::new(FlashblocksState::new(ctx.provider().clone(), 1 /* minimal depth */));
+            let metering_api = MeteringApiImpl::new(ctx.provider().clone(), fb_state);
             ctx.modules.merge_configured(metering_api.into_rpc())?;
             Ok(())
         })

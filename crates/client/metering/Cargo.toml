@@ -25,6 +25,7 @@ test-utils = [
 # workspace
 base-bundles.workspace = true
 base-primitives.workspace = true
+base-reth-flashblocks.workspace = true
 
 # reth
 reth.workspace = true

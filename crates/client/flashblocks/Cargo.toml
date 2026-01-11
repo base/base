@@ -57,6 +57,9 @@ jsonrpsee.workspace = true
 jsonrpsee-types.workspace = true
 serde.workspace = true
 
+# revm
+revm-database.workspace = true
+
 # misc
 eyre.workspace = true
 once_cell.workspace = true
