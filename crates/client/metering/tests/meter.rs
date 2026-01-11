@@ -1,107 +1,16 @@
 //! Integration tests covering the Metering logic surface area.
 
-use std::sync::Arc;
-
-use alloy_consensus::crypto::secp256k1::public_key_to_address;
 use alloy_eips::Encodable2718;
-use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, Bytes, U256, keccak256};
 use base_bundles::{Bundle, ParsedBundle};
-use base_reth_metering::meter_bundle;
-use base_reth_test_utils::create_provider_factory;
+use base_reth_metering::{meter_bundle, test_utils::MeteringTestContext};
+use base_reth_test_utils::{ALICE, BOB};
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
-use rand::{SeedableRng, rngs::StdRng};
-use reth::{api::NodeTypesWithDBAdapter, chainspec::EthChainSpec};
-use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
-use reth_optimism_node::OpNode;
+use reth::chainspec::EthChainSpec;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives_traits::SealedHeader;
-use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
-use reth_testing_utils::generators::generate_keys;
+use reth_provider::StateProviderFactory;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-
-type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
-
-#[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
-enum User {
-    Alice,
-    Bob,
-}
-
-#[derive(Debug, Clone)]
-struct TestHarness {
-    provider: BlockchainProvider<NodeTypes>,
-    header: SealedHeader,
-    chain_spec: Arc<OpChainSpec>,
-    user_to_address: std::collections::HashMap<User, Address>,
-    user_to_private_key: std::collections::HashMap<User, B256>,
-}
-
-impl TestHarness {
-    fn address(&self, u: User) -> Address {
-        self.user_to_address[&u]
-    }
-
-    fn signer(&self, u: User) -> B256 {
-        self.user_to_private_key[&u]
-    }
-}
-
-fn create_chain_spec(
-    seed: u64,
-) -> (
-    Arc<OpChainSpec>,
-    std::collections::HashMap<User, Address>,
-    std::collections::HashMap<User, B256>,
-) {
-    let keys = generate_keys(&mut StdRng::seed_from_u64(seed), 2);
-
-    let mut addresses = std::collections::HashMap::new();
-    let mut private_keys = std::collections::HashMap::new();
-
-    let alice_key = keys[0];
-    let alice_address = public_key_to_address(alice_key.public_key());
-    let alice_secret = B256::from(alice_key.secret_bytes());
-    addresses.insert(User::Alice, alice_address);
-    private_keys.insert(User::Alice, alice_secret);
-
-    let bob_key = keys[1];
-    let bob_address = public_key_to_address(bob_key.public_key());
-    let bob_secret = B256::from(bob_key.secret_bytes());
-    addresses.insert(User::Bob, bob_address);
-    private_keys.insert(User::Bob, bob_secret);
-
-    let genesis = BASE_MAINNET
-        .genesis
-        .clone()
-        .extend_accounts(vec![
-            (alice_address, GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64))),
-            (bob_address, GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64))),
-        ])
-        .with_gas_limit(100_000_000);
-
-    let spec =
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build());
-
-    (spec, addresses, private_keys)
-}
-
-fn setup_harness() -> eyre::Result<TestHarness> {
-    let (chain_spec, user_to_address, user_to_private_key) = create_chain_spec(1337);
-    let factory = create_provider_factory::<OpNode>(chain_spec.clone());
-
-    reth_db_common::init::init_genesis(&factory).context("initializing genesis state")?;
-
-    let provider = BlockchainProvider::new(factory.clone()).context("creating provider")?;
-    let header = provider
-        .sealed_header(0)
-        .context("fetching genesis header")?
-        .expect("genesis header exists");
-
-    Ok(TestHarness { provider, header, chain_spec, user_to_address, user_to_private_key })
-}
 
 fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> {
     Ok(tx.clone().into())
@@ -127,17 +36,17 @@ fn create_parsed_bundle(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<ParsedBund
 
 #[test]
 fn meter_bundle_empty_transactions() -> eyre::Result<()> {
-    let harness = setup_harness()?;
+    let ctx = MeteringTestContext::new()?;
 
-    let state_provider = harness
+    let state_provider = ctx
         .provider
-        .state_by_block_hash(harness.header.hash())
+        .state_by_block_hash(ctx.header.hash())
         .context("getting state provider")?;
 
     let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+        meter_bundle(state_provider, ctx.chain_spec.clone(), parsed_bundle, &ctx.header)?;
 
     assert!(results.is_empty());
     assert_eq!(total_gas_used, 0);
@@ -151,12 +60,12 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
 
 #[test]
 fn meter_bundle_single_transaction() -> eyre::Result<()> {
-    let harness = setup_harness()?;
+    let ctx = MeteringTestContext::new()?;
 
     let to = Address::random();
     let signed_tx = TransactionBuilder::default()
-        .signer(harness.signer(User::Alice))
-        .chain_id(harness.chain_spec.chain_id())
+        .signer(ALICE.signer_b256())
+        .chain_id(ctx.chain_spec.chain_id())
         .nonce(0)
         .to(to)
         .value(1_000)
@@ -171,21 +80,21 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     let envelope = envelope_from_signed(&tx)?;
     let tx_hash = envelope.tx_hash();
 
-    let state_provider = harness
+    let state_provider = ctx
         .provider
-        .state_by_block_hash(harness.header.hash())
+        .state_by_block_hash(ctx.header.hash())
         .context("getting state provider")?;
 
     let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+        meter_bundle(state_provider, ctx.chain_spec.clone(), parsed_bundle, &ctx.header)?;
 
     assert_eq!(results.len(), 1);
     let result = &results[0];
     assert!(total_execution_time > 0);
 
-    assert_eq!(result.from_address, harness.address(User::Alice));
+    assert_eq!(result.from_address, ALICE.address);
     assert_eq!(result.to_address, Some(to));
     assert_eq!(result.tx_hash, tx_hash);
     assert_eq!(result.gas_price, U256::from(10));
@@ -206,15 +115,15 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
 
 #[test]
 fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
-    let harness = setup_harness()?;
+    let ctx = MeteringTestContext::new()?;
 
     let to_1 = Address::random();
     let to_2 = Address::random();
 
     // Create first transaction
     let signed_tx_1 = TransactionBuilder::default()
-        .signer(harness.signer(User::Alice))
-        .chain_id(harness.chain_spec.chain_id())
+        .signer(ALICE.signer_b256())
+        .chain_id(ctx.chain_spec.chain_id())
         .nonce(0)
         .to(to_1)
         .value(1_000)
@@ -229,8 +138,8 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     // Create second transaction
     let signed_tx_2 = TransactionBuilder::default()
-        .signer(harness.signer(User::Bob))
-        .chain_id(harness.chain_spec.chain_id())
+        .signer(BOB.signer_b256())
+        .chain_id(ctx.chain_spec.chain_id())
         .nonce(0)
         .to(to_2)
         .value(2_000)
@@ -248,22 +157,22 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     let tx_hash_1 = envelope_1.tx_hash();
     let tx_hash_2 = envelope_2.tx_hash();
 
-    let state_provider = harness
+    let state_provider = ctx
         .provider
-        .state_by_block_hash(harness.header.hash())
+        .state_by_block_hash(ctx.header.hash())
         .context("getting state provider")?;
 
     let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+        meter_bundle(state_provider, ctx.chain_spec.clone(), parsed_bundle, &ctx.header)?;
 
     assert_eq!(results.len(), 2);
     assert!(total_execution_time > 0);
 
     // Check first transaction
     let result_1 = &results[0];
-    assert_eq!(result_1.from_address, harness.address(User::Alice));
+    assert_eq!(result_1.from_address, ALICE.address);
     assert_eq!(result_1.to_address, Some(to_1));
     assert_eq!(result_1.tx_hash, tx_hash_1);
     assert_eq!(result_1.gas_price, U256::from(10));
@@ -272,7 +181,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     // Check second transaction
     let result_2 = &results[1];
-    assert_eq!(result_2.from_address, harness.address(User::Bob));
+    assert_eq!(result_2.from_address, BOB.address);
     assert_eq!(result_2.to_address, Some(to_2));
     assert_eq!(result_2.tx_hash, tx_hash_2);
     assert_eq!(result_2.gas_price, U256::from(15));

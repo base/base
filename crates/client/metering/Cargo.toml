@@ -15,6 +15,8 @@ workspace = true
 default = []
 test-utils = [
     "dep:base-reth-test-utils",
+    "dep:reth-db",
+    "dep:reth-db-common",
     "dep:reth-e2e-test-utils",
     "dep:reth-optimism-node",
 ]
@@ -48,6 +50,8 @@ serde.workspace = true
 
 # test-utils feature dependencies (optional)
 base-reth-test-utils = { workspace = true, optional = true }
+reth-db = { workspace = true, features = ["test-utils"], optional = true }
+reth-db-common = { workspace = true, optional = true }
 reth-e2e-test-utils = { workspace = true, optional = true }
 reth-optimism-node = { workspace = true, optional = true }
 
