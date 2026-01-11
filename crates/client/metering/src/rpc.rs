@@ -94,7 +94,7 @@ where
         })?;
 
         // Meter bundle using utility function
-        let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
+        let output =
             meter_bundle(state_provider, self.provider.chain_spec(), parsed_bundle, &header)
                 .map_err(|e| {
                     error!(error = %e, "Bundle metering failed");
@@ -106,31 +106,33 @@ where
                 })?;
 
         // Calculate average gas price
-        let bundle_gas_price = if total_gas_used > 0 {
-            total_gas_fees / U256::from(total_gas_used)
+        let bundle_gas_price = if output.total_gas_used > 0 {
+            output.total_gas_fees / U256::from(output.total_gas_used)
         } else {
             U256::from(0)
         };
 
         info!(
-            bundle_hash = %bundle_hash,
-            num_transactions = results.len(),
-            total_gas_used = total_gas_used,
-            total_execution_time_us = total_execution_time,
+            bundle_hash = %output.bundle_hash,
+            num_transactions = output.results.len(),
+            total_gas_used = output.total_gas_used,
+            total_time_us = output.total_time_us,
+            state_root_time_us = output.state_root_time_us,
             "Bundle metering completed successfully"
         );
 
         Ok(MeterBundleResponse {
             bundle_gas_price,
-            bundle_hash,
-            coinbase_diff: total_gas_fees,
-            eth_sent_to_coinbase: U256::from(0),
-            gas_fees: total_gas_fees,
-            results,
+            bundle_hash: output.bundle_hash,
+            coinbase_diff: output.total_gas_fees,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: output.total_gas_fees,
+            results: output.results,
             state_block_number: header.number,
             state_flashblock_index: None,
-            total_gas_used,
-            total_execution_time_us: total_execution_time,
+            total_gas_used: output.total_gas_used,
+            total_execution_time_us: output.total_time_us,
+            state_root_time_us: output.state_root_time_us,
         })
     }
 
@@ -238,16 +240,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, address};
     use alloy_rpc_client::RpcClient;
     use base_bundles::{Bundle, MeterBundleResponse};
-    use base_reth_test_utils::{ALICE, BOB, BASE_CHAIN_ID, TestHarness};
+    use base_reth_test_utils::{ALICE, BASE_CHAIN_ID, BOB, TestHarness};
     use op_alloy_consensus::OpTxEnvelope;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
+    use super::*;
     use crate::test_utils::metering_launcher;
 
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
@@ -271,8 +273,7 @@ mod tests {
 
         let bundle = create_bundle(vec![], 0, None);
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 0);
         assert_eq!(response.total_gas_used, 0);
@@ -308,8 +309,7 @@ mod tests {
 
         let bundle = create_bundle(vec![tx_bytes], 0, None);
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.total_gas_used, 21_000);
@@ -317,10 +317,7 @@ mod tests {
 
         let result = &response.results[0];
         assert_eq!(result.from_address, ALICE.address);
-        assert_eq!(
-            result.to_address,
-            Some(address!("0x1111111111111111111111111111111111111111"))
-        );
+        assert_eq!(result.to_address, Some(address!("0x1111111111111111111111111111111111111111")));
         assert_eq!(result.gas_used, 21_000);
         assert_eq!(result.gas_price, 1_000_000_000);
         assert!(result.execution_time_us > 0);
@@ -370,8 +367,7 @@ mod tests {
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 2);
         assert_eq!(response.total_gas_used, 42_000);
@@ -419,8 +415,7 @@ mod tests {
         // Metering always uses the latest block state, regardless of bundle.block_number
         let bundle = create_bundle(vec![], 0, None);
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         // Should return the latest block number (genesis block 0)
         assert_eq!(response.state_block_number, 0);
@@ -436,14 +431,12 @@ mod tests {
         // Even if bundle.block_number is different, it should use the latest block
         // In this test, we specify block_number=0 in the bundle
         let bundle1 = create_bundle(vec![], 0, None);
-        let response1: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle1,)).await?;
+        let response1: MeterBundleResponse = client.request("base_meterBundle", (bundle1,)).await?;
 
         // Try with a different bundle.block_number (999 - arbitrary value)
         // Since we can't create future blocks, we use a different value to show it's ignored
         let bundle2 = create_bundle(vec![], 999, None);
-        let response2: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle2,)).await?;
+        let response2: MeterBundleResponse = client.request("base_meterBundle", (bundle2,)).await?;
 
         // Both should return the same state_block_number (the latest block)
         // because the implementation always uses Latest, not bundle.block_number
@@ -464,8 +457,7 @@ mod tests {
         let custom_timestamp = 1234567890;
         let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         // Verify the request succeeded with custom timestamp
         assert_eq!(response.results.len(), 0);
@@ -483,8 +475,7 @@ mod tests {
         // any block_number value should work (it's only used for bundle validity in TIPS)
         let bundle = create_bundle(vec![], 999999, None);
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         // Should succeed and use the latest block (genesis block 0)
         assert_eq!(response.state_block_number, 0);
@@ -535,8 +526,7 @@ mod tests {
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-        let response: MeterBundleResponse =
-            client.request("base_meterBundle", (bundle,)).await?;
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 2);
 

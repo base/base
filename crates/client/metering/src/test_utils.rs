@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use base_reth_test_utils::{OpAddOns, OpBuilder, create_provider_factory, load_genesis};
 use eyre::Context;
-use reth::api::NodeTypesWithDBAdapter;
-use reth::builder::NodeHandle;
+use reth::{api::NodeTypesWithDBAdapter, builder::NodeHandle};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_chainspec::{OpChainSpec, OpChainSpecBuilder};
@@ -34,7 +33,8 @@ use crate::{MeteringApiImpl, MeteringApiServer};
 #[derive(Debug, Clone)]
 pub struct MeteringTestContext {
     /// Blockchain provider for state access.
-    pub provider: BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>>,
+    pub provider:
+        BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>>,
     /// Genesis header - used as parent block for metering simulations.
     pub header: SealedHeader,
     /// Chain specification for EVM configuration.
@@ -46,10 +46,7 @@ impl MeteringTestContext {
     pub fn new() -> eyre::Result<Self> {
         let genesis = load_genesis();
         let chain_spec = Arc::new(
-            OpChainSpecBuilder::base_mainnet()
-                .genesis(genesis)
-                .isthmus_activated()
-                .build(),
+            OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build(),
         );
 
         let factory = create_provider_factory::<OpNode>(chain_spec.clone());

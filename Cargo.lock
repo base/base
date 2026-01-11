@@ -1676,6 +1676,7 @@ dependencies = [
  "reth-provider",
  "reth-testing-utils",
  "reth-transaction-pool",
+ "revm-database",
  "serde",
  "tokio",
  "tracing",

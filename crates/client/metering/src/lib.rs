@@ -10,7 +10,7 @@ mod extension;
 pub use extension::{MeteringRpcConfig, MeteringRpcExtension};
 
 mod meter;
-pub use meter::meter_bundle;
+pub use meter::{MeterBundleOutput, meter_bundle};
 
 mod rpc;
 pub use rpc::MeteringApiImpl;
