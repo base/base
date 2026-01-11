@@ -49,7 +49,11 @@ alloy-eips.workspace = true
 # rpc
 jsonrpsee.workspace = true
 
+# DA calculation
+op-alloy-flz.workspace = true
+
 # misc
+parking_lot.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true

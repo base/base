@@ -1,6 +1,7 @@
 //! Types for block metering responses.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
+use base_bundles::MeterBundleResponse;
 use serde::{Deserialize, Serialize};
 
 /// Response for block metering RPC calls.
@@ -37,4 +38,39 @@ pub struct MeterBlockTransactions {
     pub gas_used: u64,
     /// Execution time in microseconds
     pub execution_time_us: u128,
+}
+
+// --- Metered priority fee types ---
+
+/// Human-friendly representation of a resource fee quote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceFeeEstimateResponse {
+    /// Resource name (gasUsed, executionTime, etc).
+    pub resource: String,
+    /// Minimum fee to displace enough capacity.
+    pub threshold_priority_fee: U256,
+    /// Recommended fee with safety margin.
+    pub recommended_priority_fee: U256,
+    /// Cumulative resource usage above threshold.
+    pub cumulative_usage: U256,
+    /// Number of transactions above threshold.
+    pub threshold_tx_count: u64,
+    /// Total transactions considered.
+    pub total_transactions: u64,
+}
+
+/// Response payload for `base_meteredPriorityFeePerGas`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeteredPriorityFeeResponse {
+    /// Bundled metering results.
+    #[serde(flatten)]
+    pub meter_bundle: MeterBundleResponse,
+    /// Recommended priority fee (max across all resources and median across recent blocks).
+    pub priority_fee: U256,
+    /// Number of recent blocks used to compute the rolling estimate.
+    pub blocks_sampled: u64,
+    /// Per-resource estimates (median across sampled blocks).
+    pub resource_estimates: Vec<ResourceFeeEstimateResponse>,
 }

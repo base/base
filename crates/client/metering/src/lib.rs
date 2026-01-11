@@ -6,8 +6,18 @@
 mod block;
 pub use block::meter_block;
 
+mod cache;
+pub use cache::{BlockMetrics, FlashblockMetrics, MeteredTransaction, MeteringCache, ResourceTotals};
+
+mod estimator;
+pub use estimator::{
+    BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
+    ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
+    RollingPriorityEstimate,
+};
+
 mod extension;
-pub use extension::{MeteringRpcConfig, MeteringRpcExtension};
+pub use extension::{MeteringResourceLimits, MeteringRpcConfig, MeteringRpcExtension};
 
 mod meter;
 pub use meter::meter_bundle;
@@ -19,7 +29,10 @@ mod traits;
 pub use traits::MeteringApiServer;
 
 mod types;
-pub use types::{MeterBlockResponse, MeterBlockTransactions};
+pub use types::{
+    MeterBlockResponse, MeterBlockTransactions, MeteredPriorityFeeResponse,
+    ResourceFeeEstimateResponse,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
