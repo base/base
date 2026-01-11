@@ -15,6 +15,7 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-client-node.workspace = true
+base-flashblocks.workspace = true
 
 # reth
 reth-provider.workspace = true

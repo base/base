@@ -110,6 +110,12 @@ impl FlashblocksReceiver for FlashblocksState {
     }
 }
 
+impl Default for FlashblocksState {
+    fn default() -> Self {
+        Self::new(10)
+    }
+}
+
 impl FlashblocksAPI for FlashblocksState {
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
         self.pending_blocks.load()

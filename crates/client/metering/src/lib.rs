@@ -7,10 +7,10 @@ mod block;
 pub use block::meter_block;
 
 mod extension;
-pub use extension::MeteringExtension;
+pub use extension::{MeteringConfig, MeteringExtension};
 
 mod meter;
-pub use meter::{MeterBundleOutput, meter_bundle};
+pub use meter::{FlashblocksState, MeterBundleOutput, meter_bundle};
 
 mod rpc;
 pub use rpc::MeteringApiImpl;

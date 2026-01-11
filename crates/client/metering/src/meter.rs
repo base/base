@@ -11,7 +11,14 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_revm::{database::StateProviderDatabase, db::State};
-use revm_database::states::bundle_state::BundleRetention;
+use revm_database::states::{BundleState, bundle_state::BundleRetention};
+
+/// State from pending flashblocks that is used as a base for metering
+#[derive(Debug, Clone)]
+pub struct FlashblocksState {
+    /// The accumulated bundle of state changes
+    pub bundle_state: BundleState,
+}
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
@@ -34,16 +41,16 @@ pub struct MeterBundleOutput {
 
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a state provider, chain spec, parsed bundle, and block header,
+/// Takes a state provider, chain spec, parsed bundle, block header, and optional flashblocks state,
 /// then executes transactions in sequence to measure gas usage and execution time.
 ///
-/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics,
-/// including separate timing for state root calculation.
+/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
+    flashblocks_state: Option<FlashblocksState>,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -53,7 +60,16 @@ where
 
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
-    let mut db = State::builder().with_database(state_db).with_bundle_update().build();
+
+    // Track bundle state changes. If metering using flashblocks state, include its bundle prestate.
+    let mut db = match flashblocks_state {
+        Some(ref flashblocks) => State::builder()
+            .with_database(state_db)
+            .with_bundle_update()
+            .with_bundle_prestate(flashblocks.bundle_state.clone())
+            .build(),
+        None => State::builder().with_database(state_db).with_bundle_update().build(),
+    };
 
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
@@ -112,7 +128,8 @@ where
         }
     }
 
-    // Calculate state root and measure its calculation time
+    // Calculate state root and measure its calculation time. The bundle already includes
+    // flashblocks state if it was provided via with_bundle_prestate.
     db.merge_transitions(BundleRetention::Reverts);
     let bundle_update = db.take_bundle();
     let state_provider = db.database.as_ref();
@@ -142,6 +159,7 @@ mod tests {
     use eyre::Context;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_provider::StateProviderFactory;
+    use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
@@ -177,7 +195,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         assert!(output.results.is_empty());
         assert_eq!(output.total_gas_used, 0);
@@ -220,7 +239,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         assert_eq!(output.results.len(), 1);
         let result = &output.results[0];
@@ -297,7 +317,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         assert_eq!(output.results.len(), 2);
         assert!(output.total_time_us > 0);
@@ -369,7 +390,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         // Verify invariant: total time must include state root time
         assert!(
@@ -381,6 +403,101 @@ mod tests {
 
         // State root time should be non-zero
         assert!(output.state_root_time_us > 0, "state_root_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    /// Integration test: verifies meter_bundle uses flashblocks state correctly.
+    ///
+    /// A transaction using nonce=1 should fail without flashblocks state (since
+    /// canonical nonce is 0), but succeed when flashblocks state indicates nonce=1.
+    #[tokio::test]
+    async fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        // Create a transaction that requires nonce=1 (assuming canonical nonce is 0)
+        let to = Address::random();
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(1) // Requires pending state to have nonce=1
+            .to(to)
+            .value(100)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        // Without flashblocks state, transaction should fail (nonce mismatch)
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let result_without_flashblocks = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle.clone(),
+            &header,
+            None, // No flashblocks state
+        );
+
+        assert!(
+            result_without_flashblocks.is_err(),
+            "Transaction with nonce=1 should fail without pending state (canonical nonce is 0)"
+        );
+
+        // Now create flashblocks state with nonce=1 for Alice
+        // Use BundleState::new() to properly calculate state_size
+        let bundle_state = BundleState::new(
+            [(
+                Account::Alice.address(),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000_000u64),
+                    nonce: 0, // original
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                }),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000_000u64),
+                    nonce: 1, // pending (after first flashblock tx)
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                }),
+                Default::default(), // no storage changes
+            )],
+            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+            Vec::<(B256, Bytecode)>::new(),
+        );
+
+        let flashblocks_state = FlashblocksState { bundle_state };
+
+        // With correct flashblocks state, transaction should succeed
+        let state_provider2 = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let result_with_flashblocks = meter_bundle(
+            state_provider2,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            Some(flashblocks_state),
+        );
+
+        assert!(
+            result_with_flashblocks.is_ok(),
+            "Transaction with nonce=1 should succeed with pending state showing nonce=1: {:?}",
+            result_with_flashblocks.err()
+        );
 
         Ok(())
     }

@@ -797,6 +797,136 @@ async fn test_duplicate_flashblock_ignored() {
     assert_eq!(block, block_two);
 }
 
+/// Verifies that eth_call targeting pending block sees flashblock state changes.
+///
+/// This test catches database layering bugs where pending state from flashblocks
+/// isn't visible to RPC callers. After a flashblock transfers ETH to Bob, an
+/// eth_call simulating a transfer FROM Bob should succeed because Bob now has
+/// more funds from the flashblock.
+#[tokio::test]
+async fn test_eth_call_sees_flashblock_state_changes() {
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_provider::Provider;
+    use alloy_rpc_types_eth::TransactionInput;
+    use op_alloy_rpc_types::OpTransactionRequest;
+
+    let test = TestHarness::new().await;
+    let provider = test.node.provider();
+
+    let bob_address = Account::Bob.address();
+    let charlie_address = Account::Charlie.address();
+
+    // Get Bob's canonical balance to calculate a transfer amount that exceeds it
+    let canonical_balance = provider.get_balance(bob_address).await.unwrap();
+
+    // Send base flashblock
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    // Flashblock 1: Alice sends a large amount to Bob
+    let transfer_to_bob = 1_000_000_000_000_000_000u128; // 1 ETH
+    let tx = test.build_transaction_to_send_eth_with_nonce(
+        Account::Alice,
+        Account::Bob,
+        transfer_to_bob,
+        0,
+    );
+    test.send_flashblock(FlashblockBuilder::new(&test, 1).with_transactions(vec![tx]).build())
+        .await;
+
+    // Verify via state overrides that Bob received the funds
+    let overrides = test
+        .flashblocks
+        .get_pending_blocks()
+        .get_state_overrides()
+        .expect("state overrides should exist after flashblock execution");
+    let bob_override = overrides.get(&bob_address).expect("Bob should have a state override");
+    let bob_pending_balance = bob_override.balance.expect("Bob's balance override should be set");
+    assert_eq!(
+        bob_pending_balance,
+        canonical_balance + U256::from(transfer_to_bob),
+        "State override should show Bob's increased balance"
+    );
+
+    // Now the key test: eth_call from Bob should see this pending balance.
+    // Try to transfer more than Bob's canonical balance (but less than pending).
+    // This would fail if eth_call can't see the pending state.
+    let transfer_amount = canonical_balance + U256::from(100_000u64);
+    let call_request = OpTransactionRequest::default()
+        .from(bob_address)
+        .to(charlie_address)
+        .value(transfer_amount)
+        .gas_limit(21_000)
+        .input(TransactionInput::default());
+
+    let result = provider.call(call_request).block(BlockNumberOrTag::Pending.into()).await;
+    assert!(
+        result.is_ok(),
+        "eth_call from Bob should succeed because pending state shows increased balance. \
+         If this fails, eth_call may not be seeing flashblock state changes. Error: {:?}",
+        result.err()
+    );
+}
+
+/// Verifies that transactions in flashblock N+1 can see state changes from flashblock N.
+///
+/// This test catches database layering bugs where writes from earlier flashblocks
+/// aren't visible to later flashblock execution. The key is that flashblock 2's
+/// transaction uses nonce=1, which only succeeds if the execution layer sees
+/// flashblock 1's transaction (which used nonce=0).
+#[tokio::test]
+async fn test_sequential_nonces_across_flashblocks() {
+    let test = TestHarness::new().await;
+
+    // Send base flashblock
+    test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
+
+    // Flashblock 1: Alice sends to Bob with nonce 0
+    let tx_nonce_0 =
+        test.build_transaction_to_send_eth_with_nonce(Account::Alice, Account::Bob, 1000, 0);
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1).with_transactions(vec![tx_nonce_0]).build(),
+    )
+    .await;
+
+    // Verify flashblock 1 was processed - Alice's pending nonce should now be 1
+    let alice_state = test.account_state(Account::Alice);
+    assert_eq!(alice_state.nonce, 1, "After flashblock 1, Alice's pending nonce should be 1");
+
+    // Flashblock 2: Alice sends to Charlie with nonce 1
+    // This will FAIL if the execution layer can't see flashblock 1's state change
+    let tx_nonce_1 =
+        test.build_transaction_to_send_eth_with_nonce(Account::Alice, Account::Charlie, 2000, 1);
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 2).with_transactions(vec![tx_nonce_1]).build(),
+    )
+    .await;
+
+    // Verify flashblock 2 was processed - Alice's pending nonce should now be 2
+    let alice_state_after = test.account_state(Account::Alice);
+    assert_eq!(
+        alice_state_after.nonce, 2,
+        "After flashblock 2, Alice's pending nonce should be 2. \
+         If this fails, the database layering may be preventing flashblock 2 \
+         from seeing flashblock 1's state changes."
+    );
+
+    // Also verify Bob and Charlie received their funds
+    let overrides = test
+        .flashblocks
+        .get_pending_blocks()
+        .get_state_overrides()
+        .expect("state overrides should exist");
+
+    assert!(
+        overrides.get(&Account::Bob.address()).is_some(),
+        "Bob should have received funds from flashblock 1"
+    );
+    assert!(
+        overrides.get(&Account::Charlie.address()).is_some(),
+        "Charlie should have received funds from flashblock 2"
+    );
+}
+
 #[tokio::test]
 async fn test_progress_canonical_blocks_without_flashblocks() {
     let mut test = TestHarness::new().await;
