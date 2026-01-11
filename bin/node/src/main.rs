@@ -30,17 +30,12 @@ fn main() {
         let flashblocks_cell: FlashblocksCell<FlashblocksState<OpProvider>> =
             Arc::new(OnceCell::new());
 
-        let txpool_config = args.clone().into();
-        let metering_enabled = args.enable_metering;
-        let flashblocks_config = args.clone().into();
-
-        let mut runner = BaseNodeRunner::new(args.rollup_args);
+        let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
-        runner.install_ext(Box::new(TxPoolExtension::new(txpool_config)));
-        runner.install_ext(Box::new(MeteringExtension::new(metering_enabled)));
-        runner
-            .install_ext(Box::new(FlashblocksExtension::new(flashblocks_cell, flashblocks_config)));
+        runner.install_ext(Box::new(TxPoolExtension::new(args.clone().into())));
+        runner.install_ext(Box::new(MeteringExtension::new(args.enable_metering)));
+        runner.install_ext(Box::new(FlashblocksExtension::new(flashblocks_cell, args.into())));
 
         let handle = runner.run(builder);
         handle.await
