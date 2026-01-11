@@ -81,6 +81,13 @@ impl Account {
             .expect("should be able to build the PrivateKeySigner")
             .into()
     }
+
+    /// Returns the private key as B256 for use with TransactionBuilder.
+    pub fn signer_b256(&self) -> FixedBytes<32> {
+        let key_bytes =
+            hex::decode(self.private_key).expect("should be able to decode private key");
+        FixedBytes::from_slice(&key_bytes)
+    }
 }
 
 /// Handy alias used throughout tests to refer to the deterministic `Account`.

@@ -11,6 +11,14 @@ description = "Metering RPC for Base node"
 [lints]
 workspace = true
 
+[features]
+default = []
+test-utils = [
+    "dep:base-reth-test-utils",
+    "dep:reth-e2e-test-utils",
+    "dep:reth-optimism-node",
+]
+
 [dependencies]
 # workspace
 base-bundles.workspace = true
@@ -38,11 +46,13 @@ tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true
 
+# test-utils feature dependencies (optional)
+base-reth-test-utils = { workspace = true, optional = true }
+reth-e2e-test-utils = { workspace = true, optional = true }
+reth-optimism-node = { workspace = true, optional = true }
+
 [dev-dependencies]
-base-reth-test-utils.workspace = true
-reth-db = { workspace = true, features = ["test-utils"] }
-reth-db-common.workspace = true
-reth-optimism-node.workspace = true
+base-reth-metering = { path = ".", features = ["test-utils"] }
 reth-testing-utils.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 alloy-genesis.workspace = true
