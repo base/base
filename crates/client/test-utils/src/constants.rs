@@ -3,11 +3,6 @@
 use alloy_primitives::{B256, Bytes, b256, bytes};
 pub use reth::chainspec::NamedChain;
 
-// Chain Configuration
-
-/// Chain ID used for test networks (Base Sepolia).
-pub const BASE_CHAIN_ID: u64 = NamedChain::BaseSepolia as u64;
-
 // Block Building
 
 /// Block time in seconds for test node configuration.

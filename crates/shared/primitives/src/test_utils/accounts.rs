@@ -5,12 +5,14 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use eyre::Result;
+use eyre::{Result, eyre};
 use op_alloy_network::TransactionBuilder;
 use op_alloy_rpc_types::OpTransactionRequest;
-use reth::{revm::context::TransactionType, rpc::compat::SignTxRequestError};
 
-use crate::BASE_CHAIN_ID;
+use super::DEVNET_CHAIN_ID;
+
+/// EIP-1559 transaction type constant.
+const EIP1559_TX_TYPE: u8 = 2;
 
 /// Hardcoded test accounts using Anvil's deterministic keys.
 /// Derived from the test mnemonic: "test test test test test test test test test test test junk"
@@ -77,42 +79,38 @@ impl Account {
     ) -> Result<(Bytes, Address, TxHash)> {
         let tx_request = OpTransactionRequest::default()
             .from(self.address())
-            .transaction_type(TransactionType::Eip1559.into())
+            .transaction_type(EIP1559_TX_TYPE)
             .with_gas_limit(3_000_000)
             .with_max_fee_per_gas(1_000_000_000)
             .with_max_priority_fee_per_gas(0)
-            .with_chain_id(BASE_CHAIN_ID)
+            .with_chain_id(DEVNET_CHAIN_ID)
             .with_deploy_code(bytecode)
             .with_nonce(nonce);
 
-        let tx = tx_request
-            .build_typed_tx()
-            .map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
+        let tx = tx_request.build_typed_tx().map_err(|_| eyre!("invalid transaction request"))?;
         let signature = self.signer().sign_hash_sync(&tx.signature_hash())?;
         let signed_tx = tx.into_signed(signature);
         let signed_tx_bytes = signed_tx.encoded_2718().into();
 
         let contract_address = self.address().create(signed_tx.nonce());
-        Ok((signed_tx_bytes, contract_address, signed_tx.hash().clone()))
+        Ok((signed_tx_bytes, contract_address, *signed_tx.hash()))
     }
 
     /// Sign a TransactionRequest and return the signed bytes.
     pub fn sign_txn_request(&self, tx_request: OpTransactionRequest) -> Result<(Bytes, TxHash)> {
         let tx_request = tx_request
             .from(self.address())
-            .transaction_type(TransactionType::Eip1559.into())
+            .transaction_type(EIP1559_TX_TYPE)
             .with_gas_limit(500_000)
-            .with_chain_id(BASE_CHAIN_ID)
+            .with_chain_id(DEVNET_CHAIN_ID)
             .with_max_fee_per_gas(1_000_000_000)
             .with_max_priority_fee_per_gas(0);
 
-        let tx = tx_request
-            .build_typed_tx()
-            .map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
+        let tx = tx_request.build_typed_tx().map_err(|_| eyre!("invalid transaction request"))?;
         let signature = self.signer().sign_hash_sync(&tx.signature_hash())?;
         let signed_tx = tx.into_signed(signature);
         let signed_tx_bytes = signed_tx.encoded_2718().into();
         let tx_hash = signed_tx.hash();
-        Ok((signed_tx_bytes, tx_hash.clone()))
+        Ok((signed_tx_bytes, *tx_hash))
     }
 }

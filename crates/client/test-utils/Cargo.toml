@@ -16,6 +16,7 @@ workspace = true
 base-client-primitives.workspace = true
 base-flashtypes.workspace = true
 base-flashblocks.workspace = true
+base-primitives = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth.workspace = true
@@ -35,20 +36,14 @@ reth-ipc.workspace = true
 # alloy
 alloy-primitives.workspace = true
 alloy-genesis.workspace = true
-alloy-sol-macro = { workspace = true, features = ["json"] }
-alloy-sol-types.workspace = true
-alloy-contract.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-engine.workspace = true
-alloy-consensus.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-client.workspace = true
-alloy-signer = "1.0"
-alloy-signer-local = "1.1.0"
+alloy-signer.workspace = true
 
 # op-alloy
-op-alloy-rpc-types.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
 
@@ -62,7 +57,6 @@ jsonrpsee.workspace = true
 # misc
 derive_more = { workspace = true, features = ["deref"] }
 tracing-subscriber.workspace = true
-serde_json.workspace = true
 eyre.workspace = true
 once_cell.workspace = true
 url.workspace = true

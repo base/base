@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    AccessListContract, AccountInfo, BASE_SEPOLIA_CHAIN_ID, Bytecode, IntoAddress, ONE_ETHER,
+    AccessListContract, AccountInfo, Bytecode, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
     OpTransaction, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
@@ -24,7 +24,7 @@ fn test_sload_zero_value() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(contract))
                 .data(AccessListContract::valueCall {}.abi_encode().into())
                 .gas_price(0)
@@ -67,7 +67,7 @@ fn test_update_one_value() {
             .base(
                 TxEnv::builder()
                     .caller(sender)
-                    .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                    .chain_id(Some(DEVNET_CHAIN_ID))
                     .kind(TxKind::Call(contract))
                     .data(
                         AccessListContract::updateValueCall { newValue: U256::from(42) }
@@ -87,7 +87,7 @@ fn test_update_one_value() {
             .base(
                 TxEnv::builder()
                     .caller(sender)
-                    .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                    .chain_id(Some(DEVNET_CHAIN_ID))
                     .kind(TxKind::Call(contract))
                     .data(AccessListContract::valueCall {}.abi_encode().into())
                     .nonce(1)
@@ -147,7 +147,7 @@ fn test_multi_sload_same_slot() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(contract))
                 .data(AccessListContract::getABCall {}.abi_encode().into())
                 .nonce(0)
@@ -193,7 +193,7 @@ fn test_multi_sstore() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(contract))
                 .data(
                     AccessListContract::insertMultipleCall {

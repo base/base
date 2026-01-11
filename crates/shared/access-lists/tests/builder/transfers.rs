@@ -3,15 +3,14 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, BASE_SEPOLIA_CHAIN_ID, IntoAddress, ONE_ETHER, OpTransaction, TxEnv, TxKind, U256,
+    AccountInfo, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER, OpTransaction, TxEnv, TxKind, U256,
     execute_txns_build_access_list,
 };
 
 #[test]
 /// Tests that the system precompiles get included in the access list
 fn test_precompiles() {
-    let base_tx =
-        TxEnv::builder().chain_id(Some(BASE_SEPOLIA_CHAIN_ID)).gas_limit(50_000).gas_price(0);
+    let base_tx = TxEnv::builder().chain_id(Some(DEVNET_CHAIN_ID)).gas_limit(50_000).gas_price(0);
     let tx = OpTransaction::builder().base(base_tx).build_fill();
     let access_list = execute_txns_build_access_list(vec![tx], None, None)
         .expect("access list build should succeed");
@@ -32,7 +31,7 @@ fn test_single_transfer() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(recipient))
                 .value(U256::from(1_000_000))
                 .gas_price(0)
@@ -73,7 +72,7 @@ fn test_gas_included_in_balance_change() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(recipient))
                 .value(U256::from(1_000_000))
                 .gas_price(1000)
@@ -118,7 +117,7 @@ fn test_multiple_transfers() {
             .base(
                 TxEnv::builder()
                     .caller(sender)
-                    .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                    .chain_id(Some(DEVNET_CHAIN_ID))
                     .nonce(i)
                     .kind(TxKind::Call(recipient))
                     .value(U256::from(1_000_000))

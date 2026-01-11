@@ -55,6 +55,7 @@ base-access-lists = { path = "crates/shared/access-lists" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
 base-flashtypes = { path = "crates/shared/flashtypes" }
+base-primitives = { path = "crates/shared/primitives" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 # Client
 base-client-primitives = { path = "crates/client/client-primitives" }
@@ -104,6 +105,7 @@ alloy-eips = "1.0.41"
 alloy-serde = "1.0.41"
 alloy-eip7928 = "0.3.0"
 alloy-genesis = "1.0.41"
+alloy-signer = "1.0.41"
 alloy-signer-local = "1.0.41"
 alloy-hardforks = "0.4.4"
 alloy-provider = "1.0.41"

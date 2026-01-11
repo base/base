@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, B256, BASE_SEPOLIA_CHAIN_ID, Bytecode, ContractFactory, IntoAddress, ONE_ETHER,
+    AccountInfo, B256, Bytecode, ContractFactory, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
     OpTransaction, SimpleStorage, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
@@ -30,7 +30,7 @@ fn test_create_deployment_tracked() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(factory))
                 .data(
                     ContractFactory::deployWithCreateCall {
@@ -96,7 +96,7 @@ fn test_create2_deployment_tracked() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(factory))
                 .data(
                     ContractFactory::deployWithCreate2Call {
@@ -160,7 +160,7 @@ fn test_create_and_immediate_call() {
         .base(
             TxEnv::builder()
                 .caller(sender)
-                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(factory))
                 .data(
                     ContractFactory::deployAndCallCall {

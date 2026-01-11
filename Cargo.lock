@@ -1513,12 +1513,12 @@ dependencies = [
  "alloy-eip7928",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-sol-macro",
  "alloy-sol-types",
- "base-test-utils",
+ "base-primitives",
  "eyre",
  "op-revm",
  "reth-evm",
+ "reth-optimism-chainspec",
  "reth-optimism-evm",
  "revm",
  "serde",
@@ -1680,6 +1680,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-primitives"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "eyre",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
+ "serde_json",
+]
+
+[[package]]
 name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
@@ -1707,8 +1726,6 @@ dependencies = [
 name = "base-test-utils"
 version = "0.2.1"
 dependencies = [
- "alloy-consensus",
- "alloy-contract",
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
@@ -1717,19 +1734,16 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-macro",
- "alloy-sol-types",
  "base-client-primitives",
  "base-flashblocks",
  "base-flashtypes",
+ "base-primitives",
  "chrono",
  "derive_more",
  "eyre",
  "jsonrpsee",
  "once_cell",
  "op-alloy-network",
- "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "reth",
  "reth-db",
@@ -1744,7 +1758,6 @@ dependencies = [
  "reth-provider",
  "reth-rpc-layer",
  "reth-tracing",
- "serde_json",
  "tokio",
  "tokio-stream",
  "tower",

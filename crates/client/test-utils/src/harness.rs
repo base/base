@@ -249,7 +249,7 @@ mod tests {
 
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
-        assert_eq!(chain_id, crate::BASE_CHAIN_ID);
+        assert_eq!(chain_id, crate::DEVNET_CHAIN_ID);
 
         let alice_balance = provider.get_balance(Account::Alice.address()).await?;
         assert!(alice_balance > U256::ZERO);
