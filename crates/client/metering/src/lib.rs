@@ -20,6 +20,8 @@ pub use estimator::{
     ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
     RollingPriorityEstimate,
 };
+// Re-export OpDAConfig for consumers who want dynamic DA configuration
+pub use reth_optimism_payload_builder::config::OpDAConfig;
 
 mod extension;
 pub use extension::{MeteringExtension, MeteringExtensionConfig, MeteringResourceLimits};
