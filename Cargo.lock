@@ -8919,6 +8919,7 @@ version = "1.9.3"
 source = "git+https://github.com/paradigmxyz/reth?tag=v1.9.3#27a8c0f5a6dfb27dea84c5751776ecabdd069646"
 dependencies = [
  "alloy-consensus",
+ "alloy-genesis",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -8929,6 +8930,7 @@ dependencies = [
  "op-revm",
  "reth-chainspec",
  "reth-consensus",
+ "reth-e2e-test-utils",
  "reth-engine-local",
  "reth-evm",
  "reth-network",
@@ -8950,11 +8952,13 @@ dependencies = [
  "reth-rpc-api",
  "reth-rpc-engine-api",
  "reth-rpc-server-types",
+ "reth-tasks",
  "reth-tracing",
  "reth-transaction-pool",
  "reth-trie-common",
  "revm",
  "serde",
+ "serde_json",
  "tokio",
  "url",
 ]

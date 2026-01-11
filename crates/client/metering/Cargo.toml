@@ -14,11 +14,17 @@ workspace = true
 [features]
 default = []
 test-utils = [
-    "dep:base-reth-test-utils",
-    "dep:reth-db",
-    "dep:reth-db-common",
-    "dep:reth-e2e-test-utils",
-    "dep:reth-optimism-node",
+	"dep:base-reth-test-utils",
+	"dep:reth-db",
+	"dep:reth-db-common",
+	"dep:reth-e2e-test-utils",
+	"dep:reth-optimism-node",
+	"base-bundles/test-utils",
+	"reth-db?/test-utils",
+	"reth-evm/test-utils",
+	"reth-optimism-node?/test-utils",
+	"reth-primitives-traits/test-utils",
+	"reth-provider/test-utils"
 ]
 
 [dependencies]
