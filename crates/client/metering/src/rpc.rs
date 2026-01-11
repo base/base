@@ -17,7 +17,7 @@ use reth_provider::{
 use tracing::{error, info};
 
 use crate::{
-    FlashblocksState, MeterBlockResponse, block::meter_block, meter::meter_bundle,
+    MeterBlockResponse, PendingState, PendingTrieCache, block::meter_block, meter::meter_bundle,
     traits::MeteringApiServer,
 };
 
@@ -25,7 +25,10 @@ use crate::{
 #[derive(Debug)]
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
-    flashblocks_state: Arc<FB>,
+    flashblocks_api: Arc<FB>,
+    /// Cache for pending trie input, ensuring each bundle's state root
+    /// calculation only measures the bundle's incremental I/O.
+    pending_trie_cache: PendingTrieCache,
 }
 
 impl<Provider, FB> MeteringApiImpl<Provider, FB>
@@ -38,9 +41,9 @@ where
         + Clone,
     FB: FlashblocksAPI,
 {
-    /// Creates a new instance of MeteringApi
-    pub const fn new(provider: Provider, flashblocks_state: Arc<FB>) -> Self {
-        Self { provider, flashblocks_state }
+    /// Creates a new instance of MeteringApi.
+    pub fn new(provider: Provider, flashblocks_api: Arc<FB>) -> Self {
+        Self { provider, flashblocks_api, pending_trie_cache: PendingTrieCache::new() }
     }
 }
 
@@ -65,8 +68,8 @@ where
             "Starting bundle metering"
         );
 
-        // Get pending flashblocks state
-        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        // Get pending blocks from flashblocks API
+        let pending_blocks = self.flashblocks_api.get_pending_blocks();
 
         // Get header and flashblock index from pending blocks
         // If no pending blocks exist, fall back to latest canonical block
@@ -135,10 +138,34 @@ where
                 )
             })?;
 
-        // If we have pending flashblocks, get the state to apply pending changes
-        let flashblocks_state = pending_blocks
-            .as_ref()
-            .map(|pb| FlashblocksState { bundle_state: pb.get_bundle_state() });
+        // Get the flashblock index if we have pending blocks
+        let state_flashblock_index = pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index());
+
+        // If we have pending blocks, extract the pending state for metering
+        let pending_state = if let Some(pb) = pending_blocks.as_ref() {
+            let bundle_state = pb.get_bundle_state();
+
+            // Build a temporary PendingState without trie_input to get the cached trie
+            let temp_state = PendingState { bundle_state: bundle_state.clone(), trie_input: None };
+
+            // Ensure the pending trie input is cached for reuse across bundle simulations
+            let fb_index = state_flashblock_index.unwrap();
+            let trie_input = self
+                .pending_trie_cache
+                .ensure_cached(header.hash(), fb_index, &temp_state, &*state_provider)
+                .map_err(|e| {
+                    error!(error = %e, "Failed to cache pending trie input");
+                    jsonrpsee::types::ErrorObjectOwned::owned(
+                        jsonrpsee::types::ErrorCode::InternalError.code(),
+                        format!("Failed to cache pending trie input: {}", e),
+                        None::<()>,
+                    )
+                })?;
+
+            Some(PendingState { bundle_state, trie_input: Some(trie_input) })
+        } else {
+            None
+        };
 
         // Meter bundle using utility function
         let output = meter_bundle(
@@ -146,7 +173,7 @@ where
             self.provider.chain_spec(),
             parsed_bundle,
             &header,
-            flashblocks_state,
+            pending_state,
         )
         .map_err(|e| {
             error!(error = %e, "Bundle metering failed");
@@ -182,7 +209,7 @@ where
             gas_fees: output.total_gas_fees,
             results: output.results,
             state_block_number: header.number,
-            state_flashblock_index: Some(flashblock_index),
+            state_flashblock_index,
             total_gas_used: output.total_gas_used,
             total_execution_time_us: output.total_time_us,
             state_root_time_us: output.state_root_time_us,

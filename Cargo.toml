@@ -105,6 +105,7 @@ reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
