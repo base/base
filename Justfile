@@ -157,3 +157,43 @@ build-builder-release:
 # Builds builder with maxperf profile
 build-builder-maxperf:
     cargo build --profile maxperf -p op-rbuilder --bin op-rbuilder --features jemalloc
+
+# ============================================
+# Node Run Targets
+# ============================================
+
+# Run the node with Account Abstraction enabled (dev mode)
+run-node-aa:
+    ./crates/client/account-abstraction/start_dev_node.sh
+
+# Run the node with all extensions enabled (dev mode)
+run-node-dev AA_SEND_URL="http://localhost:8080":
+    cargo build --release -p base-reth-node
+    RUST_LOG=info ./target/release/base-reth-node node \
+        --datadir /tmp/reth-dev \
+        --chain dev \
+        --http \
+        --http.api eth,net,web3,debug,trace,txpool,rpc,admin \
+        --http.addr 0.0.0.0 \
+        --http.port 8545 \
+        --dev \
+        --enable-metering \
+        --account-abstraction.enabled \
+        --account-abstraction.send-url "{{AA_SEND_URL}}" \
+        --account-abstraction.indexer
+
+# Run the node with only AA enabled (no other extensions)
+run-node-aa-only AA_SEND_URL="http://localhost:8080":
+    cargo build --release -p base-reth-node
+    RUST_LOG=info ./target/release/base-reth-node node \
+        --datadir /tmp/reth-aa \
+        --chain dev \
+        --http \
+        --http.api eth,net,web3,debug,trace,txpool,rpc,admin \
+        --http.addr 0.0.0.0 \
+        --http.port 8545 \
+        --dev \
+        --account-abstraction.enabled \
+        --account-abstraction.send-url "{{AA_SEND_URL}}" \
+        --account-abstraction.indexer \
+        --account-abstraction.debug
