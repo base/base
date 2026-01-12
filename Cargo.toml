@@ -35,7 +35,8 @@ redundant-clone = "warn"
 
 [profile.dev]
 debug = "line-tables-only"
-split-debuginfo = "unpacked"
+split-debuginfo = "packed"
+incremental = false
 
 [profile.release]
 opt-level = 3
