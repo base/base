@@ -204,6 +204,10 @@ pub struct Config {
     /// URL of third-party RPC endpoint to forward raw transactions to (enables forwarding if set)
     #[arg(long, env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC")]
     pub raw_tx_forward_rpc: Option<Url>,
+
+    /// TTL for bundle cache in seconds
+    #[arg(long, env = "TIPS_INGRESS_BUNDLE_CACHE_TTL", default_value = "20")]
+    pub bundle_cache_ttl: u64,
 }
 
 pub fn connect_ingress_to_builder(

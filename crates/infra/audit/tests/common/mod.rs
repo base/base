@@ -35,7 +35,10 @@ impl TestHarness {
             .await;
 
         let s3_client = aws_sdk_s3::Client::new(&config);
-        let bucket_name = format!("test-bucket-{}", Uuid::new_v4());
+        let bucket_name = format!(
+            "test-bucket-{}",
+            Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice())
+        );
 
         s3_client
             .create_bucket()

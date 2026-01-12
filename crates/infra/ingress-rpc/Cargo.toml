@@ -33,6 +33,8 @@ backon = { workspace = true, features = ["std", "tokio-sleep"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 clap = { version = "4.5.47", features = ["std", "derive", "env"] }
 op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+moka = { workspace = true, features = ["future"] }
+uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 mockall = "0.13"

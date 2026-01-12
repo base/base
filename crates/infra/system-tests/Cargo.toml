@@ -28,7 +28,7 @@ serde = { workspace = true, features = ["std", "derive"] }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
-uuid = { workspace = true, features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v5", "serde"] }
 serde_json = { workspace = true, features = ["std"] }
 reqwest = { version = "0.12.12", features = ["json"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }

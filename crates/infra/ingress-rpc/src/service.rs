@@ -12,6 +12,7 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
+use moka::future::Cache;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,6 +24,7 @@ use tips_core::{
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Duration, Instant, timeout};
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::metrics::{Metrics, record_histogram};
 use crate::queue::{BundleQueuePublisher, MessageQueue, UserOpQueuePublisher};
@@ -84,6 +86,7 @@ pub struct IngressService<Q: MessageQueue, M: Mempool> {
     builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
     max_backrun_txs: usize,
     max_backrun_gas_limit: u64,
+    bundle_cache: Cache<Uuid, ()>,
 }
 
 impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
@@ -108,6 +111,11 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
         let reputation_service = mempool_engine
             .as_ref()
             .map(|engine| Arc::new(ReputationServiceImpl::new(engine.get_mempool())));
+
+        // A TTL cache to deduplicate bundles with the same Bundle ID
+        let bundle_cache = Cache::builder()
+            .time_to_live(Duration::from_secs(config.bundle_cache_ttl))
+            .build();
         Self {
             mempool_provider,
             simulation_provider,
@@ -134,6 +142,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
             builder_backrun_tx,
             max_backrun_txs: config.max_backrun_txs,
             max_backrun_gas_limit: config.max_backrun_gas_limit,
+            bundle_cache,
         }
     }
 }
@@ -301,7 +310,20 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
 
         self.metrics.bundles_parsed.increment(1);
 
-        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await.ok();
+        let meter_bundle_response = match self.meter_bundle(&bundle, bundle_hash).await {
+            Ok(response) => {
+                info!(message = "Metering succeeded for raw transaction", bundle_hash = %bundle_hash, response = ?response);
+                Some(response)
+            }
+            Err(e) => {
+                warn!(
+                    bundle_hash = %bundle_hash,
+                    error = %e,
+                    "Metering failed for raw transaction"
+                );
+                None
+            }
+        };
 
         if let Some(meter_info) = meter_bundle_response.as_ref() {
             self.metrics.successful_simulations.increment(1);
@@ -313,42 +335,54 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
         let accepted_bundle =
             AcceptedBundle::new(parsed_bundle, meter_bundle_response.unwrap_or_default());
 
-        if send_to_kafka {
-            if let Err(e) = self
-                .bundle_queue_publisher
-                .publish(&accepted_bundle, bundle_hash)
-                .await
-            {
-                warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
+        let bundle_id = *accepted_bundle.uuid();
+        if self.bundle_cache.get(&bundle_id).await.is_some() {
+            debug!(
+                message = "Duplicate bundle detected, skipping Kafka publish",
+                bundle_id = %bundle_id,
+                bundle_hash = %bundle_hash,
+                transaction_hash = %transaction.tx_hash(),
+            );
+        } else {
+            self.bundle_cache.insert(bundle_id, ()).await;
+
+            if send_to_kafka {
+                if let Err(e) = self
+                    .bundle_queue_publisher
+                    .publish(&accepted_bundle, bundle_hash)
+                    .await
+                {
+                    warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
+                }
+
+                self.metrics.sent_to_kafka.increment(1);
+                info!(message="queued singleton bundle", txn_hash=%transaction.tx_hash());
             }
 
-            self.metrics.sent_to_kafka.increment(1);
-            info!(message="queued singleton bundle", txn_hash=%transaction.tx_hash());
-        }
-
-        if send_to_mempool {
-            let response = self
-                .mempool_provider
-                .send_raw_transaction(data.iter().as_slice())
-                .await;
-            match response {
-                Ok(_) => {
-                    self.metrics.sent_to_mempool.increment(1);
-                    debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
-                }
-                Err(e) => {
-                    warn!(message = "Failed to send raw transaction to mempool", error = %e);
+            if send_to_mempool {
+                let response = self
+                    .mempool_provider
+                    .send_raw_transaction(data.iter().as_slice())
+                    .await;
+                match response {
+                    Ok(_) => {
+                        self.metrics.sent_to_mempool.increment(1);
+                        debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
+                    }
+                    Err(e) => {
+                        warn!(message = "Failed to send raw transaction to mempool", error = %e);
+                    }
                 }
             }
+
+            info!(
+                message = "processed transaction",
+                bundle_hash = %bundle_hash,
+                transaction_hash = %transaction.tx_hash(),
+            );
+
+            self.send_audit_event(&accepted_bundle, accepted_bundle.bundle_hash());
         }
-
-        info!(
-            message = "processed transaction",
-            bundle_hash = %bundle_hash,
-            transaction_hash = %transaction.tx_hash(),
-        );
-
-        self.send_audit_event(&accepted_bundle, accepted_bundle.bundle_hash());
 
         self.metrics
             .send_raw_transaction_duration
@@ -615,6 +649,7 @@ mod tests {
             user_operation_topic: String::new(),
             max_backrun_txs: 5,
             max_backrun_gas_limit: 5000000,
+            bundle_cache_ttl: 20,
         }
     }
 

@@ -18,7 +18,7 @@ metrics-derive.workspace = true
 tips-core = { workspace = true, features = ["test-utils"] }
 serde = { workspace = true, features = ["std", "derive"] }
 tokio = { workspace = true, features = ["full"] }
-uuid = { workspace = true, features = ["v4", "serde"] }
+uuid = { workspace = true, features = ["v5", "serde"] }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
@@ -26,6 +26,7 @@ rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
+futures = { workspace = true }
 
 [dev-dependencies]
 testcontainers = { workspace = true, features = ["blocking"] }

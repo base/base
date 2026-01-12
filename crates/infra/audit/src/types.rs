@@ -140,7 +140,11 @@ impl BundleEvent {
                 format!("{bundle_id}-{block_hash}")
             }
             _ => {
-                format!("{}-{}", self.bundle_id(), Uuid::new_v4())
+                format!(
+                    "{}-{}",
+                    self.bundle_id(),
+                    Uuid::new_v5(&Uuid::NAMESPACE_OID, self.bundle_id().as_bytes())
+                )
             }
         }
     }
@@ -200,7 +204,11 @@ impl UserOpEvent {
                 format!("{user_op_hash}-{tx_hash}")
             }
             _ => {
-                format!("{}-{}", self.user_op_hash(), Uuid::new_v4())
+                format!(
+                    "{}-{}",
+                    self.user_op_hash(),
+                    Uuid::new_v5(&Uuid::NAMESPACE_OID, self.user_op_hash().as_slice())
+                )
             }
         }
     }

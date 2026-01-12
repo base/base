@@ -244,7 +244,9 @@ impl BundleTxs for AcceptedBundle {
 impl AcceptedBundle {
     pub fn new(bundle: ParsedBundle, meter_bundle_response: MeterBundleResponse) -> Self {
         Self {
-            uuid: bundle.replacement_uuid.unwrap_or_else(Uuid::new_v4),
+            uuid: bundle.replacement_uuid.unwrap_or_else(|| {
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice())
+            }),
             txs: bundle.txs,
             block_number: bundle.block_number,
             flashblock_number_min: bundle.flashblock_number_min,
@@ -345,7 +347,7 @@ mod tests {
 
         assert_eq!(bundle.bundle_hash(), expected_bundle_hash_single);
 
-        let uuid = Uuid::new_v4();
+        let uuid = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
         let bundle = AcceptedBundle::new(
             Bundle {
                 txs: vec![tx1_bytes.clone().into(), tx2_bytes.clone().into()],
@@ -447,5 +449,44 @@ mod tests {
         assert_eq!(deserialized.state_flashblock_index, None);
         assert_eq!(deserialized.state_block_number, 12345);
         assert_eq!(deserialized.total_gas_used, 21000);
+    }
+
+    #[test]
+    fn test_same_uuid_for_same_bundle_hash() {
+        let alice = PrivateKeySigner::random();
+        let bob = PrivateKeySigner::random();
+
+        // suppose this is a spam tx
+        let tx1 = create_transaction(alice.clone(), 1, bob.address());
+        let tx1_bytes = tx1.encoded_2718();
+
+        // we receive it the first time
+        let bundle1 = AcceptedBundle::new(
+            Bundle {
+                txs: vec![tx1_bytes.clone().into()],
+                block_number: 1,
+                replacement_uuid: None,
+                ..Default::default()
+            }
+            .try_into()
+            .unwrap(),
+            create_test_meter_bundle_response(),
+        );
+
+        // but we may receive it more than once
+        let bundle2 = AcceptedBundle::new(
+            Bundle {
+                txs: vec![tx1_bytes.clone().into()],
+                block_number: 1,
+                replacement_uuid: None,
+                ..Default::default()
+            }
+            .try_into()
+            .unwrap(),
+            create_test_meter_bundle_response(),
+        );
+
+        // however, the UUID should be the same
+        assert_eq!(bundle1.uuid(), bundle2.uuid());
     }
 }

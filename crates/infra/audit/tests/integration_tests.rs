@@ -9,7 +9,7 @@ use tips_audit_lib::{
     storage::{BundleEventS3Reader, S3EventReaderWriter},
     types::{BundleEvent, DropReason, UserOpEvent},
 };
-use tips_core::test_utils::create_bundle_from_txn_data;
+use tips_core::{BundleExtensions, test_utils::create_bundle_from_txn_data};
 use uuid::Uuid;
 mod common;
 use common::TestHarness;
@@ -24,11 +24,12 @@ async fn test_kafka_publisher_s3_archiver_integration()
     let s3_writer =
         S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
-    let test_bundle_id = Uuid::new_v4();
+    let bundle = create_bundle_from_txn_data();
+    let test_bundle_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
     let test_events = [
         BundleEvent::Received {
             bundle_id: test_bundle_id,
-            bundle: Box::new(create_bundle_from_txn_data()),
+            bundle: Box::new(bundle.clone()),
         },
         BundleEvent::Dropped {
             bundle_id: test_bundle_id,
@@ -45,6 +46,8 @@ async fn test_kafka_publisher_s3_archiver_integration()
     let mut consumer = KafkaAuditArchiver::new(
         KafkaAuditLogReader::new(harness.kafka_consumer, topic.to_string())?,
         s3_writer.clone(),
+        1,
+        100,
     );
 
     tokio::spawn(async move {

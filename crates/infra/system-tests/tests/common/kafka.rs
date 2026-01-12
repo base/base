@@ -39,7 +39,13 @@ fn build_kafka_consumer(properties_env: &str, default_path: &str) -> Result<Stre
     let mut client_config = ClientConfig::from_iter(load_kafka_config_from_file(&props_file)?);
 
     client_config
-        .set("group.id", format!("tips-system-tests-{}", Uuid::new_v4()))
+        .set(
+            "group.id",
+            format!(
+                "tips-system-tests-{}",
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice())
+            ),
+        )
         .set("enable.auto.commit", "false")
         .set("auto.offset.reset", "earliest");
 
