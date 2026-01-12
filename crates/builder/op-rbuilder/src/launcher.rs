@@ -2,8 +2,8 @@ use eyre::Result;
 use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
-    args::*,
-    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    args::OpRbuilderArgs,
+    builders::{BuilderConfig, PayloadBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
@@ -25,45 +25,7 @@ use reth_optimism_node::{
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};
 
-pub fn launch() -> Result<()> {
-    let cli = Cli::parsed();
-    let mode = cli.builder_mode();
-
-    #[cfg(feature = "telemetry")]
-    let telemetry_args = match &cli.command {
-        reth_optimism_cli::commands::Commands::Node(node_command) => {
-            node_command.ext.telemetry.clone()
-        }
-        _ => Default::default(),
-    };
-
-    #[cfg(not(feature = "telemetry"))]
-    let cli_app = cli.configure();
-
-    #[cfg(feature = "telemetry")]
-    let mut cli_app = cli.configure();
-    #[cfg(feature = "telemetry")]
-    {
-        use crate::primitives::telemetry::setup_telemetry_layer;
-        let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
-        cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
-    }
-
-    match mode {
-        BuilderMode::Standard => {
-            tracing::info!("Starting OP builder in standard mode");
-            let launcher = BuilderLauncher::<StandardBuilder>::new();
-            cli_app.run(launcher)?;
-        }
-        BuilderMode::Flashblocks => {
-            tracing::info!("Starting OP builder in flashblocks mode");
-            let launcher = BuilderLauncher::<FlashblocksBuilder>::new();
-            cli_app.run(launcher)?;
-        }
-    }
-    Ok(())
-}
-
+/// Launcher for the OP builder node.
 pub struct BuilderLauncher<B> {
     _builder: PhantomData<B>,
 }
