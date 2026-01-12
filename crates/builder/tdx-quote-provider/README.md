@@ -89,8 +89,6 @@ To build a docker image:
 docker build -f crates/tdx-quote-provider/Dockerfile -t tdx-quote-provider .
 ```
 
-Builds of the websocket proxy are provided on [Dockerhub](https://hub.docker.com/r/flashbots/tdx-quote-provider/tags).
-
 You can see a full list of parameters by running:
 
 `docker run flashbots/tdx-quote-provider:latest --help`

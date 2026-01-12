@@ -8,8 +8,12 @@ homepage.workspace = true
 repository.workspace = true
 default-run = "op-rbuilder"
 
-[lints]
-workspace = true
+[lints.rust]
+unreachable_pub = "deny"
+dead_code = "allow"
+
+[lints.clippy]
+unused_async = "warn"
 
 [dependencies]
 p2p = { path = "../p2p" }
@@ -171,41 +175,41 @@ hyper-util = { version = "0.1.11" }
 http-body-util = { version = "0.1.3" }
 
 [features]
-default = ["jemalloc"]
+default = [ "jemalloc" ]
 
 jemalloc = [
-    "dep:tikv-jemallocator",
-    "reth-cli-util/jemalloc",
-    "reth-optimism-cli/jemalloc",
+	"dep:tikv-jemallocator",
+	"reth-cli-util/jemalloc",
+	"reth-optimism-cli/jemalloc",
 ]
 jemalloc-prof = [
-    "jemalloc",
-    "tikv-jemallocator?/profiling",
-    "reth/jemalloc-prof",
-    "reth-cli-util/jemalloc-prof",
+	"jemalloc",
+	"reth-cli-util/jemalloc-prof",
+	"reth/jemalloc-prof",
+	"tikv-jemallocator?/profiling",
 ]
 
-min-error-logs = ["tracing/release_max_level_error"]
-min-warn-logs = ["tracing/release_max_level_warn"]
-min-info-logs = ["tracing/release_max_level_info"]
-min-debug-logs = ["tracing/release_max_level_debug"]
-min-trace-logs = ["tracing/release_max_level_trace"]
+min-error-logs = [ "tracing/release_max_level_error" ]
+min-warn-logs = [ "tracing/release_max_level_warn" ]
+min-info-logs = [ "tracing/release_max_level_info" ]
+min-debug-logs = [ "tracing/release_max_level_debug" ]
+min-trace-logs = [ "tracing/release_max_level_trace" ]
 
 testing = [
-    "nanoid",
-    "reth-ipc",
-    "reth-node-builder/test-utils",
-    "ctor",
-    "macros",
-    "rlimit",
-    "hyper",
-    "hyper-util",
-    "http-body-util",
+	"ctor",
+	"http-body-util",
+	"hyper",
+	"hyper-util",
+	"macros",
+	"nanoid",
+	"reth-ipc",
+	"reth-node-builder/test-utils",
+	"rlimit",
 ]
 
 interop = []
 
-telemetry = ["reth-tracing-otlp", "opentelemetry"]
+telemetry = [ "opentelemetry", "reth-tracing-otlp" ]
 
 custom-engine-api = []
 

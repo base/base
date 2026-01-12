@@ -24,5 +24,9 @@ tokio = { workspace = true, features = [ "macros" ] }
 tokio-util = { workspace = true, features = [ "compat", "codec" ]  }
 tracing = { workspace = true }
 
-[lints]
-workspace = true
+[lints.rust]
+unreachable_pub = "deny"
+dead_code = "allow"
+
+[lints.clippy]
+unused_async = "warn"

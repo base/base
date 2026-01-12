@@ -39,7 +39,7 @@ zepter-fix:
   @command -v zepter >/dev/null 2>&1 || cargo install zepter
   zepter format features --fix
 
-# Runs tests across workspace with all features enabled
+# Runs tests across workspace with all features enabled (excludes builder crates)
 test: build-contracts
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features
@@ -48,16 +48,16 @@ test: build-contracts
 hack:
   cargo hack check --feature-powerset --no-dev-deps
 
-# Checks formatting
+# Checks formatting (builder crates excluded via rustfmt.toml)
 check-format:
     cargo +nightly fmt --all -- --check
 
-# Fixes any formatting issues
+# Fixes any formatting issues (builder crates excluded via rustfmt.toml)
 format-fix:
-    cargo fix --allow-dirty --allow-staged
+    cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
-# Checks clippy
+# Checks clippy (excludes builder crates)
 check-clippy:
     cargo clippy --all-targets -- -D warnings
 
@@ -89,7 +89,7 @@ build-contracts:
 clean:
     cargo clean
 
-# Checks if there are any unused dependencies
+# Checks if there are any unused dependencies (excludes builder crates)
 check-udeps: build-contracts
   @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
   cargo +nightly udeps --workspace --all-features --all-targets
@@ -113,3 +113,47 @@ benches:
 # Runs flashblocks pending state benchmarks
 bench-flashblocks:
     cargo bench -p base-flashblocks --bench pending_state
+
+# ============================================
+# Builder Crate Targets
+# ============================================
+
+# Builds builder crates
+build-builder:
+    cargo build -p op-rbuilder -p p2p -p tdx-quote-provider
+
+# Builds op-rbuilder binary
+build-op-rbuilder:
+    cargo build -p op-rbuilder --bin op-rbuilder
+
+# Builds tester binary (requires testing feature)
+build-tester:
+    cargo build -p op-rbuilder --bin tester --features "testing"
+
+# Builds tdx-quote-provider binary
+build-tdx-quote-provider:
+    cargo build -p tdx-quote-provider --bin tdx-quote-provider
+
+# Runs tests for builder crates (with OTEL env vars disabled)
+test-builder:
+    OTEL_EXPORTER_OTLP_ENDPOINT="" OTEL_EXPORTER_OTLP_HEADERS="" OTEL_SDK_DISABLED="true" \
+    cargo test -p op-rbuilder -p p2p -p tdx-quote-provider --verbose
+
+# Runs clippy on builder crates (using nightly, matching op-rbuilder's original)
+check-clippy-builder:
+    cargo +nightly clippy -p op-rbuilder -p p2p -p tdx-quote-provider --all-features -- -D warnings
+
+# Fixes formatting for builder crates
+format-builder:
+    cargo +nightly fmt -p op-rbuilder -p p2p -p tdx-quote-provider
+
+# Full builder CI check
+ci-builder: build-builder test-builder check-clippy-builder
+
+# Builds builder release binary
+build-builder-release:
+    cargo build --release -p op-rbuilder --bin op-rbuilder
+
+# Builds builder with maxperf profile
+build-builder-maxperf:
+    cargo build --profile maxperf -p op-rbuilder --bin op-rbuilder --features jemalloc

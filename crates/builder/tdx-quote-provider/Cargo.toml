@@ -29,6 +29,12 @@ metrics-exporter-prometheus = { version = "0.17.0", features = [
 tracing-subscriber = { version = "0.3.11", features = ["env-filter", "json"] }
 tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", features = ["configfs"], branch = "main"}
 
+[lints.rust]
+dead_code = "allow"
+
+[lints.clippy]
+unused_async = "warn"
+
 [dev-dependencies]
 reqwest.workspace = true
 
