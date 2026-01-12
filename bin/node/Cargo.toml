@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 # internal
+base-account-abstraction.workspace = true
 base-cli-utils.workspace = true
 base-client-node.workspace = true
 base-flashblocks.workspace = true

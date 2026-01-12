@@ -1,5 +1,6 @@
 //! Contains the CLI arguments
 
+use base_account_abstraction::{AccountAbstractionArgs, AccountAbstractionConfig};
 use base_flashblocks::FlashblocksConfig;
 use base_txpool::TxpoolConfig;
 use reth_optimism_node::args::RollupArgs;
@@ -38,6 +39,10 @@ pub struct Args {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
+
+    /// Account Abstraction (ERC-4337) arguments
+    #[command(flatten)]
+    pub account_abstraction: AccountAbstractionArgs,
 }
 
 impl Args {
@@ -64,5 +69,11 @@ impl From<Args> for TxpoolConfig {
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
             sequencer_rpc: args.rollup_args.sequencer,
         }
+    }
+}
+
+impl From<Args> for AccountAbstractionConfig {
+    fn from(args: Args) -> Self {
+        Self::from(args.account_abstraction)
     }
 }

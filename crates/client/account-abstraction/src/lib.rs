@@ -3,12 +3,14 @@ pub mod contracts;
 pub mod decoding;
 pub mod entrypoint;
 pub mod estimation;
+mod extension;
 pub mod provider;
 mod rpc;
 pub mod simulation;
 mod tips_client;
 
 pub use config::{AccountAbstractionArgs, ConfigError};
+pub use extension::{AccountAbstractionConfig, AccountAbstractionExtension};
 pub use contracts::{
     ENTRYPOINT_V06_ADDRESS, ENTRYPOINT_V07_ADDRESS, ENTRYPOINT_V08_ADDRESS,
 };

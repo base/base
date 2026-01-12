@@ -5,6 +5,7 @@
 
 pub mod cli;
 
+use base_account_abstraction::AccountAbstractionExtension;
 use base_client_node::BaseNodeRunner;
 use base_flashblocks::FlashblocksExtension;
 use base_metering::MeteringExtension;
@@ -29,6 +30,7 @@ fn main() {
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
         runner.install_ext::<TxPoolExtension>(args.clone().into());
         runner.install_ext::<MeteringExtension>(args.enable_metering);
+        runner.install_ext::<AccountAbstractionExtension>(args.clone().into());
         runner.install_ext::<FlashblocksExtension>(args.into());
 
         let handle = runner.run(builder);

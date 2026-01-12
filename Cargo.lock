@@ -2196,6 +2196,7 @@ dependencies = [
 name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
+ "base-account-abstraction",
  "base-cli-utils",
  "base-client-node",
  "base-flashblocks",
