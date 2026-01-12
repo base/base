@@ -7,6 +7,7 @@ use crate::{
 };
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
+use base_flashtypes::FlashblocksPayloadV1;
 use eyre::{WrapErr as _, bail};
 use op_alloy_consensus::OpTxEnvelope;
 use reth::revm::{State, database::StateProviderDatabase};
@@ -19,7 +20,6 @@ use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
-use rollup_boost::FlashblocksPayloadV1;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
