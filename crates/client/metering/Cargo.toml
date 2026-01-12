@@ -11,6 +11,14 @@ description = "Metering RPC for Base node"
 [lints]
 workspace = true
 
+[features]
+test-utils = [
+	"base-client-node/test-utils",
+	"dep:reth-db",
+	"dep:reth-db-common",
+	"dep:reth-optimism-node",
+]
+
 [dependencies]
 # workspace
 base-bundles.workspace = true
@@ -37,6 +45,11 @@ jsonrpsee.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true
+
+# test-utils (optional)
+reth-db = { workspace = true, features = ["test-utils"], optional = true }
+reth-db-common = { workspace = true, optional = true }
+reth-optimism-node = { workspace = true, optional = true }
 
 [dev-dependencies]
 base-client-node = { workspace = true, features = ["test-utils"] }
