@@ -133,7 +133,7 @@ rand = "0.9.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 shellexpand = "3.1"
 serde_yaml = { version = "0.9" }
-moka = "0.12"
+moka = { version = "0.12", features = ["future"] }
 http = "1.0"
 sha3 = "0.10"
 reqwest = "0.12.23"
