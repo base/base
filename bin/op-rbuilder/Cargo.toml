@@ -25,9 +25,6 @@ eyre.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["jemalloc"]
-jemalloc = [
-	"reth-cli-util/jemalloc",
-	"op-rbuilder/jemalloc",
-]
-telemetry = ["op-rbuilder/telemetry", "reth-optimism-cli"]
+default = [ "jemalloc" ]
+jemalloc = [ "op-rbuilder/jemalloc", "reth-cli-util/jemalloc" ]
+telemetry = [ "op-rbuilder/telemetry", "reth-optimism-cli" ]
