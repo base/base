@@ -46,7 +46,7 @@ Base Reth Node is a Reth-based Ethereum node implementation, specifically tailor
 
 ## Prerequisites
 
-- **Rust:** Version 1.85 or later (as specified in `Cargo.toml`). You can install Rust using [rustup](https://rustup.rs/).
+- **Rust:** Version 1.88 or later (matches the `rust-version` in `Cargo.toml`). You can install Rust using [rustup](https://rustup.rs/).
 - **Just:** A command runner. Installation instructions can be found [here](https://github.com/casey/just#installation).
 - **Docker:** (Optional) For building and running the node in a container. See [Docker installation guide](https://docs.docker.com/get-docker/).
 - **Build Essentials:** `git`, `libclang-dev`, `pkg-config`, `curl`, `build-essential` (these are installed in the Docker build process and may be needed for local builds on some systems).
