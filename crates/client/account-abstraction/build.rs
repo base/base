@@ -64,6 +64,13 @@ fn main() {
         "EntryPointSimulations.sol",
         "EntryPointSimulations",
     );
+    let v09_bytecode = get_bytecode(
+        &manifest_dir,
+        "v0_9",
+        "v0.9",
+        "EntryPointSimulations.sol",
+        "EntryPointSimulations",
+    );
 
     // Generate the Rust module
     generate_bytecode_module(
@@ -71,6 +78,7 @@ fn main() {
         v06_bytecode.as_deref(),
         v07_bytecode.as_deref(),
         v08_bytecode.as_deref(),
+        v09_bytecode.as_deref(),
     );
 }
 
@@ -252,6 +260,7 @@ fn generate_bytecode_module(
     v06: Option<&str>,
     v07: Option<&str>,
     v08: Option<&str>,
+    v09: Option<&str>,
 ) {
     let dest_path = out_dir.join("entrypoint_bytecode.rs");
     let mut file = fs::File::create(&dest_path).expect("Failed to create bytecode file");
@@ -292,6 +301,16 @@ fn generate_bytecode_module(
     );
     writeln!(file).unwrap();
 
+    // v0.9 - EntryPointSimulations
+    write_bytecode_const(
+        &mut file,
+        "ENTRYPOINT_V09_SIMULATIONS_DEPLOYED_BYTECODE",
+        "v0.9 EntryPointSimulations",
+        v09,
+        "EntryPointSimulations_v0.9.hex",
+    );
+    writeln!(file).unwrap();
+
     // Helper functions
     writeln!(file, "/// Check if v0.6 simulation bytecode is available").unwrap();
     writeln!(file, "#[inline]").unwrap();
@@ -311,6 +330,13 @@ fn generate_bytecode_module(
     writeln!(file, "#[inline]").unwrap();
     writeln!(file, "pub const fn has_v08_bytecode() -> bool {{").unwrap();
     writeln!(file, "    !ENTRYPOINT_V08_SIMULATIONS_DEPLOYED_BYTECODE.is_empty()").unwrap();
+    writeln!(file, "}}").unwrap();
+    writeln!(file).unwrap();
+
+    writeln!(file, "/// Check if v0.9 simulation bytecode is available").unwrap();
+    writeln!(file, "#[inline]").unwrap();
+    writeln!(file, "pub const fn has_v09_bytecode() -> bool {{").unwrap();
+    writeln!(file, "    !ENTRYPOINT_V09_SIMULATIONS_DEPLOYED_BYTECODE.is_empty()").unwrap();
     writeln!(file, "}}").unwrap();
 }
 

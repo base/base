@@ -35,7 +35,7 @@ mod storage;
 
 pub use event::{
     is_entry_point, try_parse_user_operation_ref, IndexedUserOperationRef, UserOperationEvent,
-    ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08,
+    ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08, ENTRYPOINT_V09,
 };
 pub use exex::account_abstraction_indexer_exex;
 pub use storage::UserOperationStorage;

@@ -742,10 +742,11 @@ where
                     paymaster_validation_data: exec.paymasterValidationData,
                 })
             }
-            EntryPointVersion::V08 => {
+            // v0.8 and v0.9 are ABI-compatible
+            EntryPointVersion::V08 | EntryPointVersion::V09 => {
                 let exec = ExecutionResultV08::abi_decode(data)
                     .map_err(|e| GasEstimationError::SimulationFailed(format!(
-                        "Failed to decode v0.8 ExecutionResult: {}",
+                        "Failed to decode v0.8/v0.9 ExecutionResult: {}",
                         e
                     )))?;
                 Ok(DecodedExecutionResult {

@@ -17,6 +17,10 @@ pub const ENTRYPOINT_V07: Address = address!("0000000071727de22e5e9d8baf0edac6f3
 /// EntryPoint v0.8 address
 pub const ENTRYPOINT_V08: Address = address!("4337084d9e255ff0702461cf8895ce9e3b5ff108");
 
+/// EntryPoint v0.9 address
+/// Source: https://github.com/eth-infinitism/account-abstraction/releases/tag/v0.9.0
+pub const ENTRYPOINT_V09: Address = address!("433709009B8330FDa32311DF1C2AFA402eD8D009");
+
 // Define the UserOperationEvent using alloy's sol! macro
 // This event is emitted by the EntryPoint contract when a UserOperation is executed
 sol! {
@@ -59,7 +63,7 @@ pub struct IndexedUserOperationRef {
 
 /// Returns true if the address is a known EntryPoint contract
 pub fn is_entry_point(address: Address) -> bool {
-    address == ENTRYPOINT_V06 || address == ENTRYPOINT_V07 || address == ENTRYPOINT_V08
+    address == ENTRYPOINT_V06 || address == ENTRYPOINT_V07 || address == ENTRYPOINT_V08 || address == ENTRYPOINT_V09
 }
 
 /// Try to parse a UserOperationEvent from a log and return a minimal reference
@@ -101,6 +105,7 @@ mod tests {
         assert!(is_entry_point(ENTRYPOINT_V06));
         assert!(is_entry_point(ENTRYPOINT_V07));
         assert!(is_entry_point(ENTRYPOINT_V08));
+        assert!(is_entry_point(ENTRYPOINT_V09));
         assert!(!is_entry_point(Address::ZERO));
     }
 

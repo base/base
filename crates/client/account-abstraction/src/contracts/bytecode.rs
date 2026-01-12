@@ -14,9 +14,10 @@
 //! The contracts are included as git submodules. To compile:
 //!
 //! ```sh
+//! cd contracts/solidity/v0_6 && forge build
 //! cd contracts/solidity/v0_7 && forge build
 //! cd contracts/solidity/v0_8 && forge build
-//! cd contracts/solidity/v0_6 && forge build
+//! cd contracts/solidity/v0_9 && forge build
 //! ```
 //!
 //! Then rebuild the crate:
@@ -37,11 +38,13 @@ mod tests {
         let _ = ENTRYPOINT_V06_SIMULATIONS_DEPLOYED_BYTECODE;
         let _ = ENTRYPOINT_V07_SIMULATIONS_DEPLOYED_BYTECODE;
         let _ = ENTRYPOINT_V08_SIMULATIONS_DEPLOYED_BYTECODE;
+        let _ = ENTRYPOINT_V09_SIMULATIONS_DEPLOYED_BYTECODE;
 
         // Verify they have content
         assert!(has_v06_bytecode(), "v0.6 bytecode should be available");
         assert!(has_v07_bytecode(), "v0.7 bytecode should be available");
         assert!(has_v08_bytecode(), "v0.8 bytecode should be available");
+        assert!(has_v09_bytecode(), "v0.9 bytecode should be available");
     }
 }
 

@@ -45,7 +45,9 @@ pub fn decode_simulation_revert(
 ) -> SimulationRevertDecoded {
     match version {
         EntryPointVersion::V06 => decode_v06_simulation_revert(revert_data),
-        EntryPointVersion::V07 | EntryPointVersion::V08 => decode_v07_simulation_revert(revert_data),
+        EntryPointVersion::V07 | EntryPointVersion::V08 | EntryPointVersion::V09 => {
+            decode_v07_simulation_revert(revert_data)
+        }
     }
 }
 

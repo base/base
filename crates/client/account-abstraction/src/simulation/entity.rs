@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
 use std::sync::Arc;
 
-use crate::contracts::{ENTRYPOINT_V06_ADDRESS, ENTRYPOINT_V07_ADDRESS, ENTRYPOINT_V08_ADDRESS};
+use crate::contracts::{ENTRYPOINT_V06_ADDRESS, ENTRYPOINT_V07_ADDRESS, ENTRYPOINT_V08_ADDRESS, ENTRYPOINT_V09_ADDRESS};
 use crate::entrypoint::EntryPointVersion;
 use crate::estimation::SimulationProvider;
 use crate::rpc::UserOperation;
@@ -269,6 +269,7 @@ pub fn is_entry_point(address: Address) -> bool {
     address == ENTRYPOINT_V06_ADDRESS
         || address == ENTRYPOINT_V07_ADDRESS
         || address == ENTRYPOINT_V08_ADDRESS
+        || address == ENTRYPOINT_V09_ADDRESS
 }
 
 /// Get the EntryPoint address for a version
@@ -277,6 +278,7 @@ pub fn entry_point_address(version: EntryPointVersion) -> Address {
         EntryPointVersion::V06 => ENTRYPOINT_V06_ADDRESS,
         EntryPointVersion::V07 => ENTRYPOINT_V07_ADDRESS,
         EntryPointVersion::V08 => ENTRYPOINT_V08_ADDRESS,
+        EntryPointVersion::V09 => ENTRYPOINT_V09_ADDRESS,
     }
 }
 
@@ -327,6 +329,7 @@ mod tests {
         assert!(is_entry_point(ENTRYPOINT_V06_ADDRESS));
         assert!(is_entry_point(ENTRYPOINT_V07_ADDRESS));
         assert!(is_entry_point(ENTRYPOINT_V08_ADDRESS));
+        assert!(is_entry_point(ENTRYPOINT_V09_ADDRESS));
         assert!(!is_entry_point(Address::ZERO));
         assert!(!is_entry_point(Address::repeat_byte(0x01)));
     }

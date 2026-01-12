@@ -17,6 +17,9 @@ use crate::contracts::{
     // v0.8
     IEntryPointSimulationsV08, PackedUserOperationV08, ENTRYPOINT_V08_ADDRESS,
     ENTRYPOINT_V08_SIMULATIONS_BYTECODE,
+    // v0.9
+    IEntryPointSimulationsV09, PackedUserOperationV09, ENTRYPOINT_V09_ADDRESS,
+    ENTRYPOINT_V09_SIMULATIONS_BYTECODE,
 };
 
 use crate::rpc::{UserOperation, UserOperationV07};
@@ -27,6 +30,7 @@ pub enum EntryPointVersion {
     V06,
     V07,
     V08,
+    V09,
 }
 
 impl EntryPointVersion {
@@ -36,6 +40,7 @@ impl EntryPointVersion {
             Self::V06 => ENTRYPOINT_V06_ADDRESS,
             Self::V07 => ENTRYPOINT_V07_ADDRESS,
             Self::V08 => ENTRYPOINT_V08_ADDRESS,
+            Self::V09 => ENTRYPOINT_V09_ADDRESS,
         }
     }
 
@@ -45,7 +50,7 @@ impl EntryPointVersion {
     pub fn needs_simulation_override(&self) -> bool {
         match self {
             Self::V06 => false, // v0.6 reverts with ExecutionResult - parse revert data
-            Self::V07 | Self::V08 => true, // v0.7+ use EntryPointSimulations contract
+            Self::V07 | Self::V08 | Self::V09 => true, // v0.7+ use EntryPointSimulations contract
         }
     }
 
@@ -53,7 +58,7 @@ impl EntryPointVersion {
     pub fn simulation_reverts(&self) -> bool {
         match self {
             Self::V06 => true,  // v0.6 simulateHandleOp always reverts
-            Self::V07 | Self::V08 => false, // v0.7+ return ExecutionResult
+            Self::V07 | Self::V08 | Self::V09 => false, // v0.7+ return ExecutionResult
         }
     }
 }
@@ -112,6 +117,9 @@ impl EntryPointVersionResolver {
             }
             EntryPointVersion::V08 => {
                 Self::build_v08_simulate_handle_op(user_op, target, target_call_data)
+            }
+            EntryPointVersion::V09 => {
+                Self::build_v09_simulate_handle_op(user_op, target, target_call_data)
             }
         }
     }
@@ -270,6 +278,47 @@ impl EntryPointVersionResolver {
         })
     }
 
+    /// Build v0.9 simulateHandleOp calldata
+    /// v0.9 is ABI-compatible with v0.7/v0.8 but deployed at a different address
+    fn build_v09_simulate_handle_op(
+        user_op: &UserOperation,
+        target: Address,
+        target_call_data: Bytes,
+    ) -> Result<SimulationCallData, String> {
+        let op = match user_op {
+            UserOperation::V07(op) => op, // v0.9 uses same format as v0.7/v0.8
+            UserOperation::V06(_) => {
+                return Err("Cannot use v0.6 UserOperation with v0.9 EntryPoint".to_string())
+            }
+        };
+
+        let packed = Self::pack_v09_user_op(op);
+
+        let call = IEntryPointSimulationsV09::simulateHandleOpCall {
+            op: packed,
+            target,
+            targetCallData: target_call_data,
+        };
+
+        // Build state override with simulation bytecode
+        let state_override = if !ENTRYPOINT_V09_SIMULATIONS_BYTECODE.is_empty() {
+            let bytecode =
+                Bytes::from(hex::decode(ENTRYPOINT_V09_SIMULATIONS_BYTECODE).map_err(|e| {
+                    format!("Failed to decode v0.9 simulation bytecode: {}", e)
+                })?);
+            Some(create_code_override(ENTRYPOINT_V09_ADDRESS, bytecode))
+        } else {
+            // Fallback: call without override (will fail if EntryPoint doesn't have simulateHandleOp)
+            None
+        };
+
+        Ok(SimulationCallData {
+            to: ENTRYPOINT_V09_ADDRESS,
+            data: Bytes::from(call.abi_encode()),
+            state_override,
+        })
+    }
+
     /// Pack a v0.7 UserOperation into the on-chain format
     fn pack_v07_user_op(op: &UserOperationV07) -> PackedUserOperationV07 {
         use crate::contracts::v07::{pack_account_gas_limits, pack_gas_fees, pack_paymaster_and_data};
@@ -318,6 +367,40 @@ impl EntryPointVersionResolver {
         };
 
         PackedUserOperationV08 {
+            sender: op.sender,
+            nonce: op.nonce,
+            initCode: init_code,
+            callData: op.call_data.clone(),
+            accountGasLimits: pack_account_gas_limits(op.verification_gas_limit, op.call_gas_limit)
+                .into(),
+            preVerificationGas: op.pre_verification_gas,
+            gasFees: pack_gas_fees(op.max_priority_fee_per_gas, op.max_fee_per_gas).into(),
+            paymasterAndData: pack_paymaster_and_data(
+                op.paymaster,
+                op.paymaster_verification_gas_limit,
+                op.paymaster_post_op_gas_limit,
+                op.paymaster_data.clone(),
+            ),
+            signature: op.signature.clone(),
+        }
+    }
+
+    /// Pack a v0.9 UserOperation into the on-chain format
+    /// v0.9 uses the same packed format as v0.7/v0.8
+    fn pack_v09_user_op(op: &UserOperationV07) -> PackedUserOperationV09 {
+        use crate::contracts::v09::{pack_account_gas_limits, pack_gas_fees, pack_paymaster_and_data};
+
+        // Pack initCode: factory (20 bytes) | factoryData
+        let init_code = if op.factory.is_zero() {
+            Bytes::default()
+        } else {
+            let mut ic = Vec::with_capacity(20 + op.factory_data.len());
+            ic.extend_from_slice(op.factory.as_slice());
+            ic.extend_from_slice(&op.factory_data);
+            Bytes::from(ic)
+        };
+
+        PackedUserOperationV09 {
             sender: op.sender,
             nonce: op.nonce,
             initCode: init_code,

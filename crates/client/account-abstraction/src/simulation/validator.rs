@@ -672,7 +672,10 @@ where
         match version {
             EntryPointVersion::V06 => self.build_v06_simulate_validation(user_op),
             EntryPointVersion::V07 => self.build_v07_simulate_validation(user_op),
-            EntryPointVersion::V08 => self.build_v08_simulate_validation(user_op),
+            // v0.8 and v0.9 are ABI-compatible
+            EntryPointVersion::V08 | EntryPointVersion::V09 => {
+                self.build_v08_simulate_validation(user_op)
+            }
         }
     }
 
@@ -789,7 +792,9 @@ where
     ) -> Result<(ReturnInfo, Option<Address>), ValidationError> {
         match version {
             EntryPointVersion::V06 => self.decode_v06_validation_result(data),
-            EntryPointVersion::V07 | EntryPointVersion::V08 => self.decode_v07_validation_result(data),
+            EntryPointVersion::V07 | EntryPointVersion::V08 | EntryPointVersion::V09 => {
+                self.decode_v07_validation_result(data)
+            }
         }
     }
 

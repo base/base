@@ -17,6 +17,7 @@ use alloy_sol_types::{sol, SolEvent};
 use async_trait::async_trait;
 use base_account_abstraction_indexer::{
     IndexedUserOperationRef, UserOperationStorage, ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08,
+    ENTRYPOINT_V09,
 };
 use reth::api::BlockBody;
 use reth_primitives_traits::Block;
@@ -133,7 +134,7 @@ pub trait UserOperationReceiptProvider: Send + Sync {
 
     /// Get the list of supported entry points
     fn supported_entry_points(&self) -> Vec<Address> {
-        vec![ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08]
+        vec![ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08, ENTRYPOINT_V09]
     }
 }
 
@@ -412,7 +413,7 @@ where
         );
 
         // Query logs from all EntryPoint contracts
-        let entry_points = vec![ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08];
+        let entry_points = vec![ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08, ENTRYPOINT_V09];
 
         for block_num in (from_block..=latest_block).rev() {
             // Get receipts for this block
