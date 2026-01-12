@@ -15,7 +15,7 @@ mod estimator;
 pub use estimator::{
     BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
     ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
-    RollingPriorityEstimate, compute_estimate, estimate_from_transactions, usage_extractor,
+    RollingPriorityEstimate,
 };
 
 mod extension;

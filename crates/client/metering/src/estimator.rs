@@ -520,7 +520,7 @@ fn compute_min_max_estimates(
 ///    not congested, so return the configured default fee.
 ///
 /// Returns `Err` if the bundle's demand exceeds the resource limit.
-pub fn compute_estimate(
+fn compute_estimate(
     resource: ResourceKind,
     transactions: &[&MeteredTransaction],
     demand: u128,
@@ -617,7 +617,7 @@ pub fn compute_estimate(
 }
 
 /// Returns a function that extracts the relevant resource usage from a transaction.
-pub fn usage_extractor(resource: ResourceKind) -> fn(&MeteredTransaction) -> u128 {
+fn usage_extractor(resource: ResourceKind) -> fn(&MeteredTransaction) -> u128 {
     match resource {
         ResourceKind::GasUsed => |tx: &MeteredTransaction| tx.gas_used as u128,
         ResourceKind::ExecutionTime => |tx: &MeteredTransaction| tx.execution_time_us,
@@ -627,68 +627,6 @@ pub fn usage_extractor(resource: ResourceKind) -> fn(&MeteredTransaction) -> u12
         }
     }
 }
-
-/// Estimates priority fees for all configured resources given a list of transactions.
-///
-/// This is a simple single-block estimation that treats all transactions as a single pool.
-///
-/// # Arguments
-///
-/// * `transactions` - Transactions from a block, will be sorted by priority fee descending
-/// * `demand` - Resource demand for the bundle being priced
-/// * `limits` - Configured resource limits
-/// * `percentile` - Percentile for recommended fee calculation
-/// * `default_fee` - Fee to return when resources are uncongested
-///
-/// Returns `Ok(None)` if no transactions are provided.
-/// Returns `Err` if bundle demand exceeds any resource limit.
-pub fn estimate_from_transactions(
-    transactions: &[MeteredTransaction],
-    demand: ResourceDemand,
-    limits: &ResourceLimits,
-    percentile: f64,
-    default_fee: U256,
-) -> Result<Option<(ResourceEstimates, U256)>, EstimateError> {
-    if transactions.is_empty() {
-        return Ok(None);
-    }
-
-    // Sort transactions by priority fee descending
-    let mut sorted: Vec<&MeteredTransaction> = transactions.iter().collect();
-    sorted.sort_by(|a, b| b.priority_fee_per_gas.cmp(&a.priority_fee_per_gas));
-
-    let mut estimates = ResourceEstimates::default();
-    let mut max_fee = U256::ZERO;
-
-    for resource in ResourceKind::all() {
-        let Some(demand_value) = demand.demand_for(resource) else {
-            continue;
-        };
-        let Some(limit_value) = limits.limit_for(resource) else {
-            continue;
-        };
-
-        let estimate = compute_estimate(
-            resource,
-            &sorted,
-            demand_value,
-            limit_value,
-            usage_extractor(resource),
-            percentile,
-            default_fee,
-        )?;
-
-        max_fee = max_fee.max(estimate.recommended_priority_fee);
-        estimates.set(resource, estimate);
-    }
-
-    if estimates.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some((estimates, max_fee)))
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
@@ -864,22 +802,6 @@ mod tests {
         .expect("no error");
         assert_eq!(quote.threshold_priority_fee, DEFAULT_FEE);
         assert_eq!(quote.recommended_priority_fee, DEFAULT_FEE);
-    }
-
-    #[test]
-    fn estimate_from_transactions_basic() {
-        let txs = vec![tx(10, 10), tx(5, 10), tx(2, 10)];
-        let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };
-        let limits = ResourceLimits { gas_used: Some(30), ..Default::default() };
-
-        let result = estimate_from_transactions(&txs, demand, &limits, 0.5, DEFAULT_FEE)
-            .expect("no error")
-            .expect("has estimates");
-
-        let (estimates, max_fee) = result;
-        let gas_estimate = estimates.gas_used.expect("gas estimate present");
-        assert_eq!(gas_estimate.threshold_priority_fee, U256::from(10));
-        assert_eq!(max_fee, U256::from(10));
     }
 
     const DEFAULT_LIMITS: ResourceLimits = ResourceLimits {
