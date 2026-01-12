@@ -1953,6 +1953,7 @@ version = "0.2.1"
 dependencies = [
  "clap",
  "eyre",
+ "libc",
  "reth",
  "tokio",
  "tracing",
@@ -1995,6 +1996,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "url",
+]
+
+[[package]]
+name = "base-consensus"
+version = "0.2.1"
+dependencies = [
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "vergen",
+ "vergen-git2",
 ]
 
 [[package]]
