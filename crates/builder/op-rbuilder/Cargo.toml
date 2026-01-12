@@ -19,7 +19,6 @@ unused_async = "warn"
 p2p = { path = "../p2p" }
 
 base-bundles.workspace = true
-
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
@@ -161,7 +160,7 @@ vergen-git2.workspace = true
 
 [dev-dependencies]
 alloy-provider = { workspace = true, default-features = true, features = [
-    "txpool-api",
+	"txpool-api",
 ] }
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }
