@@ -5,7 +5,7 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
-use reth::revm::{Database, context::result::ExecutionResult, state::EvmState};
+use reth::revm::{Database, context::result::ExecutionResult};
 use reth_evm::Evm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_primitives::OpReceipt;
@@ -29,7 +29,7 @@ pub enum ReceiptBuildError {
 ///
 /// ```ignore
 /// let builder = UnifiedReceiptBuilder::new(chain_spec);
-/// let receipt = builder.build(&mut evm, &transaction, result, &state, cumulative_gas_used, timestamp)?;
+/// let receipt = builder.build(&mut evm, &transaction, result, cumulative_gas_used, timestamp)?;
 /// ```
 #[derive(Debug, Clone)]
 pub struct UnifiedReceiptBuilder<C> {
@@ -60,7 +60,6 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
     /// * `evm` - Mutable reference to the EVM, used for database access
     /// * `transaction` - The recovered transaction to build a receipt for
     /// * `result` - The execution result
-    /// * `state` - The resulting EVM state
     /// * `cumulative_gas_used` - Cumulative gas used up to and including this transaction
     /// * `timestamp` - The block timestamp, used to determine active hardforks
     ///
@@ -73,7 +72,6 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
         evm: &mut E,
         transaction: &Recovered<OpTxEnvelope>,
         result: ExecutionResult<E::HaltReason>,
-        _state: &EvmState,
         cumulative_gas_used: u64,
         timestamp: u64,
     ) -> Result<OpReceipt, ReceiptBuildError>
@@ -130,14 +128,138 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
 mod tests {
     use std::sync::Arc;
 
+    use alloy_primitives::{Address, Log, LogData, address};
+    use op_alloy_consensus::{OpDeposit, OpTypedTransaction};
     use reth_optimism_chainspec::OpChainSpecBuilder;
 
     use super::*;
 
+    fn create_legacy_tx() -> Recovered<OpTxEnvelope> {
+        let tx = alloy_consensus::TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 1000000000,
+            gas_limit: 21000,
+            to: alloy_consensus::TxKind::Call(Address::ZERO),
+            value: alloy_primitives::U256::ZERO,
+            input: alloy_primitives::Bytes::new(),
+        };
+        let envelope = OpTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+            tx,
+            alloy_primitives::Signature::test_signature(),
+            alloy_primitives::B256::ZERO,
+        ));
+        Recovered::new_unchecked(envelope, Address::ZERO)
+    }
+
+    fn create_deposit_tx() -> Recovered<OpTxEnvelope> {
+        let deposit = OpDeposit {
+            source_hash: alloy_primitives::B256::ZERO,
+            from: address!("0x1234567890123456789012345678901234567890"),
+            to: alloy_consensus::TxKind::Call(Address::ZERO),
+            mint: None,
+            value: alloy_primitives::U256::ZERO,
+            gas_limit: 21000,
+            is_system_transaction: false,
+            input: alloy_primitives::Bytes::new(),
+        };
+        let envelope = OpTxEnvelope::Deposit(deposit);
+        Recovered::new_unchecked(envelope, address!("0x1234567890123456789012345678901234567890"))
+    }
+
+    fn create_success_result<H>() -> ExecutionResult<H> {
+        ExecutionResult::Success {
+            reason: reth::revm::context::result::SuccessReason::Stop,
+            gas_used: 21000,
+            gas_refunded: 0,
+            logs: vec![Log {
+                address: Address::ZERO,
+                data: LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
+            }],
+            output: reth::revm::context::result::Output::Call(alloy_primitives::Bytes::new()),
+        }
+    }
+
     #[test]
     fn test_unified_receipt_builder_creation() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
-        let builder = UnifiedReceiptBuilder::new(chain_spec);
-        assert!(std::mem::size_of_val(&builder) > 0);
+        let builder = UnifiedReceiptBuilder::new(chain_spec.clone());
+        assert!(Arc::ptr_eq(builder.chain_spec(), &chain_spec));
+    }
+
+    #[test]
+    fn test_legacy_receipt_type() {
+        let tx = create_legacy_tx();
+        assert_eq!(tx.tx_type(), OpTxType::Legacy);
+    }
+
+    #[test]
+    fn test_deposit_receipt_type() {
+        let tx = create_deposit_tx();
+        assert_eq!(tx.tx_type(), OpTxType::Deposit);
+    }
+
+    #[test]
+    fn test_receipt_from_success_result() {
+        let result: ExecutionResult<reth::revm::context::result::HaltReason> =
+            create_success_result();
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(result.is_success()),
+            cumulative_gas_used: 21000,
+            logs: result.into_logs(),
+        };
+        assert!(receipt.status.coerce_status());
+        assert_eq!(receipt.cumulative_gas_used, 21000);
+        assert_eq!(receipt.logs.len(), 1);
+    }
+
+    #[test]
+    fn test_receipt_from_revert_result() {
+        let result: ExecutionResult<reth::revm::context::result::HaltReason> =
+            ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(result.is_success()),
+            cumulative_gas_used: 10000,
+            logs: result.into_logs(),
+        };
+        assert!(!receipt.status.coerce_status());
+        assert_eq!(receipt.cumulative_gas_used, 10000);
+        assert!(receipt.logs.is_empty());
+    }
+
+    #[test]
+    fn test_op_receipt_legacy_variant() {
+        let receipt =
+            Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
+        let op_receipt = OpReceipt::Legacy(receipt);
+        assert!(matches!(op_receipt, OpReceipt::Legacy(_)));
+    }
+
+    #[test]
+    fn test_op_receipt_deposit_variant() {
+        let receipt =
+            Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
+        let op_receipt = OpReceipt::Deposit(OpDepositReceipt {
+            inner: receipt,
+            deposit_nonce: Some(1),
+            deposit_receipt_version: Some(1),
+        });
+        assert!(matches!(op_receipt, OpReceipt::Deposit(_)));
+        if let OpReceipt::Deposit(deposit) = op_receipt {
+            assert_eq!(deposit.deposit_nonce, Some(1));
+            assert_eq!(deposit.deposit_receipt_version, Some(1));
+        }
+    }
+
+    #[test]
+    fn test_tx_type_to_receipt_mapping() {
+        let receipt =
+            Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
+
+        // Test all non-deposit variants
+        assert!(matches!(OpReceipt::Legacy(receipt.clone()), OpReceipt::Legacy(_)));
+        assert!(matches!(OpReceipt::Eip2930(receipt.clone()), OpReceipt::Eip2930(_)));
+        assert!(matches!(OpReceipt::Eip1559(receipt.clone()), OpReceipt::Eip1559(_)));
+        assert!(matches!(OpReceipt::Eip7702(receipt), OpReceipt::Eip7702(_)));
     }
 }

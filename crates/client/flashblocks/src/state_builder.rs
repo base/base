@@ -190,17 +190,13 @@ where
 
                 // Build receipt using the unified receipt builder - handles both
                 // deposit and non-deposit transactions seamlessly
-                let receipt = self
-                    .receipt_builder
-                    .build(
-                        &mut self.evm,
-                        &transaction,
-                        result,
-                        &state,
-                        self.cumulative_gas_used,
-                        self.pending_block.timestamp,
-                    )
-                    .map_err(|_| ExecutionError::DepositAccountLoad)?;
+                let receipt = self.receipt_builder.build(
+                    &mut self.evm,
+                    &transaction,
+                    result,
+                    self.cumulative_gas_used,
+                    self.pending_block.timestamp,
+                )?;
 
                 let meta = TransactionMeta {
                     tx_hash,
@@ -226,7 +222,7 @@ where
                     input,
                     &mut self.l1_block_info,
                 )
-                .unwrap()
+                .map_err(|e| ExecutionError::RpcReceiptBuild(e.to_string()))?
                 .build();
                 self.next_log_index += receipt.logs().len();
 
