@@ -1634,6 +1634,7 @@ dependencies = [
  "reth-testing-utils",
  "reth-tracing",
  "reth-transaction-pool",
+ "revm",
  "rstest",
  "serde",
  "serde_json",

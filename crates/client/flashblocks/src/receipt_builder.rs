@@ -128,9 +128,13 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
 mod tests {
     use std::sync::Arc;
 
+    use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, address};
     use op_alloy_consensus::{OpDeposit, OpTypedTransaction};
+    use reth_evm::ConfigureEvm;
     use reth_optimism_chainspec::OpChainSpecBuilder;
+    use reth_optimism_evm::OpEvmConfig;
+    use revm::database::InMemoryDB;
 
     use super::*;
 
@@ -261,5 +265,99 @@ mod tests {
         assert!(matches!(OpReceipt::Eip2930(receipt.clone()), OpReceipt::Eip2930(_)));
         assert!(matches!(OpReceipt::Eip1559(receipt.clone()), OpReceipt::Eip1559(_)));
         assert!(matches!(OpReceipt::Eip7702(receipt), OpReceipt::Eip7702(_)));
+    }
+
+    /// Helper to create an EVM instance for testing
+    fn create_test_evm(
+        chain_spec: Arc<reth_optimism_chainspec::OpChainSpec>,
+        db: &mut InMemoryDB,
+    ) -> impl Evm + '_ {
+        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let header = Header::default();
+        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        evm_config.evm_with_env(db, evm_env)
+    }
+
+    #[test]
+    fn test_build_legacy_receipt() {
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let mut db = InMemoryDB::default();
+        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+
+        let builder = UnifiedReceiptBuilder::new(chain_spec);
+        let tx = create_legacy_tx();
+        let result = create_success_result();
+
+        let receipt = builder.build(&mut evm, &tx, result, 21000, 0).expect("build should succeed");
+
+        assert!(matches!(receipt, OpReceipt::Legacy(_)));
+        if let OpReceipt::Legacy(inner) = receipt {
+            assert!(inner.status.coerce_status());
+            assert_eq!(inner.cumulative_gas_used, 21000);
+        }
+    }
+
+    #[test]
+    fn test_build_deposit_receipt() {
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let mut db = InMemoryDB::default();
+        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+
+        let builder = UnifiedReceiptBuilder::new(chain_spec);
+        let tx = create_deposit_tx();
+        let result = create_success_result();
+
+        let receipt = builder.build(&mut evm, &tx, result, 21000, 0).expect("build should succeed");
+
+        assert!(matches!(receipt, OpReceipt::Deposit(_)));
+        if let OpReceipt::Deposit(deposit) = receipt {
+            assert!(deposit.inner.status.coerce_status());
+            assert_eq!(deposit.inner.cumulative_gas_used, 21000);
+        }
+    }
+
+    #[test]
+    fn test_build_deposit_receipt_with_canyon_active() {
+        // Canyon activates deposit_receipt_version
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let mut db = InMemoryDB::default();
+        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+
+        let builder = UnifiedReceiptBuilder::new(chain_spec.clone());
+        let tx = create_deposit_tx();
+        let result = create_success_result();
+
+        // Use a timestamp after Canyon activation (Base mainnet Canyon: 1704992401)
+        let canyon_timestamp = 1704992401 + 1000;
+        let receipt = builder
+            .build(&mut evm, &tx, result, 21000, canyon_timestamp)
+            .expect("build should succeed");
+
+        if let OpReceipt::Deposit(deposit) = receipt {
+            assert_eq!(deposit.deposit_receipt_version, Some(1));
+        } else {
+            panic!("Expected deposit receipt");
+        }
+    }
+
+    #[test]
+    fn test_build_failed_transaction_receipt() {
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let mut db = InMemoryDB::default();
+        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+
+        let builder = UnifiedReceiptBuilder::new(chain_spec);
+        let tx = create_legacy_tx();
+        let result: ExecutionResult<reth::revm::context::result::HaltReason> =
+            ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
+
+        let receipt = builder.build(&mut evm, &tx, result, 10000, 0).expect("build should succeed");
+
+        if let OpReceipt::Legacy(inner) = receipt {
+            assert!(!inner.status.coerce_status()); // Failed transaction
+            assert_eq!(inner.cumulative_gas_used, 10000);
+        } else {
+            panic!("Expected legacy receipt");
+        }
     }
 }
