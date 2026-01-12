@@ -16,7 +16,7 @@ use std::{
     },
     time::Instant,
 };
-use tips_core::{AcceptedBundle, MeterBundleResponse};
+use base_bundles::{AcceptedBundle, MeterBundleResponse};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
