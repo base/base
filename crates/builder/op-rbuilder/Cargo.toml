@@ -19,6 +19,8 @@ unused_async = "warn"
 p2p = { path = "../p2p" }
 
 base-bundles.workspace = true
+base-flashtypes.workspace = true
+
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
@@ -136,8 +138,6 @@ http = "1.0"
 sha3 = "0.10"
 reqwest = "0.12.23"
 k256 = "0.13.4"
-
-rollup-boost.workspace = true
 
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }

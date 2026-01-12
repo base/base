@@ -42,9 +42,6 @@ use reth_revm::{
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
-use rollup_boost::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
-};
 use serde::{Deserialize, Serialize};
 use std::{
     ops::{Div, Rem},
@@ -54,6 +51,7 @@ use std::{
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
+use base_flashtypes::{FlashblocksPayloadV1, ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     <Pool as TransactionPool>::Transaction,

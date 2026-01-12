@@ -45,7 +45,7 @@ use reth_optimism_node::{
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use rollup_boost::FlashblocksPayloadV1;
+use base_flashtypes::FlashblocksPayloadV1;
 use std::{
     net::SocketAddr,
     sync::{Arc, LazyLock},

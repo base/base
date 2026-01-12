@@ -3,9 +3,9 @@ use core::{
     net::SocketAddr,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use base_flashtypes::FlashblocksPayloadV1;
 use futures::SinkExt;
 use futures_util::StreamExt;
-use rollup_boost::FlashblocksPayloadV1;
 use std::{io, net::TcpListener, sync::Arc};
 use tokio::{
     net::TcpStream,
