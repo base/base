@@ -3,7 +3,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{TxHash, U256};
 use alloy_provider::Provider;
 use macros::rb_test;
-use tips_core::{AcceptedBundle, MeterBundleResponse};
+use base_bundles::{AcceptedBundle, MeterBundleResponse};
 use uuid::Uuid;
 
 /// Tests that backrun bundles are all-or-nothing:

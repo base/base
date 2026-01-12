@@ -7547,6 +7547,7 @@ dependencies = [
  "alloy-transport-http",
  "anyhow",
  "async-trait",
+ "base-bundles",
  "chrono",
  "clap",
  "clap_builder",
@@ -7645,7 +7646,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tikv-jemallocator",
  "time",
- "tips-core",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tokio-util",
@@ -13980,23 +13980,6 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
-name = "tips-core"
-version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=c08eaa4fe10c26de8911609b41ddab4918698325#c08eaa4fe10c26de8911609b41ddab4918698325"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives 1.5.2",
- "alloy-provider",
- "alloy-serde",
- "op-alloy-consensus",
- "op-alloy-flz",
- "serde",
- "tracing",
- "tracing-subscriber 0.3.22",
- "uuid",
-]
 
 [[package]]
 name = "tokio"

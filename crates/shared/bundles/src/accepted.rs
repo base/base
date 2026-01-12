@@ -3,6 +3,7 @@
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::TxHash;
 use op_alloy_consensus::OpTxEnvelope;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{MeterBundleResponse, ParsedBundle};
@@ -10,7 +11,7 @@ use crate::{MeterBundleResponse, ParsedBundle};
 /// `AcceptedBundle` is the type that is sent over the wire after validation.
 ///
 /// This represents a bundle that has been decoded, validated, and metered.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptedBundle {
     /// Unique identifier for this bundle instance.
     pub uuid: Uuid,
@@ -19,27 +20,51 @@ pub struct AcceptedBundle {
     pub txs: Vec<Recovered<OpTxEnvelope>>,
 
     /// The target block number for inclusion.
+    #[serde(with = "alloy_serde::quantity")]
     pub block_number: u64,
 
     /// Minimum flashblock number for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub flashblock_number_min: Option<u64>,
 
     /// Maximum flashblock number for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub flashblock_number_max: Option<u64>,
 
     /// Minimum timestamp for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub min_timestamp: Option<u64>,
 
     /// Maximum timestamp for inclusion.
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_timestamp: Option<u64>,
 
     /// Transaction hashes that are allowed to revert.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reverting_tx_hashes: Vec<TxHash>,
 
     /// UUID for bundle replacement (if this bundle replaces another).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_uuid: Option<Uuid>,
 
     /// Transaction hashes that should be dropped from the pool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropping_tx_hashes: Vec<TxHash>,
 
     /// Metering response from bundle simulation.
