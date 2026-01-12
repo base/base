@@ -28,16 +28,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libsqlite3-dev \
-            clang \
-            libclang-dev \
-            llvm \
-            build-essential \
-            pkg-config \
-            libtss2-dev
+        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        with:
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          version: 1.0
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
         with:
@@ -67,16 +61,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libsqlite3-dev \
-            clang \
-            libclang-dev \
-            llvm \
-            build-essential \
-            pkg-config \
-            libtss2-dev
+        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        with:
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          version: 1.0
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
 
@@ -113,16 +101,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install native dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libsqlite3-dev \
-            clang \
-            libclang-dev \
-            llvm \
-            build-essential \
-            pkg-config \
-            libtss2-dev
+        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        with:
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          version: 1.0
 
       - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
         with:
