@@ -78,6 +78,7 @@ where
             EngineCapabilities::new(OP_ENGINE_CAPABILITIES.iter().copied()),
             engine_validator,
             ctx.config.engine.accept_execution_requests_hash,
+            ctx.node.network().clone(),
         );
 
         Ok(OpEngineApiExt::new(OpEngineApi::new(inner)))

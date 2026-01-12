@@ -5,14 +5,20 @@ use std::sync::Arc;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
 use base_primitives::{Account, build_test_genesis};
-use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
+use reth::api::NodeTypesWithDBAdapter;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
-    test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
+    test_utils::{
+        ERROR_DB_CREATION, TempDatabase, create_test_rocksdb_dir, create_test_static_files_dir,
+        tempdir_path,
+    },
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_provider::{ProviderFactory, providers::StaticFileProvider};
+use reth_provider::{
+    ProviderFactory,
+    providers::{ProviderNodeTypes, RocksDBProvider, StaticFileProvider},
+};
 
 use crate::test_utils::{GENESIS_GAS_LIMIT, TEST_ACCOUNT_BALANCE_ETH};
 
@@ -36,16 +42,19 @@ pub fn load_chain_spec() -> Arc<OpChainSpec> {
 }
 
 /// Creates a provider factory for tests with the given chain spec.
-pub fn create_provider_factory<N: NodeTypes>(
+pub fn create_provider_factory<N: ProviderNodeTypes>(
     chain_spec: Arc<N::ChainSpec>,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
     let (static_dir, _) = create_test_static_files_dir();
     let db = create_test_db();
+    let (rocksdb_dir, _) = create_test_rocksdb_dir();
     ProviderFactory::new(
         db,
         chain_spec,
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
+        RocksDBProvider::builder(rocksdb_dir.keep()).build().unwrap(),
     )
+    .unwrap()
 }
 
 /// Creates a temporary test database.

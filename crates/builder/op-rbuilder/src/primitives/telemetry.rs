@@ -1,6 +1,8 @@
-use crate::args::TelemetryArgs;
+use reth_tracing_otlp::OtlpConfig;
 use tracing_subscriber::{Layer, filter::Targets};
 use url::Url;
+
+use crate::args::TelemetryArgs;
 
 /// Setup telemetry layer with sampling and custom endpoint configuration
 pub fn setup_telemetry_layer(
@@ -19,11 +21,12 @@ pub fn setup_telemetry_layer(
     }
 
     // Create OTLP layer with custom configuration
-    let otlp_layer = reth_tracing_otlp::span_layer(
+    let otlp_layer = reth_tracing_otlp::span_layer(OtlpConfig::new(
         "op-rbuilder",
-        &Url::parse(args.otlp_endpoint.as_ref().unwrap()).expect("Invalid OTLP endpoint"),
+        Url::parse(args.otlp_endpoint.as_ref().unwrap()).expect("Invalid OTLP endpoint"),
         reth_tracing_otlp::OtlpProtocol::Http,
-    )?;
+        Some((args.sampling_ratio as f64) / 100.0),
+    )?)?;
 
     // Create a trace filter that sends more data to OTLP but less to stdout
     let trace_filter = Targets::new()

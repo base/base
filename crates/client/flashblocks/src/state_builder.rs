@@ -8,7 +8,7 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
+use op_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
 use reth_evm::{
@@ -131,11 +131,9 @@ where
         effective_gas_price: u128,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-            let deposit_receipt = receipt
-                .inner
-                .inner
-                .as_deposit_receipt()
-                .ok_or(ExecutionError::DepositReceiptMismatch)?;
+            let OpReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
+                return Err(ExecutionError::DepositReceiptMismatch.into());
+            };
 
             (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
         } else {
@@ -261,11 +259,10 @@ where
                 self.next_log_index += receipt.logs().len();
 
                 let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                    let deposit_receipt = op_receipt
-                        .inner
-                        .inner
-                        .as_deposit_receipt()
-                        .ok_or(ExecutionError::DepositReceiptMismatch)?;
+                    let OpReceipt::Deposit(deposit_receipt) = &op_receipt.inner.inner.receipt
+                    else {
+                        return Err(ExecutionError::DepositReceiptMismatch.into());
+                    };
 
                     (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
                 } else {

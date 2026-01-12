@@ -21,10 +21,9 @@ use core::time::Duration;
 use eyre::WrapErr as _;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
-use reth_chain_state::ExecutedBlock;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
+use reth_node_api::{Block, BuiltPayloadExecutedBlock, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -336,7 +335,7 @@ where
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(&state_provider);
+        let db = StateProviderDatabase::new(state_provider);
         self.address_gas_limiter.refresh(ctx.block_number());
 
         // 1. execute the pre steps and seal an early block with that
@@ -345,6 +344,8 @@ where
             .with_database(cached_reads.as_db_mut(db))
             .with_bundle_update()
             .build();
+
+        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         let mut info = execute_pre_steps(&mut state, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
@@ -537,13 +538,15 @@ where
                 return Ok(());
             }
 
+            let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+
             // build first flashblock immediately
             let next_flashblocks_ctx = match self
                 .build_next_flashblock(
                     &ctx,
                     &mut info,
                     &mut state,
-                    &state_provider,
+                    state_provider,
                     &mut best_txs,
                     &block_cancel,
                     &best_payload,
@@ -601,7 +604,7 @@ where
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
-        state_provider: impl reth::providers::StateProvider + Clone,
+        state_provider: impl reth::providers::StateProvider,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
@@ -1110,11 +1113,11 @@ where
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
     // create the executed block data
 
-    let executed = ExecutedBlock {
+    let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
         execution_output: Arc::new(execution_outcome),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
+        hashed_state: either::Either::Left(Arc::new(hashed_state)),
+        trie_updates: either::Either::Left(Arc::new(trie_output)),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 

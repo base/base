@@ -337,8 +337,18 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     let data_path = tempdir
         .join(format!("rbuilder.{random_id}.datadir"))
         .to_path_buf();
+    
+    let rocksdb_path = tempdir
+        .join(format!("rbuilder.{random_id}.rocksdb"))
+        .to_path_buf();
+
+    let pprof_dumps_path = tempdir
+        .join(format!("rbuilder.{random_id}.pprof-dumps"))
+        .to_path_buf();
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
+    std::fs::create_dir_all(&rocksdb_path).expect("Failed to create temporary rocksdb directory");
+    std::fs::create_dir_all(&pprof_dumps_path).expect("Failed to create temporary pprof dumps directory");
 
     let rpc_ipc_path = tempdir
         .join(format!("rbuilder.{random_id}.rpc-ipc"))
@@ -363,6 +373,8 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
             .to_string_lossy()
             .parse()
             .expect("Failed to parse data dir path"),
+        rocksdb_path: Some(rocksdb_path),
+        pprof_dumps_path: Some(pprof_dumps_path),
         static_files_path: None,
     };
 
