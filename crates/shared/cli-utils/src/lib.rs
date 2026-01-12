@@ -19,7 +19,7 @@ mod version;
 pub use version::Version;
 
 mod runtime;
-pub use runtime::{build_runtime, run_until_ctrl_c, run_until_ctrl_c_fallible};
+pub use runtime::RuntimeManager;
 
 mod styles;
 pub use styles::CliStyles;
