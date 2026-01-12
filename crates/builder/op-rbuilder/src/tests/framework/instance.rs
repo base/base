@@ -54,6 +54,25 @@ use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
+/// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
+/// This is necessary because clap reads env vars for args with `env = "..."` attributes,
+/// and external OTEL env vars (e.g., `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) may contain
+/// values that are incompatible with the CLI's expected values.
+fn clear_otel_env_vars() {
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_LOGS_EXPORTER",
+        "OTEL_METRICS_EXPORTER",
+        "OTEL_TRACES_EXPORTER",
+        "OTEL_SDK_DISABLED",
+    ] {
+        // SAFETY: We're in a test environment where env var mutation is acceptable
+        unsafe { std::env::remove_var(key) };
+    }
+}
+
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 pub struct LocalInstance {
@@ -197,6 +216,7 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the standard builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
+        clear_otel_env_vars();
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref node_command) = args.command else {
             unreachable!()
@@ -207,6 +227,7 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
+        clear_otel_env_vars();
         let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref mut node_command) = args.command else {
             unreachable!()
