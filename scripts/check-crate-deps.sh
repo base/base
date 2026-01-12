@@ -24,7 +24,7 @@ VIOLATIONS=$(cargo metadata --format-version 1 --no-deps | jq -r '
 ')
 
 if [ -n "$VIOLATIONS" ]; then
-    echo "ERROR: Found dependency boundary violations:"
+    echo "ERROR: Found shared -> client dependency violations:"
     echo "$VIOLATIONS" | while read -r violation; do
         echo "  - $violation"
     done
@@ -33,4 +33,29 @@ if [ -n "$VIOLATIONS" ]; then
     exit 1
 fi
 
-echo "All shared crates have valid dependencies (no client crate dependencies)"
+echo "Checking that shared crates don't depend on builder crates..."
+
+# Check for shared -> builder violations
+BUILDER_VIOLATIONS=$(cargo metadata --format-version 1 --no-deps | jq -r '
+  [.packages[]
+   | select(.manifest_path | contains("/crates/shared/"))
+   | . as $pkg
+   | .dependencies[]
+   | select(.path)
+   | select(.path | contains("/crates/builder/"))
+   | "\($pkg.name) -> \(.name)"
+  ]
+  | .[]
+')
+
+if [ -n "$BUILDER_VIOLATIONS" ]; then
+    echo "ERROR: Found shared -> builder dependency violations:"
+    echo "$BUILDER_VIOLATIONS" | while read -r violation; do
+        echo "  - $violation"
+    done
+    echo ""
+    echo "Shared crates (crates/shared/) must not depend on builder crates (crates/builder/)"
+    exit 1
+fi
+
+echo "All crate dependencies are valid"
