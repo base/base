@@ -27,7 +27,7 @@ jobs:
         id: claude-review
         uses: anthropics/claude-code-action@1b8ee3b94104046d71fde52ec3557651ad8c0d71 # v1.0.29
         env:
-          ANTHROPIC_BASE_URL: ${{ secrets.LLM_GATEWAY_BASE_URL }}
+          ANTHROPIC_BASE_URL: ${{ vars.LLM_GATEWAY_BASE_URL }}
           LLM_GATEWAY_API_KEY: ${{ secrets.LLM_GATEWAY_API_KEY }}
         with:
           anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
