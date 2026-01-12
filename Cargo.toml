@@ -64,6 +64,7 @@ base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
+base-client-engine = { path = "crates/client/engine" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
@@ -87,6 +88,11 @@ reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3
 reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
     "client",
 ] }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-tokio-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
@@ -127,6 +133,11 @@ reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "
 reth-optimism-forks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-txpool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-optimism-storage = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-engine-local = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-network = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 
 # revm
 revm = { version = "31.0.2", features = [

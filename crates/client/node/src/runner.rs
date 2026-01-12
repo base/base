@@ -2,10 +2,11 @@
 
 use eyre::Result;
 use reth::{
-    builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig},
+    builder::{EngineNodeLauncher, NodeHandleFor, TreeConfig},
     providers::providers::BlockchainProvider,
 };
-use reth_optimism_node::{OpNode, args::RollupArgs};
+use crate::node::{BaseNode};
+use reth_optimism_node::args::RollupArgs;
 use tracing::info;
 
 use crate::{BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};
@@ -41,15 +42,18 @@ impl BaseNodeRunner {
         rollup_args: RollupArgs,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         builder: BaseNodeBuilder,
-    ) -> Result<NodeHandleFor<OpNode>> {
+    ) -> Result<NodeHandleFor<BaseNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
-        let op_node = OpNode::new(rollup_args);
+        let op_node = BaseNode::new(rollup_args);
+
+
+        let addons = op_node.add_ons_builder().build();
 
         let builder = builder
-            .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(op_node.components())
-            .with_add_ons(op_node.add_ons())
+            .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()));
 
         let builder =

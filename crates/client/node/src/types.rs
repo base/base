@@ -9,14 +9,14 @@ use reth::{
 };
 use reth_db::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::OpNode;
+use crate::node::BaseNode;
 
-type OpNodeTypes = FullNodeTypesAdapter<OpNode, Arc<DatabaseEnv>, OpProvider>;
-type OpComponentsBuilder = <OpNode as Node<OpNodeTypes>>::ComponentsBuilder;
-type OpAddOns = <OpNode as Node<OpNodeTypes>>::AddOns;
+type OpNodeTypes = FullNodeTypesAdapter<BaseNode, Arc<DatabaseEnv>, OpProvider>;
+type OpComponentsBuilder = <BaseNode as Node<OpNodeTypes>>::ComponentsBuilder;
+type OpAddOns = <BaseNode as Node<OpNodeTypes>>::AddOns;
 
 /// A [`BlockchainProvider`] instance.
-pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<DatabaseEnv>>>;
+pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, Arc<DatabaseEnv>>>;
 
 /// OP Builder is a [`WithLaunchContext`] reth node builder.
 pub type OpBuilder =

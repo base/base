@@ -10,7 +10,7 @@ use derive_more::Debug;
 use eyre::Result;
 use futures_util::{FutureExt, future::BoxFuture};
 use reth::builder::NodeHandleFor;
-use reth_optimism_node::OpNode;
+use crate::node::BaseNode;
 
 /// Handle to a launched Base node.
 ///
@@ -20,14 +20,14 @@ use reth_optimism_node::OpNode;
 #[derive(Debug, Default)]
 pub struct BaseNodeHandle {
     #[debug(skip)]
-    build_fut: Option<BoxFuture<'static, Result<NodeHandleFor<OpNode>>>>,
+    build_fut: Option<BoxFuture<'static, Result<NodeHandleFor<BaseNode>>>>,
     #[debug(skip)]
-    handle: Option<Box<NodeHandleFor<OpNode>>>,
+    handle: Option<Box<NodeHandleFor<BaseNode>>>,
 }
 
 impl BaseNodeHandle {
     pub(crate) fn new(
-        fut: impl Future<Output = Result<NodeHandleFor<OpNode>>> + Send + 'static,
+        fut: impl Future<Output = Result<NodeHandleFor<BaseNode>>> + Send + 'static,
     ) -> Self {
         Self { build_fut: Some(fut.boxed()), handle: None }
     }

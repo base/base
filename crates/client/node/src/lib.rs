@@ -17,3 +17,6 @@ pub use types::{BaseNodeBuilder, OpBuilder, OpProvider};
 
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
+
+pub mod node;
+pub use node::{BaseNode};
