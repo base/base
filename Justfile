@@ -83,7 +83,7 @@ build-node:
 
 # Build the contracts used for tests
 build-contracts:
-    cd crates/client/test-utils/contracts && forge build
+    cd crates/shared/primitives/contracts && forge build
 
 # Cleans the workspace
 clean:
@@ -93,6 +93,10 @@ clean:
 check-udeps: build-contracts
   @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
   cargo +nightly udeps --workspace --all-features --all-targets
+
+# Checks that shared crates don't depend on client crates
+check-crate-deps:
+    ./scripts/check-crate-deps.sh
 
 # Watches tests
 watch-test: build-contracts
@@ -108,4 +112,4 @@ benches:
 
 # Runs flashblocks pending state benchmarks
 bench-flashblocks:
-    cargo bench -p base-reth-flashblocks --bench pending_state
+    cargo bench -p base-flashblocks --bench pending_state

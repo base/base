@@ -16,11 +16,12 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::{SolConstructor, SolValue};
+use base_client_node::test_utils::{
+    Account, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
+};
+use base_flashblocks::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
-};
-use base_reth_test_utils::{
-    FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
 };
 use eyre::Result;
 struct Erc20TestSetup {
@@ -34,7 +35,7 @@ struct Erc20TestSetup {
 impl Erc20TestSetup {
     async fn new(with_proxy: bool) -> Result<Self> {
         let harness = FlashblocksHarness::new().await?;
-        let deployer = &harness.accounts().deployer;
+        let deployer = Account::Deployer;
 
         // Deploy MockERC20 from solmate with constructor args (name, symbol, decimals)
         let token_constructor = MockERC20::constructorCall {
@@ -52,7 +53,7 @@ impl Erc20TestSetup {
             // Constructor: (implementation, initialOwner, data)
             let proxy_constructor = TransparentUpgradeableProxy::constructorCall {
                 _logic: token_address,
-                initialOwner: deployer.address,
+                initialOwner: deployer.address(),
                 _data: Bytes::new(),
             };
             let proxy_deploy_data =
@@ -212,14 +213,13 @@ async fn test_proxy_erc20_deployment() -> Result<()> {
 async fn test_erc20_mint() -> Result<()> {
     let setup = Erc20TestSetup::new(false).await?;
     let provider = setup.harness.provider();
-    let accounts = setup.harness.accounts();
 
     // Deploy contracts first
     setup.send_base_and_deploy().await?;
 
     // Check initial balance is zero
     let token = MockERC20::MockERC20Instance::new(setup.token_address, provider.clone());
-    let balance_call = token.balanceOf(accounts.alice.address).into_transaction_request();
+    let balance_call = token.balanceOf(Account::Alice.address()).into_transaction_request();
     let result =
         provider.call(balance_call.clone()).block(BlockNumberOrTag::Pending.into()).await?;
     let initial_balance = U256::abi_decode(&result)?;
@@ -228,8 +228,8 @@ async fn test_erc20_mint() -> Result<()> {
     // Create mint transaction
     let mint_amount = U256::from(1000u64);
     let mint_tx_request =
-        token.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx, _) = accounts.deployer.sign_txn_request(mint_tx_request.nonce(1))?;
+        token.mint(Account::Alice.address(), mint_amount).into_transaction_request();
+    let (mint_tx, _) = Account::Deployer.sign_txn_request(mint_tx_request.nonce(1))?;
 
     // Send mint flashblock
     let mint_payload = setup.create_mint_payload(mint_tx);
@@ -248,7 +248,6 @@ async fn test_erc20_mint() -> Result<()> {
 async fn test_proxy_erc20_mint() -> Result<()> {
     let setup = Erc20TestSetup::new(true).await?;
     let provider = setup.harness.provider();
-    let accounts = setup.harness.accounts();
 
     // Deploy contracts first
     setup.send_base_and_deploy().await?;
@@ -256,7 +255,8 @@ async fn test_proxy_erc20_mint() -> Result<()> {
     // Check initial balance is zero through proxy
     let proxy_address = setup.proxy_address.unwrap();
     let token_via_proxy = MockERC20::MockERC20Instance::new(proxy_address, provider.clone());
-    let balance_call = token_via_proxy.balanceOf(accounts.alice.address).into_transaction_request();
+    let balance_call =
+        token_via_proxy.balanceOf(Account::Alice.address()).into_transaction_request();
     let result =
         provider.call(balance_call.clone()).block(BlockNumberOrTag::Pending.into()).await?;
     let initial_balance = U256::abi_decode(&result)?;
@@ -265,8 +265,8 @@ async fn test_proxy_erc20_mint() -> Result<()> {
     // Create mint transaction through proxy
     let mint_amount = U256::from(5000u64);
     let mint_tx_request =
-        token_via_proxy.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx, _) = accounts.deployer.sign_txn_request(mint_tx_request.nonce(2))?;
+        token_via_proxy.mint(Account::Alice.address(), mint_amount).into_transaction_request();
+    let (mint_tx, _) = Account::Deployer.sign_txn_request(mint_tx_request.nonce(2))?;
 
     // Send mint flashblock (note: interaction_address returns proxy)
     let mint_payload = setup.create_mint_payload(mint_tx);

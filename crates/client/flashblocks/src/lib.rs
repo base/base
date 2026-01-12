@@ -45,7 +45,7 @@ pub use rpc::{
 };
 
 mod extension;
-pub use extension::{FlashblocksCanonConfig, FlashblocksCanonExtension, FlashblocksCell};
+pub use extension::{FlashblocksCell, FlashblocksConfig, FlashblocksExtension};
 
-mod rpc_extension;
-pub use rpc_extension::FlashblocksRpcExtension;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_harness;

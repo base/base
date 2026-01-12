@@ -11,10 +11,11 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
+use base_client_node::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
+use base_flashblocks::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_reth_test_utils::{DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX};
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -173,9 +174,9 @@ impl TestSetup {
         let harness = FlashblocksHarness::new().await?;
 
         let provider = harness.provider();
-        let deployer = &harness.accounts().deployer;
-        let alice = &harness.accounts().alice;
-        let bob = &harness.accounts().bob;
+        let deployer = Account::Deployer;
+        let alice = Account::Alice;
+        let bob = Account::Bob;
 
         // DoubleCounter deployment at nonce 0
         let (counter_deployment_tx, counter_address, _) = deployer
@@ -193,11 +194,11 @@ impl TestSetup {
         let (eth_transfer_tx, eth_transfer_hash) = alice
             .sign_txn_request(
                 OpTransactionRequest::default()
-                    .from(alice.address)
+                    .from(alice.address())
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(100_000)
                     .nonce(0)
-                    .to(bob.address)
+                    .to(bob.address())
                     .value(U256::from_str("999999999000000000000000").unwrap())
                     .into(),
             )
@@ -205,14 +206,14 @@ impl TestSetup {
 
         // Log-emitting contracts:
         // Deploy LogEmitterB at deployer nonce 3
-        let log_emitter_b_address = deployer.address.create(3);
+        let log_emitter_b_address = deployer.address().create(3);
         let log_emitter_b_bytecode = wrap_in_init_code(LOG_EMITTER_B_RUNTIME);
         let (log_emitter_b_deployment_tx, _, _) = deployer
             .create_deployment_tx(log_emitter_b_bytecode, 3)
             .expect("should be able to sign LogEmitterB deployment txn");
 
         // Deploy LogEmitterA at deployer nonce 4 (knows LogEmitterB's address)
-        let log_emitter_a_address = deployer.address.create(4);
+        let log_emitter_a_address = deployer.address().create(4);
         let log_emitter_a_runtime = log_emitter_a_runtime(log_emitter_b_address);
         let log_emitter_a_bytecode = wrap_in_init_code(&log_emitter_a_runtime);
         let (log_emitter_a_deployment_tx, _, _) = deployer
@@ -223,7 +224,7 @@ impl TestSetup {
         let (log_trigger_tx, log_trigger_hash) = deployer
             .sign_txn_request(
                 OpTransactionRequest::default()
-                    .from(deployer.address)
+                    .from(deployer.address())
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(100_000)
                     .nonce(5)
@@ -236,7 +237,7 @@ impl TestSetup {
         let (balance_transfer_tx, _) = alice
             .sign_txn_request(
                 OpTransactionRequest::default()
-                    .from(alice.address)
+                    .from(alice.address())
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(21_000)
                     .nonce(1)
@@ -471,11 +472,8 @@ async fn test_get_transaction_by_hash_pending() -> Result<()> {
         .await?
         .expect("tx2 expected");
     assert_eq!(tx2.tx_hash(), setup.txn_details.alice_eth_transfer_hash);
-    assert_eq!(tx2.from(), setup.harness.accounts().alice.address);
-    assert_eq!(
-        tx2.inner.inner.as_eip1559().unwrap().to().unwrap(),
-        setup.harness.accounts().bob.address
-    );
+    assert_eq!(tx2.from(), Account::Alice.address());
+    assert_eq!(tx2.inner.inner.as_eip1559().unwrap().to().unwrap(), Account::Bob.address());
 
     Ok(())
 }
@@ -508,8 +506,8 @@ async fn test_get_transaction_count() -> Result<()> {
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
-    let deployer_addr = setup.harness.accounts().deployer.address;
-    let alice_addr = setup.harness.accounts().alice.address;
+    let deployer_addr = Account::Deployer.address();
+    let alice_addr = Account::Alice.address();
 
     assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).pending().await?, 0);
     assert_eq!(provider.get_transaction_count(deployer_addr).pending().await?, 0);
@@ -532,15 +530,13 @@ async fn test_eth_call() -> Result<()> {
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
-    let accounts = setup.harness.accounts();
-
     // Initially, the big spend will succeed because we haven't sent the test payloads yet
     let big_spend = OpTransactionRequest::default()
-        .from(accounts.alice.address)
+        .from(Account::Alice.address())
         .transaction_type(0)
         .gas_limit(200000)
         .nonce(0)
-        .to(setup.harness.accounts().bob.address)
+        .to(Account::Bob.address())
         .value(U256::from(9999999999849942300000u128));
 
     let res = provider.call(big_spend.clone()).block(BlockNumberOrTag::Pending.into()).await;
@@ -577,11 +573,11 @@ async fn test_eth_estimate_gas() -> Result<()> {
 
     // We ensure that eth_estimate_gas will succeed because we are on plain state
     let send_estimate_gas = OpTransactionRequest::default()
-        .from(setup.harness.accounts().alice.address)
+        .from(Account::Alice.address())
         .transaction_type(0)
         .gas_limit(200000)
         .nonce(0)
-        .to(setup.harness.accounts().bob.address)
+        .to(Account::Bob.address())
         .value(U256::from(9999999999849942300000u128))
         .input(TransactionInput::new(bytes!("0x")));
 

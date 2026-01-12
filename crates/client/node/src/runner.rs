@@ -1,60 +1,50 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
-use base_primitives::{BaseNodeExtension, ConfigurableBaseNodeExtension};
 use eyre::Result;
 use reth::{
     builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig},
     providers::providers::BlockchainProvider,
 };
-use reth_optimism_node::OpNode;
+use reth_optimism_node::{OpNode, args::RollupArgs};
 use tracing::info;
 
-use crate::{BaseNodeBuilder, BaseNodeConfig, BaseNodeHandle};
+use crate::{BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]
 pub struct BaseNodeRunner {
-    /// Contains the configuration for the Base node.
-    config: BaseNodeConfig,
+    /// Rollup-specific arguments forwarded to the Optimism node implementation.
+    rollup_args: RollupArgs,
     /// Registered builder extensions.
     extensions: Vec<Box<dyn BaseNodeExtension>>,
 }
 
 impl BaseNodeRunner {
-    /// Creates a new launcher using the provided configuration.
-    pub fn new(config: impl Into<BaseNodeConfig>) -> Self {
-        Self { config: config.into(), extensions: Vec::new() }
+    /// Creates a new launcher using the provided rollup arguments.
+    pub fn new(rollup_args: RollupArgs) -> Self {
+        Self { rollup_args, extensions: Vec::new() }
     }
 
-    /// Returns the underlying configuration, primarily for testing.
-    pub const fn config(&self) -> &BaseNodeConfig {
-        &self.config
+    /// Registers a new builder extension.
+    pub fn install_ext<T: FromExtensionConfig + 'static>(&mut self, config: T::Config) {
+        self.extensions.push(Box::new(T::from_config(config)));
     }
 
-    /// Registers a new builder extension constructed from the node configuration.
-    pub fn install_ext<E>(&mut self) -> Result<()>
-    where
-        E: ConfigurableBaseNodeExtension<BaseNodeConfig>,
-    {
-        let extension = E::build(&self.config)?;
-        self.extensions.push(Box::new(extension));
-        Ok(())
-    }
-
-    /// Applies all Base-specific wiring to the supplied builder, launches the node, and returns a handle that can be awaited.
+    /// Applies all Base-specific wiring to the supplied builder, launches the node, and returns a
+    /// handle that can be awaited.
     pub fn run(self, builder: BaseNodeBuilder) -> BaseNodeHandle {
-        let Self { config, extensions } = self;
-        BaseNodeHandle::new(Self::launch_node(config, extensions, builder))
+        let Self { rollup_args, extensions } = self;
+        BaseNodeHandle::new(Self::launch_node(rollup_args, extensions, builder))
     }
 
     async fn launch_node(
-        config: BaseNodeConfig,
+        rollup_args: RollupArgs,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         builder: BaseNodeBuilder,
     ) -> Result<NodeHandleFor<OpNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
-        let op_node = OpNode::new(config.rollup_args.clone());
+        let op_node = OpNode::new(rollup_args);
 
         let builder = builder
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()

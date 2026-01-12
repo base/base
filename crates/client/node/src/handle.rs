@@ -1,3 +1,5 @@
+//! Contains the [`BaseNodeHandle`], an awaitable handle to a launched Base node.
+
 use std::{
     future::Future,
     pin::Pin,

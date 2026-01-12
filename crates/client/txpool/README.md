@@ -24,13 +24,18 @@ cargo run -p node --release -- \
   --enable-transaction-tracing-logs  # optional: emit per-tx lifecycle logs
 ```
 
-From code, wire the ExEx into the node builder:
+From code, wire the extension into the node builder:
 
 ```rust,ignore
-use base_reth_runner::{TracingConfig, extensions::TransactionTracingExtension};
+use base_txpool::{TxpoolConfig, TxPoolExtension};
 
-let tracing = TracingConfig { enabled: true, logs_enabled: true };
-let builder = TransactionTracingExtension::new(tracing).apply(builder);
+let config = TxpoolConfig {
+    tracing_enabled: true,
+    tracing_logs_enabled: true,
+    sequencer_rpc: None,
+};
+let ext = TxPoolExtension::new(config);
+let builder = Box::new(ext).apply(builder);
 ```
 
 ## Metrics

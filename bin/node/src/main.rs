@@ -5,10 +5,10 @@
 
 pub mod cli;
 
-use base_reth_flashblocks::{FlashblocksCanonExtension, FlashblocksRpcExtension};
-use base_reth_metering::MeteringRpcExtension;
-use base_reth_runner::BaseNodeRunner;
-use base_txpool::{TransactionStatusRpcExtension, TransactionTracingExtension};
+use base_client_node::BaseNodeRunner;
+use base_flashblocks::FlashblocksExtension;
+use base_metering::MeteringExtension;
+use base_txpool::TxPoolExtension;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -24,16 +24,12 @@ fn main() {
 
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
-        let mut runner = BaseNodeRunner::new(args);
+        let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 
-        // ExEx extensions
-        runner.install_ext::<FlashblocksCanonExtension>()?;
-        runner.install_ext::<TransactionTracingExtension>()?;
-
-        // RPC extensions (FlashblocksRpcExtension must be last - uses replace_configured)
-        runner.install_ext::<MeteringRpcExtension>()?;
-        runner.install_ext::<TransactionStatusRpcExtension>()?;
-        runner.install_ext::<FlashblocksRpcExtension>()?;
+        // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
+        runner.install_ext::<TxPoolExtension>(args.clone().into());
+        runner.install_ext::<MeteringExtension>(args.enable_metering);
+        runner.install_ext::<FlashblocksExtension>(args.into());
 
         let handle = runner.run(builder);
         handle.await

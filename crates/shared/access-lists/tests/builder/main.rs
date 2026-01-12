@@ -4,10 +4,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use alloy_consensus::Header;
 pub use alloy_primitives::{Address, B256, TxKind, U256};
-use alloy_sol_macro::sol;
 pub use alloy_sol_types::SolCall;
 use base_access_lists::FBALBuilderDb;
 pub use base_access_lists::FlashblockAccessList;
+use base_primitives::{
+    AccessListContract, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
+};
 pub use eyre::Result;
 pub use op_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm};
@@ -26,62 +28,10 @@ mod deployment;
 mod storage;
 mod transfers;
 
-sol!(
-    #[sol(rpc)]
-    AccessListContract,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../client/test-utils/contracts/out/AccessList.sol/AccessList.json"
-    )
-);
-
-sol!(
-    #[sol(rpc)]
-    ContractFactory,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../client/test-utils/contracts/out/ContractFactory.sol/ContractFactory.json"
-    )
-);
-
-sol!(
-    #[sol(rpc)]
-    SimpleStorage,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../client/test-utils/contracts/out/ContractFactory.sol/SimpleStorage.json"
-    )
-);
-
-sol!(
-    #[sol(rpc)]
-    Proxy,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../client/test-utils/contracts/out/Proxy.sol/Proxy.json"
-    )
-);
-
-sol!(
-    #[sol(rpc)]
-    Logic,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../client/test-utils/contracts/out/Proxy.sol/Logic.json"
-    )
-);
-
-sol!(
-    #[sol(rpc)]
-    Logic2,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../client/test-utils/contracts/out/Proxy.sol/Logic2.json"
-    )
-);
-
-/// Chain ID for Base Sepolia
-pub const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
+/// Loads the test chain spec from the genesis configuration.
+fn load_chain_spec() -> Arc<OpChainSpec> {
+    Arc::new(OpChainSpec::from_genesis(build_test_genesis()))
+}
 
 /// Executes a list of transactions and builds a FlashblockAccessList tracking all
 /// account and storage changes across all transactions.
@@ -93,10 +43,7 @@ pub fn execute_txns_build_access_list(
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {
-    let chain_spec = Arc::new(OpChainSpec::from_genesis(
-        serde_json::from_str(include_str!("../../../../client/test-utils/assets/genesis.json"))
-            .unwrap(),
-    ));
+    let chain_spec = load_chain_spec();
     let evm_config = OpEvmConfig::optimism(chain_spec.clone());
     let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
 

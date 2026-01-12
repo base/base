@@ -1,4 +1,4 @@
-# base-reth-metering
+# base-metering
 
 Metering RPC for Base node. Provides RPC methods for measuring transaction and block execution timing.
 

@@ -1,77 +1,117 @@
 //! Unified test harness combining node and engine helpers, plus optional flashblocks adapter.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use eyre::{Result, eyre};
-use futures_util::Future;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth::{
-    builder::NodeHandle,
-    providers::{BlockNumReader, BlockReader, ChainSpecProvider},
-};
-use reth_e2e_test_utils::Adapter;
-use reth_optimism_node::OpNode;
+use reth::providers::{BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
 
 use crate::{
-    BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
-    NODE_STARTUP_DELAY_MS, TestAccounts,
-    engine::{EngineApi, IpcEngine},
-    node::{LocalNode, LocalNodeProvider, OpAddOns, OpBuilder, default_launcher},
-    tracing::init_silenced_tracing,
+    BaseNodeExtension, FromExtensionConfig,
+    test_utils::{
+        BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
+        NODE_STARTUP_DELAY_MS,
+        engine::{EngineApi, IpcEngine},
+        node::{LocalNode, LocalNodeProvider},
+        tracing::init_silenced_tracing,
+    },
 };
+
+/// Builder for configuring and launching a test harness.
+#[derive(Debug, Default)]
+pub struct TestHarnessBuilder {
+    extensions: Vec<Box<dyn BaseNodeExtension>>,
+    chain_spec: Option<Arc<OpChainSpec>>,
+}
+
+impl TestHarnessBuilder {
+    /// Create a new builder with no extensions.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an extension to be applied during node launch using its config type.
+    pub fn with_ext<T: FromExtensionConfig + 'static>(mut self, config: T::Config) -> Self {
+        self.extensions.push(Box::new(T::from_config(config)));
+        self
+    }
+
+    /// Add a pre-constructed extension to be applied during node launch.
+    ///
+    /// Prefer [`with_ext`](Self::with_ext) for simpler configuration.
+    pub fn with_extension(mut self, ext: impl BaseNodeExtension + 'static) -> Self {
+        self.extensions.push(Box::new(ext));
+        self
+    }
+
+    /// Set a custom chain spec for the test harness.
+    ///
+    /// If not provided, the default genesis is built programmatically.
+    pub fn with_chain_spec(mut self, chain_spec: Arc<OpChainSpec>) -> Self {
+        self.chain_spec = Some(chain_spec);
+        self
+    }
+
+    /// Build and launch the test harness.
+    pub async fn build(self) -> Result<TestHarness> {
+        init_silenced_tracing();
+
+        let chain_spec = match self.chain_spec {
+            Some(spec) => spec,
+            None => {
+                let genesis = crate::test_utils::build_test_genesis();
+                Arc::new(OpChainSpec::from_genesis(genesis))
+            }
+        };
+
+        let node = LocalNode::new(self.extensions, chain_spec).await?;
+        let engine = node.engine_api()?;
+
+        sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
+
+        Ok(TestHarness { node, engine })
+    }
+}
 
 /// High-level façade that bundles a local node, engine API client, and common helpers.
 #[derive(Debug)]
 pub struct TestHarness {
     node: LocalNode,
     engine: EngineApi<IpcEngine>,
-    accounts: TestAccounts,
 }
 
 impl TestHarness {
-    /// Launch a new harness using the default launcher configuration.
+    /// Launch a new harness using the default configuration (no extensions).
     pub async fn new() -> Result<Self> {
-        Self::with_launcher(default_launcher).await
+        TestHarnessBuilder::new().build().await
     }
 
-    /// Launch the harness with a custom node launcher (e.g. to tweak components).
-    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        init_silenced_tracing();
-        let node = LocalNode::new(launcher).await?;
-        Self::from_node(node).await
+    /// Create a builder for configuring the test harness with extensions.
+    pub fn builder() -> TestHarnessBuilder {
+        TestHarnessBuilder::new()
     }
 
-    /// Build a harness from an already-running [`LocalNode`].
-    pub(crate) async fn from_node(node: LocalNode) -> Result<Self> {
-        let engine = node.engine_api()?;
-        let accounts = TestAccounts::new();
-
-        sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
-
-        Ok(Self { node, engine, accounts })
+    /// Create a harness from pre-built parts.
+    ///
+    /// This is useful when you need to capture extension state before building the harness.
+    pub fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
+        Self { node, engine }
     }
 
     /// Return an Optimism JSON-RPC provider connected to the harness node.
     pub fn provider(&self) -> RootProvider<Optimism> {
         self.node.provider().expect("provider should always be available after node initialization")
-    }
-
-    /// Access the deterministic test accounts backing the harness.
-    pub fn accounts(&self) -> &TestAccounts {
-        &self.accounts
     }
 
     /// Access the low-level blockchain provider for direct database queries.
@@ -87,6 +127,12 @@ impl TestHarness {
     /// Websocket URL for subscribing to JSON-RPC notifications.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.node.ws_api_addr)
+    }
+
+    /// Return a JSON-RPC client connected to the harness node.
+    pub fn rpc_client(&self) -> Result<RpcClient> {
+        let url = self.rpc_url().parse()?;
+        Ok(RpcClient::new_http(url))
     }
 
     /// Build a block using the provided transactions and push it through the engine.
@@ -187,6 +233,16 @@ impl TestHarness {
             .expect("canonical block exists");
         BlockT::try_into_recovered(block).expect("able to recover canonical block")
     }
+
+    /// Return the chain specification used by the harness.
+    pub fn chain_spec(&self) -> Arc<OpChainSpec> {
+        self.node.blockchain_provider().chain_spec()
+    }
+
+    /// Return the chain ID used by the harness.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_spec().chain().id()
+    }
 }
 
 #[cfg(test)]
@@ -195,18 +251,17 @@ mod tests {
     use alloy_provider::Provider;
 
     use super::*;
+    use crate::test_utils::Account;
+
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
         let harness = TestHarness::new().await?;
 
-        assert_eq!(harness.accounts().alice.name, "Alice");
-        assert_eq!(harness.accounts().bob.name, "Bob");
-
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
-        assert_eq!(chain_id, crate::BASE_CHAIN_ID);
+        assert_eq!(chain_id, crate::test_utils::DEVNET_CHAIN_ID);
 
-        let alice_balance = provider.get_balance(harness.accounts().alice.address).await?;
+        let alice_balance = provider.get_balance(Account::Alice.address()).await?;
         assert!(alice_balance > U256::ZERO);
 
         let block_number = provider.get_block_number().await?;

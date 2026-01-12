@@ -1,5 +1,5 @@
 [package]
-name = "base-reth-flashblocks"
+name = "base-flashblocks"
 description = "Flashblocks State Management"
 version.workspace = true
 edition.workspace = true
@@ -11,10 +11,19 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-utils = [
+	"base-client-node/test-utils",
+	"dep:derive_more",
+	"dep:eyre",
+	"reth-evm/test-utils",
+	"reth-primitives/test-utils",
+]
+
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
-base-primitives.workspace = true
+base-client-node.workspace = true
 
 # reth
 reth.workspace = true
@@ -58,7 +67,6 @@ jsonrpsee-types.workspace = true
 serde.workspace = true
 
 # misc
-eyre.workspace = true
 once_cell.workspace = true
 url.workspace = true
 thiserror.workspace = true
@@ -68,7 +76,12 @@ arc-swap.workspace = true
 metrics-derive.workspace = true
 rayon.workspace = true
 
+# Optional test-utils dependencies
+derive_more = { workspace = true, features = ["deref"], optional = true }
+eyre = { workspace = true, optional = true }
+
 [dev-dependencies]
+base-flashblocks = { path = ".", features = ["test-utils"] }
 rstest.workspace = true
 rand.workspace = true
 eyre.workspace = true
@@ -83,14 +96,11 @@ alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
 alloy-contract.workspace = true
 op-alloy-consensus.workspace = true
-reth-testing-utils.workspace = true
 reth-tracing.workspace = true
 reth-optimism-node.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio-tungstenite.workspace = true
 tracing-subscriber.workspace = true
-reth-e2e-test-utils.workspace = true
-base-reth-test-utils.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
 criterion = { version = "0.5", features = ["async_tokio"] }
