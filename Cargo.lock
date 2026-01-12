@@ -1931,6 +1931,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-account-abstraction"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives 1.5.2",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
+ "alloy-rpc-types-trace",
+ "alloy-sol-types 1.5.2",
+ "async-trait",
+ "base-account-abstraction-indexer",
+ "base-client-node",
+ "clap",
+ "eyre",
+ "hex",
+ "jsonrpsee 0.26.0",
+ "jsonrpsee-types 0.26.0",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
+ "parking_lot",
+ "reth",
+ "reth-evm",
+ "reth-exex",
+ "reth-optimism-chainspec",
+ "reth-optimism-cli",
+ "reth-optimism-evm",
+ "reth-optimism-primitives",
+ "reth-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-rpc",
+ "reth-rpc-eth-api",
+ "reth-tasks",
+ "reth-transaction-pool",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-account-abstraction-indexer"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives 1.5.2",
+ "alloy-sol-types 1.5.2",
+ "eyre",
+ "futures",
+ "metrics",
+ "parking_lot",
+ "reth",
+ "reth-exex",
+ "reth-primitives-traits",
+ "reth-tracing",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-bundles"
 version = "0.2.1"
 dependencies = [

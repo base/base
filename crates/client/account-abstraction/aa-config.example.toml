@@ -1,0 +1,21 @@
+# Account Abstraction (EIP-4337) Configuration
+#
+# Copy this file to aa-config.toml and customize for your environment.
+#
+# Usage:
+#   base-reth-node node --aa-config /path/to/aa-config.toml
+
+# Required: URL of the TIPS ingress service for submitting user operations
+# This is the bundler endpoint that receives and processes user operations
+tips_url = "http://localhost:8080"
+
+# Optional: Enable debug logging for AA operations (default: false)
+# Set to true for verbose logging during development
+debug = false
+
+# Optional: Number of blocks to look back when searching for UserOperation events
+# This is used as a fallback when the AA indexer ExEx is not installed.
+# Higher values allow finding older operations but increase query time.
+# Default: 1000 blocks
+user_op_event_lookback_blocks = 1000
+

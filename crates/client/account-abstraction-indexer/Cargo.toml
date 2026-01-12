@@ -1,0 +1,35 @@
+[package]
+name = "base-account-abstraction-indexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Account Abstraction (EIP-4337) UserOperation Indexer ExEx"
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth.workspace = true
+reth-exex.workspace = true
+reth-primitives-traits.workspace = true
+reth-tracing.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
+
+# async
+futures.workspace = true
+tokio.workspace = true
+
+# misc
+eyre.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+parking_lot.workspace = true
+

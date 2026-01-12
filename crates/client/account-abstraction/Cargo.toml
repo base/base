@@ -1,0 +1,73 @@
+[package]
+name = "base-account-abstraction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Account Abstraction (EIP-4337) RPC Support"
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[build-dependencies]
+serde_json.workspace = true
+
+[dependencies]
+# internal
+base-account-abstraction-indexer.workspace = true
+base-client-node.workspace = true
+
+# reth
+reth.workspace = true
+reth-exex.workspace = true
+reth-provider.workspace = true
+reth-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-evm.workspace = true
+reth-optimism-evm.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-optimism-primitives.workspace = true
+reth-transaction-pool.workspace = true
+reth-optimism-cli.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc.workspace = true
+reth-tasks.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-provider.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-trace.workspace = true
+alloy-rpc-types.workspace = true
+alloy-eips.workspace = true
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+jsonrpsee-types.workspace = true
+
+# async
+tokio.workspace = true
+
+# misc
+tracing.workspace = true
+serde.workspace = true
+eyre.workspace = true
+url.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+hex.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dev-dependencies]
+

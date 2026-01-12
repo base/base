@@ -1,0 +1,10 @@
+# Cloned test repositories
+repos/
+
+# Test logs
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+.pdm-python

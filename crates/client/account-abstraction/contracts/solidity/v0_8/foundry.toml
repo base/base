@@ -1,0 +1,16 @@
+[profile.default]
+src = 'src'
+out = 'out'
+libs = ['lib']
+test = 'test'
+cache_path = 'cache'
+solc_version = '0.8.28'
+optimizer = true
+optimizer_runs = 1000000
+evm_version = 'cancun'
+
+remappings = [
+    '@account-abstraction/=lib/account-abstraction/contracts/',
+    '@openzeppelin/=lib/openzeppelin-contracts/',
+]
+

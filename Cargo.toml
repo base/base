@@ -64,6 +64,8 @@ base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
+base-account-abstraction = { path = "crates/client/account-abstraction" }
+base-account-abstraction-indexer = { path = "crates/client/account-abstraction-indexer" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
@@ -172,6 +174,7 @@ alloy-rpc-types = "1.0.41"
 alloy-rpc-client = "1.0.41"
 alloy-rpc-types-eth = "1.0.41"
 alloy-rpc-types-engine = { version = "1.0.41", features = ["ssz"] }
+alloy-rpc-types-trace = "1.0.41"
 alloy-chains = "0.2.5"
 alloy-evm = { version = "0.23.0", default-features = false }
 alloy-pubsub = "1.0.41"
