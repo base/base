@@ -107,23 +107,16 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256};
     use base_bundles::{Bundle, ParsedBundle};
-    use base_client_node::test_utils::Account;
+    use base_client_node::test_utils::{Account, TestHarness};
     use eyre::Context;
-    use op_alloy_consensus::OpTxEnvelope;
-    use reth::chainspec::EthChainSpec;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_provider::StateProviderFactory;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
-    use crate::test_utils::MeteringTestContext;
 
-    fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> {
-        Ok(tx.clone())
-    }
-
-    fn create_parsed_bundle(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<ParsedBundle> {
-        let txs: Vec<Bytes> = envelopes.iter().map(|env| Bytes::from(env.encoded_2718())).collect();
+    fn create_parsed_bundle(txs: Vec<OpTransactionSigned>) -> eyre::Result<ParsedBundle> {
+        let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();
 
         let bundle = Bundle {
             txs,
@@ -140,19 +133,21 @@ mod tests {
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
     }
 
-    #[test]
-    fn meter_bundle_empty_transactions() -> eyre::Result<()> {
-        let ctx = MeteringTestContext::new()?;
+    #[tokio::test]
+    async fn meter_bundle_empty_transactions() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
 
-        let state_provider = ctx
-            .provider
-            .state_by_block_hash(ctx.header.hash())
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
             .context("getting state provider")?;
 
         let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, ctx.chain_spec.clone(), parsed_bundle, &ctx.header)?;
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
 
         assert!(results.is_empty());
         assert_eq!(total_gas_used, 0);
@@ -164,14 +159,16 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn meter_bundle_single_transaction() -> eyre::Result<()> {
-        let ctx = MeteringTestContext::new()?;
+    #[tokio::test]
+    async fn meter_bundle_single_transaction() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
 
         let to = Address::random();
         let signed_tx = TransactionBuilder::default()
             .signer(Account::Alice.signer_b256())
-            .chain_id(ctx.chain_spec.chain_id())
+            .chain_id(harness.chain_id())
             .nonce(0)
             .to(to)
             .value(1_000)
@@ -183,19 +180,17 @@ mod tests {
         let tx = OpTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
+        let tx_hash = tx.tx_hash();
 
-        let envelope = envelope_from_signed(&tx)?;
-        let tx_hash = envelope.tx_hash();
-
-        let state_provider = ctx
-            .provider
-            .state_by_block_hash(ctx.header.hash())
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
             .context("getting state provider")?;
 
-        let parsed_bundle = create_parsed_bundle(vec![envelope])?;
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, ctx.chain_spec.clone(), parsed_bundle, &ctx.header)?;
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
@@ -220,9 +215,11 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
-        let ctx = MeteringTestContext::new()?;
+    #[tokio::test]
+    async fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
 
         let to_1 = Address::random();
         let to_2 = Address::random();
@@ -230,7 +227,7 @@ mod tests {
         // Create first transaction
         let signed_tx_1 = TransactionBuilder::default()
             .signer(Account::Alice.signer_b256())
-            .chain_id(ctx.chain_spec.chain_id())
+            .chain_id(harness.chain_id())
             .nonce(0)
             .to(to_1)
             .value(1_000)
@@ -246,7 +243,7 @@ mod tests {
         // Create second transaction
         let signed_tx_2 = TransactionBuilder::default()
             .signer(Account::Bob.signer_b256())
-            .chain_id(ctx.chain_spec.chain_id())
+            .chain_id(harness.chain_id())
             .nonce(0)
             .to(to_2)
             .value(2_000)
@@ -259,20 +256,18 @@ mod tests {
             signed_tx_2.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
-        let envelope_1 = envelope_from_signed(&tx_1)?;
-        let envelope_2 = envelope_from_signed(&tx_2)?;
-        let tx_hash_1 = envelope_1.tx_hash();
-        let tx_hash_2 = envelope_2.tx_hash();
+        let tx_hash_1 = tx_1.tx_hash();
+        let tx_hash_2 = tx_2.tx_hash();
 
-        let state_provider = ctx
-            .provider
-            .state_by_block_hash(ctx.header.hash())
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
             .context("getting state provider")?;
 
-        let parsed_bundle = create_parsed_bundle(vec![envelope_1, envelope_2])?;
+        let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
 
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(state_provider, ctx.chain_spec.clone(), parsed_bundle, &ctx.header)?;
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
 
         assert_eq!(results.len(), 2);
         assert!(total_execution_time > 0);

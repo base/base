@@ -20,6 +20,3 @@ pub use traits::MeteringApiServer;
 
 mod types;
 pub use types::{MeterBlockResponse, MeterBlockTransactions};
-
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
