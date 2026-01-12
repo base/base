@@ -250,4 +250,3 @@ ethereum_ssz_derive = "0.9.0"
 
 # base
 concurrent-queue = "2.5.0"
-tips-core = { git = "https://github.com/base/tips", rev = "c08eaa4fe10c26de8911609b41ddab4918698325", default-features = false }
