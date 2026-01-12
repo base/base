@@ -17,6 +17,8 @@ tokio = { workspace = true, features = ["full"] }
 eyre.workspace = true
 clap = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+thiserror.workspace = true
+metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

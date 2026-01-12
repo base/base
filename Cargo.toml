@@ -215,6 +215,9 @@ vergen = "9.0.6"
 vergen-git2 = "1.0.7"
 clap = { version = "4.5.53", features = ["derive", "env", "string"] }
 
+# Metrics
+metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
+
 # misc
 url = "2.5.7"
 lru = "0.16.2"

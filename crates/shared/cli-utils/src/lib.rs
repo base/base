@@ -9,6 +9,9 @@ pub use sigsegv::SigsegvHandler;
 mod backtrace;
 pub use backtrace::Backtracing;
 
+mod errors;
+pub use errors::{CliError, CliResult};
+
 mod args;
 pub use args::GlobalArgs;
 

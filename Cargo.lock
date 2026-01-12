@@ -1896,7 +1896,9 @@ dependencies = [
  "clap",
  "eyre",
  "libc",
+ "metrics-exporter-prometheus 0.18.1",
  "reth",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
 ]
@@ -6639,6 +6641,26 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-rustls",
+ "hyper-util",
+ "indexmap 2.13.0",
+ "ipnet",
+ "metrics",
+ "metrics-util 0.20.1",
+ "quanta",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "metrics-exporter-prometheus"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3589659543c04c7dc5526ec858591015b87cd8746583b51b48ef4353f99dbcda"
+dependencies = [
+ "base64 0.22.1",
+ "http-body-util",
+ "hyper",
  "hyper-util",
  "indexmap 2.13.0",
  "ipnet",
