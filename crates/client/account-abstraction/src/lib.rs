@@ -4,12 +4,13 @@ pub mod decoding;
 pub mod entrypoint;
 pub mod estimation;
 mod extension;
+pub mod mempool;
 pub mod provider;
 mod rpc;
 pub mod simulation;
 mod tips_client;
 
-pub use config::{AccountAbstractionArgs, ConfigError};
+pub use config::{AccountAbstractionArgs, ConfigError, SendMode};
 pub use extension::{AccountAbstractionConfig, AccountAbstractionExtension};
 pub use contracts::{
     ENTRYPOINT_V06_ADDRESS, ENTRYPOINT_V07_ADDRESS, ENTRYPOINT_V08_ADDRESS, ENTRYPOINT_V09_ADDRESS,
@@ -44,4 +45,11 @@ pub use simulation::{
     EntityInfoProvider, Erc7562RuleChecker, UserOperationValidator, ValidationConfig,
     ValidationError as SimulationValidationError, ValidationOutput,
 };
+pub use mempool::{
+    BlockWatcher, EntryPointPool, EntityReputation, GossipConfig, GossipError, MempoolConfig,
+    MempoolError, MempoolResult, MempoolRuleChecker, ParsedUserOpEvent, PooledUserOp,
+    ReputationManager, ReputationStatus, SharedUserOpMempoolProvider, UserOpGossip,
+    UserOpGossipHandle, UserOpGossipMessage, UserOpMempoolProvider, UserOpPool, UserOpStatus,
+};
+pub use contracts::is_entrypoint;
 

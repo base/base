@@ -500,12 +500,29 @@ pub trait BaseAccountAbstractionApi {
     ) -> RpcResult<ValidationResult>;
 }
 
+/// The handler for sending UserOperations based on configured mode
+#[derive(Clone)]
+pub enum UserOpSendHandler {
+    /// Forward to TIPS service
+    Tips(TipsClient),
+    /// Store in local mempool
+    Mempool {
+        /// Reference to the mempool
+        pool: Arc<parking_lot::RwLock<crate::mempool::UserOpPool>>,
+        /// Chain ID for hash computation
+        chain_id: u64,
+        /// Optional gossip handle for p2p propagation
+        gossip_handle: Option<crate::mempool::UserOpGossipHandle>,
+    },
+}
+
 /// Implementation of the account abstraction RPC API
 pub struct AccountAbstractionApiImpl<Provider, Eth> {
     provider: Provider,
     /// The Eth API for simulation (eth_call)
     eth_api: Eth,
-    tips_client: TipsClient,
+    /// Handler for sending UserOperations (Tips or Mempool)
+    send_handler: UserOpSendHandler,
     /// Receipt provider for looking up UserOperation receipts
     receipt_provider: Arc<RethReceiptProvider<Provider>>,
 }
@@ -515,7 +532,7 @@ where
     Provider: StateProviderFactory + ChainSpecProvider<ChainSpec = OpChainSpec> + Clone,
     Eth: FullEthApi<NetworkTypes = Optimism> + Clone,
 {
-    /// Creates a new instance of AccountAbstractionApi
+    /// Creates a new instance of AccountAbstractionApi in Tips mode
     ///
     /// # Arguments
     /// * `provider` - The state provider for blockchain access
@@ -538,8 +555,52 @@ where
         Self {
             provider,
             eth_api,
-            tips_client: TipsClient::new(tips_url),
+            send_handler: UserOpSendHandler::Tips(TipsClient::new(tips_url)),
             receipt_provider,
+        }
+    }
+
+    /// Creates a new instance of AccountAbstractionApi in Mempool mode
+    ///
+    /// # Arguments
+    /// * `provider` - The state provider for blockchain access
+    /// * `eth_api` - The Eth API for simulation calls
+    /// * `pool` - Reference to the UserOperation mempool
+    /// * `chain_id` - Chain ID for UserOp hash computation
+    /// * `gossip_handle` - Optional handle for p2p propagation
+    /// * `storage` - Optional indexed storage from the AA indexer ExEx
+    /// * `args` - Account abstraction CLI arguments
+    pub fn new_with_mempool(
+        provider: Provider,
+        eth_api: Eth,
+        pool: Arc<parking_lot::RwLock<crate::mempool::UserOpPool>>,
+        chain_id: u64,
+        gossip_handle: Option<crate::mempool::UserOpGossipHandle>,
+        storage: Option<Arc<UserOperationStorage>>,
+        args: &AccountAbstractionArgs,
+    ) -> Self {
+        let receipt_provider = Arc::new(RethReceiptProvider::new(
+            provider.clone(),
+            storage,
+            args.user_op_event_lookback_blocks(),
+        ));
+        Self {
+            provider,
+            eth_api,
+            send_handler: UserOpSendHandler::Mempool {
+                pool,
+                chain_id,
+                gossip_handle,
+            },
+            receipt_provider,
+        }
+    }
+
+    /// Get the underlying mempool if in mempool mode
+    pub fn mempool(&self) -> Option<Arc<parking_lot::RwLock<crate::mempool::UserOpPool>>> {
+        match &self.send_handler {
+            UserOpSendHandler::Mempool { pool, .. } => Some(pool.clone()),
+            UserOpSendHandler::Tips(_) => None,
         }
     }
 }
@@ -1014,18 +1075,75 @@ where
             "UserOperation validated successfully, sending to bundler"
         );
 
-        // Send to userop bundle builder
-        let user_op_hash = self
-            .tips_client
-            .send_user_operation(user_operation, entry_point)
-            .await
-            .map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                    format!("Failed to send user operation to bundler pool: {}", e),
-                    None::<String>,
-                )
-            })?;
+        // Handle based on send mode (Tips or Mempool)
+        let user_op_hash = match &self.send_handler {
+            UserOpSendHandler::Tips(tips_client) => {
+                // Send to external TIPS service
+                tips_client
+                    .send_user_operation(user_operation, entry_point)
+                    .await
+                    .map_err(|e| {
+                        jsonrpsee::types::ErrorObjectOwned::owned(
+                            jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                            format!("Failed to send user operation to TIPS: {}", e),
+                            None::<String>,
+                        )
+                    })?
+            }
+            UserOpSendHandler::Mempool {
+                pool,
+                chain_id,
+                gossip_handle,
+            } => {
+                // Compute UserOp hash
+                let user_op_hash = user_operation.hash(entry_point, *chain_id);
+
+                // Add to local mempool
+                {
+                    let mut pool_guard = pool.write();
+                    pool_guard
+                        .add(user_operation.clone(), entry_point, validation_result)
+                        .map_err(|e| {
+                            warn!(
+                                target: "aa-rpc",
+                                sender = %sender,
+                                error = %e,
+                                "Failed to add UserOperation to mempool"
+                            );
+                            jsonrpsee::types::ErrorObjectOwned::owned(
+                                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                                format!("Failed to add UserOperation to mempool: {}", e),
+                                None::<String>,
+                            )
+                        })?;
+                }
+
+                debug!(
+                    target: "aa-rpc",
+                    sender = %sender,
+                    hash = %user_op_hash,
+                    "UserOperation added to mempool"
+                );
+
+                // Optionally gossip to peers
+                if let Some(handle) = gossip_handle {
+                    if let Err(e) = handle
+                        .broadcast_user_op(user_operation, entry_point, user_op_hash, *chain_id)
+                        .await
+                    {
+                        // Log but don't fail - local mempool succeeded
+                        warn!(
+                            target: "aa-rpc",
+                            hash = %user_op_hash,
+                            error = %e,
+                            "Failed to gossip UserOperation to peers"
+                        );
+                    }
+                }
+
+                user_op_hash
+            }
+        };
 
         Ok(user_op_hash)
     }

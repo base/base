@@ -1952,6 +1952,7 @@ dependencies = [
  "jsonrpsee-types 0.26.0",
  "op-alloy-network",
  "op-alloy-rpc-types",
+ "p2p",
  "parking_lot",
  "reth",
  "reth-evm",
@@ -1971,6 +1972,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]

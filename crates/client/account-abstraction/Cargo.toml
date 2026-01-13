@@ -19,6 +19,7 @@ serde_json.workspace = true
 # internal
 base-account-abstraction-indexer.workspace = true
 base-client-node.workspace = true
+p2p.workspace = true
 
 # reth
 reth.workspace = true
@@ -54,6 +55,7 @@ jsonrpsee-types.workspace = true
 
 # async
 tokio.workspace = true
+tokio-util.workspace = true
 
 # misc
 tracing.workspace = true

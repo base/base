@@ -66,6 +66,8 @@ base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-account-abstraction = { path = "crates/client/account-abstraction" }
 base-account-abstraction-indexer = { path = "crates/client/account-abstraction-indexer" }
+# Builder
+p2p = { path = "crates/builder/p2p" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
