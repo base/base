@@ -5,10 +5,10 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
-use revm::{Database, context::result::ExecutionResult};
 use reth_evm::Evm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_primitives::OpReceipt;
+use revm::{Database, context::result::ExecutionResult};
 
 /// Error type for receipt building operations.
 #[derive(Debug, thiserror::Error)]
@@ -129,11 +129,9 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::Header;
-    use alloy_primitives::{Address, Log, LogData, address};
-    use alloy_primitives::TxKind;
+    use alloy_primitives::{Address, Log, LogData, TxKind, address};
     use op_alloy_consensus::TxDeposit;
-    use reth_evm::op_revm::OpHaltReason;
-    use reth_evm::ConfigureEvm;
+    use reth_evm::{ConfigureEvm, op_revm::OpHaltReason};
     use reth_optimism_chainspec::OpChainSpecBuilder;
     use reth_optimism_evm::OpEvmConfig;
     use revm::database::InMemoryDB;
@@ -196,8 +194,7 @@ mod tests {
 
     #[test]
     fn test_receipt_from_success_result() {
-        let result: ExecutionResult<OpHaltReason> =
-            create_success_result();
+        let result: ExecutionResult<OpHaltReason> = create_success_result();
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used: 21000,
