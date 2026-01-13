@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-default-run = "op-rbuilder"
 
 [lints.rust]
 unreachable_pub = "deny"
@@ -207,10 +206,6 @@ interop = []
 telemetry = [ "opentelemetry", "reth-tracing-otlp" ]
 
 custom-engine-api = []
-
-[[bin]]
-name = "op-rbuilder"
-path = "src/bin/op-rbuilder/main.rs"
 
 [[bin]]
 name = "tester"
