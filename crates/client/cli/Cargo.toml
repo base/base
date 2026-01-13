@@ -12,9 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Shared
-base-jwt.workspace = true
-
-# CLI
+# General
 url.workspace = true
 clap.workspace = true
+alloy-rpc-types-engine.workspace = true

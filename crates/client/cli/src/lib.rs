@@ -3,8 +3,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub use base_jwt::{JwtError, JwtSecret, default_jwt_secret};
-
 mod l1;
 pub use l1::L1ClientArgs;
 
