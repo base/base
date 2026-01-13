@@ -5,7 +5,7 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
-use reth::revm::{Database, context::result::ExecutionResult};
+use revm::{Database, context::result::ExecutionResult};
 use reth_evm::Evm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_primitives::OpReceipt;
@@ -130,7 +130,9 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, address};
-    use op_alloy_consensus::{OpDeposit, OpTypedTransaction};
+    use alloy_primitives::TxKind;
+    use op_alloy_consensus::TxDeposit;
+    use reth_evm::op_revm::OpHaltReason;
     use reth_evm::ConfigureEvm;
     use reth_optimism_chainspec::OpChainSpecBuilder;
     use reth_optimism_evm::OpEvmConfig;
@@ -144,7 +146,7 @@ mod tests {
             nonce: 0,
             gas_price: 1000000000,
             gas_limit: 21000,
-            to: alloy_consensus::TxKind::Call(Address::ZERO),
+            to: TxKind::Call(Address::ZERO),
             value: alloy_primitives::U256::ZERO,
             input: alloy_primitives::Bytes::new(),
         };
@@ -157,30 +159,31 @@ mod tests {
     }
 
     fn create_deposit_tx() -> Recovered<OpTxEnvelope> {
-        let deposit = OpDeposit {
+        let deposit = TxDeposit {
             source_hash: alloy_primitives::B256::ZERO,
             from: address!("0x1234567890123456789012345678901234567890"),
-            to: alloy_consensus::TxKind::Call(Address::ZERO),
-            mint: None,
+            to: TxKind::Call(Address::ZERO),
+            mint: 0,
             value: alloy_primitives::U256::ZERO,
             gas_limit: 21000,
             is_system_transaction: false,
             input: alloy_primitives::Bytes::new(),
         };
-        let envelope = OpTxEnvelope::Deposit(deposit);
+        let sealed = alloy_consensus::Sealed::new_unchecked(deposit, alloy_primitives::B256::ZERO);
+        let envelope = OpTxEnvelope::Deposit(sealed);
         Recovered::new_unchecked(envelope, address!("0x1234567890123456789012345678901234567890"))
     }
 
-    fn create_success_result<H>() -> ExecutionResult<H> {
+    fn create_success_result() -> ExecutionResult<OpHaltReason> {
         ExecutionResult::Success {
-            reason: reth::revm::context::result::SuccessReason::Stop,
+            reason: revm::context::result::SuccessReason::Stop,
             gas_used: 21000,
             gas_refunded: 0,
             logs: vec![Log {
                 address: Address::ZERO,
                 data: LogData::new_unchecked(vec![], alloy_primitives::Bytes::new()),
             }],
-            output: reth::revm::context::result::Output::Call(alloy_primitives::Bytes::new()),
+            output: revm::context::result::Output::Call(alloy_primitives::Bytes::new()),
         }
     }
 
@@ -193,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_receipt_from_success_result() {
-        let result: ExecutionResult<reth::revm::context::result::HaltReason> =
+        let result: ExecutionResult<OpHaltReason> =
             create_success_result();
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
@@ -207,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_receipt_from_revert_result() {
-        let result: ExecutionResult<reth::revm::context::result::HaltReason> =
+        let result: ExecutionResult<OpHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
@@ -247,7 +250,7 @@ mod tests {
     fn create_test_evm(
         chain_spec: Arc<reth_optimism_chainspec::OpChainSpec>,
         db: &mut InMemoryDB,
-    ) -> impl Evm + '_ {
+    ) -> impl Evm<HaltReason = OpHaltReason, DB = &mut InMemoryDB> + '_ {
         let evm_config = OpEvmConfig::optimism(chain_spec);
         let header = Header::default();
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
@@ -324,7 +327,7 @@ mod tests {
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
-        let result: ExecutionResult<reth::revm::context::result::HaltReason> =
+        let result: ExecutionResult<OpHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
 
         let receipt = builder.build(&mut evm, &tx, result, 10000, 0).expect("build should succeed");
