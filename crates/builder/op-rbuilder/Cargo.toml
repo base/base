@@ -130,7 +130,7 @@ chrono = "0.4"
 uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 tokio-tungstenite = "0.26.2"
 rand = "0.9.0"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 shellexpand = "3.1"
 serde_yaml = { version = "0.9" }
 moka = { version = "0.12", features = ["future"] }
