@@ -67,7 +67,6 @@ base-flashblocks = { path = "crates/client/flashblocks" }
 
 reth-optimism-exex = { path = "crates/optimism/exex" }
 reth-optimism-trie = { path = "crates/optimism/trie" }
-reth-optimism-rpc = { path = "crates/optimism/rpc" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
@@ -88,9 +87,9 @@ reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f3
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
-# reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8", features = [
-#     "client",
-# ] }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8", features = [
+    "client",
+] }
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }

@@ -23,7 +23,8 @@ reth-provider.workspace = true
 # op-reth
 # proofs exex handles `TrieUpdates` in notifications
 reth-optimism-trie = { workspace = true, features = ["serde-bincode-compat", "metrics"] }
-reth-optimism-rpc = { workspace = true }
+reth-optimism-rpc = { path = "../rpc" }
+
 reth-tasks.workspace = true
 tokio.workspace = true
 
