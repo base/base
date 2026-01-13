@@ -142,14 +142,14 @@ fn test_multi_sload_same_slot() {
             .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
     );
 
-    // getAB reads both `a` and `b` which are packed in slot 1
+    // getAb reads both `a` and `b` which are packed in slot 1
     let tx = OpTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
                 .chain_id(Some(DEVNET_CHAIN_ID))
                 .kind(TxKind::Call(contract))
-                .data(AccessListContract::getABCall {}.abi_encode().into())
+                .data(AccessListContract::getAbCall {}.abi_encode().into())
                 .nonce(0)
                 .gas_price(0)
                 .gas_priority_fee(None)

@@ -34,7 +34,7 @@ contract AccessList {
         }
     }
 
-    function getAB() public view returns (uint128, uint128) {
+    function getAb() public view returns (uint128, uint128) {
         return (a, b);
     }
 
