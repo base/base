@@ -21,6 +21,11 @@ pub(crate) struct Args {
     #[arg(long)]
     pub recipient: Option<String>,
 
+    /// Simulator contract address for state root timing tests.
+    /// If not provided, state root timing tests will use simple ETH transfers.
+    #[arg(long, env = "SIMULATOR_ADDRESS")]
+    pub simulator: Option<String>,
+
     /// Run only tests matching this filter (supports glob patterns).
     #[arg(long, short)]
     pub filter: Option<String>,

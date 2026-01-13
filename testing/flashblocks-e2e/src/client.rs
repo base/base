@@ -35,6 +35,8 @@ pub struct TestClient {
     signer: Option<PrivateKeySigner>,
     /// Recipient address for ETH transfers in tests.
     recipient: Option<Address>,
+    /// Simulator contract address for state root timing tests.
+    simulator: Option<Address>,
     /// Chain ID for signing transactions.
     chain_id: u64,
 }
@@ -47,6 +49,7 @@ impl TestClient {
     /// * `flashblocks_ws_url` - Flashblocks WebSocket URL
     /// * `private_key` - Optional hex-encoded private key for signing transactions
     /// * `recipient` - Optional recipient address for ETH transfers in tests
+    /// * `simulator` - Optional Simulator contract address for state root timing tests
     ///
     /// # Errors
     /// Returns an error if recipient equals the signer address.
@@ -55,6 +58,7 @@ impl TestClient {
         flashblocks_ws_url: &str,
         private_key: Option<&str>,
         recipient: Option<Address>,
+        simulator: Option<Address>,
     ) -> Result<Self> {
         let url: Url = rpc_url.parse().wrap_err("Invalid RPC URL")?;
 
@@ -88,6 +92,7 @@ impl TestClient {
             flashblocks_ws_url: flashblocks_ws_url.to_string(),
             signer,
             recipient,
+            simulator,
             chain_id,
         })
     }
@@ -105,6 +110,11 @@ impl TestClient {
     /// Get the recipient address for ETH transfers, if configured.
     pub const fn recipient(&self) -> Option<Address> {
         self.recipient
+    }
+
+    /// Get the Simulator contract address, if configured.
+    pub const fn simulator(&self) -> Option<Address> {
+        self.simulator
     }
 
     /// Get the chain ID.

@@ -46,10 +46,27 @@ async fn main() -> Result<()> {
         tracing::warn!("No --recipient set - tests requiring ETH transfers will be skipped");
     }
 
+    // Parse simulator address if provided
+    let simulator: Option<Address> = args
+        .simulator
+        .as_ref()
+        .map(|s| s.parse())
+        .transpose()
+        .wrap_err("Invalid simulator address")?;
+
+    if let Some(addr) = simulator {
+        tracing::info!(address = ?addr, "Simulator contract configured");
+    }
+
     // Create test client (chain ID is fetched from RPC)
-    let client =
-        TestClient::new(&args.rpc_url, &args.flashblocks_ws_url, private_key.as_deref(), recipient)
-            .await?;
+    let client = TestClient::new(
+        &args.rpc_url,
+        &args.flashblocks_ws_url,
+        private_key.as_deref(),
+        recipient,
+        simulator,
+    )
+    .await?;
 
     if let Some(addr) = client.signer_address() {
         tracing::info!(address = ?addr, "Signer configured");

@@ -117,6 +117,19 @@ pub fn skip_if_no_addresses(client: &TestClient) -> Option<String> {
     }
 }
 
+/// Check if we have signer and simulator configured.
+///
+/// Returns Some(reason) if either is missing, indicating the test should be skipped.
+pub fn skip_if_no_signer_or_simulator(client: &TestClient) -> Option<String> {
+    if !client.has_signer() {
+        Some("No PRIVATE_KEY configured".to_string())
+    } else if client.simulator().is_none() {
+        Some("No --simulator configured".to_string())
+    } else {
+        None
+    }
+}
+
 /// Build the complete test suite.
 pub fn build_test_suite() -> TestSuite {
     TestSuite {

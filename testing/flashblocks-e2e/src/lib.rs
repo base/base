@@ -16,6 +16,11 @@ pub use runner::{
     TestResult, TestSummary, list_tests, print_results_json, print_results_text, run_tests,
 };
 
+pub mod simulator;
+pub use simulator::{
+    PrecompileConfig, Simulator, SimulatorConfig, SimulatorConfigBuilder, encode_run_call,
+};
+
 pub mod types;
 pub use types::{
     Bundle, ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock,
