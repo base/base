@@ -57,9 +57,11 @@ base-access-lists = { path = "crates/shared/access-lists" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
 base-flashtypes = { path = "crates/shared/flashtypes" }
+base-jwt = { path = "crates/shared/jwt" }
 base-primitives = { path = "crates/shared/primitives" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 # Client
+base-client-cli = { path = "crates/client/cli" }
 base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }

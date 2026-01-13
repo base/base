@@ -1927,6 +1927,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-client-cli"
+version = "0.2.1"
+dependencies = [
+ "base-jwt",
+ "clap",
+ "url",
+]
+
+[[package]]
 name = "base-client-node"
 version = "0.2.1"
 dependencies = [
@@ -2062,6 +2071,15 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "base-jwt"
+version = "0.2.1"
+dependencies = [
+ "alloy-primitives 1.5.2",
+ "alloy-rpc-types-engine",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
