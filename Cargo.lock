@@ -1884,6 +1884,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-testing-flashblocks-e2e"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "base-bundles",
+ "base-flashtypes",
+ "brotli",
+ "colored",
+ "eyre",
+ "futures-util",
+ "hex",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-txpool"
 version = "0.2.1"
 dependencies = [
@@ -2568,6 +2600,16 @@ name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "colored"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
+dependencies = [
+ "lazy_static",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "combine"
@@ -3397,6 +3439,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3765,6 +3813,20 @@ dependencies = [
  "rand 0.8.5",
  "rustc-hex",
  "static_assertions",
+]
+
+[[package]]
+name = "flashblocks-e2e"
+version = "0.2.1"
+dependencies = [
+ "alloy-primitives",
+ "base-testing-flashblocks-e2e",
+ "clap",
+ "dotenvy",
+ "eyre",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]

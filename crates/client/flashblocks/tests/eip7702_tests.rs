@@ -140,7 +140,7 @@ fn create_base_flashblock(setup: &TestSetup) -> Flashblock {
             transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone(), setup.account_deploy_tx.clone()],
             ..Default::default()
         },
-        metadata: Metadata { block_number: 1 },
+        metadata: Metadata { block_number: 1, ..Default::default() },
     }
 }
 
@@ -160,7 +160,7 @@ fn create_eip7702_flashblock(eip7702_tx: Bytes, cumulative_gas: u64) -> Flashblo
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
         },
-        metadata: Metadata { block_number: 1 },
+        metadata: Metadata { block_number: 1, ..Default::default() },
     }
 }
 
@@ -265,7 +265,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
         },
-        metadata: Metadata { block_number: 1 },
+        metadata: Metadata { block_number: 1, ..Default::default() },
     };
 
     setup.send_flashblock(flashblock).await?;
@@ -383,7 +383,7 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
         },
-        metadata: Metadata { block_number: 1 },
+        metadata: Metadata { block_number: 1, ..Default::default() },
     };
 
     setup.send_flashblock(execution_flashblock).await?;

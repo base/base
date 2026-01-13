@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*"]
+members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*", "testing/*"]
 default-members = ["bin/node", "bin/consensus"]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -64,6 +64,8 @@ base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
+# Testing
+base-testing-flashblocks-e2e = { path = "testing/flashblocks-e2e" }
 
 # reth
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
@@ -270,3 +272,7 @@ jsonrpsee-core = "0.26.0"
 ethereum_ssz = "0.9.0"
 ethereum_ssz_derive = "0.9.0"
 concurrent-queue = "2.5.0"
+
+# Testing misc
+colored = "2.1"
+dotenvy = "0.15"
