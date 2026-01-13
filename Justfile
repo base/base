@@ -125,7 +125,7 @@ bench-flashblocks:
 
 # Builds builder crates
 build-builder:
-    cargo build -p op-rbuilder -p tdx-quote-provider
+    cargo build -p op-rbuilder
 
 # Builds op-rbuilder binary
 build-op-rbuilder:
@@ -138,15 +138,15 @@ build-tester:
 # Runs tests for builder crates (with OTEL env vars disabled)
 test-builder:
     OTEL_EXPORTER_OTLP_ENDPOINT="" OTEL_EXPORTER_OTLP_HEADERS="" OTEL_SDK_DISABLED="true" \
-    cargo test -p op-rbuilder -p tdx-quote-provider --verbose
+    cargo test -p op-rbuilder --verbose
 
 # Runs clippy on builder crates (using nightly, matching op-rbuilder's original)
 check-clippy-builder:
-    cargo +nightly clippy -p op-rbuilder -p tdx-quote-provider --all-features -- -D warnings
+    cargo +nightly clippy -p op-rbuilder --all-features -- -D warnings
 
 # Fixes formatting for builder crates
 format-builder:
-    cargo +nightly fmt -p op-rbuilder -p tdx-quote-provider
+    cargo +nightly fmt -p op-rbuilder
 
 # Full builder CI check
 ci-builder: build-builder test-builder check-clippy-builder
