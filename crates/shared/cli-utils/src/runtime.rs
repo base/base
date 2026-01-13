@@ -7,43 +7,26 @@ use std::future::Future;
 pub struct RuntimeManager;
 
 impl RuntimeManager {
-    /// Builds a multi-threaded Tokio runtime with all features enabled.
-    pub fn build_runtime() -> eyre::Result<tokio::runtime::Runtime> {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| eyre::eyre!("Failed to build tokio runtime: {}", e))
+    /// Creates a new default tokio multi-thread [Runtime](tokio::runtime::Runtime) with all
+    /// features enabled.
+    pub fn tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
+        tokio::runtime::Builder::new_multi_thread().enable_all().build()
     }
 
-    /// Runs a future to completion, returning early on Ctrl+C.
-    pub async fn run_until_ctrl_c<F>(fut: F) -> eyre::Result<()>
-    where
-        F: Future<Output = ()>,
-    {
-        let ctrl_c = async {
-            tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
-        };
-
-        tokio::select! {
-            biased;
-            () = ctrl_c => Ok(()),
-            () = fut => Ok(()),
-        }
-    }
-
-    /// Runs a fallible future to completion, returning early on Ctrl+C.
-    pub async fn run_until_ctrl_c_fallible<F>(fut: F) -> eyre::Result<()>
+    /// Run a fallible future until ctrl-c is pressed.
+    pub fn run_until_ctrl_c<F>(fut: F) -> eyre::Result<()>
     where
         F: Future<Output = eyre::Result<()>>,
     {
-        let ctrl_c = async {
-            tokio::signal::ctrl_c().await.expect("Failed to install Ctrl+C handler");
-        };
-
-        tokio::select! {
-            biased;
-            () = ctrl_c => Ok(()),
-            result = fut => result,
-        }
+        let rt = Self::tokio_runtime().map_err(|e| eyre::eyre!(e))?;
+        rt.block_on(async move {
+            tokio::select! {
+                res = fut => res,
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    Ok(())
+                }
+            }
+        })
     }
 }
