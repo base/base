@@ -79,7 +79,6 @@ serde.workspace = true
 revm-database.workspace = true
 
 # misc
-once_cell.workspace = true
 url.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

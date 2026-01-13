@@ -50,10 +50,7 @@ impl Args {
 
 impl From<Args> for Option<FlashblocksConfig> {
     fn from(args: Args) -> Self {
-        args.websocket_url.map(|url| FlashblocksConfig {
-            websocket_url: url,
-            max_pending_blocks_depth: args.max_pending_blocks_depth,
-        })
+        args.websocket_url.map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
     }
 }
 
