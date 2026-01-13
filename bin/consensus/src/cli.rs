@@ -1,9 +1,18 @@
 //! Contains the CLI entry point for the Base consensus binary.
 
-use base_cli_utils::GlobalArgs;
-use clap::Parser;
+use std::{sync::Arc, time::Duration};
 
-use crate::version;
+use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
+use base_client_cli::{
+    BuilderClientArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs,
+    RollupBoostFlags, RpcArgs, SequencerArgs,
+};
+use clap::Parser;
+use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
+use strum::IntoEnumIterator;
+use tracing::{error, info};
+
+use crate::{metrics::init_rollup_config_metrics, version};
 
 /// The Base Consensus CLI.
 #[derive(Parser, Clone, Debug)]
@@ -11,6 +20,7 @@ use crate::version;
     author,
     version = version::SHORT_VERSION,
     long_version = version::LONG_VERSION,
+    styles = CliStyles::init(),
     about,
     long_about = None
 )]
@@ -18,17 +28,160 @@ pub struct Cli {
     /// Global arguments for the Base Consensus CLI.
     #[command(flatten)]
     pub global: GlobalArgs,
+    /// The mode to run the node in.
+    #[arg(
+        long = "mode",
+        default_value_t = NodeMode::Validator,
+        env = "BASE_NODE_MODE",
+        help = format!(
+            "The mode to run the node in. Supported modes are: {}",
+            NodeMode::iter()
+                .map(|mode| format!("\"{}\"", mode.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    )]
+    pub node_mode: NodeMode,
+
+    /// L1 RPC CLI arguments.
+    #[clap(flatten)]
+    pub l1_rpc_args: L1ClientArgs,
+
+    /// L2 engine CLI arguments.
+    #[clap(flatten)]
+    pub l2_client_args: L2ClientArgs,
+
+    /// Optional block builder client.
+    #[clap(flatten)]
+    pub builder_client_args: BuilderClientArgs,
+
+    /// L1 configuration file.
+    #[clap(flatten)]
+    pub l1_config: L1ConfigFile,
+    /// L2 configuration file.
+    #[clap(flatten)]
+    pub l2_config: L2ConfigFile,
+
+    /// P2P CLI arguments.
+    #[command(flatten)]
+    pub p2p_flags: P2PArgs,
+    /// RPC CLI arguments.
+    #[command(flatten)]
+    pub rpc_flags: RpcArgs,
+    /// SEQUENCER CLI arguments.
+    #[command(flatten)]
+    pub sequencer_flags: SequencerArgs,
+    /// Rollup Boost CLI arguments.
+    #[command(flatten)]
+    pub rollup_boost_flags: RollupBoostFlags,
 }
 
 impl Cli {
-    /// Parse the CLI arguments.
-    pub fn parse() -> Self {
-        <Self as Parser>::parse()
+    /// Runs the CLI.
+    pub fn run(self) -> eyre::Result<()> {
+        // Initialize telemetry - allow subcommands to customize the filter.
+        Self::init_logs(&self.global)?;
+
+        // Initialize unified metrics
+        self.global.metrics.init_with(|| {
+            kona_gossip::Metrics::init();
+            kona_disc::Metrics::init();
+            kona_engine::Metrics::init();
+            kona_node_service::Metrics::init();
+            kona_derive::Metrics::init();
+            kona_providers_alloy::Metrics::init();
+            version::VersionInfo::from_build().register_version_metrics();
+        })?;
+
+        // Run the subcommand.
+        RuntimeManager::run_until_ctrl_c(self.exec(&self.global))
     }
 
-    /// Run the CLI.
-    pub fn run(self) -> eyre::Result<()> {
-        // TODO: Implement the CLI logic
+    /// Run the Node subcommand.
+    pub async fn exec(&self, args: &GlobalArgs) -> eyre::Result<()> {
+        let cfg = self.l2_config.load(&args.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+
+        info!(
+            target: "rollup_node",
+            chain_id = cfg.l2_chain_id.id(),
+            "Starting rollup node services"
+        );
+        for hf in cfg.hardforks.to_string().lines() {
+            info!(target: "rollup_node", "{hf}");
+        }
+
+        let l1_chain_config =
+            self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let l1_config = L1ConfigBuilder {
+            chain_config: l1_chain_config,
+            trust_rpc: self.l1_rpc_args.l1_trust_rpc,
+            beacon: self.l1_rpc_args.l1_beacon.clone(),
+            rpc_url: self.l1_rpc_args.l1_eth_rpc.clone(),
+            slot_duration_override: self.l1_rpc_args.l1_slot_duration_override,
+        };
+
+        // If metrics are enabled, initialize the global cli metrics.
+        args.metrics.enabled.then(|| init_rollup_config_metrics(&cfg));
+
+        let jwt_secret = self.l2_client_args.validate_jwt().await?;
+
+        self.p2p_flags.check_ports()?;
+        let genesis_signer = args.genesis_signer().ok();
+        let p2p_config = self
+            .p2p_flags
+            .clone()
+            .config(
+                &cfg,
+                args.l2_chain_id.into(),
+                Some(self.l1_rpc_args.l1_eth_rpc.clone()),
+                genesis_signer,
+            )
+            .await?;
+        let rpc_config = self.rpc_flags.clone().into();
+
+        let engine_config = EngineConfig {
+            config: Arc::new(cfg.clone()),
+            builder_url: self.builder_client_args.l2_builder_rpc.clone(),
+            builder_jwt_secret: self
+                .builder_client_args
+                .jwt_secret()
+                .map_err(|e| eyre::eyre!(e))?,
+            builder_timeout: Duration::from_millis(self.builder_client_args.builder_timeout),
+            l2_url: self.l2_client_args.l2_engine_rpc.clone(),
+            l2_jwt_secret: jwt_secret,
+            l2_timeout: Duration::from_millis(self.l2_client_args.l2_engine_timeout),
+            l1_url: self.l1_rpc_args.l1_eth_rpc.clone(),
+            mode: self.node_mode,
+            rollup_boost: self.rollup_boost_flags.clone().as_rollup_boost_args(),
+        };
+
+        RollupNodeBuilder::new(
+            cfg,
+            l1_config,
+            self.l2_client_args.l2_trust_rpc,
+            engine_config,
+            p2p_config,
+            rpc_config,
+        )
+        .with_sequencer_config(self.sequencer_flags.config())
+        .build()
+        .start()
+        .await
+        .map_err(|e| {
+            error!(target: "rollup_node", "Failed to start rollup node service: {e}");
+            eyre::eyre!("{e}")
+        })?;
+
         Ok(())
+    }
+
+    /// Initializes the logging system based on global arguments.
+    pub fn init_logs(args: &GlobalArgs) -> eyre::Result<()> {
+        // Filter out discovery warnings since they're very very noisy.
+        let filter = tracing_subscriber::EnvFilter::from_default_env()
+            .add_directive("discv5=error".parse()?);
+
+        let config: LogConfig = args.logging.clone().into();
+        config.init_tracing_subscriber_with_filter(filter)
     }
 }
