@@ -20,8 +20,7 @@ base-cli-utils = { git = "https://github.com/base/node-reth" }
 ```
 
 ```rust,ignore
-use base_cli_utils::{GlobalArgs, Version};
-use base_cli_utils::runtime::{build_runtime, run_until_ctrl_c};
+use base_cli_utils::{GlobalArgs, RuntimeManager, Version};
 use clap::Parser;
 
 #[derive(Parser)]
@@ -32,10 +31,12 @@ struct MyCli {
 
 fn main() -> eyre::Result<()> {
     Version::init();
-    let cli = MyCli::parse();
+    let _cli = MyCli::parse();
 
-    let runtime = build_runtime()?;
-    runtime.block_on(run_until_ctrl_c(async { /* ... */ }))
+    RuntimeManager::run_until_ctrl_c(async {
+        // ... your async code ...
+        Ok(())
+    })
 }
 ```
 

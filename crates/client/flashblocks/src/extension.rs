@@ -3,9 +3,8 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder, OpProvider};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
 use futures_util::TryStreamExt;
-use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
 use tracing::info;
 use url::Url;
@@ -15,34 +14,37 @@ use crate::{
     FlashblocksSubscriber,
 };
 
-/// The flashblocks cell holds a shared state reference.
-pub type FlashblocksCell<T> = Arc<OnceCell<Arc<T>>>;
-
 /// Flashblocks-specific configuration knobs.
 #[derive(Debug, Clone)]
 pub struct FlashblocksConfig {
     /// The websocket endpoint that streams flashblock updates.
-    pub websocket_url: String,
+    pub websocket_url: Url,
     /// Maximum number of pending flashblocks to retain in memory.
     pub max_pending_blocks_depth: u64,
+    /// Shared Flashblocks state.
+    pub state: Arc<FlashblocksState>,
+}
+
+impl FlashblocksConfig {
+    /// Create a new Flashblocks configuration.
+    pub fn new(websocket_url: String, max_pending_blocks_depth: u64) -> Self {
+        let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
+        let ws_url = Url::parse(&websocket_url).expect("valid websocket URL");
+        Self { websocket_url: ws_url, max_pending_blocks_depth, state }
+    }
 }
 
 /// Helper struct that wires the Flashblocks feature (canon ExEx and RPC) into the node builder.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FlashblocksExtension {
-    /// Shared Flashblocks state cache.
-    cell: FlashblocksCell<FlashblocksState<OpProvider>>,
-    /// Optional Flashblocks configuration.
+    /// Optional Flashblocks configuration (includes state).
     config: Option<FlashblocksConfig>,
 }
 
 impl FlashblocksExtension {
     /// Create a new Flashblocks extension helper.
-    pub const fn new(
-        cell: FlashblocksCell<FlashblocksState<OpProvider>>,
-        config: Option<FlashblocksConfig>,
-    ) -> Self {
-        Self { cell, config }
+    pub const fn new(config: Option<FlashblocksConfig>) -> Self {
+        Self { config }
     }
 }
 
@@ -54,23 +56,17 @@ impl BaseNodeExtension for FlashblocksExtension {
             return builder;
         };
 
-        let flashblocks_cell = self.cell;
-        let cfg_for_rpc = cfg.clone();
-        let flashblocks_cell_for_rpc = flashblocks_cell.clone();
+        let state = cfg.state;
+        let mut subscriber = FlashblocksSubscriber::new(state.clone(), cfg.websocket_url);
+
+        let state_for_exex = state.clone();
+        let state_for_rpc = state.clone();
+        let state_for_start = state;
 
         // Install the canon ExEx
         let builder = builder.install_exex("flashblocks-canon", move |mut ctx| {
-            let flashblocks_cell = flashblocks_cell.clone();
+            let fb = state_for_exex;
             async move {
-                let fb = flashblocks_cell
-                    .get_or_init(|| {
-                        Arc::new(FlashblocksState::new(
-                            ctx.provider().clone(),
-                            cfg.max_pending_blocks_depth,
-                        ))
-                    })
-                    .clone();
-
                 Ok(async move {
                     while let Some(note) = ctx.notifications.try_next().await? {
                         if let Some(committed) = note.committed_chain() {
@@ -87,23 +83,19 @@ impl BaseNodeExtension for FlashblocksExtension {
             }
         });
 
+        // Start state processor and subscriber after node is started
+        let builder = builder.on_node_started(move |ctx| {
+            info!(message = "Starting Flashblocks state processor");
+            state_for_start.start(ctx.provider().clone());
+            subscriber.start();
+            Ok(())
+        });
+
         // Extend with RPC modules
         builder.extend_rpc_modules(move |ctx| {
             info!(message = "Starting Flashblocks RPC");
 
-            let ws_url = Url::parse(cfg_for_rpc.websocket_url.as_str())?;
-            let fb = flashblocks_cell_for_rpc
-                .get_or_init(|| {
-                    Arc::new(FlashblocksState::new(
-                        ctx.provider().clone(),
-                        cfg_for_rpc.max_pending_blocks_depth,
-                    ))
-                })
-                .clone();
-            fb.start();
-
-            let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
-            flashblocks_client.start();
+            let fb = state_for_rpc;
 
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
@@ -127,6 +119,6 @@ impl FromExtensionConfig for FlashblocksExtension {
     type Config = Option<FlashblocksConfig>;
 
     fn from_config(config: Self::Config) -> Self {
-        Self::new(Arc::new(OnceCell::new()), config)
+        Self::new(config)
     }
 }
