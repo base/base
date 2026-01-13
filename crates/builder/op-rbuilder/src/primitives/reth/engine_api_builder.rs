@@ -1,6 +1,6 @@
 //! RPC component builder
 
-use reth_node_api::AddOnsContext;
+use reth_node_api::{AddOnsContext, NodeTypes};
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_optimism_node::OpEngineTypes;
@@ -22,7 +22,6 @@ use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion, SuperchainSignal,
 };
-use reth::builder::NodeTypes;
 use reth_node_api::{EngineApiValidator, EngineTypes};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_rpc::OpEngineApiServer;

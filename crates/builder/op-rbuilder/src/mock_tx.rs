@@ -11,7 +11,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use reth::primitives::TransactionSigned;
+use reth_primitives::TransactionSigned;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction, TransactionOrigin,

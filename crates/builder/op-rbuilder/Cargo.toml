@@ -21,7 +21,6 @@ p2p = { path = "../p2p" }
 base-bundles.workspace = true
 base-flashtypes.workspace = true
 
-reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
 reth-optimism-chainspec.workspace = true
@@ -184,7 +183,6 @@ jemalloc = [
 jemalloc-prof = [
 	"jemalloc",
 	"reth-cli-util/jemalloc-prof",
-	"reth/jemalloc-prof",
 	"tikv-jemallocator?/profiling",
 ]
 

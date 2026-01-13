@@ -14,6 +14,8 @@ use crate::{
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use clap::Parser;
+use reth_node_core::{args::{DatadirArgs, NetworkArgs, RpcServerArgs}, exit::NodeExitFuture};
+use reth_tasks::TaskManager;
 use core::{
     any::Any,
     future::Future,
@@ -31,11 +33,6 @@ use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
 use parking_lot::Mutex;
-use reth::{
-    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
-    core::exit::NodeExitFuture,
-    tasks::TaskManager,
-};
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;

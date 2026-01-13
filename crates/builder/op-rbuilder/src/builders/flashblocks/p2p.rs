@@ -1,7 +1,8 @@
 use alloy_primitives::U256;
-use reth::{core::primitives::SealedBlock, payload::PayloadId};
 use reth_optimism_payload_builder::OpBuiltPayload as RethOpBuiltPayload;
 use reth_optimism_primitives::OpBlock;
+use reth_payload_builder::PayloadId;
+use reth_primitives_traits::SealedBlock;
 use serde::{Deserialize, Serialize};
 
 pub(super) const AGENT_VERSION: &str = "op-rbuilder/1.0.0";

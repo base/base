@@ -26,7 +26,6 @@ base-flashtypes.workspace = true
 base-client-node.workspace = true
 
 # reth
-reth.workspace = true
 reth-exex.workspace = true
 reth-evm.workspace = true
 reth-primitives.workspace = true
@@ -37,6 +36,10 @@ reth-optimism-rpc.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
+reth-provider.workspace = true
+reth-chainspec.workspace = true
+reth-revm.workspace = true
+reth-rpc-eth-types.workspace = true
 
 # alloy
 alloy-eips.workspace = true
@@ -60,6 +63,9 @@ tokio-stream.workspace = true
 
 # async
 futures-util.workspace = true
+
+# revm
+revm.workspace = true
 
 # rpc
 jsonrpsee.workspace = true

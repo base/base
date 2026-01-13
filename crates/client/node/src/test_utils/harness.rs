@@ -11,10 +11,11 @@ use alloy_rpc_types_engine::PayloadAttributes;
 use eyre::{Result, eyre};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth::providers::{BlockNumReader, BlockReader, ChainSpecProvider};
+use reth_chainspec::ChainSpecProvider;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
+use reth_provider::{BlockNumReader, BlockReader};
 use tokio::time::sleep;
 
 use crate::{

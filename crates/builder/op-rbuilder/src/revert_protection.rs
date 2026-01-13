@@ -12,9 +12,9 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use moka::future::Cache;
-use reth::rpc::api::eth::{RpcReceipt, helpers::FullEthApi};
 use reth_optimism_txpool::{OpPooledTransaction, conditional::MaybeConditionalTransaction};
 use reth_provider::StateProviderFactory;
+use reth_rpc_api::eth::{RpcReceipt, helpers::FullEthApi};
 use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use tracing::error;

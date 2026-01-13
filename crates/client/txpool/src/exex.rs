@@ -2,9 +2,10 @@
 
 use eyre::Result;
 use futures::StreamExt;
-use reth::{api::FullNodeComponents, transaction_pool::TransactionPool};
 use reth_exex::ExExContext;
+use reth_node_api::FullNodeComponents;
 use reth_tracing::tracing::debug;
+use reth_transaction_pool::TransactionPool;
 
 use crate::tracker::Tracker;
 

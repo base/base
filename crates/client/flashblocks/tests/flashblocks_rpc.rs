@@ -20,7 +20,7 @@ use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
 use op_alloy_rpc_types::OpTransactionRequest;
-use reth::revm::context::TransactionType;
+use reth_revm::context::TransactionType;
 use reth_rpc_eth_api::RpcReceipt;
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};

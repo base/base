@@ -9,7 +9,7 @@ use std::{
 use derive_more::Debug;
 use eyre::Result;
 use futures_util::{FutureExt, future::BoxFuture};
-use reth::builder::NodeHandleFor;
+use reth_node_builder::NodeHandleFor;
 use reth_optimism_node::OpNode;
 
 /// Handle to a launched Base node.

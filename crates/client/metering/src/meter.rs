@@ -6,11 +6,11 @@ use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecovera
 use alloy_primitives::{B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use eyre::{Result as EyreResult, eyre};
-use reth::revm::db::State;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
+use reth_revm::{database::StateProviderDatabase, db::State};
 use revm_database::states::bundle_state::BundleRetention;
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
@@ -52,7 +52,7 @@ where
     let bundle_hash = bundle.bundle_hash();
 
     // Create state database
-    let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
+    let state_db = StateProviderDatabase::new(state_provider);
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Set up next block attributes

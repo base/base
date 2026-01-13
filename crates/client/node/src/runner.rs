@@ -1,11 +1,9 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
 use eyre::Result;
-use reth::{
-    builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig},
-    providers::providers::BlockchainProvider,
-};
+use reth_node_builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig};
 use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
 use crate::{BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};

@@ -5,13 +5,13 @@ use std::{sync::Arc, time::Instant};
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use eyre::{Result as EyreResult, eyre};
-use reth::revm::db::State;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
+use reth_revm::{database::StateProviderDatabase, db::State};
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 
@@ -57,7 +57,7 @@ where
     let state_provider = provider.state_by_block_hash(parent_hash)?;
 
     // Create state database from parent state
-    let state_db = reth::revm::database::StateProviderDatabase::new(&state_provider);
+    let state_db = StateProviderDatabase::new(&state_provider);
     let mut db = State::builder().with_database(state_db).with_bundle_update().build();
 
     // Set up block attributes from the actual block header

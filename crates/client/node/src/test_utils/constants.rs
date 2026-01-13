@@ -1,7 +1,7 @@
 //! Shared constants used across integration tests.
 
 use alloy_primitives::{B256, Bytes, b256, bytes};
-pub use reth::chainspec::NamedChain;
+pub use reth_chainspec::NamedChain;
 
 // Block Building
 

@@ -27,13 +27,14 @@ test-utils = [
 	"dep:jsonrpsee",
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types-engine",
+	"dep:reth-chainspec",
 	"dep:reth-ipc",
 	"dep:reth-node-core",
 	"dep:reth-optimism-primitives",
 	"dep:reth-optimism-rpc",
 	"dep:reth-primitives-traits",
-	"dep:reth-provider",
 	"dep:reth-rpc-layer",
+	"dep:reth-tasks",
 	"dep:reth-tracing",
 	"dep:tokio",
 	"dep:tower",
@@ -42,7 +43,7 @@ test-utils = [
 	"reth-db/test-utils",
 	"reth-optimism-node/test-utils",
 	"reth-primitives-traits?/test-utils",
-	"reth-provider?/test-utils",
+	"reth-provider/test-utils",
 ]
 
 [dependencies]
@@ -50,18 +51,20 @@ test-utils = [
 base-primitives = { workspace = true, optional = true }
 
 # reth
-reth.workspace = true
 reth-db.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-tracing = { workspace = true, optional = true }
 reth-rpc-layer = { workspace = true, optional = true }
-reth-provider = { workspace = true, optional = true }
+reth-provider = { workspace = true }
+reth-node-builder = { workspace = true }
 reth-node-core = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 reth-optimism-rpc = { workspace = true, features = ["client"], optional = true }
 reth-optimism-primitives = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
+reth-tasks = { workspace = true, optional = true }
 
 # alloy
 alloy-primitives = { workspace = true, optional = true }

@@ -20,14 +20,13 @@ use jsonrpsee::{
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
-use reth::{
-    providers::CanonStateSubscriptions,
-    rpc::{eth::EthFilter, server_types::eth::EthApiError},
-};
+use reth_provider::CanonStateSubscriptions;
+use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
     EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
+use reth_rpc_eth_types::EthApiError;
 use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};

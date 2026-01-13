@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use reth::{
-    api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
-    builder::{Node, NodeBuilder, NodeBuilderWithComponents, WithLaunchContext},
-    providers::providers::BlockchainProvider,
-};
 use reth_db::DatabaseEnv;
+use reth_node_builder::{
+    FullNodeTypesAdapter, Node, NodeBuilder, NodeBuilderWithComponents, NodeTypesWithDBAdapter,
+    WithLaunchContext,
+};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpNode;
+use reth_provider::providers::BlockchainProvider;
 
 type OpNodeTypes = FullNodeTypesAdapter<OpNode, Arc<DatabaseEnv>, OpProvider>;
 type OpComponentsBuilder = <OpNode as Node<OpNodeTypes>>::ComponentsBuilder;
