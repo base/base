@@ -2,8 +2,8 @@
 
 use base_flashblocks::FlashblocksConfig;
 use base_txpool::TxpoolConfig;
+use reth_optimism_exex::ProofsHistoryConfig;
 use reth_optimism_node::args::RollupArgs;
-use reth_optimism_exex::{ProofsHistoryConfig};
 
 /// CLI Arguments
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
