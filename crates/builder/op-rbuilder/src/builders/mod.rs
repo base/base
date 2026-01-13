@@ -3,6 +3,7 @@ use core::{
     fmt::Debug,
     time::Duration,
 };
+
 use reth_node_builder::components::PayloadServiceBuilder;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
@@ -21,7 +22,6 @@ mod flashblocks;
 mod generator;
 mod standard;
 
-use crate::tx_data_store::TxDataStore;
 pub use builder_tx::{
     BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
     SimulationSuccessResult, get_balance, get_nonce,
@@ -29,6 +29,8 @@ pub use builder_tx::{
 pub use context::OpPayloadBuilderCtx;
 pub use flashblocks::FlashblocksBuilder;
 pub use standard::StandardBuilder;
+
+use crate::tx_data_store::TxDataStore;
 
 /// Defines the payload building mode for the OP builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

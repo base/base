@@ -1,10 +1,11 @@
-use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{TxHash, U256};
 use alloy_provider::Provider;
-use macros::rb_test;
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
+use macros::rb_test;
 use uuid::Uuid;
+
+use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 
 /// Tests that backrun bundles are all-or-nothing:
 /// - If any backrun tx in a bundle reverts, the entire bundle is excluded
@@ -25,9 +26,7 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
 
     // Send to mempool manually (send() doesn't return the Recovered tx)
     let provider = rbuilder.provider().await?;
-    let _ = provider
-        .send_raw_transaction(target_tx.encoded_2718().as_slice())
-        .await?;
+    let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
 
     // 2. Create backrun transactions:
     //    - backrun_ok: valid tx with HIGH priority (executes first, succeeds)
@@ -91,10 +90,7 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
     // Target tx SHOULD be in block (it was in mempool independently)
-    assert!(
-        tx_hashes.contains(&target_tx_hash),
-        "Target tx should be included in block"
-    );
+    assert!(tx_hashes.contains(&target_tx_hash), "Target tx should be included in block");
 
     // backrun_ok should NOT be in block (all-or-nothing: bundle failed)
     assert!(
@@ -103,10 +99,7 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
     );
 
     // backrun_revert should NOT be in block (it caused the revert)
-    assert!(
-        !tx_hashes.contains(&backrun_revert_hash),
-        "backrun_revert should NOT be in block"
-    );
+    assert!(!tx_hashes.contains(&backrun_revert_hash), "backrun_revert should NOT be in block");
 
     Ok(())
 }
@@ -130,9 +123,7 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
 
     // Send to mempool manually
     let provider = rbuilder.provider().await?;
-    let _ = provider
-        .send_raw_transaction(target_tx.encoded_2718().as_slice())
-        .await?;
+    let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
 
     // 2. Create Bundle A with HIGH total priority fee
     //    Two txs: 60 + 50 = 110 total
@@ -225,14 +216,8 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
     };
 
     // Insert in "wrong" order - B first, then A
-    rbuilder
-        .tx_data_store()
-        .insert_backrun_bundle(bundle_b)
-        .expect("Failed to insert bundle B");
-    rbuilder
-        .tx_data_store()
-        .insert_backrun_bundle(bundle_a)
-        .expect("Failed to insert bundle A");
+    rbuilder.tx_data_store().insert_backrun_bundle(bundle_b).expect("Failed to insert bundle B");
+    rbuilder.tx_data_store().insert_backrun_bundle(bundle_a).expect("Failed to insert bundle A");
 
     // 5. Build the block
     driver.build_new_block().await?;
@@ -242,26 +227,11 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
     // All txs should be in block
-    assert!(
-        tx_hashes.contains(&target_tx_hash),
-        "Target tx not included in block"
-    );
-    assert!(
-        tx_hashes.contains(&bundle_a_tx1_hash),
-        "Bundle A tx1 not included in block"
-    );
-    assert!(
-        tx_hashes.contains(&bundle_a_tx2_hash),
-        "Bundle A tx2 not included in block"
-    );
-    assert!(
-        tx_hashes.contains(&bundle_b_tx1_hash),
-        "Bundle B tx1 not included in block"
-    );
-    assert!(
-        tx_hashes.contains(&bundle_b_tx2_hash),
-        "Bundle B tx2 not included in block"
-    );
+    assert!(tx_hashes.contains(&target_tx_hash), "Target tx not included in block");
+    assert!(tx_hashes.contains(&bundle_a_tx1_hash), "Bundle A tx1 not included in block");
+    assert!(tx_hashes.contains(&bundle_a_tx2_hash), "Bundle A tx2 not included in block");
+    assert!(tx_hashes.contains(&bundle_b_tx1_hash), "Bundle B tx1 not included in block");
+    assert!(tx_hashes.contains(&bundle_b_tx2_hash), "Bundle B tx2 not included in block");
 
     // 7. Verify ordering: Bundle A txs come BEFORE Bundle B txs
     //    (higher total fee bundle processed first)
@@ -314,9 +284,7 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
 
     // Send to mempool manually
     let provider = rbuilder.provider().await?;
-    let _ = provider
-        .send_raw_transaction(target_tx.encoded_2718().as_slice())
-        .await?;
+    let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
 
     // 2. Create backrun transactions with LOW total fee:
     //    - backrun_1: priority fee 30
@@ -378,10 +346,7 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
     // Target tx SHOULD be in block (it was in mempool independently)
-    assert!(
-        tx_hashes.contains(&target_tx_hash),
-        "Target tx should be included in block"
-    );
+    assert!(tx_hashes.contains(&target_tx_hash), "Target tx should be included in block");
 
     // backrun_1 should NOT be in block (bundle rejected: total fee 50 < target fee 100)
     assert!(
@@ -390,10 +355,7 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
     );
 
     // backrun_2 should NOT be in block (bundle rejected)
-    assert!(
-        !tx_hashes.contains(&backrun_2_hash),
-        "backrun_2 should NOT be in block"
-    );
+    assert!(!tx_hashes.contains(&backrun_2_hash), "backrun_2 should NOT be in block");
 
     Ok(())
 }
@@ -406,10 +368,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> e
     // Set gas limit high enough for builder tx + target tx, but not backrun
     // Flashblocks has additional overhead, so use higher limits
     // Set limit to 500k, backrun requests 1M -> rejected
-    driver
-        .provider()
-        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (500_000,))
-        .await?;
+    driver.provider().raw_request::<(u64,), bool>("miner_setGasLimit".into(), (500_000,)).await?;
 
     let target_tx = driver
         .create_transaction()
@@ -420,9 +379,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> e
     let target_tx_hash = target_tx.tx_hash().clone();
 
     let provider = rbuilder.provider().await?;
-    let _ = provider
-        .send_raw_transaction(target_tx.encoded_2718().as_slice())
-        .await?;
+    let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
 
     let backrun = driver
         .create_transaction()
@@ -469,10 +426,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> e
     let block = driver.latest_full().await?;
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
-    assert!(
-        tx_hashes.contains(&target_tx_hash),
-        "Target tx should be included in block"
-    );
+    assert!(tx_hashes.contains(&target_tx_hash), "Target tx should be included in block");
 
     assert!(
         !tx_hashes.contains(&backrun_hash),
@@ -504,9 +458,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
     let target_tx_hash = target_tx.tx_hash().clone();
 
     let provider = rbuilder.provider().await?;
-    let _ = provider
-        .send_raw_transaction(target_tx.encoded_2718().as_slice())
-        .await?;
+    let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
 
     // Create backrun with large calldata to exceed DA limit
     let backrun = driver
@@ -554,10 +506,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
     let block = driver.latest_full().await?;
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
-    assert!(
-        tx_hashes.contains(&target_tx_hash),
-        "Target tx should be included in block"
-    );
+    assert!(tx_hashes.contains(&target_tx_hash), "Target tx should be included in block");
 
     assert!(
         !tx_hashes.contains(&backrun_hash),
@@ -582,9 +531,7 @@ async fn backrun_bundle_invalid_tx_skipped(rbuilder: LocalInstance) -> eyre::Res
     let target_tx_hash = target_tx.tx_hash().clone();
 
     let provider = rbuilder.provider().await?;
-    let _ = provider
-        .send_raw_transaction(target_tx.encoded_2718().as_slice())
-        .await?;
+    let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
 
     let backrun_tx = driver
         .create_transaction()
@@ -641,15 +588,9 @@ async fn backrun_bundle_invalid_tx_skipped(rbuilder: LocalInstance) -> eyre::Res
     let block = driver.latest_full().await?;
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
-    assert!(
-        tx_hashes.contains(&target_tx_hash),
-        "Target tx should be included in block"
-    );
+    assert!(tx_hashes.contains(&target_tx_hash), "Target tx should be included in block");
 
-    assert!(
-        tx_hashes.contains(&conflicting_tx_hash),
-        "Conflicting tx should be included in block"
-    );
+    assert!(tx_hashes.contains(&conflicting_tx_hash), "Conflicting tx should be included in block");
 
     assert!(
         !tx_hashes.contains(&backrun_tx_hash),

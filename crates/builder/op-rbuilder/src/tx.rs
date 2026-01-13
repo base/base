@@ -233,9 +233,7 @@ impl EthPoolTransaction for FBPooledTransaction {
         _sidecar: &BlobTransactionSidecarVariant,
         _settings: &KzgSettings,
     ) -> Result<(), BlobTransactionValidationError> {
-        Err(BlobTransactionValidationError::NotBlobTransaction(
-            self.ty(),
-        ))
+        Err(BlobTransactionValidationError::NotBlobTransaction(self.ty()))
     }
 }
 

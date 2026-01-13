@@ -1,9 +1,10 @@
-use crate::{builders::flashblocks::ctx::OpPayloadSyncerCtx, traits::ClientBounds};
 use reth_node_builder::Events;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::OpBuiltPayload;
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use crate::{builders::flashblocks::ctx::OpPayloadSyncerCtx, traits::ClientBounds};
 
 /// Handles newly built flashblock payloads.
 ///
@@ -31,13 +32,7 @@ where
         client: Client,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
-        Self {
-            built_rx,
-            payload_events_handle,
-            ctx,
-            client,
-            cancel,
-        }
+        Self { built_rx, payload_events_handle, ctx, client, cancel }
     }
 
     pub(crate) async fn run(self) {

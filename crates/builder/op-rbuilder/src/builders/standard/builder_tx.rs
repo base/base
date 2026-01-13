@@ -1,5 +1,6 @@
-use alloy_evm::Database;
 use core::fmt::Debug;
+
+use alloy_evm::Database;
 use reth_provider::StateProvider;
 use reth_revm::State;
 use revm::DatabaseRef;
@@ -28,10 +29,7 @@ impl StandardBuilderTx {
         flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(signer);
-        Self {
-            base_builder_tx,
-            flashtestations_builder_tx,
-        }
+        Self { base_builder_tx, flashtestations_builder_tx }
     }
 }
 

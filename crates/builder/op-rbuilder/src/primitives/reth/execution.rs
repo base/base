@@ -1,6 +1,7 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
-use alloy_primitives::{Address, U256};
 use core::fmt::Debug;
+
+use alloy_primitives::{Address, U256};
 use derive_more::Display;
 use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};

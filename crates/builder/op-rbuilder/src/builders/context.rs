@@ -1,10 +1,12 @@
+use core::fmt::Debug;
+use std::{sync::Arc, time::Instant};
+
 use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
-use core::fmt::Debug;
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
@@ -35,7 +37,6 @@ use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
-use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace};
 
@@ -122,10 +123,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     pub fn block_gas_limit(&self) -> u64 {
         match self.gas_limit_config.gas_limit() {
             Some(gas_limit) => gas_limit,
-            None => self
-                .attributes()
-                .gas_limit
-                .unwrap_or(self.evm_env.block_env.gas_limit),
+            None => self.attributes().gas_limit.unwrap_or(self.evm_env.block_env.gas_limit),
         }
     }
 
@@ -141,10 +139,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the current blob gas price.
     pub fn get_blob_gasprice(&self) -> Option<u64> {
-        self.evm_env
-            .block_env
-            .blob_gasprice()
-            .map(|gasprice| gasprice as u64)
+        self.evm_env.block_env.blob_gasprice().map(|gasprice| gasprice as u64)
     }
 
     /// Returns the blob fields for the header.
@@ -157,9 +152,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         info: &ExecutionInfo<Extra>,
     ) -> (Option<u64>, Option<u64>) {
         if self.is_jovian_active() {
-            let scalar = info
-                .da_footprint_scalar
-                .expect("Scalar must be defined for Jovian blocks");
+            let scalar =
+                info.da_footprint_scalar.expect("Scalar must be defined for Jovian blocks");
             let result = info.cumulative_da_bytes_used * scalar as u64;
             (Some(0), Some(result))
         } else if self.is_ecotone_active() {
@@ -206,38 +200,32 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns true if regolith is active for the payload.
     pub fn is_regolith_active(&self) -> bool {
-        self.chain_spec
-            .is_regolith_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_regolith_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if ecotone is active for the payload.
     pub fn is_ecotone_active(&self) -> bool {
-        self.chain_spec
-            .is_ecotone_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_ecotone_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if canyon is active for the payload.
     pub fn is_canyon_active(&self) -> bool {
-        self.chain_spec
-            .is_canyon_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_canyon_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if holocene is active for the payload.
     pub fn is_holocene_active(&self) -> bool {
-        self.chain_spec
-            .is_holocene_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_holocene_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if isthmus is active for the payload.
     pub fn is_isthmus_active(&self) -> bool {
-        self.chain_spec
-            .is_isthmus_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_isthmus_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if isthmus is active for the payload.
     pub fn is_jovian_active(&self) -> bool {
-        self.chain_spec
-            .is_jovian_active_at_timestamp(self.attributes().timestamp())
+        self.chain_spec.is_jovian_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the chain id
@@ -300,12 +288,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
-            let sequencer_tx = sequencer_tx
-                .value()
-                .try_clone_into_recovered()
-                .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
-                })?;
+            let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+            })?;
 
             // Cache the depositor account prior to the state transition for the deposit nonce.
             //
@@ -445,10 +430,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             num_txs_considered += 1;
 
-            let TxData {
-                metering: _resource_usage,
-                backrun_bundles,
-            } = self.tx_data_store.get(&tx_hash);
+            let TxData { metering: _resource_usage, backrun_bundles } =
+                self.tx_data_store.get(&tx_hash);
 
             // TODO: ideally we should get this from the txpool stream
             if let Some(conditional) = conditional
@@ -526,9 +509,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 }
             };
 
-            self.metrics
-                .tx_simulation_duration
-                .record(tx_simulation_start_time.elapsed());
+            self.metrics.tx_simulation_duration.record(tx_simulation_start_time.elapsed());
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
@@ -536,11 +517,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // reverted or not, as this is a check against maliciously searchers
             // sending txs that are expensive to compute but always revert.
             let gas_used = result.gas_used();
-            if self
-                .address_gas_limiter
-                .consume_gas(tx.signer(), gas_used)
-                .is_err()
-            {
+            if self.address_gas_limiter.consume_gas(tx.signer(), gas_used).is_err() {
                 log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -625,9 +602,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
                         .sum();
                     if total_effective_tip < miner_fee {
-                        self.metrics
-                            .backrun_bundles_rejected_low_fee_total
-                            .increment(1);
+                        self.metrics.backrun_bundles_rejected_low_fee_total.increment(1);
                         info!(
                             target: "payload_builder",
                             bundle_id = ?stored_bundle.bundle_id,
@@ -638,16 +613,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         break 'bundle_loop;
                     }
 
-                    let total_backrun_gas: u64 = stored_bundle
-                        .backrun_txs
-                        .iter()
-                        .map(|tx| tx.gas_limit())
-                        .sum();
-                    let total_backrun_da_size: u64 = stored_bundle
-                        .backrun_txs
-                        .iter()
-                        .map(|tx| tx.estimated_da_size())
-                        .sum();
+                    let total_backrun_gas: u64 =
+                        stored_bundle.backrun_txs.iter().map(|tx| tx.gas_limit()).sum();
+                    let total_backrun_da_size: u64 =
+                        stored_bundle.backrun_txs.iter().map(|tx| tx.estimated_da_size()).sum();
 
                     if let Err(result) = info.is_tx_over_limits(
                         total_backrun_da_size,
@@ -658,9 +627,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         info.da_footprint_scalar,
                         block_da_footprint_limit,
                     ) {
-                        self.metrics
-                            .backrun_bundles_rejected_over_limits_total
-                            .increment(1);
+                        self.metrics.backrun_bundles_rejected_over_limits_total.increment(1);
                         info!(
                             target: "payload_builder",
                             bundle_id = ?stored_bundle.bundle_id,
@@ -740,9 +707,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     self.metrics.backrun_bundles_landed_total.increment(1);
                 }
 
-                self.metrics
-                    .backrun_bundle_execution_duration
-                    .record(backrun_start_time.elapsed());
+                self.metrics.backrun_bundle_execution_duration.record(backrun_start_time.elapsed());
 
                 // Remove the target tx from the backrun bundle store as already executed
                 self.tx_data_store.remove_backrun_bundles(&tx_hash);

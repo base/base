@@ -1,10 +1,11 @@
-use crate::tests::{
-    BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH, default_node_config,
-};
 use macros::rb_test;
 use reth_node_builder::NodeConfig;
 use reth_node_core::args::TxPoolArgs;
 use reth_optimism_chainspec::OpChainSpec;
+
+use crate::tests::{
+    BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH, default_node_config,
+};
 
 /// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
 #[rb_test(
@@ -26,11 +27,7 @@ async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let acc_with_priority = accounts.last().unwrap();
 
     for _ in 0..50 {
-        let _ = driver
-            .create_transaction()
-            .with_signer(*acc_no_priority)
-            .send()
-            .await?;
+        let _ = driver.create_transaction().with_signer(*acc_no_priority).send().await?;
     }
 
     assert_eq!(

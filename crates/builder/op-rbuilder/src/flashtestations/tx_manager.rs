@@ -1,16 +1,16 @@
+use std::time::Duration;
+
 use alloy_json_rpc::RpcError;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use alloy_rpc_types_eth::TransactionRequest;
-use alloy_sol_types::SolCall;
-use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
-use k256::ecdsa;
-use std::time::Duration;
-
 use alloy_provider::{
     PendingTransactionBuilder, PendingTransactionError, Provider, ProviderBuilder,
 };
+use alloy_rpc_types_eth::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::SolCall;
+use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
+use k256::ecdsa;
 use op_alloy_network::Optimism;
 use tracing::{debug, info, warn};
 
@@ -53,12 +53,7 @@ impl TxManager {
         rpc_url: String,
         registry_address: Address,
     ) -> Self {
-        Self {
-            tee_service_signer,
-            builder_signer,
-            rpc_url,
-            registry_address,
-        }
+        Self { tee_service_signer, builder_signer, rpc_url, registry_address }
     }
 
     pub async fn register_tee_service(
@@ -84,9 +79,7 @@ impl TxManager {
         info!(target: "flashtestations", "submitting quote to registry at {}", self.registry_address);
 
         // Get permit nonce
-        let nonce_call = IERC20Permit::noncesCall {
-            owner: self.tee_service_signer.address,
-        };
+        let nonce_call = IERC20Permit::noncesCall { owner: self.tee_service_signer.address };
         let nonce_tx = TransactionRequest {
             to: Some(TxKind::Call(self.registry_address)),
             input: nonce_call.abi_encode().into(),
@@ -96,10 +89,7 @@ impl TxManager {
 
         // Set deadline 1 hour from now
         let deadline = U256::from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
                 + 3600,
         );
 
@@ -118,9 +108,8 @@ impl TxManager {
         let struct_hash = B256::from_slice(provider.call(struct_hash_tx.into()).await?.as_ref());
 
         // Get typed data hash
-        let typed_hash_call = IFlashtestationRegistry::hashTypedDataV4Call {
-            structHash: struct_hash,
-        };
+        let typed_hash_call =
+            IFlashtestationRegistry::hashTypedDataV4Call { structHash: struct_hash };
         let typed_hash_tx = TransactionRequest {
             to: Some(TxKind::Call(self.registry_address)),
             input: typed_hash_call.abi_encode().into(),
@@ -170,11 +159,7 @@ impl TxManager {
                 debug!(target: "flashtestations", tx_hash = %tx_hash, "transaction submitted");
 
                 // Wait for funding transaction confirmation
-                match pending_tx
-                    .with_timeout(Some(Duration::from_secs(30)))
-                    .get_receipt()
-                    .await
-                {
+                match pending_tx.with_timeout(Some(Duration::from_secs(30))).get_receipt().await {
                     Ok(receipt) => {
                         if receipt.status() {
                             Ok(receipt.transaction_hash())

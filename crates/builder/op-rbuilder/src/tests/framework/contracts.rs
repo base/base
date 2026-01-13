@@ -1,6 +1,7 @@
 pub mod flashtestation_registry {
-    use crate::tests::framework::contracts::block_builder_policy::BlockBuilderPolicy::TD10ReportBody;
     use alloy_sol_types::sol;
+
+    use crate::tests::framework::contracts::block_builder_policy::BlockBuilderPolicy::TD10ReportBody;
 
     sol!(
         // https://github.com/flashbots/flashtestations/tree/7cc7f68492fe672a823dd2dead649793aac1f216
@@ -11,8 +12,9 @@ pub mod flashtestation_registry {
 }
 
 pub mod block_builder_policy {
-    use crate::tests::framework::contracts::block_builder_policy::BlockBuilderPolicy::TD10ReportBody;
     use alloy_sol_types::sol;
+
+    use crate::tests::framework::contracts::block_builder_policy::BlockBuilderPolicy::TD10ReportBody;
 
     sol!(
         // https://github.com/flashbots/flashtestations/tree/7cc7f68492fe672a823dd2dead649793aac1f216

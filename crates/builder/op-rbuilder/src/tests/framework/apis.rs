@@ -1,9 +1,8 @@
-use super::DEFAULT_JWT_TOKEN;
+use core::{future::Future, marker::PhantomData};
+
 use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
-
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
-use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
@@ -16,6 +15,8 @@ use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
 use tracing::debug;
+
+use super::DEFAULT_JWT_TOKEN;
 
 #[derive(Clone, Debug)]
 pub enum Address {
@@ -91,9 +92,7 @@ impl EngineApi<Http> {
     pub fn with_localhost_port(port: u16) -> EngineApi<Http> {
         EngineApi::<Http> {
             address: Address::Http(
-                format!("http://localhost:{port}")
-                    .parse()
-                    .expect("Invalid URL"),
+                format!("http://localhost:{port}").parse().expect("Invalid URL"),
             ),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,
@@ -145,15 +144,9 @@ impl<P: Protocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        debug!(
-            "Fetching payload with id: {} at {}",
-            payload_id,
-            chrono::Utc::now()
-        );
-        Ok(
-            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-                .await?,
-        )
+        debug!("Fetching payload with id: {} at {}", payload_id, chrono::Utc::now());
+        Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+            .await?)
     }
 
     pub async fn new_payload(

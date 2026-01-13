@@ -1,14 +1,10 @@
-use crate::{
-    primitives::bundle::{Bundle, BundleResult},
-    tests::funded_signer,
-    tx::FBPooledTransaction,
-    tx_signer::Signer,
-};
+use core::cmp::max;
+use std::{collections::VecDeque, sync::Arc};
+
 use alloy_consensus::TxEip1559;
-use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
+use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
-use core::cmp::max;
 use dashmap::DashMap;
 use futures::StreamExt;
 use moka::future::Cache;
@@ -16,11 +12,15 @@ use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
 use reth_primitives::Recovered;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
-use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::watch;
 use tracing::debug;
 
-use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+use crate::{
+    primitives::bundle::{Bundle, BundleResult},
+    tests::funded_signer,
+    tx::FBPooledTransaction,
+    tx_signer::Signer,
+};
 
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
@@ -82,11 +82,7 @@ impl TransactionBuilder {
             signer: None,
             nonce: None,
             base_fee: None,
-            tx: TxEip1559 {
-                chain_id: 901,
-                gas_limit: 210000,
-                ..Default::default()
-            },
+            tx: TxEip1559 { chain_id: 901, gas_limit: 210000, ..Default::default() },
             bundle_opts: None,
             with_reverted_hash: false,
         }
@@ -193,9 +189,7 @@ impl TransactionBuilder {
             self.tx.max_fee_per_gas = base_fee + self.tx.max_priority_fee_per_gas;
         }
 
-        signer
-            .sign_tx(OpTypedTransaction::Eip1559(self.tx))
-            .expect("Failed to sign transaction")
+        signer.sign_tx(OpTypedTransaction::Eip1559(self.tx)).expect("Failed to sign transaction")
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
@@ -210,11 +204,7 @@ impl TransactionBuilder {
             // Send the transaction as a bundle with the bundle options
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
-                reverting_hashes: if with_reverted_hash {
-                    Some(vec![txn_hash])
-                } else {
-                    None
-                },
+                reverting_hashes: if with_reverted_hash { Some(vec![txn_hash]) } else { None },
                 block_number_min: bundle_opts.block_number_min,
                 block_number_max: bundle_opts.block_number_max,
                 flashblock_number_min: bundle_opts.flashblock_number_min,
@@ -223,20 +213,13 @@ impl TransactionBuilder {
                 max_timestamp: bundle_opts.max_timestamp,
             };
 
-            let result: BundleResult = provider
-                .client()
-                .request("eth_sendBundle", (bundle,))
-                .await?;
+            let result: BundleResult =
+                provider.client().request("eth_sendBundle", (bundle,)).await?;
 
-            return Ok(PendingTransactionBuilder::new(
-                provider.root().clone(),
-                result.bundle_hash,
-            ));
+            return Ok(PendingTransactionBuilder::new(provider.root().clone(), result.bundle_hash));
         }
 
-        Ok(provider
-            .send_raw_transaction(transaction_encoded.as_slice())
-            .await?)
+        Ok(provider.send_raw_transaction(transaction_encoded.as_slice()).await?)
     }
 }
 
@@ -316,16 +299,11 @@ impl TransactionPoolObserver {
             }
         });
 
-        Self {
-            observations,
-            term: Some(term),
-        }
+        Self { observations, term: Some(term) }
     }
 
     pub fn tx_status(&self, txhash: TxHash) -> Option<TransactionEvent> {
-        self.observations
-            .get(&txhash)
-            .and_then(|history| history.back().cloned())
+        self.observations.get(&txhash).and_then(|history| history.back().cloned())
     }
 
     pub fn is_pending(&self, txhash: TxHash) -> bool {
@@ -341,10 +319,7 @@ impl TransactionPoolObserver {
     }
 
     pub fn count(&self, status: TransactionEvent) -> usize {
-        self.observations
-            .iter()
-            .filter(|tx| tx.value().back() == Some(&status))
-            .count()
+        self.observations.iter().filter(|tx| tx.value().back() == Some(&status)).count()
     }
 
     pub fn pending_count(&self) -> usize {
@@ -361,9 +336,7 @@ impl TransactionPoolObserver {
 
     /// Returns the history of pool events for a transaction.
     pub fn history(&self, txhash: TxHash) -> Option<Vec<TransactionEvent>> {
-        self.observations
-            .get(&txhash)
-            .map(|history| history.iter().cloned().collect())
+        self.observations.get(&txhash).map(|history| history.iter().cloned().collect())
     }
 
     pub fn print_all(&self) {

@@ -22,6 +22,7 @@
 // THE SOFTWARE.
 
 use std::{env, error::Error};
+
 use vergen::{BuildBuilder, CargoBuilder, Emitter};
 use vergen_git2::Git2Builder;
 
@@ -32,10 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     emitter.add_instructions(&build_builder)?;
 
-    let cargo_builder = CargoBuilder::default()
-        .features(true)
-        .target_triple(true)
-        .build()?;
+    let cargo_builder = CargoBuilder::default().features(true).target_triple(true).build()?;
 
     emitter.add_instructions(&cargo_builder)?;
 

@@ -4,16 +4,18 @@
 
 //! clap [Args](clap::Args) for optimism rollup configuration
 
-use crate::{
-    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
-    tx_signer::Signer,
-};
+use std::path::PathBuf;
+
 use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
-use std::path::PathBuf;
+
+use crate::{
+    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
+    tx_signer::Signer,
+};
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -27,11 +29,7 @@ pub struct OpRbuilderArgs {
     pub builder_signer: Option<Signer>,
 
     /// chain block time in milliseconds
-    #[arg(
-        long = "rollup.chain-block-time",
-        default_value = "1000",
-        env = "CHAIN_BLOCK_TIME"
-    )]
+    #[arg(long = "rollup.chain-block-time", default_value = "1000", env = "CHAIN_BLOCK_TIME")]
     pub chain_block_time: u64,
 
     /// max gas a transaction can use
@@ -78,9 +76,7 @@ pub struct OpRbuilderArgs {
 impl Default for OpRbuilderArgs {
     fn default() -> Self {
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(node_command) = args.command else { unreachable!() };
         node_command.ext
     }
 }
@@ -104,56 +100,32 @@ pub struct FlashblocksArgs {
     ///
     /// The default value will change in the future once the flashblocks
     /// feature is stable.
-    #[arg(
-        long = "flashblocks.enabled",
-        default_value = "false",
-        env = "ENABLE_FLASHBLOCKS"
-    )]
+    #[arg(long = "flashblocks.enabled", default_value = "false", env = "ENABLE_FLASHBLOCKS")]
     pub enabled: bool,
 
     /// The port that we bind to for the websocket server that provides flashblocks
-    #[arg(
-        long = "flashblocks.port",
-        env = "FLASHBLOCKS_WS_PORT",
-        default_value = "1111"
-    )]
+    #[arg(long = "flashblocks.port", env = "FLASHBLOCKS_WS_PORT", default_value = "1111")]
     pub flashblocks_port: u16,
 
     /// The address that we bind to for the websocket server that provides flashblocks
-    #[arg(
-        long = "flashblocks.addr",
-        env = "FLASHBLOCKS_WS_ADDR",
-        default_value = "127.0.0.1"
-    )]
+    #[arg(long = "flashblocks.addr", env = "FLASHBLOCKS_WS_ADDR", default_value = "127.0.0.1")]
     pub flashblocks_addr: String,
 
     /// flashblock block time in milliseconds
-    #[arg(
-        long = "flashblocks.block-time",
-        default_value = "250",
-        env = "FLASHBLOCK_BLOCK_TIME"
-    )]
+    #[arg(long = "flashblocks.block-time", default_value = "250", env = "FLASHBLOCK_BLOCK_TIME")]
     pub flashblocks_block_time: u64,
 
     /// Builder would always thry to produce fixed number of flashblocks without regard to time of
     /// FCU arrival.
     /// In cases of late FCU it could lead to partially filled blocks.
-    #[arg(
-        long = "flashblocks.fixed",
-        default_value = "false",
-        env = "FLASHBLOCK_FIXED"
-    )]
+    #[arg(long = "flashblocks.fixed", default_value = "false", env = "FLASHBLOCK_FIXED")]
     pub flashblocks_fixed: bool,
 
     /// Time by which blocks would be completed earlier in milliseconds.
     ///
     /// This time used to account for latencies, this time would be deducted from total block
     /// building time before calculating number of fbs.
-    #[arg(
-        long = "flashblocks.leeway-time",
-        default_value = "75",
-        env = "FLASHBLOCK_LEEWAY_TIME"
-    )]
+    #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
     pub flashblocks_leeway_time: u64,
 
     /// Whether to disable state root calculation for each flashblock
@@ -187,9 +159,7 @@ pub struct FlashblocksArgs {
 impl Default for FlashblocksArgs {
     fn default() -> Self {
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks
     }
 }
@@ -206,10 +176,6 @@ pub struct TelemetryArgs {
     pub otlp_headers: Option<String>,
 
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
-    #[arg(
-        long = "telemetry.sampling-ratio",
-        env = "SAMPLING_RATIO",
-        default_value = "100"
-    )]
+    #[arg(long = "telemetry.sampling-ratio", env = "SAMPLING_RATIO", default_value = "100")]
     pub sampling_ratio: u64,
 }
