@@ -16,8 +16,6 @@ dead_code = "allow"
 unused_async = "warn"
 
 [dependencies]
-p2p = { path = "../p2p" }
-
 base-bundles.workspace = true
 base-flashtypes.workspace = true
 
