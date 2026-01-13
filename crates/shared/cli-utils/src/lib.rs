@@ -10,13 +10,18 @@ mod backtrace;
 pub use backtrace::Backtracing;
 
 mod args;
-pub use args::GlobalArgs;
+pub use args::{GlobalArgs, LogArgs};
 
 mod prometheus;
 pub use prometheus::PrometheusServer;
 
 mod logging;
-pub use logging::{LogFormat, LogRotation, LoggingArgs};
+pub use logging::{
+    FileLogConfig, LogConfig, LogFormat, LogRotation, StdoutLogConfig, verbosity_to_level_filter,
+};
+
+mod tracing;
+pub use tracing::{LogfmtFormatter, init_test_tracing};
 
 mod version;
 pub use version::Version;
