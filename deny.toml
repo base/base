@@ -1,0 +1,3 @@
+[bans]
+deny = ["reth"]
+multiple-versions = "allow"

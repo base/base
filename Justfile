@@ -22,7 +22,12 @@ lychee:
   lychee --config ./lychee.toml .
 
 # Checks formatting, udeps, clippy, and tests
-check: check-format check-udeps check-clippy test
+check: check-format check-udeps check-clippy test check-deny
+
+# Runs cargo deny to check dependencies
+check-deny:
+  @command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
+  cargo deny check bans --hide-inclusion-graph
 
 # Fixes formatting and clippy issues
 fix: format-fix clippy-fix zepter-fix
