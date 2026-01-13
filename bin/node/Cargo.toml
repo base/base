@@ -24,6 +24,7 @@ base-txpool.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
 reth-cli-util.workspace = true
+reth-optimism-exex.workspace = true
 
 # misc
 clap.workspace = true

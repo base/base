@@ -2095,6 +2095,7 @@ dependencies = [
  "clap",
  "reth-cli-util",
  "reth-optimism-cli",
+ "reth-optimism-exex",
  "reth-optimism-node",
 ]
 
@@ -10725,10 +10726,13 @@ version = "0.2.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
+ "base-client-node",
+ "clap",
  "derive_more",
  "eyre",
  "futures",
  "futures-util",
+ "humantime",
  "reth-db",
  "reth-execution-types",
  "reth-exex",
@@ -10737,8 +10741,10 @@ dependencies = [
  "reth-node-types",
  "reth-optimism-chainspec",
  "reth-optimism-node",
+ "reth-optimism-rpc 0.2.1",
  "reth-optimism-trie",
  "reth-provider",
+ "reth-tasks",
  "reth-trie",
  "tempfile",
  "tokio",

@@ -28,6 +28,9 @@ use tracing::{debug, info};
 // If the required prune exceeds this, the node will error out and require manual pruning.
 const MAX_PRUNE_BLOCKS_STARTUP: u64 = 1000;
 
+mod extension;
+pub use extension::{ProofsHistoryConfig, ProofsHistoryExtension};
+
 /// OP Proofs ExEx - processes blocks and tracks state changes within fault proof window.
 ///
 /// Saves and serves trie nodes to make proofs faster. This handles the process of
@@ -181,14 +184,11 @@ where
 
         // Need to update the earliest block metric on startup as this is not called frequently and
         // can show outdated info. When metrics are disabled, this is a no-op.
-        #[cfg(feature = "metrics")]
-        {
-            self.storage
-                .metrics()
-                .block_metrics()
-                .earliest_number
-                .set(earliest_block_number as f64);
-        }
+        self.storage
+            .metrics()
+            .block_metrics()
+            .earliest_number
+            .set(earliest_block_number as f64);
 
         Ok(())
     }

@@ -83,4 +83,5 @@ metrics = [
     "reth-trie/metrics",
     "dep:reth-metrics",
     "dep:metrics",
+    "dep:eyre"
 ]
