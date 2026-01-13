@@ -102,6 +102,16 @@ reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", rev = 
 reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8", features = [
     "op",
 ] }
+reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-downloaders = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-fs-util = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-node-events = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-node-metrics = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-prune = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-stages = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-static-file = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
+reth-static-file-types = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-chain-state = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", rev = "6d952f39fe47411164ec0b3978c43fdc7eefe3a8" }
@@ -277,6 +287,8 @@ serial_test = "3.2.0"
 tempfile = "3.20"
 test-case = "3"
 humantime = "2.1"
+proptest = "1.7"
+
 
 # base
 concurrent-queue = "2.5.0"

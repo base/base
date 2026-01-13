@@ -126,7 +126,9 @@ checksum = "dd208e8a87fbc2ca1a3822dd1ea03b0a7a4a841e6fa70db2c236dd30ae2e7018"
 dependencies = [
  "alloy-primitives 1.5.2",
  "alloy-rlp",
+ "arbitrary",
  "num_enum",
+ "proptest",
  "serde",
  "strum 0.27.2",
 ]
@@ -478,6 +480,7 @@ dependencies = [
  "alloy-hardforks",
  "alloy-primitives 1.5.2",
  "auto_impl",
+ "serde",
 ]
 
 [[package]]
@@ -2094,7 +2097,7 @@ dependencies = [
  "base-txpool",
  "clap",
  "reth-cli-util",
- "reth-optimism-cli",
+ "reth-optimism-cli 0.2.1",
  "reth-optimism-exex",
  "reth-optimism-node",
 ]
@@ -6795,6 +6798,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
+ "serde",
  "simd-adler32",
 ]
 
@@ -7515,7 +7519,7 @@ dependencies = [
  "reth-node-core",
  "reth-node-ethereum",
  "reth-optimism-chainspec",
- "reth-optimism-cli",
+ "reth-optimism-cli 1.9.3",
  "reth-optimism-consensus",
  "reth-optimism-evm",
  "reth-optimism-forks",
@@ -9036,6 +9040,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives 1.5.2",
  "alloy-rlp",
+ "arbitrary",
  "backon",
  "clap",
  "comfy-table",
@@ -9048,6 +9053,8 @@ dependencies = [
  "itertools 0.14.0",
  "lz4",
  "metrics",
+ "proptest",
+ "proptest-arbitrary-interop",
  "ratatui",
  "reqwest",
  "reth-chainspec",
@@ -9068,6 +9075,7 @@ dependencies = [
  "reth-era-downloader",
  "reth-era-utils",
  "reth-eth-wire",
+ "reth-ethereum-primitives",
  "reth-etl",
  "reth-evm",
  "reth-exex",
@@ -9084,8 +9092,10 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-prune",
+ "reth-prune-types",
  "reth-revm",
  "reth-stages",
+ "reth-stages-types",
  "reth-static-file",
  "reth-static-file-types",
  "reth-tasks",
@@ -9750,6 +9760,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives 1.5.2",
  "alloy-rlp",
+ "arbitrary",
  "bytes",
  "derive_more",
  "futures",
@@ -9781,8 +9792,11 @@ dependencies = [
  "alloy-hardforks",
  "alloy-primitives 1.5.2",
  "alloy-rlp",
+ "arbitrary",
  "bytes",
  "derive_more",
+ "proptest",
+ "proptest-arbitrary-interop",
  "reth-chainspec",
  "reth-codecs-derive",
  "reth-ethereum-primitives",
@@ -10617,6 +10631,56 @@ dependencies = [
  "serde_json",
  "tar-no-std",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "reth-optimism-cli"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives 1.5.2",
+ "alloy-rlp",
+ "clap",
+ "derive_more",
+ "eyre",
+ "futures-util",
+ "op-alloy-consensus",
+ "proptest",
+ "reth-chainspec",
+ "reth-cli",
+ "reth-cli-commands",
+ "reth-cli-runner",
+ "reth-consensus",
+ "reth-db",
+ "reth-db-api",
+ "reth-db-common",
+ "reth-downloaders",
+ "reth-execution-types",
+ "reth-fs-util",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-node-events",
+ "reth-node-metrics",
+ "reth-optimism-chainspec",
+ "reth-optimism-consensus",
+ "reth-optimism-evm",
+ "reth-optimism-node",
+ "reth-optimism-primitives",
+ "reth-optimism-trie",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-prune",
+ "reth-rpc-server-types",
+ "reth-stages",
+ "reth-static-file",
+ "reth-static-file-types",
+ "reth-tracing",
+ "serde",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

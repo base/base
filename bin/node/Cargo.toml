@@ -22,7 +22,7 @@ base-txpool.workspace = true
 
 # reth
 reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
+reth-optimism-cli = { path = "../../crates/optimism/cli" }
 reth-cli-util.workspace = true
 reth-optimism-exex.workspace = true
 
