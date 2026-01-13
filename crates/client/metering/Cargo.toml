@@ -25,6 +25,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
 reth-revm.workspace = true
+reth-trie-common.workspace = true
 
 # revm
 revm-database.workspace = true
@@ -38,6 +39,9 @@ alloy-eips.workspace = true
 jsonrpsee.workspace = true
 
 # misc
+arc-swap.workspace = true
+metrics.workspace = true
+metrics-derive.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true

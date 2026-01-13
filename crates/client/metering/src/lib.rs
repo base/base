@@ -10,13 +10,18 @@ mod extension;
 pub use extension::{MeteringConfig, MeteringExtension};
 
 mod meter;
-pub use meter::{FlashblocksState, MeterBundleOutput, meter_bundle};
+pub use meter::{MeterBundleOutput, PendingState, PendingTrieInput, meter_bundle};
+
+mod metrics;
 
 mod rpc;
 pub use rpc::MeteringApiImpl;
 
 mod traits;
 pub use traits::MeteringApiServer;
+
+mod trie_cache;
+pub use trie_cache::PendingTrieCache;
 
 mod types;
 pub use types::{MeterBlockResponse, MeterBlockTransactions};
