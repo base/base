@@ -6,8 +6,8 @@
 pub mod cli;
 
 use base_client_node::BaseNodeRunner;
-use base_flashblocks::FlashblocksExtension;
-use base_metering::MeteringExtension;
+use base_flashblocks::{FlashblocksConfig, FlashblocksExtension};
+use base_metering::{MeteringConfig, MeteringExtension};
 use base_txpool::TxPoolExtension;
 
 #[global_allocator]
@@ -26,10 +26,16 @@ fn main() {
     cli.run(|builder, args| async move {
         let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 
+        // Create flashblocks config first so we can share its state with metering
+        let flashblocks_config: Option<FlashblocksConfig> = args.clone().into();
+
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
         runner.install_ext::<TxPoolExtension>(args.clone().into());
-        runner.install_ext::<MeteringExtension>(args.enable_metering);
-        runner.install_ext::<FlashblocksExtension>(args.into());
+        runner.install_ext::<MeteringExtension>(MeteringConfig {
+            enabled: args.enable_metering,
+            flashblocks_config: flashblocks_config.clone(),
+        });
+        runner.install_ext::<FlashblocksExtension>(flashblocks_config);
 
         let handle = runner.run(builder);
         handle.await

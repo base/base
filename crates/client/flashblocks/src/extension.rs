@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// Flashblocks-specific configuration knobs.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FlashblocksConfig {
     /// The websocket endpoint that streams flashblock updates.
     pub websocket_url: Url,
