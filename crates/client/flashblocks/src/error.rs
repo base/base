@@ -91,8 +91,8 @@ impl From<RecoveryError> for ExecutionError {
 }
 
 impl From<crate::ReceiptBuildError> for ExecutionError {
-    fn from(_: crate::ReceiptBuildError) -> Self {
-        Self::DepositAccountLoad
+    fn from(err: crate::ReceiptBuildError) -> Self {
+        Self::RpcReceiptBuild(err.to_string())
     }
 }
 

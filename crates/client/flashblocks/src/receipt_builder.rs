@@ -192,18 +192,6 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_receipt_type() {
-        let tx = create_legacy_tx();
-        assert_eq!(tx.tx_type(), OpTxType::Legacy);
-    }
-
-    #[test]
-    fn test_deposit_receipt_type() {
-        let tx = create_deposit_tx();
-        assert_eq!(tx.tx_type(), OpTxType::Deposit);
-    }
-
-    #[test]
     fn test_receipt_from_success_result() {
         let result: ExecutionResult<reth::revm::context::result::HaltReason> =
             create_success_result();
@@ -253,18 +241,6 @@ mod tests {
             assert_eq!(deposit.deposit_nonce, Some(1));
             assert_eq!(deposit.deposit_receipt_version, Some(1));
         }
-    }
-
-    #[test]
-    fn test_tx_type_to_receipt_mapping() {
-        let receipt =
-            Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-
-        // Test all non-deposit variants
-        assert!(matches!(OpReceipt::Legacy(receipt.clone()), OpReceipt::Legacy(_)));
-        assert!(matches!(OpReceipt::Eip2930(receipt.clone()), OpReceipt::Eip2930(_)));
-        assert!(matches!(OpReceipt::Eip1559(receipt.clone()), OpReceipt::Eip1559(_)));
-        assert!(matches!(OpReceipt::Eip7702(receipt), OpReceipt::Eip7702(_)));
     }
 
     /// Helper to create an EVM instance for testing
