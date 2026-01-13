@@ -36,6 +36,9 @@ alloy-eips.workspace = true
 # rpc
 jsonrpsee.workspace = true
 
+# DA calculation
+op-alloy-flz.workspace = true
+
 # misc
 tracing.workspace = true
 eyre.workspace = true

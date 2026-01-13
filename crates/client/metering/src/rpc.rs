@@ -5,20 +5,33 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::core::{RpcResult, async_trait};
+use op_alloy_flz::flz_compress_len;
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
 use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProviderFactory};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
-    MeterBlockResponse, block::meter_block, meter::meter_bundle, traits::MeteringApiServer,
+    MeterBlockResponse, MeteredPriorityFeeResponse, MeteredTransaction, ResourceDemand,
+    ResourceFeeEstimateResponse, ResourceLimits, block::meter_block, estimate_from_transactions,
+    meter::meter_bundle, traits::MeteringApiServer,
 };
+
+/// Estimator configuration for priority fee estimation.
+#[derive(Debug, Clone)]
+struct EstimatorConfig {
+    limits: ResourceLimits,
+    percentile: f64,
+    default_fee: U256,
+}
 
 /// Implementation of the metering RPC API
 #[derive(Debug)]
 pub struct MeteringApiImpl<Provider> {
     provider: Provider,
+    /// Configuration for priority fee estimation, if enabled.
+    estimator_config: Option<EstimatorConfig>,
 }
 
 impl<Provider> MeteringApiImpl<Provider>
@@ -30,9 +43,22 @@ where
         + HeaderProvider<Header = Header>
         + Clone,
 {
-    /// Creates a new instance of MeteringApi
+    /// Creates a new instance of MeteringApi without priority fee estimation.
     pub const fn new(provider: Provider) -> Self {
-        Self { provider }
+        Self { provider, estimator_config: None }
+    }
+
+    /// Creates a new instance with priority fee estimation enabled.
+    pub const fn with_estimator_config(
+        provider: Provider,
+        limits: ResourceLimits,
+        percentile: f64,
+        default_fee: U256,
+    ) -> Self {
+        Self {
+            provider,
+            estimator_config: Some(EstimatorConfig { limits, percentile, default_fee }),
+        }
     }
 }
 
@@ -210,6 +236,143 @@ where
         );
 
         Ok(response)
+    }
+
+    async fn metered_priority_fee_per_gas(
+        &self,
+        bundle: Bundle,
+    ) -> RpcResult<MeteredPriorityFeeResponse> {
+        info!(
+            num_transactions = &bundle.txs.len(),
+            block_number = &bundle.block_number,
+            "Starting metered priority fee estimation"
+        );
+
+        // First, meter the bundle to get resource consumption
+        let meter_bundle_response = self.meter_bundle(bundle.clone()).await?;
+
+        // Check if we have estimator config
+        let Some(config) = &self.estimator_config else {
+            warn!("Priority fee estimation requested but no estimator configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Priority fee estimation not configured".to_string(),
+                None::<()>,
+            ));
+        };
+
+        // Get the latest block and meter it for historical data
+        let block = self
+            .provider
+            .block_by_number_or_tag(BlockNumberOrTag::Latest)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get latest block");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get latest block: {}", e),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    "Latest block not found".to_string(),
+                    None::<()>,
+                )
+            })?;
+
+        let block_metering = self.meter_block_internal(&block)?;
+
+        // Convert block metering to MeteredTransaction list
+        let transactions: Vec<MeteredTransaction> = block_metering
+            .transactions
+            .iter()
+            .map(|tx| {
+                // Estimate DA bytes from transaction (placeholder - would need actual tx bytes)
+                let da_bytes = 0u64; // Will be improved in later PRs
+                MeteredTransaction {
+                    priority_fee_per_gas: U256::ZERO, // Will compute from tx
+                    gas_used: tx.gas_used,
+                    execution_time_us: tx.execution_time_us,
+                    state_root_time_us: 0, // Not available per-tx
+                    data_availability_bytes: da_bytes,
+                }
+            })
+            .collect();
+
+        // Compute resource demand from metering results
+        let demand = compute_resource_demand(&bundle, &meter_bundle_response);
+
+        // Estimate fees
+        let estimate_result = estimate_from_transactions(
+            &transactions,
+            demand,
+            &config.limits,
+            config.percentile,
+            config.default_fee,
+        )
+        .map_err(|e| {
+            error!(error = %e, "Priority fee estimation failed");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Priority fee estimation failed: {}", e),
+                None::<()>,
+            )
+        })?;
+
+        let Some((estimates, priority_fee)) = estimate_result else {
+            // No transactions in block - return default fee
+            info!(
+                priority_fee = %config.default_fee,
+                blocks_sampled = 1,
+                "No transactions in block, returning default fee"
+            );
+            return Ok(MeteredPriorityFeeResponse {
+                meter_bundle: meter_bundle_response,
+                priority_fee: config.default_fee,
+                blocks_sampled: 1,
+                resource_estimates: vec![],
+            });
+        };
+
+        // Build response
+        let resource_estimates: Vec<ResourceFeeEstimateResponse> = estimates
+            .iter()
+            .map(|(kind, est)| ResourceFeeEstimateResponse {
+                resource: kind.as_camel_case().to_string(),
+                threshold_priority_fee: est.threshold_priority_fee,
+                recommended_priority_fee: est.recommended_priority_fee,
+                cumulative_usage: U256::from(est.cumulative_usage),
+                threshold_tx_count: est.threshold_tx_count as u64,
+                total_transactions: est.total_transactions as u64,
+            })
+            .collect();
+
+        info!(
+            priority_fee = %priority_fee,
+            blocks_sampled = 1,
+            "Metered priority fee estimation completed"
+        );
+
+        Ok(MeteredPriorityFeeResponse {
+            meter_bundle: meter_bundle_response,
+            priority_fee,
+            blocks_sampled: 1,
+            resource_estimates,
+        })
+    }
+}
+
+/// Computes resource demand from bundle metering results.
+fn compute_resource_demand(bundle: &Bundle, meter_result: &MeterBundleResponse) -> ResourceDemand {
+    // Calculate DA bytes from bundle transactions
+    let da_bytes: u64 = bundle.txs.iter().map(|tx| flz_compress_len(tx) as u64).sum();
+
+    ResourceDemand {
+        gas_used: Some(meter_result.total_gas_used),
+        execution_time_us: Some(meter_result.total_execution_time_us),
+        state_root_time_us: None, // Not available per-bundle
+        data_availability_bytes: Some(da_bytes),
     }
 }
 

@@ -6,8 +6,14 @@
 mod block;
 pub use block::meter_block;
 
+mod estimator;
+pub use estimator::{
+    EstimateError, MeteredTransaction, ResourceDemand, ResourceEstimate, ResourceEstimates,
+    ResourceKind, ResourceLimits, compute_estimate, estimate_from_transactions, usage_extractor,
+};
+
 mod extension;
-pub use extension::MeteringExtension;
+pub use extension::{MeteringExtension, MeteringExtensionConfig, MeteringResourceLimits};
 
 mod meter;
 pub use meter::{MeterBundleOutput, meter_bundle};
@@ -19,4 +25,7 @@ mod traits;
 pub use traits::MeteringApiServer;
 
 mod types;
-pub use types::{MeterBlockResponse, MeterBlockTransactions};
+pub use types::{
+    MeterBlockResponse, MeterBlockTransactions, MeteredPriorityFeeResponse,
+    ResourceFeeEstimateResponse,
+};
