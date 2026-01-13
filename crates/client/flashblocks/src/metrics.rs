@@ -97,4 +97,12 @@ pub struct Metrics {
     /// Count of times flashblocks get_logs is called.
     #[metric(describe = "Count of times flashblocks get_logs is called")]
     pub rpc_get_logs: Counter,
+
+    /// Time taken to clone bundle state.
+    #[metric(describe = "Time taken to clone bundle state")]
+    pub bundle_state_clone_duration: Histogram,
+
+    /// Size of bundle state being cloned (number of accounts).
+    #[metric(describe = "Size of bundle state being cloned (number of accounts)")]
+    pub bundle_state_clone_size: Histogram,
 }
