@@ -31,7 +31,7 @@ const SLEEP_TIME: u64 = 10;
 
 struct TestHarness {
     node: FlashblocksHarness,
-    flashblocks: Arc<FlashblocksState<LocalNodeProvider>>,
+    flashblocks: Arc<FlashblocksState>,
     provider: LocalNodeProvider,
 }
 

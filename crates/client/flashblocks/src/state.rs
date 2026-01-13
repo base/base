@@ -25,43 +25,56 @@ use crate::{
 const BUFFER_SIZE: usize = 20;
 
 /// Manages the pending flashblock state and processes incoming updates.
-#[derive(Debug, Clone)]
-pub struct FlashblocksState<Client> {
+#[derive(Debug)]
+pub struct FlashblocksState {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     queue: mpsc::UnboundedSender<StateUpdate>,
+    rx: Arc<Mutex<mpsc::UnboundedReceiver<StateUpdate>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
-    state_processor: StateProcessor<Client>,
+    max_pending_blocks_depth: u64,
 }
 
-impl<Client> FlashblocksState<Client>
-where
-    Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
-        + BlockReaderIdExt<Header = Header>
-        + Clone
-        + 'static,
-{
+impl FlashblocksState {
     /// Creates a new flashblocks state manager.
-    pub fn new(client: Client, max_pending_blocks_depth: u64) -> Self {
+    ///
+    /// The state is created without a client. Call [`start`](Self::start) with a client
+    /// to spawn the state processor after the node is launched.
+    pub fn new(max_pending_blocks_depth: u64) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
         let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
-        let state_processor = StateProcessor::new(
-            client,
-            pending_blocks.clone(),
-            max_pending_blocks_depth,
-            Arc::new(Mutex::new(rx)),
-            flashblock_sender.clone(),
-        );
 
-        Self { pending_blocks, queue: tx, flashblock_sender, state_processor }
+        Self {
+            pending_blocks,
+            queue: tx,
+            rx: Arc::new(Mutex::new(rx)),
+            flashblock_sender,
+            max_pending_blocks_depth,
+        }
     }
 
-    /// Starts the flashblocks state processor.
-    pub fn start(&self) {
-        let sp = self.state_processor.clone();
+    /// Starts the flashblocks state processor with the given client.
+    ///
+    /// This spawns a background task that processes canonical blocks and flashblocks.
+    /// Should be called after the node is launched and the provider is available.
+    pub fn start<Client>(&self, client: Client)
+    where
+        Client: StateProviderFactory
+            + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+            + BlockReaderIdExt<Header = Header>
+            + Clone
+            + 'static,
+    {
+        let state_processor = StateProcessor::new(
+            client,
+            self.pending_blocks.clone(),
+            self.max_pending_blocks_depth,
+            self.rx.clone(),
+            self.flashblock_sender.clone(),
+        );
+
         tokio::spawn(async move {
-            sp.start().await;
+            state_processor.start().await;
         });
     }
 
@@ -79,7 +92,7 @@ where
     }
 }
 
-impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
+impl FlashblocksReceiver for FlashblocksState {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         let flashblock_index = flashblock.index;
         let block_number = flashblock.metadata.block_number;
@@ -97,7 +110,7 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
     }
 }
 
-impl<Client> FlashblocksAPI for FlashblocksState<Client> {
+impl FlashblocksAPI for FlashblocksState {
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>> {
         self.pending_blocks.load()
     }

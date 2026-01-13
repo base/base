@@ -15,14 +15,12 @@ use std::{
 use base_client_node::{
     BaseNodeExtension,
     test_utils::{
-        LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
-        init_silenced_tracing,
+        LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing,
     },
 };
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
-use once_cell::sync::OnceCell;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::CanonStateSubscriptions;
 use tokio::sync::{mpsc, oneshot};
@@ -33,14 +31,11 @@ use crate::{
     FlashblocksState,
 };
 
-/// Convenience alias for the Flashblocks state backing the local node.
-pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
-
 /// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
 pub struct FlashblocksParts {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
-    state: Arc<LocalFlashblocksState>,
+    state: Arc<FlashblocksState>,
 }
 
 impl fmt::Debug for FlashblocksParts {
@@ -51,7 +46,7 @@ impl fmt::Debug for FlashblocksParts {
 
 impl FlashblocksParts {
     /// Clone the shared [`FlashblocksState`] handle.
-    pub fn state(&self) -> Arc<LocalFlashblocksState> {
+    pub fn state(&self) -> Arc<FlashblocksState> {
         self.state.clone()
     }
 
@@ -77,7 +72,7 @@ struct FlashblocksTestExtensionInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     #[allow(clippy::type_complexity)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
-    fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
+    state: Arc<FlashblocksState>,
     process_canonical: bool,
 }
 
@@ -99,7 +94,7 @@ impl FlashblocksTestExtension {
         let inner = FlashblocksTestExtensionInner {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
-            fb_cell: Arc::new(OnceCell::new()),
+            state: Arc::new(FlashblocksState::new(5)),
             process_canonical,
         };
         Self { inner: Arc::new(inner) }
@@ -107,27 +102,23 @@ impl FlashblocksTestExtension {
 
     /// Get the flashblocks parts after the node has been launched.
     pub fn parts(&self) -> Result<FlashblocksParts> {
-        let state = self.inner.fb_cell.get().ok_or_else(|| {
-            eyre::eyre!("FlashblocksState should be initialized during node launch")
-        })?;
-        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: state.clone() })
+        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: self.inner.state.clone() })
     }
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
     fn apply(self: Box<Self>, builder: base_client_node::OpBuilder) -> base_client_node::OpBuilder {
-        let fb_cell = self.inner.fb_cell.clone();
+        let state = self.inner.state.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
 
-        let fb_cell_for_exex = fb_cell.clone();
+        let state_for_exex = state.clone();
+        let state_for_rpc = state.clone();
 
         builder
             .install_exex("flashblocks-canon", move |mut ctx| {
-                let fb_cell = fb_cell_for_exex.clone();
+                let fb = state_for_exex.clone();
                 async move {
-                    let provider = ctx.provider().clone();
-                    let fb = init_flashblocks_state(&fb_cell, &provider);
                     Ok(async move {
                         use reth_exex::ExExEvent;
                         while let Some(note) = ctx.notifications.try_next().await? {
@@ -149,9 +140,11 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 }
             })
             .extend_rpc_modules(move |ctx| {
-                let fb_cell = fb_cell.clone();
+                let fb = state_for_rpc;
                 let provider = ctx.provider().clone();
-                let fb = init_flashblocks_state(&fb_cell, &provider);
+
+                // Start the state processor with the provider
+                fb.start(provider.clone());
 
                 let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
                     ctx.provider().subscribe_to_canonical_state(),
@@ -191,18 +184,6 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 Ok(())
             })
     }
-}
-
-fn init_flashblocks_state(
-    cell: &Arc<OnceCell<Arc<LocalFlashblocksState>>>,
-    provider: &LocalNodeProvider,
-) -> Arc<LocalFlashblocksState> {
-    cell.get_or_init(|| {
-        let fb = Arc::new(FlashblocksState::new(provider.clone(), 5));
-        fb.start();
-        fb
-    })
-    .clone()
 }
 
 /// Local node wrapper that exposes helpers specific to Flashblocks tests.
@@ -245,7 +226,7 @@ impl FlashblocksLocalNode {
     }
 
     /// Access the shared Flashblocks state for assertions or manual driving.
-    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+    pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
     }
 
@@ -280,7 +261,7 @@ impl FlashblocksHarness {
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
-    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+    pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
     }
 
