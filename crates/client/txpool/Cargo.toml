@@ -16,7 +16,6 @@ workspace = true
 base-client-node.workspace = true
 
 # reth
-reth-exex.workspace = true
 reth-tracing.workspace = true
 reth-transaction-pool.workspace = true
 reth-node-api.workspace = true
@@ -31,11 +30,11 @@ jsonrpsee.workspace = true
 
 # async
 tokio.workspace = true
+tokio-stream.workspace = true
 futures.workspace = true
 
 # misc
 lru.workspace = true
-eyre.workspace = true
 chrono.workspace = true
 metrics.workspace = true
 derive_more = { workspace = true, features = ["display"] }
@@ -43,6 +42,7 @@ tracing.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+eyre.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

@@ -29,7 +29,7 @@ base-flashtypes.workspace = true
 base-client-node.workspace = true
 
 # reth
-reth-exex.workspace = true
+reth-chain-state.workspace = true
 reth-evm.workspace = true
 reth-primitives.workspace = true
 reth-rpc.workspace = true

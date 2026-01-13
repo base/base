@@ -1,11 +1,11 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
-//! (both the canon ExEx and RPC surface) on the Base node builder.
+//! (canonical block subscription and RPC surface) on the Base node builder.
 
 use std::sync::Arc;
 
 use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
-use futures_util::TryStreamExt;
-use reth_exex::ExExEvent;
+use reth_chain_state::CanonStateSubscriptions;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
 use url::Url;
 
@@ -34,7 +34,7 @@ impl FlashblocksConfig {
     }
 }
 
-/// Helper struct that wires the Flashblocks feature (canon ExEx and RPC) into the node builder.
+/// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node builder.
 #[derive(Debug)]
 pub struct FlashblocksExtension {
     /// Optional Flashblocks configuration (includes state).
@@ -59,29 +59,8 @@ impl BaseNodeExtension for FlashblocksExtension {
         let state = cfg.state;
         let mut subscriber = FlashblocksSubscriber::new(state.clone(), cfg.websocket_url);
 
-        let state_for_exex = state.clone();
         let state_for_rpc = state.clone();
         let state_for_start = state;
-
-        // Install the canon ExEx
-        let builder = builder.install_exex("flashblocks-canon", move |mut ctx| {
-            let fb = state_for_exex;
-            async move {
-                Ok(async move {
-                    while let Some(note) = ctx.notifications.try_next().await? {
-                        if let Some(committed) = note.committed_chain() {
-                            let tip = committed.tip().num_hash();
-                            let chain = Arc::unwrap_or_clone(committed);
-                            for (_, block) in chain.into_blocks() {
-                                fb.on_canonical_block_received(block);
-                            }
-                            let _ = ctx.events.send(ExExEvent::FinishedHeight(tip));
-                        }
-                    }
-                    Ok(())
-                })
-            }
-        });
 
         // Start state processor and subscriber after node is started
         let builder = builder.on_node_started(move |ctx| {
@@ -91,7 +70,7 @@ impl BaseNodeExtension for FlashblocksExtension {
             Ok(())
         });
 
-        // Extend with RPC modules
+        // Extend with RPC modules and start canonical block subscription
         builder.extend_rpc_modules(move |ctx| {
             info!(message = "Starting Flashblocks RPC");
 
@@ -107,8 +86,19 @@ impl BaseNodeExtension for FlashblocksExtension {
             // Register the eth_subscribe subscription endpoint for flashblocks
             // Uses replace_configured since eth_subscribe already exists from reth's standard module
             // Pass eth_api to enable proxying standard subscription types to reth's implementation
-            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb);
+            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
+
+            let mut canonical_stream =
+                BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+            tokio::spawn(async move {
+                while let Some(Ok(notification)) = canonical_stream.next().await {
+                    let committed = notification.committed();
+                    for block in committed.blocks_iter() {
+                        fb.on_canonical_block_received(block.clone());
+                    }
+                }
+            });
 
             Ok(())
         })
