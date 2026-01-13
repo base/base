@@ -12,11 +12,11 @@ description = "CLI Utilities"
 workspace = true
 
 [dependencies]
-reth.workspace = true
 tokio = { workspace = true, features = ["full"] }
 eyre.workspace = true
 clap = { workspace = true, features = ["derive"] }
 tracing.workspace = true
+reth-node-core.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

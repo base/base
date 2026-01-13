@@ -5,10 +5,11 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::core::{RpcResult, async_trait};
-use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
-use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProviderFactory};
+use reth_provider::{
+    BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
+};
 use tracing::{error, info};
 
 use crate::{

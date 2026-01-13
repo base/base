@@ -10,7 +10,6 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth::revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
 use reth_evm::{
     Evm, FromRecoveredTx, eth::receipt_builder::ReceiptBuilderCtx, op_revm::L1BlockInfo,
 };
@@ -19,6 +18,7 @@ use reth_optimism_evm::OpRethReceiptBuilder;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
+use revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
 
 use crate::{ExecutionError, PendingBlocks, StateProcessorError};
 

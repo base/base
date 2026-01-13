@@ -1,9 +1,5 @@
 use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
-use reth::{
-    providers::{BlockReaderIdExt, StateProviderFactory},
-    tasks::TaskSpawner,
-};
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
 };
@@ -13,8 +9,9 @@ use reth_payload_builder::{
 };
 use reth_payload_primitives::BuiltPayload;
 use reth_primitives_traits::HeaderTy;
-use reth_provider::CanonStateNotification;
+use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
+use reth_tasks::TaskSpawner;
 use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -469,7 +466,7 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
     use rand::rng;
-    use reth::tasks::TokioTaskExecutor;
+    use reth_tasks::TokioTaskExecutor;
     use reth_chain_state::ExecutedBlock;
     use reth_node_api::NodePrimitives;
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};

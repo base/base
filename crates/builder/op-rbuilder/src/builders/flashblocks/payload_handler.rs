@@ -10,7 +10,6 @@ use alloy_primitives::B64;
 use base_flashtypes::FlashblocksPayloadV1;
 use eyre::{WrapErr as _, bail};
 use op_alloy_consensus::OpTxEnvelope;
-use reth::revm::{State, database::StateProviderDatabase};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::FromRecoveredTx;
 use reth_node_builder::Events;
@@ -20,6 +19,8 @@ use reth_optimism_node::{OpEngineTypes, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::OpBuiltPayload;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
+use reth_primitives::SealedHeader;
+use reth_revm::{State, cached::CachedReads, database::StateProviderDatabase};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -140,14 +141,13 @@ where
     Client: ClientBounds,
 {
     use alloy_consensus::BlockHeader as _;
-    use reth::primitives::SealedHeader;
     use reth_evm::{ConfigureEvm as _, execute::BlockBuilder as _};
 
     let start = tokio::time::Instant::now();
 
     tracing::info!(header = ?payload.block().header(), "executing flashblock");
 
-    let mut cached_reads = reth::revm::cached::CachedReads::default();
+    let mut cached_reads = CachedReads::default();
     let parent_hash = payload.block().sealed_header().parent_hash;
     let parent_header = client
         .header_by_id(parent_hash.into())

@@ -6,22 +6,21 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use eyre::Result;
 use op_alloy_network::Optimism;
-use reth::{
-    args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
-    builder::{EngineNodeLauncher, Node, NodeBuilder, NodeConfig, NodeHandle, TreeConfig},
-    core::exit::NodeExitFuture,
-    providers::providers::BlockchainProvider,
-    tasks::TaskManager,
-};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
+use reth_node_builder::{
+    EngineNodeLauncher, Node, NodeBuilder, NodeConfig, NodeHandle, TreeConfig,
+};
 use reth_node_core::{
-    args::DatadirArgs,
+    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
+    exit::NodeExitFuture,
 };
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth_provider::providers::BlockchainProvider;
+use reth_tasks::TaskManager;
 
 use crate::{BaseNodeExtension, OpProvider, test_utils::engine::EngineApi};
 

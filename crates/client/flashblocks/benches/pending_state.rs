@@ -14,13 +14,11 @@ use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
-use reth::{
-    chainspec::{ChainSpecProvider, EthChainSpec},
-    providers::BlockReader,
-    transaction_pool::test_utils::TransactionBuilder,
-};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_optimism_primitives::{OpBlock, OpTransactionSigned};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
+use reth_provider::BlockReader;
+use reth_transaction_pool::test_utils::TransactionBuilder;
 use tokio::{runtime::Runtime, time::sleep};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 

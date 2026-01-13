@@ -16,16 +16,14 @@ use base_flashtypes::Flashblock;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;
-use reth::{
-    chainspec::{ChainSpecProvider, EthChainSpec},
-    providers::{BlockReaderIdExt, StateProviderFactory},
-    revm::{State, database::StateProviderDatabase},
-};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
+use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 

@@ -13,9 +13,10 @@ use arc_swap::Guard;
 use base_flashtypes::Flashblock;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth::revm::{db::BundleState, state::EvmState};
+use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
+use revm::state::EvmState;
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError};
 

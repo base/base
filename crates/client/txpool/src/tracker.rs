@@ -8,14 +8,12 @@ use std::{
 use alloy_primitives::TxHash;
 use chrono::Local;
 use lru::LruCache;
-use reth::{
-    api::{BlockBody, NodePrimitives},
-    core::primitives::{AlloyBlockHeader, transaction::TxHashRef},
-    providers::Chain,
-    transaction_pool::{FullTransactionEvent, PoolTransaction},
-};
 use reth_exex::{ExExEvent, ExExNotification};
+use reth_node_api::{BlockBody, NodePrimitives};
+use reth_primitives_traits::{AlloyBlockHeader, transaction::TxHashRef};
+use reth_provider::Chain;
 use reth_tracing::tracing::{debug, info};
+use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 
 use crate::{EventLog, Pool, TxEvent};
 

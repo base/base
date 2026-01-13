@@ -7,14 +7,11 @@ use std::{fmt, marker::PhantomData, time::Duration};
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus};
+use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
-use reth::{
-    api::{EngineTypes, PayloadTypes},
-    rpc::types::engine::ForkchoiceState,
-};
+use reth_node_builder::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_rpc::OpEngineApiClient;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};

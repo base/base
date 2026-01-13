@@ -1,4 +1,5 @@
 use eyre::Result;
+use reth_node_builder::WithLaunchContext;
 use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
@@ -13,11 +14,11 @@ use crate::{
 };
 use core::fmt::Debug;
 use moka::future::Cache;
-use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
+use reth_node_builder::NodeBuilder;
 use reth_optimism_node::{
     OpNode,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},

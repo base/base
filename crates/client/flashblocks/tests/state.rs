@@ -17,14 +17,13 @@ use base_flashtypes::{
 };
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::BlockResponse;
-use reth::{
-    chainspec::EthChainSpec,
-    providers::{AccountReader, BlockNumReader, BlockReader},
-    transaction_pool::test_utils::TransactionBuilder,
-};
+use reth_chainspec::EthChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
-use reth_provider::{ChainSpecProvider, StateProviderFactory};
+use reth_provider::{
+    AccountReader, BlockNumReader, BlockReader, ChainSpecProvider, StateProviderFactory,
+};
+use reth_transaction_pool::test_utils::TransactionBuilder;
 use tokio::time::sleep;
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
 // so it can be processed by the state processor

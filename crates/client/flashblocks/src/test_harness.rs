@@ -23,8 +23,8 @@ use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
 use once_cell::sync::OnceCell;
-use reth::providers::CanonStateSubscriptions;
 use reth_optimism_chainspec::OpChainSpec;
+use reth_provider::CanonStateSubscriptions;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 

@@ -5,12 +5,12 @@ use std::sync::Arc;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
 use base_primitives::{Account, build_test_genesis};
-use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
     test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
 };
+use reth_node_builder::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
 
