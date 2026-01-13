@@ -301,6 +301,20 @@ impl TestClient {
             .wrap_err("base_meterBundle failed")
     }
 
+    /// Call `base_meteredPriorityFeePerGas` RPC method.
+    pub async fn metered_priority_fee(
+        &self,
+        bundle: Bundle,
+    ) -> Result<crate::types::MeteredPriorityFeeResponse> {
+        self.rpc_client
+            .request::<_, crate::types::MeteredPriorityFeeResponse>(
+                "base_meteredPriorityFeePerGas",
+                (bundle,),
+            )
+            .await
+            .wrap_err("base_meteredPriorityFeePerGas failed")
+    }
+
     /// Connect to WebSocket and subscribe to a topic.
     pub async fn ws_subscribe(
         &self,

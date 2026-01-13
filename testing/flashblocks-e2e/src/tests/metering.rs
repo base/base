@@ -141,6 +141,12 @@ pub(crate) fn category() -> TestCategory {
                     })
                 })),
             },
+            Test {
+                name: "metered_priority_fee".to_string(),
+                description: Some("Test base_meteredPriorityFeePerGas endpoint".to_string()),
+                run: Box::new(|client| Box::pin(test_metered_priority_fee(client))),
+                skip_if: Some(Box::new(|client| Box::pin(check_metering_support(client)))),
+            },
         ],
     }
 }
@@ -435,4 +441,31 @@ async fn test_meter_bundle_high_execution_time(client: &TestClient) -> Result<()
     );
 
     Ok(())
+}
+
+async fn test_metered_priority_fee(client: &TestClient) -> Result<()> {
+    let bundle = Bundle { block_number: 1, ..Default::default() };
+
+    // This might fail if there's no metering cache data - that's expected
+    match client.metered_priority_fee(bundle).await {
+        Ok(response) => {
+            tracing::debug!(
+                blocks_sampled = response.blocks_sampled,
+                priority_fee = ?response.priority_fee,
+                "Got metered priority fee"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            // Check if this is an expected error (no cache data)
+            let err_str = format!("{:?}", e);
+            if err_str.contains("cache") || err_str.contains("empty") || err_str.contains("no data")
+            {
+                tracing::warn!("Metered priority fee not available (no cache data): {}", e);
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }

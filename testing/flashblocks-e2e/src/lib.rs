@@ -24,7 +24,8 @@ pub use simulator::{
 pub mod types;
 pub use types::{
     Bundle, ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock,
-    FlashblockMetadata, MeterBundleResponse, OpBlock, TransactionResult,
+    FlashblockMetadata, MeterBundleResponse, MeteredPriorityFeeResponse, OpBlock,
+    TransactionResult,
 };
 
 pub mod tests;
