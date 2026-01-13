@@ -12,16 +12,32 @@ description = "CLI Utilities"
 workspace = true
 
 [dependencies]
+# General
 eyre.workspace = true
-tracing.workspace = true
-reth-node-core.workspace = true
-
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+
+# Alloy
+alloy-primitives.workspace = true
+alloy-chains.workspace = true
+
+# Kona
+kona-registry.workspace = true
+
+# Tracing
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "tracing-log"] }
+reth-node-core.workspace = true
 
 # Metrics
-metrics-process.workspace = true
+metrics-process = { workspace = true, features = ["metrics-rs"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
+
+[dev-dependencies]
+rstest.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
