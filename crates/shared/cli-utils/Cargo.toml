@@ -32,7 +32,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json"
 reth-node-core.workspace = true
 
 # Metrics
-metrics-process.workspace = true
+metrics-process = { workspace = true, features = ["metrics-rs"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 
 [dev-dependencies]

@@ -81,14 +81,14 @@ impl From<LogArgs> for LogConfig {
 
 /// Global arguments shared across all CLI commands.
 ///
-/// Chain ID defaults to Base Mainnet (8453). Can be set via `--chain-id` or `BASE_NETWORK` env.
+/// Chain ID defaults to Base Mainnet (8453). Can be set via `--network` or `BASE_NETWORK` env.
 #[derive(Debug, Clone, Parser)]
 pub struct GlobalArgs {
-    /// L2 Chain ID (8453 = Base Mainnet, 84532 = Base Sepolia).
+    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
     #[arg(
-        long = "chain",
+        long = "network",
         alias = "chain-id",
-        short = 'c',
+        short = 'n',
         global = true,
         default_value = "8453",
         env = "BASE_NETWORK"
@@ -222,7 +222,19 @@ mod tests {
             global: GlobalArgs,
         }
 
-        let cli = GlobalCli::parse_from(["test", "--chain", chain_str]);
+        let cli = GlobalCli::parse_from(["test", "--network", chain_str]);
         assert_eq!(cli.global.l2_chain_id.id(), expected_id);
+    }
+
+    #[test]
+    fn network_name_parsing() {
+        #[derive(Parser)]
+        struct GlobalCli {
+            #[command(flatten)]
+            global: GlobalArgs,
+        }
+
+        let cli = GlobalCli::parse_from(["test", "--network", "base"]);
+        assert_eq!(cli.global.l2_chain_id.id(), 8453); // Base Mainnet
     }
 }
