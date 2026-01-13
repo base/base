@@ -12,6 +12,9 @@ pub use backtrace::Backtracing;
 mod args;
 pub use args::GlobalArgs;
 
+mod prometheus;
+pub use prometheus::PrometheusServer;
+
 mod logging;
 pub use logging::{LogFormat, LogRotation, LoggingArgs};
 

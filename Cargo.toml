@@ -214,6 +214,12 @@ vergen = "9.0.6"
 vergen-git2 = "1.0.7"
 clap = { version = "4.5.53", features = ["derive", "env", "string"] }
 
+# Metrics
+metrics = { version = "0.24.3", default-features = false }
+prometheus = { version = "0.14.0", default-features = false }
+metrics-process = { version = "2.4.2", default-features = false }
+metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
+
 # misc
 url = "2.5.7"
 lru = "0.16.3"
@@ -231,7 +237,6 @@ serde = "1.0.228"
 rustls = "0.23.35"
 httpmock = "0.8.2"
 tracing = "0.1.43"
-metrics = "0.24.3"
 arc-swap = "1.7.1"
 once_cell = "1.21.3"
 itertools = "0.14.0"
@@ -249,7 +254,6 @@ either = { version = "1.15.0", default-features = false }
 tokio-util = { version = "0.7.4", features = ["codec"] }
 warp = "0.3.7"
 flate2 = "1.0.37"
-prometheus = "0.13.4"
 ctor = "0.2"
 dashmap = "6.1"
 hex = "0.4"
