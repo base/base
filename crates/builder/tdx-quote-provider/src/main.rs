@@ -77,16 +77,12 @@ async fn main() -> eyre::Result<()> {
             metrics_addr.parse().expect("invalid metrics address");
         let builder = PrometheusBuilder::new().with_http_listener(socket_addr);
 
-        builder
-            .install()
-            .expect("failed to setup Prometheus endpoint")
+        builder.install().expect("failed to setup Prometheus endpoint")
     }
 
     // Start the server
     let server = Server::new(ServerConfig {
-        listen_addr: format!("{}:{}", args.service_host, args.service_port)
-            .parse()
-            .unwrap(),
+        listen_addr: format!("{}:{}", args.service_host, args.service_port).parse().unwrap(),
         use_mock: args.mock,
         mock_attestation_path: args.mock_attestation_path,
     });

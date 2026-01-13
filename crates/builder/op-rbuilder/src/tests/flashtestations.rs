@@ -37,14 +37,8 @@ async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Re
     setup_flashtestation_contracts(&driver, &provider, false, false).await?;
     // verify not registered
     let contract = FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
-    let result = contract
-        .getRegistrationStatus(TEE_DEBUG_ADDRESS)
-        .call()
-        .await?;
-    assert!(
-        !result.isValid,
-        "The tee key is registered for invalid quote"
-    );
+    let result = contract.getRegistrationStatus(TEE_DEBUG_ADDRESS).call().await?;
+    assert!(!result.isValid, "The tee key is registered for invalid quote");
     // check that only regular builder tx is in the block
     let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
     let txs = block.transactions.into_transactions_vec();
@@ -63,17 +57,9 @@ async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Re
     );
     let last_txs = &txs[txs.len() - 2..];
     // Check user transaction
-    assert_eq!(
-        last_txs[0].inner.tx_hash(),
-        tx_hash,
-        "tx hash for user transaction should match"
-    );
+    assert_eq!(last_txs[0].inner.tx_hash(), tx_hash, "tx hash for user transaction should match");
     // Check builder tx
-    assert_eq!(
-        last_txs[1].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
+    assert_eq!(last_txs[1].to(), Some(Address::ZERO), "builder tx should send to zero address");
     Ok(())
 }
 
@@ -111,17 +97,9 @@ async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> 
     );
     let last_txs = &txs[txs.len() - 2..];
     // Check user transaction
-    assert_eq!(
-        last_txs[0].inner.tx_hash(),
-        tx_hash,
-        "tx hash for user transaction should match"
-    );
+    assert_eq!(last_txs[0].inner.tx_hash(), tx_hash, "tx hash for user transaction should match");
     // Check builder tx
-    assert_eq!(
-        last_txs[1].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
+    assert_eq!(last_txs[1].to(), Some(Address::ZERO), "builder tx should send to zero address");
     Ok(())
 }
 
@@ -158,11 +136,7 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
     let txs = block.transactions.into_transactions_vec();
     assert_eq!(txs.len(), 8, "Expected 8 transactions in block");
     // Check builder tx
-    assert_eq!(
-        txs[1].to(),
-        Some(Address::ZERO),
-        "fallback builder tx should send to zero address"
-    );
+    assert_eq!(txs[1].to(), Some(Address::ZERO), "fallback builder tx should send to zero address");
     // flashblocks number contract
     for i in 2..6 {
         assert_eq!(
@@ -173,11 +147,7 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         );
     }
     // check regular tx
-    assert_eq!(
-        txs[6].tx_hash(),
-        *tx.tx_hash(),
-        "bundle tx was not in block"
-    );
+    assert_eq!(txs[6].tx_hash(), *tx.tx_hash(), "bundle tx was not in block");
     // check block proof tx
     assert_eq!(
         txs[7].to(),
@@ -255,11 +225,7 @@ async fn test_flashtestations_permit_block_proof(rbuilder: LocalInstance) -> eyr
     );
     let last_2_txs = &block.transactions.into_transactions_vec()[num_txs - 2..];
     // Check builder tx
-    assert_eq!(
-        last_2_txs[0].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
+    assert_eq!(last_2_txs[0].to(), Some(Address::ZERO), "builder tx should send to zero address");
     // check builder proof
     assert_eq!(
         last_2_txs[1].to(),
@@ -316,11 +282,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
     // // 1 deposit tx, 1 regular builder tx, 4 flashblocks number tx, 1 user tx, 1 block proof tx
     assert_eq!(num_txs, 8, "Expected 8 transactions in block");
     // Check builder tx
-    assert_eq!(
-        txs[1].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
+    assert_eq!(txs[1].to(), Some(Address::ZERO), "builder tx should send to zero address");
     // flashblocks number contract
     for i in 2..6 {
         assert_eq!(
@@ -331,11 +293,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
         );
     }
     // user tx
-    assert_eq!(
-        txs[6].tx_hash(),
-        *tx.tx_hash(),
-        "user tx should be in correct position in block"
-    );
+    assert_eq!(txs[6].tx_hash(), *tx.tx_hash(), "user tx should be in correct position in block");
     assert_eq!(
         txs[7].to(),
         Some(BLOCK_BUILDER_POLICY_ADDRESS),
@@ -449,11 +407,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_permit(
         );
     }
     // user tx
-    assert_eq!(
-        txs[6].tx_hash(),
-        *tx.tx_hash(),
-        "user tx should be in correct position in block"
-    );
+    assert_eq!(txs[6].tx_hash(), *tx.tx_hash(), "user tx should be in correct position in block");
     // check that the tee signer did not send any transactions
     let balance = provider.get_balance(TEE_DEBUG_ADDRESS).await?;
     assert!(balance.is_zero());
@@ -462,11 +416,7 @@ async fn test_flashtestations_permit_with_flashblocks_number_permit(
     // Verify flashblock number incremented correctly
     let contract = FlashblocksNumber::new(FLASHBLOCKS_NUMBER_ADDRESS, provider.clone());
     let current_number = contract.getFlashblockNumber().call().await?;
-    assert_eq!(
-        current_number,
-        U256::from(4),
-        "Flashblock number not incremented correctly"
-    );
+    assert_eq!(current_number, U256::from(4), "Flashblock number not incremented correctly");
     Ok(())
 }
 
@@ -538,10 +488,7 @@ async fn setup_flashtestation_contracts(
         // verify registered
         let registry_contract =
             FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
-        let registration = registry_contract
-            .getRegistration(TEE_DEBUG_ADDRESS)
-            .call()
-            .await?;
+        let registration = registry_contract.getRegistration(TEE_DEBUG_ADDRESS).call().await?;
         assert!(registration._0, "The tee key is not registered");
     }
 
@@ -562,10 +509,7 @@ async fn setup_flashtestation_contracts(
         // verify workload id added
         let policy_contract =
             BlockBuilderPolicy::new(BLOCK_BUILDER_POLICY_ADDRESS, provider.clone());
-        let is_allowed = policy_contract
-            .isAllowedPolicy(TEE_DEBUG_ADDRESS)
-            .call()
-            .await?;
+        let is_allowed = policy_contract.isAllowedPolicy(TEE_DEBUG_ADDRESS).call().await?;
         assert!(is_allowed.allowed, "The policy is not allowed")
     }
 
@@ -578,14 +522,9 @@ async fn setup_flashtestation_contracts(
         .inner
         .contract_address
         .expect("contract receipt does not contain flashblock number contract address");
-    assert_eq!(
-        mock_dcap_address, MOCK_DCAP_ADDRESS,
-        "mock dcap contract address mismatch"
-    );
+    assert_eq!(mock_dcap_address, MOCK_DCAP_ADDRESS, "mock dcap contract address mismatch");
     // verify flashtestations registry contract deployment
-    let receipt = provider
-        .get_transaction_receipt(*flashtestations_registry_tx.tx_hash())
-        .await?;
+    let receipt = provider.get_transaction_receipt(*flashtestations_registry_tx.tx_hash()).await?;
     let flashtestations_registry_address = receipt
         .expect("flashtestations registry contract deployment not mined")
         .inner
@@ -602,9 +541,7 @@ async fn setup_flashtestation_contracts(
         .expect("init registry tx not mined");
 
     // verify block builder policy contract deployment
-    let receipt = provider
-        .get_transaction_receipt(*block_builder_policy_tx.tx_hash())
-        .await?;
+    let receipt = provider.get_transaction_receipt(*block_builder_policy_tx.tx_hash()).await?;
     let block_builder_policy_address = receipt
         .expect("block builder policy contract deployment not mined")
         .inner
@@ -661,10 +598,7 @@ async fn setup_flashblock_number_contract(
     );
 
     // Verify initialization
-    provider
-        .get_transaction_receipt(*init_tx.tx_hash())
-        .await?
-        .expect("init tx not mined");
+    provider.get_transaction_receipt(*init_tx.tx_hash()).await?.expect("init tx not mined");
 
     Ok(())
 }

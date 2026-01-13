@@ -61,35 +61,22 @@ impl Server {
             mock_attestation_path: config.mock_attestation_path.clone(),
         };
         let quote_provider = get_attestation_provider(attestation_config);
-        Self {
-            quote_provider,
-            metrics: Metrics::default(),
-            config,
-        }
+        Self { quote_provider, metrics: Metrics::default(), config }
     }
 
     pub async fn listen(self) -> eyre::Result<()> {
         let router = Router::new()
             .route("/healthz", get(healthz_handler))
             .route("/attest/{appdata}", get(attest_handler))
-            .with_state(ServerState {
-                quote_provider: self.quote_provider,
-                metrics: self.metrics,
-            });
+            .with_state(ServerState { quote_provider: self.quote_provider, metrics: self.metrics });
 
         let listener = TcpListener::bind(self.config.listen_addr).await?;
-        info!(
-            message = "starting server",
-            address = listener.local_addr()?.to_string()
-        );
+        info!(message = "starting server", address = listener.local_addr()?.to_string());
 
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|e| eyre::eyre!("failed to start server: {}", e))
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .map_err(|e| eyre::eyre!("failed to start server: {}", e))
     }
 }
 
@@ -137,10 +124,7 @@ async fn attest_handler(
     match server.quote_provider.get_attestation(report_data) {
         Ok(attestation) => {
             let duration = start.elapsed();
-            server
-                .metrics
-                .attest_duration
-                .record(duration.as_secs_f64());
+            server.metrics.attest_duration.record(duration.as_secs_f64());
 
             Response::builder()
                 .status(StatusCode::OK)
@@ -153,9 +137,7 @@ async fn attest_handler(
             tracing::error!(target: "tdx_quote_provider", error = %e, "Failed to get TDX attestation");
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(
-                    json!({"message": "Failed to get TDX attestation"}).to_string(),
-                ))
+                .body(Body::from(json!({"message": "Failed to get TDX attestation"}).to_string()))
                 .unwrap()
                 .into_response()
         }

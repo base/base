@@ -1,3 +1,5 @@
+use std::{convert::Infallible, time::Duration};
+
 use eyre::WrapErr as _;
 use libp2p::{
     Swarm, autonat,
@@ -5,7 +7,6 @@ use libp2p::{
     identify, identity, mdns, ping,
     swarm::NetworkBehaviour,
 };
-use std::{convert::Infallible, time::Duration};
 
 const PROTOCOL_VERSION: &str = "1.0.0";
 
@@ -70,14 +71,7 @@ impl Behaviour {
         let ping = ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(10)));
         let stream = libp2p_stream::Behaviour::new();
 
-        Ok(Self {
-            autonat,
-            connection_limits,
-            identify,
-            ping,
-            mdns,
-            stream,
-        })
+        Ok(Self { autonat, connection_limits, identify, ping, mdns, stream })
     }
 
     pub(crate) fn new_control(&mut self) -> libp2p_stream::Control {

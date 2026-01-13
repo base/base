@@ -1,10 +1,5 @@
-use crate::{
-    builders::flashblocks::{
-        ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
-    },
-    primitives::reth::ExecutionInfo,
-    traits::ClientBounds,
-};
+use std::sync::Arc;
+
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use alloy_primitives::B64;
 use base_flashtypes::FlashblocksPayloadV1;
@@ -21,9 +16,16 @@ use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_primitives::SealedHeader;
 use reth_revm::{State, cached::CachedReads, database::StateProviderDatabase};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
+
+use crate::{
+    builders::flashblocks::{
+        ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
+    },
+    primitives::reth::ExecutionInfo,
+    traits::ClientBounds,
+};
 
 /// Handles newly built or received flashblock payloads.
 ///
@@ -59,27 +61,12 @@ where
         client: Client,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
-        Self {
-            built_rx,
-            p2p_rx,
-            p2p_tx,
-            payload_events_handle,
-            ctx,
-            client,
-            cancel,
-        }
+        Self { built_rx, p2p_rx, p2p_tx, payload_events_handle, ctx, client, cancel }
     }
 
     pub(crate) async fn run(self) {
-        let Self {
-            mut built_rx,
-            mut p2p_rx,
-            p2p_tx,
-            payload_events_handle,
-            ctx,
-            client,
-            cancel,
-        } = self;
+        let Self { mut built_rx, mut p2p_rx, p2p_tx, payload_events_handle, ctx, client, cancel } =
+            self;
 
         tracing::debug!("flashblocks payload handler started");
 
@@ -154,14 +141,11 @@ where
         .wrap_err("failed to get parent header")?
         .ok_or_else(|| eyre::eyre!("parent header not found"))?;
 
-    let state_provider = client
-        .state_by_block_hash(parent_hash)
-        .wrap_err("failed to get state for parent hash")?;
+    let state_provider =
+        client.state_by_block_hash(parent_hash).wrap_err("failed to get state for parent hash")?;
     let db = StateProviderDatabase::new(&state_provider);
-    let mut state = State::builder()
-        .with_database(cached_reads.as_db_mut(db))
-        .with_bundle_update()
-        .build();
+    let mut state =
+        State::builder().with_database(cached_reads.as_db_mut(db)).with_bundle_update().build();
 
     let chain_spec = client.chain_spec();
     let timestamp = payload.block().header().timestamp();
@@ -207,12 +191,7 @@ where
                 id: payload.id(),    // unused
                 parent: parent_hash, // unused
                 suggested_fee_recipient: payload.block().sealed_header().beneficiary,
-                withdrawals: payload
-                    .block()
-                    .body()
-                    .withdrawals
-                    .clone()
-                    .unwrap_or_default(),
+                withdrawals: payload.block().body().withdrawals.clone().unwrap_or_default(),
                 parent_beacon_block_root: payload.block().sealed_header().parent_beacon_block_root,
                 timestamp,
                 prev_randao: payload.block().sealed_header().mix_hash,
@@ -249,10 +228,7 @@ where
     )
     .wrap_err("failed to build flashblock")?;
 
-    builder_ctx
-        .metrics
-        .flashblock_sync_duration
-        .record(start.elapsed());
+    builder_ctx.metrics.flashblock_sync_duration.record(start.elapsed());
 
     if built_payload.block().hash() != payload.block().hash() {
         tracing::error!(
@@ -294,9 +270,7 @@ fn execute_transactions(
     let mut evm = evm_config.evm_with_env(&mut *state, evm_env);
 
     for tx in txs {
-        let sender = tx
-            .recover_signer()
-            .wrap_err("failed to recover tx signer")?;
+        let sender = tx.recover_signer().wrap_err("failed to recover tx signer")?;
         let tx_env = TxEnv::from_recovered_tx(&tx, sender);
         let executable_tx = match tx {
             OpTxEnvelope::Deposit(ref tx) => {
@@ -305,11 +279,7 @@ fn execute_transactions(
                     source_hash: tx.source_hash,
                     is_system_transaction: tx.is_system_transaction,
                 };
-                OpTransaction {
-                    base: tx_env,
-                    enveloped_tx: None,
-                    deposit,
-                }
+                OpTransaction { base: tx_env, enveloped_tx: None, deposit }
             }
             OpTxEnvelope::Legacy(_) => {
                 let mut tx = OpTransaction::new(tx_env);
@@ -349,16 +319,12 @@ fn execute_transactions(
         if let Some(max_gas_per_txn) = max_gas_per_txn
             && result.gas_used() > max_gas_per_txn
         {
-            return Err(eyre::eyre!(
-                "transaction exceeded max gas per txn limit in flashblock"
-            ));
+            return Err(eyre::eyre!("transaction exceeded max gas per txn limit in flashblock"));
         }
 
         let tx_gas_used = result.gas_used();
-        info.cumulative_gas_used = info
-            .cumulative_gas_used
-            .checked_add(tx_gas_used)
-            .ok_or_else(|| {
+        info.cumulative_gas_used =
+            info.cumulative_gas_used.checked_add(tx_gas_used).ok_or_else(|| {
                 eyre::eyre!("total gas used overflowed when executing flashblock transactions")
             })?;
         if info.cumulative_gas_used > gas_limit {
@@ -382,12 +348,7 @@ fn execute_transactions(
             cumulative_gas_used: info.cumulative_gas_used,
         };
 
-        info.receipts.push(build_receipt(
-            evm_config,
-            ctx,
-            depositor_nonce,
-            is_canyon_active,
-        ));
+        info.receipts.push(build_receipt(evm_config, ctx, depositor_nonce, is_canyon_active));
 
         evm.db_mut().commit(state);
 

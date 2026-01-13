@@ -1,10 +1,11 @@
 mod behaviour;
 mod outgoing;
 
-use behaviour::Behaviour;
-use libp2p_stream::IncomingStreams;
+use std::{collections::HashMap, time::Duration};
 
+use behaviour::Behaviour;
 use eyre::Context;
+pub use libp2p::{Multiaddr, StreamProtocol};
 use libp2p::{
     PeerId, Swarm, Transport as _,
     identity::{self, ed25519},
@@ -12,13 +13,11 @@ use libp2p::{
     swarm::SwarmEvent,
     tcp, yamux,
 };
+use libp2p_stream::IncomingStreams;
 use multiaddr::Protocol;
-use std::{collections::HashMap, time::Duration};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
-
-pub use libp2p::{Multiaddr, StreamProtocol};
 
 const DEFAULT_MAX_PEER_COUNT: u32 = 50;
 
@@ -86,11 +85,7 @@ impl<M: Message + 'static> Node<M> {
     pub fn multiaddrs(&self) -> Vec<libp2p::Multiaddr> {
         self.listen_addrs
             .iter()
-            .map(|addr| {
-                addr.clone()
-                    .with_p2p(self.peer_id)
-                    .expect("can add peer ID to multiaddr")
-            })
+            .map(|addr| addr.clone().with_p2p(self.peer_id).expect("can add peer ID to multiaddr"))
             .collect()
     }
 
@@ -114,9 +109,7 @@ impl<M: Message + 'static> Node<M> {
         } = self;
 
         for addr in listen_addrs {
-            swarm
-                .listen_on(addr)
-                .wrap_err("swarm failed to listen on multiaddr")?;
+            swarm.listen_on(addr).wrap_err("swarm failed to listen on multiaddr")?;
         }
 
         for mut address in known_peers {
@@ -127,9 +120,7 @@ impl<M: Message + 'static> Node<M> {
                 }
             };
             swarm.add_peer_address(peer_id, address.clone());
-            swarm
-                .dial(address)
-                .wrap_err("swarm failed to dial known peer")?;
+            swarm.dial(address).wrap_err("swarm failed to dial known peer")?;
         }
 
         let handles = incoming_streams_handlers
@@ -368,9 +359,8 @@ impl NodeBuilder {
             .collect();
         if listen_addrs.is_empty() {
             let port = port.unwrap_or(0);
-            let listen_addr = format!("/ip4/0.0.0.0/tcp/{port}")
-                .parse()
-                .expect("can parse valid multiaddr");
+            let listen_addr =
+                format!("/ip4/0.0.0.0/tcp/{port}").parse().expect("can parse valid multiaddr");
             listen_addrs.push(listen_addr);
         }
 
@@ -409,26 +399,13 @@ impl<M: Message + 'static> IncomingStreamsHandler<M> {
     ) -> (Self, mpsc::Receiver<M>) {
         const CHANNEL_SIZE: usize = 100;
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
-        (
-            Self {
-                protocol,
-                incoming,
-                tx,
-                cancellation_token,
-            },
-            rx,
-        )
+        (Self { protocol, incoming, tx, cancellation_token }, rx)
     }
 
     async fn run(self) {
         use futures::StreamExt as _;
 
-        let Self {
-            protocol,
-            mut incoming,
-            tx,
-            cancellation_token,
-        } = self;
+        let Self { protocol, mut incoming, tx, cancellation_token } = self;
         let mut handle_stream_futures = futures::stream::FuturesUnordered::new();
 
         loop {
@@ -539,36 +516,28 @@ mod test {
 
     #[tokio::test]
     async fn two_nodes_can_connect_and_message() {
-        let NodeBuildResult {
-            node: node1,
-            outgoing_message_tx: _,
-            incoming_message_rxs: mut rx1,
-        } = NodeBuilder::new()
-            .with_listen_addr("/ip4/127.0.0.1/tcp/9000".parse().unwrap())
-            .with_agent_version(TEST_AGENT_VERSION.to_string())
-            .with_protocol(TEST_PROTOCOL)
-            .try_build::<TestMessage>()
-            .unwrap();
-        let NodeBuildResult {
-            node: node2,
-            outgoing_message_tx: tx2,
-            incoming_message_rxs: _,
-        } = NodeBuilder::new()
-            .with_known_peers(node1.multiaddrs())
-            .with_protocol(TEST_PROTOCOL)
-            .with_listen_addr("/ip4/127.0.0.1/tcp/9001".parse().unwrap())
-            .with_agent_version(TEST_AGENT_VERSION.to_string())
-            .try_build::<TestMessage>()
-            .unwrap();
+        let NodeBuildResult { node: node1, outgoing_message_tx: _, incoming_message_rxs: mut rx1 } =
+            NodeBuilder::new()
+                .with_listen_addr("/ip4/127.0.0.1/tcp/9000".parse().unwrap())
+                .with_agent_version(TEST_AGENT_VERSION.to_string())
+                .with_protocol(TEST_PROTOCOL)
+                .try_build::<TestMessage>()
+                .unwrap();
+        let NodeBuildResult { node: node2, outgoing_message_tx: tx2, incoming_message_rxs: _ } =
+            NodeBuilder::new()
+                .with_known_peers(node1.multiaddrs())
+                .with_protocol(TEST_PROTOCOL)
+                .with_listen_addr("/ip4/127.0.0.1/tcp/9001".parse().unwrap())
+                .with_agent_version(TEST_AGENT_VERSION.to_string())
+                .try_build::<TestMessage>()
+                .unwrap();
 
         tokio::spawn(async move { node1.run().await });
         tokio::spawn(async move { node2.run().await });
         // sleep to allow nodes to connect
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let message = TestMessage {
-            content: "message".to_string(),
-        };
+        let message = TestMessage { content: "message".to_string() };
         tx2.send(message.clone()).await.unwrap();
 
         let recv_message: TestMessage = rx1.remove(&TEST_PROTOCOL).unwrap().recv().await.unwrap();

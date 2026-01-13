@@ -1,17 +1,18 @@
+use core::fmt::Debug;
+use std::sync::{Arc, atomic::AtomicBool};
+
 use alloy_eips::Encodable2718;
 use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256, keccak256};
 use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use core::fmt::Debug;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::{ConfigureEvm, Evm, precompiles::PrecompilesMap};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_provider::StateProvider;
 use reth_revm::{State, database::StateProviderDatabase};
 use revm::{DatabaseCommit, DatabaseRef, inspector::NoOpInspector};
-use std::sync::{Arc, atomic::AtomicBool};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -131,13 +132,9 @@ where
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     ) -> Result<(), BuilderTransactionError> {
         let state = StateProviderDatabase::new(state_provider.clone());
-        let mut simulation_state = State::builder()
-            .with_database(state)
-            .with_bundle_update()
-            .build();
-        let mut evm = ctx
-            .evm_config
-            .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
+        let mut simulation_state =
+            State::builder().with_database(state).with_bundle_update().build();
+        let mut evm = ctx.evm_config.evm_with_env(&mut simulation_state, ctx.evm_env.clone());
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
             cfg.disable_nonce_check = true;
@@ -148,8 +145,7 @@ where
         let SimulationSuccessResult { output, .. } =
             self.flashtestations_contract_read(self.registry_address, calldata, ctx, &mut evm)?;
         if output.isValid {
-            self.registered
-                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.registered.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         Ok(())
     }
@@ -160,9 +156,7 @@ where
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<U256, BuilderTransactionError> {
-        let calldata = IERC20Permit::noncesCall {
-            owner: self.tee_service_signer.address,
-        };
+        let calldata = IERC20Permit::noncesCall { owner: self.tee_service_signer.address };
         let SimulationSuccessResult { output, .. } =
             self.flashtestations_contract_read(contract_address, calldata, ctx, evm)?;
         Ok(output)
@@ -212,11 +206,7 @@ where
             deadline: U256::from(ctx.timestamp()),
             signature: signature.as_bytes().into(),
         };
-        let SimulationSuccessResult {
-            gas_used,
-            state_changes,
-            ..
-        } = self.flashtestations_call(
+        let SimulationSuccessResult { gas_used, state_changes, .. } = self.flashtestations_call(
             self.registry_address,
             calldata.clone(),
             vec![TEEServiceRegistered::SIGNATURE_HASH],
@@ -235,12 +225,7 @@ where
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
         // commit the register transaction state so the block proof transaction can succeed
         evm.db_mut().commit(state_changes);
-        Ok(BuilderTransactionCtx {
-            gas_used,
-            da_size,
-            signed_tx,
-            is_top_of_block: false,
-        })
+        Ok(BuilderTransactionCtx { gas_used, da_size, signed_tx, is_top_of_block: false })
     }
 
     fn block_proof_permit_signature(
@@ -311,12 +296,7 @@ where
         )?;
         let da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
-        Ok(BuilderTransactionCtx {
-            gas_used,
-            da_size,
-            signed_tx,
-            is_top_of_block: false,
-        })
+        Ok(BuilderTransactionCtx { gas_used, da_size, signed_tx, is_top_of_block: false })
     }
 
     fn flashtestations_contract_read<T: SolCall>(
@@ -357,9 +337,7 @@ where
                 evm,
             )
         } else {
-            Err(BuilderTransactionError::msg(
-                "invalid contract address for flashtestations",
-            ))
+            Err(BuilderTransactionError::msg("invalid contract address for flashtestations"))
         }
     }
 }

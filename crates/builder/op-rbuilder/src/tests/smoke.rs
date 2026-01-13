@@ -1,17 +1,18 @@
-use crate::{
-    args::OpRbuilderArgs,
-    tests::{LocalInstance, TransactionBuilderExt},
-};
-use alloy_primitives::TxHash;
-
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use macros::{if_flashblocks, if_standard, rb_test};
 use std::collections::HashSet;
+
+use alloy_primitives::TxHash;
+use macros::{if_flashblocks, if_standard, rb_test};
 use tokio::{join, task::yield_now};
 use tracing::info;
+
+use crate::{
+    args::OpRbuilderArgs,
+    tests::{LocalInstance, TransactionBuilderExt},
+};
 
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.
@@ -23,9 +24,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
-    let driver = driver
-        .with_validation_node(crate::tests::ExternalNode::reth().await?)
-        .await?;
+    let driver = driver.with_validation_node(crate::tests::ExternalNode::reth().await?).await?;
 
     const SAMPLE_SIZE: usize = 10;
 
@@ -119,12 +118,7 @@ async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> 
         async {
             // Keep the builder busy with new transactions.
             loop {
-                match driver
-                    .create_transaction()
-                    .random_valid_transfer()
-                    .send()
-                    .await
-                {
+                match driver.create_transaction().random_valid_transfer().send().await {
                     Ok(_) => {}
                     Err(e) if e.to_string().contains("txpool is full") => {
                         // If the txpool is full, give it a short break
@@ -202,9 +196,7 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
-    let driver = driver
-        .with_validation_node(crate::tests::ExternalNode::reth().await?)
-        .await?;
+    let driver = driver.with_validation_node(crate::tests::ExternalNode::reth().await?).await?;
 
     // insert valid txn under limit
     let tx = driver
@@ -259,9 +251,7 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
-    let driver = driver
-        .with_validation_node(crate::tests::ExternalNode::reth().await?)
-        .await?;
+    let driver = driver.with_validation_node(crate::tests::ExternalNode::reth().await?).await?;
 
     // insert txn with gas usage but there is no limit
     let tx = driver

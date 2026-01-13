@@ -1,11 +1,13 @@
+use std::collections::HashSet;
+
+use macros::rb_test;
+use tracing::info;
+
 use crate::{
     args::OpRbuilderArgs,
     gas_limiter::args::GasLimiterArgs,
     tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
 };
-use macros::rb_test;
-use std::collections::HashSet;
-use tracing::info;
 
 /// Integration test for the gas limiter functionality.
 /// Tests that gas limits are properly enforced during actual block building
@@ -23,9 +25,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
     let driver = rbuilder.driver().await?;
 
     // Fund some accounts for testing
-    let funded_accounts = driver
-        .fund_accounts(2, 10_000_000_000_000_000_000u128)
-        .await?; // 10 ETH each
+    let funded_accounts = driver.fund_accounts(2, 10_000_000_000_000_000_000u128).await?; // 10 ETH each
 
     // These transactions should not be throttled
     let tx1 = driver
@@ -59,11 +59,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
             .send()
             .await?;
         sent_txs.push(*big_tx.tx_hash());
-        info!(
-            "Sent big transaction {} from address {}",
-            i + 1,
-            funded_accounts[0].address
-        );
+        info!("Sent big transaction {} from address {}", i + 1, funded_accounts[0].address);
     }
 
     // Meanwhile, the other address should not be throttled
@@ -87,10 +83,7 @@ async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Re
         "Gas limiter should have rejected some transactions, included: {}/5",
         included_count
     );
-    assert!(
-        included_count > 0,
-        "Gas limiter should have allowed at least one transaction"
-    );
+    assert!(included_count > 0, "Gas limiter should have allowed at least one transaction");
 
     assert!(
         tx_hashes.contains(legit_tx.tx_hash()),

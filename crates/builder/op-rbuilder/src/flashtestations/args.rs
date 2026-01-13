@@ -18,11 +18,7 @@ pub struct FlashtestationsArgs {
     pub flashtestations_enabled: bool,
 
     /// Whether to use the debug HTTP service for quotes
-    #[arg(
-        long = "flashtestations.debug",
-        default_value = "false",
-        env = "FLASHTESTATIONS_DEBUG"
-    )]
+    #[arg(long = "flashtestations.debug", default_value = "false", env = "FLASHTESTATIONS_DEBUG")]
     pub debug: bool,
 
     // Debug static key for the tee key. DO NOT USE IN PRODUCTION
@@ -42,10 +38,7 @@ pub struct FlashtestationsArgs {
     pub flashtestations_key_path: String,
 
     // Remote url for attestations
-    #[arg(
-        long = "flashtestations.quote-provider",
-        env = "FLASHTESTATIONS_QUOTE_PROVIDER"
-    )]
+    #[arg(long = "flashtestations.quote-provider", env = "FLASHTESTATIONS_QUOTE_PROVIDER")]
     pub quote_provider: Option<String>,
 
     /// The rpc url to post the onchain attestation requests to
@@ -88,9 +81,7 @@ pub struct FlashtestationsArgs {
 impl Default for FlashtestationsArgs {
     fn default() -> Self {
         let args = Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(node_command) = args.command else { unreachable!() };
         node_command.ext.flashtestations
     }
 }

@@ -207,9 +207,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
 
     // Create the original function without test attributes (helper function)
     let mut helper_fn = input_fn.clone();
-    helper_fn
-        .attrs
-        .retain(|attr| !attr.path().is_ident("test") && !attr.path().is_ident("tokio"));
+    helper_fn.attrs.retain(|attr| !attr.path().is_ident("test") && !attr.path().is_ident("tokio"));
 
     let original_name = &input_fn.sig.ident;
     let mut generated_functions = vec![quote! { #helper_fn }];
@@ -260,12 +258,7 @@ fn validate_signature(item_fn: &ItemFn) {
         panic!("Function must have exactly one parameter of type LocalInstance.");
     }
 
-    let output_types = item_fn
-        .sig
-        .output
-        .to_token_stream()
-        .to_string()
-        .replace(" ", "");
+    let output_types = item_fn.sig.output.to_token_stream().to_string().replace(" ", "");
 
     if output_types != "->eyre::Result<()>" {
         panic!("Function must return Result<(), eyre::Error>. Actual: {output_types}",);

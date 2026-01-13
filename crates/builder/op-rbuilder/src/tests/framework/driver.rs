@@ -95,8 +95,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 // public test api
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0))
-            .await
+        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0)).await
     }
 
     /// Builds a new block using the current state of the chain and the transactions in the pool.
@@ -109,8 +108,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         &self,
         timestamp_jitter: Option<Duration>,
     ) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter, Some(0))
-            .await
+        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter, Some(0)).await
     }
 
     /// Builds a new block with provided txs and timestamp
@@ -232,16 +230,12 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
 
-        self.engine_api
-            .update_forkchoice(latest.header.hash, new_block_hash, None)
-            .await?;
+        self.engine_api.update_forkchoice(latest.header.hash, new_block_hash, None).await?;
 
-        let block = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Latest)
-            .full()
-            .await?
-            .ok_or_else(|| eyre::eyre!("Failed to get latest block after building new block"))?;
+        let block =
+            self.provider.get_block_by_number(BlockNumberOrTag::Latest).full().await?.ok_or_else(
+                || eyre::eyre!("Failed to get latest block after building new block"),
+            )?;
 
         assert_eq!(
             block.header.hash, new_block_hash,
@@ -325,10 +319,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     async fn fcu(&self, attribs: OpPayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
-        let response = self
-            .engine_api
-            .update_forkchoice(latest, latest, Some(attribs))
-            .await?;
+        let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
 
         Ok(response)
     }

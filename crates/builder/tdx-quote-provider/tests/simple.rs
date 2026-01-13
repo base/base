@@ -1,5 +1,6 @@
-use axum::body::Bytes;
 use std::{error::Error, net::SocketAddr, time::Duration};
+
+use axum::body::Bytes;
 use tdx_quote_provider::server::{Server, ServerConfig};
 use tokio::net::TcpListener;
 
@@ -93,10 +94,7 @@ async fn test_mock_attest() {
     let response = harness.attest(report_data).await;
     assert!(response.is_ok());
     let body = response.unwrap();
-    assert_eq!(
-        body,
-        Bytes::from_static(include_bytes!("./test_data/quote.bin"))
-    );
+    assert_eq!(body, Bytes::from_static(include_bytes!("./test_data/quote.bin")));
 }
 
 #[tokio::test]

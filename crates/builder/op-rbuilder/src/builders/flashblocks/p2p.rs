@@ -52,10 +52,6 @@ impl From<OpBuiltPayload> for RethOpBuiltPayload {
 
 impl From<RethOpBuiltPayload> for OpBuiltPayload {
     fn from(value: RethOpBuiltPayload) -> Self {
-        OpBuiltPayload {
-            id: value.id(),
-            block: value.block().clone(),
-            fees: value.fees(),
-        }
+        OpBuiltPayload { id: value.id(), block: value.block().clone(), fees: value.fees() }
     }
 }

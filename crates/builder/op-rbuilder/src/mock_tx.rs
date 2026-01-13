@@ -1,4 +1,5 @@
-use crate::tx::MaybeFlashblockFilter;
+use std::{sync::Arc, time::Instant};
+
 use alloy_consensus::{
     EthereumTxEnvelope, TxEip4844, TxEip4844WithSidecar, TxType, error::ValueError,
     transaction::Recovered,
@@ -19,7 +20,8 @@ use reth_transaction_pool::{
     identifier::TransactionId,
     test_utils::{MockTransaction, MockTransactionFactory},
 };
-use std::{sync::Arc, time::Instant};
+
+use crate::tx::MaybeFlashblockFilter;
 
 /// A factory for creating and managing various types of mock transactions.
 #[derive(Debug, Default)]
@@ -221,42 +223,26 @@ impl alloy_consensus::Transaction for MockFbTransaction {
         match &self.inner {
             MockTransaction::Legacy { gas_price, .. }
             | MockTransaction::Eip2930 { gas_price, .. } => *gas_price,
-            MockTransaction::Eip1559 {
-                max_fee_per_gas, ..
-            }
-            | MockTransaction::Eip4844 {
-                max_fee_per_gas, ..
-            }
-            | MockTransaction::Eip7702 {
-                max_fee_per_gas, ..
-            } => *max_fee_per_gas,
+            MockTransaction::Eip1559 { max_fee_per_gas, .. }
+            | MockTransaction::Eip4844 { max_fee_per_gas, .. }
+            | MockTransaction::Eip7702 { max_fee_per_gas, .. } => *max_fee_per_gas,
         }
     }
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
         match &self.inner {
             MockTransaction::Legacy { .. } | MockTransaction::Eip2930 { .. } => None,
-            MockTransaction::Eip1559 {
-                max_priority_fee_per_gas,
-                ..
+            MockTransaction::Eip1559 { max_priority_fee_per_gas, .. }
+            | MockTransaction::Eip4844 { max_priority_fee_per_gas, .. }
+            | MockTransaction::Eip7702 { max_priority_fee_per_gas, .. } => {
+                Some(*max_priority_fee_per_gas)
             }
-            | MockTransaction::Eip4844 {
-                max_priority_fee_per_gas,
-                ..
-            }
-            | MockTransaction::Eip7702 {
-                max_priority_fee_per_gas,
-                ..
-            } => Some(*max_priority_fee_per_gas),
         }
     }
 
     fn max_fee_per_blob_gas(&self) -> Option<u128> {
         match &self.inner {
-            MockTransaction::Eip4844 {
-                max_fee_per_blob_gas,
-                ..
-            } => Some(*max_fee_per_blob_gas),
+            MockTransaction::Eip4844 { max_fee_per_blob_gas, .. } => Some(*max_fee_per_blob_gas),
             _ => None,
         }
     }
@@ -265,18 +251,11 @@ impl alloy_consensus::Transaction for MockFbTransaction {
         match &self.inner {
             MockTransaction::Legacy { gas_price, .. }
             | MockTransaction::Eip2930 { gas_price, .. } => *gas_price,
-            MockTransaction::Eip1559 {
-                max_priority_fee_per_gas,
-                ..
+            MockTransaction::Eip1559 { max_priority_fee_per_gas, .. }
+            | MockTransaction::Eip4844 { max_priority_fee_per_gas, .. }
+            | MockTransaction::Eip7702 { max_priority_fee_per_gas, .. } => {
+                *max_priority_fee_per_gas
             }
-            | MockTransaction::Eip4844 {
-                max_priority_fee_per_gas,
-                ..
-            }
-            | MockTransaction::Eip7702 {
-                max_priority_fee_per_gas,
-                ..
-            } => *max_priority_fee_per_gas,
         }
     }
 
@@ -302,10 +281,7 @@ impl alloy_consensus::Transaction for MockFbTransaction {
     }
 
     fn is_dynamic_fee(&self) -> bool {
-        !matches!(
-            self.inner,
-            MockTransaction::Legacy { .. } | MockTransaction::Eip2930 { .. }
-        )
+        !matches!(self.inner, MockTransaction::Legacy { .. } | MockTransaction::Eip2930 { .. })
     }
 
     fn kind(&self) -> TxKind {
@@ -345,40 +321,23 @@ impl alloy_consensus::Transaction for MockFbTransaction {
     fn access_list(&self) -> Option<&AccessList> {
         match &self.inner {
             MockTransaction::Legacy { .. } => None,
-            MockTransaction::Eip1559 {
-                access_list: accesslist,
-                ..
-            }
-            | MockTransaction::Eip4844 {
-                access_list: accesslist,
-                ..
-            }
-            | MockTransaction::Eip2930 {
-                access_list: accesslist,
-                ..
-            }
-            | MockTransaction::Eip7702 {
-                access_list: accesslist,
-                ..
-            } => Some(accesslist),
+            MockTransaction::Eip1559 { access_list: accesslist, .. }
+            | MockTransaction::Eip4844 { access_list: accesslist, .. }
+            | MockTransaction::Eip2930 { access_list: accesslist, .. }
+            | MockTransaction::Eip7702 { access_list: accesslist, .. } => Some(accesslist),
         }
     }
 
     fn blob_versioned_hashes(&self) -> Option<&[B256]> {
         match &self.inner {
-            MockTransaction::Eip4844 {
-                blob_versioned_hashes,
-                ..
-            } => Some(blob_versioned_hashes),
+            MockTransaction::Eip4844 { blob_versioned_hashes, .. } => Some(blob_versioned_hashes),
             _ => None,
         }
     }
 
     fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
         match &self.inner {
-            MockTransaction::Eip7702 {
-                authorization_list, ..
-            } => Some(authorization_list),
+            MockTransaction::Eip7702 { authorization_list, .. } => Some(authorization_list),
             _ => None,
         }
     }
@@ -422,9 +381,7 @@ impl EthPoolTransaction for MockFbTransaction {
     ) -> Result<(), alloy_eips::eip4844::BlobTransactionValidationError> {
         match &self.inner {
             MockTransaction::Eip4844 { .. } => Ok(()),
-            _ => Err(BlobTransactionValidationError::NotBlobTransaction(
-                self.inner.tx_type(),
-            )),
+            _ => Err(BlobTransactionValidationError::NotBlobTransaction(self.inner.tx_type())),
         }
     }
 }

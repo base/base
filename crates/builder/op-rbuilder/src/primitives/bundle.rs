@@ -103,11 +103,7 @@ pub struct Bundle {
     /// builder node's clock, which may not be perfectly synchronized with
     /// network time. Block number constraints are preferred for deterministic
     /// behavior.
-    #[serde(
-        default,
-        rename = "minTimestamp",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "minTimestamp", skip_serializing_if = "Option::is_none")]
     pub min_timestamp: Option<u64>,
 
     /// Maximum timestamp (Unix epoch seconds) for bundle inclusion.
@@ -116,11 +112,7 @@ pub struct Bundle {
     /// builder node's clock, which may not be perfectly synchronized with
     /// network time. Block number constraints are preferred for deterministic
     /// behavior.
-    #[serde(
-        default,
-        rename = "maxTimestamp",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, rename = "maxTimestamp", skip_serializing_if = "Option::is_none")]
     pub max_timestamp: Option<u64>,
 }
 
@@ -142,11 +134,7 @@ pub enum BundleConditionalError {
     #[error(
         "block_number_max ({max}) is too high (current: {current}, max allowed: {max_allowed})"
     )]
-    MaxBlockTooHigh {
-        max: u64,
-        current: u64,
-        max_allowed: u64,
-    },
+    MaxBlockTooHigh { max: u64, current: u64, max_allowed: u64 },
     /// When no explicit maximum block number is provided, the system uses
     /// `current_block + MAX_BLOCK_RANGE_BLOCKS` as the default maximum. This
     /// error occurs when the specified minimum exceeds this default maximum.
@@ -258,22 +246,13 @@ mod tests {
 
     #[test]
     fn test_bundle_conditional_no_bounds() {
-        let bundle = Bundle {
-            transactions: vec![],
-            ..Default::default()
-        };
+        let bundle = Bundle { transactions: vec![], ..Default::default() };
 
         let last_block = 1000;
-        let result = bundle
-            .conditional(last_block)
-            .unwrap()
-            .transaction_conditional;
+        let result = bundle.conditional(last_block).unwrap().transaction_conditional;
 
         assert_eq!(result.block_number_min, None);
-        assert_eq!(
-            result.block_number_max,
-            Some(last_block + MAX_BLOCK_RANGE_BLOCKS)
-        );
+        assert_eq!(result.block_number_max, Some(last_block + MAX_BLOCK_RANGE_BLOCKS));
     }
 
     #[test]
@@ -285,10 +264,7 @@ mod tests {
         };
 
         let last_block = 1000;
-        let result = bundle
-            .conditional(last_block)
-            .unwrap()
-            .transaction_conditional;
+        let result = bundle.conditional(last_block).unwrap().transaction_conditional;
 
         assert_eq!(result.block_number_min, Some(1002));
         assert_eq!(result.block_number_max, Some(1005));
@@ -307,38 +283,26 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(BundleConditionalError::MinGreaterThanMax {
-                min: 1010,
-                max: 1005
-            })
+            Err(BundleConditionalError::MinGreaterThanMax { min: 1010, max: 1005 })
         ));
     }
 
     #[test]
     fn test_bundle_conditional_max_in_past() {
-        let bundle = Bundle {
-            block_number_max: Some(999),
-            ..Default::default()
-        };
+        let bundle = Bundle { block_number_max: Some(999), ..Default::default() };
 
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
         assert!(matches!(
             result,
-            Err(BundleConditionalError::MaxBlockInPast {
-                max: 999,
-                current: 1000
-            })
+            Err(BundleConditionalError::MaxBlockInPast { max: 999, current: 1000 })
         ));
     }
 
     #[test]
     fn test_bundle_conditional_max_too_high() {
-        let bundle = Bundle {
-            block_number_max: Some(1020),
-            ..Default::default()
-        };
+        let bundle = Bundle { block_number_max: Some(1020), ..Default::default() };
 
         let last_block = 1000;
         let result = bundle.conditional(last_block);
@@ -355,35 +319,23 @@ mod tests {
 
     #[test]
     fn test_bundle_conditional_min_too_high_for_default_range() {
-        let bundle = Bundle {
-            block_number_min: Some(1015),
-            ..Default::default()
-        };
+        let bundle = Bundle { block_number_min: Some(1015), ..Default::default() };
 
         let last_block = 1000;
         let result = bundle.conditional(last_block);
 
         assert!(matches!(
             result,
-            Err(BundleConditionalError::MinTooHighForDefaultRange {
-                min: 1015,
-                max_allowed: 1010
-            })
+            Err(BundleConditionalError::MinTooHighForDefaultRange { min: 1015, max_allowed: 1010 })
         ));
     }
 
     #[test]
     fn test_bundle_conditional_with_only_min() {
-        let bundle = Bundle {
-            block_number_min: Some(1005),
-            ..Default::default()
-        };
+        let bundle = Bundle { block_number_min: Some(1005), ..Default::default() };
 
         let last_block = 1000;
-        let result = bundle
-            .conditional(last_block)
-            .unwrap()
-            .transaction_conditional;
+        let result = bundle.conditional(last_block).unwrap().transaction_conditional;
 
         assert_eq!(result.block_number_min, Some(1005));
         assert_eq!(result.block_number_max, Some(1010)); // last_block + MAX_BLOCK_RANGE_BLOCKS
@@ -391,16 +343,10 @@ mod tests {
 
     #[test]
     fn test_bundle_conditional_with_only_max() {
-        let bundle = Bundle {
-            block_number_max: Some(1008),
-            ..Default::default()
-        };
+        let bundle = Bundle { block_number_max: Some(1008), ..Default::default() };
 
         let last_block = 1000;
-        let result = bundle
-            .conditional(last_block)
-            .unwrap()
-            .transaction_conditional;
+        let result = bundle.conditional(last_block).unwrap().transaction_conditional;
 
         assert_eq!(result.block_number_min, None);
         assert_eq!(result.block_number_max, Some(1008));
@@ -408,16 +354,10 @@ mod tests {
 
     #[test]
     fn test_bundle_conditional_min_lower_than_last_block() {
-        let bundle = Bundle {
-            block_number_min: Some(999),
-            ..Default::default()
-        };
+        let bundle = Bundle { block_number_min: Some(999), ..Default::default() };
 
         let last_block = 1000;
-        let result = bundle
-            .conditional(last_block)
-            .unwrap()
-            .transaction_conditional;
+        let result = bundle.conditional(last_block).unwrap().transaction_conditional;
 
         assert_eq!(result.block_number_min, Some(999));
         assert_eq!(result.block_number_max, Some(1010));
@@ -457,10 +397,7 @@ mod tests {
 
     #[test]
     fn test_bundle_conditional_with_only_flashblock_min() {
-        let bundle = Bundle {
-            flashblock_number_min: Some(100),
-            ..Default::default()
-        };
+        let bundle = Bundle { flashblock_number_min: Some(100), ..Default::default() };
 
         let last_block = 1000;
         let result = bundle.conditional(last_block).unwrap();
@@ -471,10 +408,7 @@ mod tests {
 
     #[test]
     fn test_bundle_conditional_with_only_flashblock_max() {
-        let bundle = Bundle {
-            flashblock_number_max: Some(105),
-            ..Default::default()
-        };
+        let bundle = Bundle { flashblock_number_max: Some(105), ..Default::default() };
 
         let last_block = 1000;
         let result = bundle.conditional(last_block).unwrap();

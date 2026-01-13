@@ -1,4 +1,5 @@
 use std::{fs::File, io::Read, sync::Arc};
+
 use tdx::{Tdx, device::DeviceOptions, error::TdxError};
 use thiserror::Error;
 use tracing::info;
@@ -60,9 +61,7 @@ pub struct MockAttestationProvider {
 
 impl MockAttestationProvider {
     pub fn new(mock_attestation_path: String) -> Self {
-        Self {
-            mock_attestation_path,
-        }
+        Self { mock_attestation_path }
     }
 }
 
@@ -76,8 +75,7 @@ impl AttestationProvider for MockAttestationProvider {
         let mut file = File::open(self.mock_attestation_path.clone())
             .map_err(AttestationError::ReadMockAttestationFailed)?;
         let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)
-            .map_err(AttestationError::ReadMockAttestationFailed)?;
+        file.read_to_end(&mut buffer).map_err(AttestationError::ReadMockAttestationFailed)?;
         Ok(buffer)
     }
 }

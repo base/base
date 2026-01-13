@@ -1,3 +1,47 @@
+use core::{
+    any::Any,
+    future::Future,
+    net::Ipv4Addr,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, LazyLock},
+};
+
+use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
+use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use base_flashtypes::FlashblocksPayloadV1;
+use clap::Parser;
+use futures::{FutureExt, StreamExt};
+use http::{Request, Response, StatusCode};
+use http_body_util::Full;
+use hyper::{body::Bytes as HyperBytes, server::conn::http1, service::service_fn};
+use hyper_util::rt::TokioIo;
+use moka::future::Cache;
+use nanoid::nanoid;
+use op_alloy_network::Optimism;
+use parking_lot::Mutex;
+use reth_node_builder::{NodeBuilder, NodeConfig};
+use reth_node_core::{
+    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
+    exit::NodeExitFuture,
+};
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_cli::commands::Commands;
+use reth_optimism_node::{
+    OpNode,
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+};
+use reth_optimism_rpc::OpEthApiBuilder;
+use reth_tasks::TaskManager;
+use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
+use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
@@ -11,45 +55,6 @@ use crate::{
     tx_data_store::TxDataStore,
     tx_signer::Signer,
 };
-use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
-use alloy_provider::{Identity, ProviderBuilder, RootProvider};
-use clap::Parser;
-use reth_node_core::{args::{DatadirArgs, NetworkArgs, RpcServerArgs}, exit::NodeExitFuture};
-use reth_tasks::TaskManager;
-use core::{
-    any::Any,
-    future::Future,
-    net::Ipv4Addr,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
-use futures::{FutureExt, StreamExt};
-use http::{Request, Response, StatusCode};
-use http_body_util::Full;
-use hyper::{body::Bytes as HyperBytes, server::conn::http1, service::service_fn};
-use hyper_util::rt::TokioIo;
-use moka::future::Cache;
-use nanoid::nanoid;
-use op_alloy_network::Optimism;
-use parking_lot::Mutex;
-use reth_node_builder::{NodeBuilder, NodeConfig};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_cli::commands::Commands;
-use reth_optimism_node::{
-    OpNode,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
-};
-use reth_optimism_rpc::OpEthApiBuilder;
-use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use base_flashtypes::FlashblocksPayloadV1;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, LazyLock},
-};
-use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tokio_util::sync::CancellationToken;
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
 /// This is necessary because clap reads env vars for args with `env = "..."` attributes,
@@ -168,8 +173,7 @@ impl LocalInstance {
                         reverted_cache,
                     );
 
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                    ctx.modules.add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 Ok(())
@@ -193,9 +197,7 @@ impl LocalInstance {
 
         // Wait for all required components to be ready
         rpc_ready_rx.await.expect("Failed to receive ready signal");
-        let pool_monitor = txpool_ready_rx
-            .await
-            .expect("Failed to receive txpool ready signal");
+        let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
 
         Ok(Self {
             args,
@@ -215,9 +217,7 @@ impl LocalInstance {
     pub async fn standard() -> eyre::Result<Self> {
         clear_otel_env_vars();
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(ref node_command) = args.command else { unreachable!() };
         Self::new::<StandardBuilder>(node_command.ext.clone()).await
     }
 
@@ -226,9 +226,7 @@ impl LocalInstance {
     pub async fn flashblocks() -> eyre::Result<Self> {
         clear_otel_env_vars();
         let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref mut node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
@@ -254,11 +252,7 @@ impl LocalInstance {
             .parse()
             .expect("Failed to parse flashblocks IP address");
 
-        let ipaddr = if ipaddr.is_unspecified() {
-            Ipv4Addr::LOCALHOST
-        } else {
-            ipaddr
-        };
+        let ipaddr = if ipaddr.is_unspecified() { Ipv4Addr::LOCALHOST } else { ipaddr };
 
         let port = self.args.flashblocks.flashblocks_port;
 
@@ -310,10 +304,7 @@ impl Drop for LocalInstance {
         if let Some(task_manager) = self.task_manager.take() {
             task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
             std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to remove temporary data directory {}: {e}",
-                    self.config().datadir()
-                )
+                panic!("Failed to remove temporary data directory {}: {e}", self.config().datadir())
             });
         }
     }
@@ -331,19 +322,13 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
-    let data_path = tempdir
-        .join(format!("rbuilder.{random_id}.datadir"))
-        .to_path_buf();
+    let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir")).to_path_buf();
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
 
-    let rpc_ipc_path = tempdir
-        .join(format!("rbuilder.{random_id}.rpc-ipc"))
-        .to_path_buf();
+    let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc")).to_path_buf();
 
-    let auth_ipc_path = tempdir
-        .join(format!("rbuilder.{random_id}.auth-ipc"))
-        .to_path_buf();
+    let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc")).to_path_buf();
 
     let mut rpc = RpcServerArgs::default().with_auth_ipc();
     rpc.ws = false;
@@ -356,10 +341,7 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     network.discovery.disable_discovery = true;
 
     let datadir = DatadirArgs {
-        datadir: data_path
-            .to_string_lossy()
-            .parse()
-            .expect("Failed to parse data dir path"),
+        datadir: data_path.to_string_lossy().parse().expect("Failed to parse data dir path"),
         static_files_path: None,
     };
 
@@ -392,10 +374,7 @@ fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
             // to garbage collect transactions out of the bundle range.
             rollup_args.enable_tx_conditional || args.enable_revert_protection,
         )
-        .with_supervisor(
-            rollup_args.supervisor_http.clone(),
-            rollup_args.supervisor_safety_level,
-        )
+        .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)
 }
 
 async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
@@ -443,11 +422,7 @@ impl FlashblocksListener {
             }
         });
 
-        Self {
-            flashblocks,
-            cancellation_token,
-            handle,
-        }
+        Self { flashblocks, cancellation_token, handle }
     }
 
     /// Get a snapshot of all received flashblocks
@@ -457,11 +432,7 @@ impl FlashblocksListener {
 
     /// Find a flashblock by index
     pub fn find_flashblock(&self, index: u64) -> Option<FlashblocksPayloadV1> {
-        self.flashblocks
-            .lock()
-            .iter()
-            .find(|fb| fb.index == index)
-            .cloned()
+        self.flashblocks.lock().iter().find(|fb| fb.index == index).cloned()
     }
 
     /// Check if any flashblock contains the given transaction hash

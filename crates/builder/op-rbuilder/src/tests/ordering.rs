@@ -1,7 +1,8 @@
-use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 use alloy_consensus::Transaction;
 use futures::{StreamExt, future::join_all, stream};
 use macros::rb_test;
+
+use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 
 /// This test ensures that the transactions are ordered by fee priority in the block.
 /// This version of the test is only applicable to the standard builder because in flashblocks
@@ -63,10 +64,7 @@ async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
         .rev() // we want to check descending order
         .collect::<Vec<_>>();
 
-    assert!(
-        txs_tips.is_sorted(),
-        "Transactions not ordered by fee priority"
-    );
+    assert!(txs_tips.is_sorted(), "Transactions not ordered by fee priority");
 
     Ok(())
 }

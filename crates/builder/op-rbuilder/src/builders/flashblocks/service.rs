@@ -1,3 +1,13 @@
+use std::sync::Arc;
+
+use eyre::WrapErr as _;
+use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
+use reth_node_api::NodeTypes;
+use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
+use reth_optimism_evm::OpEvmConfig;
+use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
+use reth_provider::CanonStateSubscriptions;
+
 use super::{FlashblocksConfig, payload::OpPayloadBuilder};
 use crate::{
     builders::{
@@ -16,14 +26,6 @@ use crate::{
     metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
-use eyre::WrapErr as _;
-use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
-use reth_node_api::NodeTypes;
-use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
-use reth_optimism_evm::OpEvmConfig;
-use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
-use reth_provider::CanonStateSubscriptions;
-use std::sync::Arc;
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -74,19 +76,16 @@ impl FlashblocksServiceBuilder {
                     vec![]
                 };
 
-            let p2p::NodeBuildResult {
-                node,
-                outgoing_message_tx,
-                mut incoming_message_rxs,
-            } = builder
-                .with_agent_version(AGENT_VERSION.to_string())
-                .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
-                .with_known_peers(known_peers)
-                .with_port(self.0.specific.p2p_port)
-                .with_cancellation_token(cancel.clone())
-                .with_max_peer_count(self.0.specific.p2p_max_peer_count)
-                .try_build::<Message>()
-                .wrap_err("failed to build flashblocks p2p node")?;
+            let p2p::NodeBuildResult { node, outgoing_message_tx, mut incoming_message_rxs } =
+                builder
+                    .with_agent_version(AGENT_VERSION.to_string())
+                    .with_protocol(FLASHBLOCKS_STREAM_PROTOCOL)
+                    .with_known_peers(known_peers)
+                    .with_port(self.0.specific.p2p_port)
+                    .with_cancellation_token(cancel.clone())
+                    .with_max_peer_count(self.0.specific.p2p_max_peer_count)
+                    .try_build::<Message>()
+                    .wrap_err("failed to build flashblocks p2p node")?;
             let multiaddrs = node.multiaddrs();
             ctx.task_executor().spawn(async move {
                 if let Err(e) = node.run().await {
@@ -156,10 +155,8 @@ impl FlashblocksServiceBuilder {
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
-        ctx.task_executor().spawn_critical(
-            "flashblocks payload handler",
-            Box::pin(payload_handler.run()),
-        );
+        ctx.task_executor()
+            .spawn_critical("flashblocks payload handler", Box::pin(payload_handler.run()));
 
         tracing::info!("Flashblocks payload builder service started");
         Ok(payload_builder_handle)

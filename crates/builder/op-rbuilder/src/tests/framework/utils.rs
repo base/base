@@ -1,3 +1,21 @@
+use core::future::Future;
+use std::{net::TcpListener, sync::Arc};
+
+use alloy_eips::Encodable2718;
+use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
+use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
+use alloy_sol_types::SolCall;
+use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
+use op_alloy_rpc_types::Transaction;
+use reth_db::{
+    ClientVersion, DatabaseEnv, init_db,
+    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    test_utils::{ERROR_DB_CREATION, TempDatabase},
+};
+use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
+use reth_optimism_chainspec::OpChainSpec;
+
+use super::{FUNDED_PRIVATE_KEY, TransactionBuilder};
 use crate::{
     tests::{
         BUILDER_PRIVATE_KEY, COMMIT_HASH, FLASHBLOCKS_DEPLOY_KEY, FLASHTESTATION_DEPLOY_KEY,
@@ -8,23 +26,6 @@ use crate::{
     },
     tx_signer::Signer,
 };
-use alloy_eips::Encodable2718;
-use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
-use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
-use alloy_sol_types::SolCall;
-use core::future::Future;
-use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
-use op_alloy_rpc_types::Transaction;
-use reth_db::{
-    ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
-    test_utils::{ERROR_DB_CREATION, TempDatabase},
-};
-use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
-use reth_optimism_chainspec::OpChainSpec;
-use std::{net::TcpListener, sync::Arc};
-
-use super::{FUNDED_PRIVATE_KEY, TransactionBuilder};
 
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;
@@ -74,23 +75,17 @@ impl TransactionBuilderExt for TransactionBuilder {
 
         let init_data = FlashblocksNumber::initializeCall {
             _owner: owner.address,
-            _initialBuilders: if register_builder {
-                vec![builder_signer.address]
-            } else {
-                vec![]
-            },
+            _initialBuilders: if register_builder { vec![builder_signer.address] } else { vec![] },
         }
         .abi_encode();
 
-        self.with_input(init_data.into())
-            .with_signer(flashblocks_number_signer())
+        self.with_input(init_data.into()).with_signer(flashblocks_number_signer())
     }
 
     fn add_authorized_builder(self, builder: Address) -> Self {
         let calldata = FlashblocksNumber::addBuilderCall { builder }.abi_encode();
 
-        self.with_input(calldata.into())
-            .with_signer(flashblocks_number_signer())
+        self.with_input(calldata.into()).with_signer(flashblocks_number_signer())
     }
 
     fn deploy_flashtestation_registry_contract(self) -> Self {
@@ -128,23 +123,18 @@ impl TransactionBuilderExt for TransactionBuilder {
         }
         .abi_encode();
 
-        self.with_input(init_data.into())
-            .with_signer(flashtestations_signer())
+        self.with_input(init_data.into()).with_signer(flashtestations_signer())
     }
 
     fn add_workload_to_policy(self) -> Self {
         let workload = BlockBuilderPolicy::addWorkloadToPolicyCall {
             workloadId: WORKLOAD_ID,
             commitHash: COMMIT_HASH.to_string(),
-            sourceLocators: SOURCE_LOCATORS
-                .iter()
-                .map(|source| source.to_string())
-                .collect(),
+            sourceLocators: SOURCE_LOCATORS.iter().map(|source| source.to_string()).collect(),
         }
         .abi_encode();
 
-        self.with_input(workload.into())
-            .with_signer(flashtestations_signer())
+        self.with_input(workload.into()).with_signer(flashtestations_signer())
     }
 
     fn deploy_mock_dcap_contract(self) -> Self {
@@ -164,9 +154,7 @@ impl TransactionBuilderExt for TransactionBuilder {
             _output: include_bytes!("./artifacts/quote-output.bin").into(),
         }
         .abi_encode();
-        self.with_input(quote.into())
-            .with_gas_limit(500_000)
-            .with_signer(flashtestations_signer())
+        self.with_input(quote.into()).with_gas_limit(500_000).with_signer(flashtestations_signer())
     }
 }
 
@@ -186,8 +174,7 @@ pub trait ChainDriverExt {
     ) -> impl Future<Output = eyre::Result<Vec<Signer>>> {
         async move {
             let accounts = (0..count).map(|_| Signer::random()).collect::<Vec<_>>();
-            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount)
-                .await?;
+            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount).await?;
             Ok(accounts)
         }
     }
@@ -241,32 +228,20 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         let signer = Signer::random();
         let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
-        Ok(self
-            .build_new_block_with_txs(vec![signed_tx_rlp.into()])
-            .await?
-            .header
-            .hash)
+        Ok(self.build_new_block_with_txs(vec![signed_tx_rlp.into()]).await?.header.hash)
     }
 
     async fn build_new_block_with_valid_transaction(
         &self,
     ) -> eyre::Result<(TxHash, Block<Transaction>)> {
-        let tx = self
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
+        let tx = self.create_transaction().random_valid_transfer().send().await?;
         Ok((*tx.tx_hash(), self.build_new_block().await?))
     }
 
     async fn build_new_block_with_reverting_transaction(
         &self,
     ) -> eyre::Result<(TxHash, Block<Transaction>)> {
-        let tx = self
-            .create_transaction()
-            .random_reverting_transaction()
-            .send()
-            .await?;
+        let tx = self.create_transaction().random_reverting_transaction().send().await?;
 
         Ok((*tx.tx_hash(), self.build_new_block().await?))
     }
@@ -278,18 +253,14 @@ pub trait BlockTransactionsExt {
 
 impl BlockTransactionsExt for Block<Transaction> {
     fn includes(&self, txs: &impl AsTxs) -> bool {
-        txs.as_txs()
-            .into_iter()
-            .all(|tx| self.transactions.hashes().any(|included| included == tx))
+        txs.as_txs().into_iter().all(|tx| self.transactions.hashes().any(|included| included == tx))
     }
 }
 
 impl BlockTransactionsExt for BlockTransactionHashes<'_, Transaction> {
     fn includes(&self, txs: &impl AsTxs) -> bool {
         let mut included_tx_iter = self.clone();
-        txs.as_txs()
-            .iter()
-            .all(|tx| included_tx_iter.any(|included| included == *tx))
+        txs.as_txs().iter().all(|tx| included_tx_iter.any(|included| included == *tx))
     }
 }
 
@@ -325,10 +296,8 @@ pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<Datab
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
         reth_db::test_utils::tempdir_path(),
     );
-    let db_config = config.with_datadir_args(DatadirArgs {
-        datadir: path.clone(),
-        ..Default::default()
-    });
+    let db_config =
+        config.with_datadir_args(DatadirArgs { datadir: path.clone(), ..Default::default() });
     let data_dir = path.unwrap_or_chain_default(db_config.chain.chain(), db_config.datadir.clone());
     let path = data_dir.db();
     let db = init_db(
@@ -355,18 +324,14 @@ pub fn get_available_port() -> u16 {
 
 pub fn builder_signer() -> Signer {
     Signer::try_from_secret(
-        BUILDER_PRIVATE_KEY
-            .parse()
-            .expect("invalid hardcoded builder private key"),
+        BUILDER_PRIVATE_KEY.parse().expect("invalid hardcoded builder private key"),
     )
     .expect("Failed to create signer from hardcoded builder private key")
 }
 
 pub fn funded_signer() -> Signer {
     Signer::try_from_secret(
-        FUNDED_PRIVATE_KEY
-            .parse()
-            .expect("invalid hardcoded funded private key"),
+        FUNDED_PRIVATE_KEY.parse().expect("invalid hardcoded funded private key"),
     )
     .expect("Failed to create signer from hardcoded funded private key")
 }
