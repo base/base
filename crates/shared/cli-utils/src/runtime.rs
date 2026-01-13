@@ -21,11 +21,12 @@ impl RuntimeManager {
         let rt = Self::tokio_runtime().map_err(|e| eyre::eyre!(e))?;
         rt.block_on(async move {
             tokio::select! {
-                res = fut => res,
+                biased;
                 _ = tokio::signal::ctrl_c() => {
                     tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
                     Ok(())
                 }
+                res = fut => res,
             }
         })
     }
