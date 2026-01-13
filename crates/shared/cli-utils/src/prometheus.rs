@@ -16,7 +16,10 @@ pub struct PrometheusServer;
 
 impl PrometheusServer {
     /// Initialize a Prometheus metrics server on the given address and port.
-    pub fn init(addr: IpAddr, metrics_port: u16) -> Result<(), BuildError> {
+    ///
+    /// Optionally, an interval in seconds can be provided to specify how often system metrics
+    /// are collected. If not provided, defaults to 5 seconds.
+    pub fn init(addr: IpAddr, metrics_port: u16, interval: Option<u64>) -> Result<(), BuildError> {
         let prometheus_addr = SocketAddr::from((addr, metrics_port));
         let builder = PrometheusBuilder::new().with_http_listener(prometheus_addr);
 
@@ -29,7 +32,7 @@ impl PrometheusServer {
         thread::spawn(move || {
             loop {
                 collector.collect();
-                sleep(Duration::from_secs(60));
+                sleep(Duration::from_secs(interval.unwrap_or(5)));
             }
         });
 
