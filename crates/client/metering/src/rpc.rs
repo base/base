@@ -94,7 +94,7 @@ where
         })?;
 
         // Meter bundle using utility function
-        let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
+        let output =
             meter_bundle(state_provider, self.provider.chain_spec(), parsed_bundle, &header)
                 .map_err(|e| {
                     error!(error = %e, "Bundle metering failed");
@@ -106,31 +106,33 @@ where
                 })?;
 
         // Calculate average gas price
-        let bundle_gas_price = if total_gas_used > 0 {
-            total_gas_fees / U256::from(total_gas_used)
+        let bundle_gas_price = if output.total_gas_used > 0 {
+            output.total_gas_fees / U256::from(output.total_gas_used)
         } else {
             U256::from(0)
         };
 
         info!(
-            bundle_hash = %bundle_hash,
-            num_transactions = results.len(),
-            total_gas_used = total_gas_used,
-            total_execution_time_us = total_execution_time,
+            bundle_hash = %output.bundle_hash,
+            num_transactions = output.results.len(),
+            total_gas_used = output.total_gas_used,
+            total_time_us = output.total_time_us,
+            state_root_time_us = output.state_root_time_us,
             "Bundle metering completed successfully"
         );
 
         Ok(MeterBundleResponse {
             bundle_gas_price,
-            bundle_hash,
-            coinbase_diff: total_gas_fees,
-            eth_sent_to_coinbase: U256::from(0),
-            gas_fees: total_gas_fees,
-            results,
+            bundle_hash: output.bundle_hash,
+            coinbase_diff: output.total_gas_fees,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: output.total_gas_fees,
+            results: output.results,
             state_block_number: header.number,
             state_flashblock_index: None,
-            total_gas_used,
-            total_execution_time_us: total_execution_time,
+            total_gas_used: output.total_gas_used,
+            total_execution_time_us: output.total_time_us,
+            state_root_time_us: output.state_root_time_us,
         })
     }
 

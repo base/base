@@ -58,6 +58,9 @@ pub struct MeterBundleResponse {
     pub total_gas_used: u64,
     /// Total execution time in microseconds.
     pub total_execution_time_us: u128,
+    /// Time spent calculating state root in microseconds.
+    #[serde(default)]
+    pub state_root_time_us: u128,
 }
 
 #[cfg(test)]
@@ -136,11 +139,13 @@ mod tests {
             state_flashblock_index: Some(42),
             total_gas_used: 21000,
             total_execution_time_us: 1000,
+            state_root_time_us: 500,
         };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"stateFlashblockIndex\":42"));
         assert!(json.contains("\"stateBlockNumber\":12345"));
+        assert!(json.contains("\"stateRootTimeUs\":500"));
 
         let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.state_flashblock_index, Some(42));
@@ -160,6 +165,7 @@ mod tests {
             state_flashblock_index: None,
             total_gas_used: 21000,
             total_execution_time_us: 1000,
+            state_root_time_us: 0,
         };
 
         let json = serde_json::to_string(&response).unwrap();

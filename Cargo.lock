@@ -2058,6 +2058,7 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-transaction-pool",
+ "revm-database",
  "serde",
  "tokio",
  "tracing",

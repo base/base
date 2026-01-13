@@ -74,6 +74,7 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
@@ -193,6 +194,7 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
@@ -218,6 +220,7 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
@@ -358,6 +361,7 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
@@ -451,6 +455,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> e
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
@@ -535,6 +540,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
@@ -621,6 +627,7 @@ async fn backrun_bundle_invalid_tx_skipped(rbuilder: LocalInstance) -> eyre::Res
             state_flashblock_index: None,
             total_gas_used: 0,
             total_execution_time_us: 0,
+            state_root_time_us: 0,
         },
     };
 
