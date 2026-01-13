@@ -1,6 +1,6 @@
 [package]
 name = "base-primitives"
-description = "Shared primitives and test utilities for node-reth"
+description = "Shared primitives and test utilities"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,21 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+eyre = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+alloy-eips = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+alloy-contract = { workspace = true, optional = true }
+alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
+alloy-sol-types = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["std"], optional = true }
+alloy-primitives = { workspace = true, features = ["serde"], optional = true }
+op-alloy-network = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+
 [features]
 default = []
 test-utils = [
@@ -18,6 +33,7 @@ test-utils = [
 	"dep:alloy-contract",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
+	"dep:alloy-primitives",
 	"dep:alloy-signer",
 	"dep:alloy-signer-local",
 	"dep:alloy-sol-macro",
@@ -27,20 +43,3 @@ test-utils = [
 	"dep:op-alloy-rpc-types",
 	"dep:serde_json",
 ]
-
-[dependencies]
-alloy-primitives = { workspace = true, features = ["serde"] }
-
-# test-utils (optional)
-alloy-consensus = { workspace = true, features = ["std"], optional = true }
-alloy-contract = { workspace = true, optional = true }
-alloy-eips = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
-alloy-signer = { workspace = true, optional = true }
-alloy-signer-local = { workspace = true, optional = true }
-alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
-alloy-sol-types = { workspace = true, optional = true }
-eyre = { workspace = true, optional = true }
-op-alloy-network = { workspace = true, optional = true }
-op-alloy-rpc-types = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
