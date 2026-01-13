@@ -217,7 +217,7 @@ clap = { version = "4.5.53", features = ["derive", "env", "string"] }
 
 # misc
 url = "2.5.7"
-lru = "0.16.2"
+lru = "0.16.3"
 rand = "0.9.2"
 uuid = "1.19.0"
 time = { version = "0.3.44", features = ["macros", "formatting", "parsing"] }
