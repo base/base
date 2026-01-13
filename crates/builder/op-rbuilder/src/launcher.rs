@@ -4,7 +4,7 @@ use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
     args::*,
-    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
@@ -12,7 +12,6 @@ use crate::{
     tx::FBPooledTransaction,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
-use core::fmt::Debug;
 use moka::future::Cache;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -24,11 +23,10 @@ use reth_optimism_node::{
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_transaction_pool::TransactionPool;
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
-    let mode = cli.builder_mode();
 
     #[cfg(feature = "telemetry")]
     let telemetry_args = match &cli.command {
@@ -50,57 +48,33 @@ pub fn launch() -> Result<()> {
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
 
-    match mode {
-        BuilderMode::Standard => {
-            tracing::info!("Starting OP builder in standard mode");
-            let launcher = BuilderLauncher::<StandardBuilder>::new();
-            cli_app.run(launcher)?;
-        }
-        BuilderMode::Flashblocks => {
-            tracing::info!("Starting OP builder in flashblocks mode");
-            let launcher = BuilderLauncher::<FlashblocksBuilder>::new();
-            cli_app.run(launcher)?;
-        }
-    }
+    tracing::info!("Starting OP builder in flashblocks mode");
+    let launcher = BuilderLauncher::new();
+    cli_app.run(launcher)?;
     Ok(())
 }
 
-pub struct BuilderLauncher<B> {
-    _builder: PhantomData<B>,
-}
+pub struct BuilderLauncher;
 
-impl<B> BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-{
+impl BuilderLauncher {
     pub fn new() -> Self {
-        Self {
-            _builder: PhantomData,
-        }
+        Self
     }
 }
 
-impl<B> Default for BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-{
+impl Default for BuilderLauncher {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<B> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-    BuilderConfig<B::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<B::Config> as TryFrom<OpRbuilderArgs>>::Error: Debug,
-{
+impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
     async fn entrypoint(
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+        let builder_config = BuilderConfig::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
 
         record_flag_gauge_metrics(&builder_args);
@@ -147,7 +121,7 @@ where
                                 rollup_args.supervisor_safety_level,
                             ),
                     )
-                    .payload(B::new_service(builder_config)?),
+                    .payload(FlashblocksServiceBuilder(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {

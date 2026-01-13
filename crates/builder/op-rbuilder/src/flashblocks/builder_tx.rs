@@ -32,9 +32,7 @@ use revm::{
 };
 use tracing::{trace, warn};
 
-use crate::{
-    builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
-};
+use crate::{flashblocks::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer};
 
 #[derive(Debug, Default)]
 pub struct SimulationSuccessResult<T: SolCall> {
@@ -141,14 +139,14 @@ impl BuilderTransactionError {
     }
 }
 
-pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Default = ()> {
+pub trait BuilderTransactions<Extra: Debug + Default = ()> {
     // Simulates and returns the signed builder transactions. The simulation modifies and commit
     // changes to the db so call new_simulation_state to simulate on a new copy of the state
     fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
@@ -157,7 +155,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &State<impl Database>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
@@ -175,7 +173,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<Extra>,
-        builder_ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        builder_ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
@@ -283,7 +281,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         from: Signer,
         gas_used: u64,
         calldata: Bytes,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: impl DatabaseRef,
     ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
         let nonce = get_nonce(db, from.address)?;
@@ -304,7 +302,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
     fn commit_txs(
         &self,
         signed_txs: Vec<Recovered<OpTransactionSigned>>,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
     ) -> Result<(), BuilderTransactionError> {
         let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
@@ -391,22 +389,18 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct BuilderTxBase<ExtraCtx = ()> {
+pub struct BuilderTxBase {
     pub signer: Option<Signer>,
-    _marker: std::marker::PhantomData<ExtraCtx>,
 }
 
-impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
+impl BuilderTxBase {
     pub(super) fn new(signer: Option<Signer>) -> Self {
-        Self {
-            signer,
-            _marker: std::marker::PhantomData,
-        }
+        Self { signer }
     }
 
     pub(super) fn simulate_builder_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: impl DatabaseRef,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         match self.signer {
@@ -451,7 +445,7 @@ impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
 
     fn signed_builder_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: impl DatabaseRef,
         signer: Signer,
         gas_used: u64,

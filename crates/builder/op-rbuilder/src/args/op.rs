@@ -95,22 +95,11 @@ fn expand_path(s: &str) -> Result<PathBuf> {
 
 /// Parameters for Flashblocks configuration
 /// The names in the struct are prefixed with `flashblocks` to avoid conflicts
-/// with the standard block building configuration since these args are flattened
-/// into the main `OpRbuilderArgs` struct with the other rollup/node args.
+/// with the legacy standard builder configuration (now removed) since these args are
+/// flattened into the main `OpRbuilderArgs` struct with the other rollup/node args.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct FlashblocksArgs {
-    /// When set to true, the builder will build flashblocks
-    /// and will build standard blocks at the chain block time.
-    ///
-    /// The default value will change in the future once the flashblocks
-    /// feature is stable.
-    #[arg(
-        long = "flashblocks.enabled",
-        default_value = "false",
-        env = "ENABLE_FLASHBLOCKS"
-    )]
-    pub enabled: bool,
-
+    /// Flashblocks is always enabled; these options tune its behavior.
     /// The port that we bind to for the websocket server that provides flashblocks
     #[arg(
         long = "flashblocks.port",

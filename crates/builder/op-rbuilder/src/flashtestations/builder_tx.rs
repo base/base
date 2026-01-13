@@ -15,9 +15,9 @@ use std::sync::{Arc, atomic::AtomicBool};
 use tracing::{debug, info, warn};
 
 use crate::{
-    builders::{
-        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
-        SimulationSuccessResult, get_nonce,
+    flashblocks::{
+        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, FlashblocksExecutionInfo,
+        OpPayloadBuilderCtx, SimulationSuccessResult, get_nonce,
     },
     flashtestations::{
         BlockData,
@@ -42,11 +42,7 @@ pub struct FlashtestationsBuilderTxArgs {
 }
 
 #[derive(Debug, Clone)]
-pub struct FlashtestationsBuilderTx<ExtraCtx = (), Extra = ()>
-where
-    ExtraCtx: Debug + Default,
-    Extra: Debug + Default,
-{
+pub struct FlashtestationsBuilderTx {
     // Attestation for the builder
     attestation: Vec<u8>,
     // Extra registration data for the builder
@@ -65,15 +61,9 @@ where
     enable_block_proofs: bool,
     // Builder key for the flashtestation permit tx
     builder_signer: Signer,
-    // Extra context and data
-    _marker: std::marker::PhantomData<(ExtraCtx, Extra)>,
 }
 
-impl<ExtraCtx, Extra> FlashtestationsBuilderTx<ExtraCtx, Extra>
-where
-    ExtraCtx: Debug + Default,
-    Extra: Debug + Default,
-{
+impl FlashtestationsBuilderTx {
     pub fn new(args: FlashtestationsBuilderTxArgs) -> Self {
         Self {
             attestation: args.attestation,
@@ -85,7 +75,6 @@ where
             registered: Arc::new(AtomicBool::new(args.registered)),
             enable_block_proofs: args.enable_block_proofs,
             builder_signer: args.builder_key,
-            _marker: std::marker::PhantomData,
         }
     }
 
@@ -128,7 +117,7 @@ where
     fn set_registered(
         &self,
         state_provider: impl StateProvider + Clone,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
     ) -> Result<(), BuilderTransactionError> {
         let state = StateProviderDatabase::new(state_provider.clone());
         let mut simulation_state = State::builder()
@@ -157,7 +146,7 @@ where
     fn get_permit_nonce(
         &self,
         contract_address: Address,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<U256, BuilderTransactionError> {
         let calldata = IERC20Permit::noncesCall {
@@ -171,7 +160,7 @@ where
     fn registration_permit_signature(
         &self,
         permit_nonce: U256,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashtestationRegistry::computeStructHashCall {
@@ -200,7 +189,7 @@ where
 
     fn signed_registration_permit_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<&mut State<impl Database + DatabaseRef>, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.registry_address, ctx, evm)?;
@@ -247,7 +236,7 @@ where
         &self,
         permit_nonce: U256,
         block_content_hash: B256,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IBlockBuilderPolicy::computeStructHashCall {
@@ -276,7 +265,7 @@ where
     fn signed_block_proof_permit_tx(
         &self,
         transactions: &[OpTransactionSigned],
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let permit_nonce = self.get_permit_nonce(self.builder_policy_address, ctx, evm)?;
@@ -323,7 +312,7 @@ where
         &self,
         contract_address: Address,
         calldata: T,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         self.flashtestations_call(contract_address, calldata, vec![], ctx, evm)
@@ -334,7 +323,7 @@ where
         contract_address: Address,
         calldata: T,
         expected_topics: Vec<B256>,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let tx_req = OpTransactionRequest::default()
@@ -364,17 +353,12 @@ where
     }
 }
 
-impl<ExtraCtx, Extra> BuilderTransactions<ExtraCtx, Extra>
-    for FlashtestationsBuilderTx<ExtraCtx, Extra>
-where
-    ExtraCtx: Debug + Default,
-    Extra: Debug + Default,
-{
+impl BuilderTransactions<FlashblocksExecutionInfo> for FlashtestationsBuilderTx {
     fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         _top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {

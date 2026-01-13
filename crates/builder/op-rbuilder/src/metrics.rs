@@ -227,7 +227,7 @@ impl OpRBuilderMetrics {
 /// Set gauge metrics for some flags so we can inspect which ones are set
 /// and which ones aren't.
 pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
-    gauge!("op_rbuilder_flags_flashblocks_enabled").set(builder_args.flashblocks.enabled as i32);
+    gauge!("op_rbuilder_flags_flashblocks_enabled").set(1);
     gauge!("op_rbuilder_flags_flashtestations_enabled")
         .set(builder_args.flashtestations.flashtestations_enabled as i32);
     gauge!("op_rbuilder_flags_enable_revert_protection")

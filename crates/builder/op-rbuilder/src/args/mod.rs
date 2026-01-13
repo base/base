@@ -1,7 +1,4 @@
-use crate::{
-    builders::BuilderMode,
-    metrics::{LONG_VERSION, SHORT_VERSION},
-};
+use crate::metrics::{LONG_VERSION, SHORT_VERSION};
 use clap_builder::{CommandFactory, FromArgMatches};
 pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
 use playground::PlaygroundOptions;
@@ -12,15 +9,12 @@ mod playground;
 
 /// This trait is used to extend Reth's CLI with additional functionality that
 /// are specific to the OP builder, such as populating default values for CLI arguments
-/// when running in the playground mode or checking the builder mode.
+/// when running in the playground mode.
 ///
 pub trait CliExt {
     /// Populates the default values for the CLI arguments when the user specifies
     /// the `--builder.playground` flag.
     fn populate_defaults(self) -> Self;
-
-    /// Returns the builder mode that the node is started with.
-    fn builder_mode(&self) -> BuilderMode;
 
     /// Returns the Cli instance with the parsed command line arguments
     /// and defaults populated if applicable.
@@ -63,17 +57,6 @@ impl CliExt for Cli {
 
     fn parsed() -> Self {
         Cli::set_version().populate_defaults()
-    }
-
-    /// Returns the type of builder implementation that the node is started with.
-    /// Currently supports `Standard` and `Flashblocks` modes.
-    fn builder_mode(&self) -> BuilderMode {
-        if let Commands::Node(ref node_command) = self.command
-            && node_command.ext.flashblocks.enabled
-        {
-            return BuilderMode::Flashblocks;
-        }
-        BuilderMode::Standard
     }
 
     /// Parses commands and overrides versions

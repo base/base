@@ -1,13 +1,12 @@
+use alloy_network::TransactionResponse;
 use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 use alloy_consensus::Transaction;
 use futures::{StreamExt, future::join_all, stream};
 use macros::rb_test;
 
-/// This test ensures that the transactions are ordered by fee priority in the block.
-/// This version of the test is only applicable to the standard builder because in flashblocks
-/// the transaction order is commited by the block after each flashblock is produced,
-/// so the order is only going to hold within one flashblock, but not the entire block.
-#[rb_test(standard)]
+/// This test ensures that the transactions are ordered by fee priority within each flashblock.
+/// We expect breaks in global ordering that align with flashblock boundaries.
+#[rb_test(flashblocks)]
 async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(10, ONE_ETH).await?;
@@ -31,7 +30,7 @@ async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
     .collect::<eyre::Result<Vec<_>>>()?
     .into_iter()
     .map(|tx| *tx.tx_hash())
-    .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
     driver.build_new_block().await?;
 
@@ -51,21 +50,32 @@ async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
         "not all transactions included in the block"
     );
 
-    // verify all transactions are ordered by fee priority
-    let txs_tips = driver
+    let flashblocks_per_block =
+        rbuilder.args().chain_block_time / rbuilder.args().flashblocks.flashblocks_block_time;
+
+    // verify user transactions are fee-ordered within each flashblock boundary
+    let tips_in_block_order = driver
         .latest_full()
         .await?
         .into_transactions_vec()
         .into_iter()
-        .skip(1) // skip the deposit transaction
-        .take(txs.len()) // skip the last builder transaction
-        .map(|tx| tx.effective_tip_per_gas(base_fee as u64))
-        .rev() // we want to check descending order
+        .filter_map(|tx| {
+            if txs.contains(&tx.tx_hash()) {
+                Some(tx.effective_tip_per_gas(base_fee as u64))
+            } else {
+                None
+            }
+        })
         .collect::<Vec<_>>();
 
+    let breaks = tips_in_block_order
+        .windows(2)
+        .filter(|pair| pair[0] < pair[1])
+        .count();
+
     assert!(
-        txs_tips.is_sorted(),
-        "Transactions not ordered by fee priority"
+        (breaks as u64) <= flashblocks_per_block,
+        "Observed more ordering resets than flashblocks_per_block (breaks={breaks}, flashblocks_per_block={flashblocks_per_block})"
     );
 
     Ok(())

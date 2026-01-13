@@ -13,18 +13,16 @@ use revm::{DatabaseRef, inspector::NoOpInspector};
 use tracing::warn;
 
 use crate::{
-    builders::{
-        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
-        SimulationSuccessResult,
-        builder_tx::BuilderTxBase,
-        context::OpPayloadBuilderCtx,
-        flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
-        get_nonce,
+    flashblocks::{
+        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxBase,
+        OpPayloadBuilderCtx, SimulationSuccessResult,
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
+use super::payload::FlashblocksExecutionInfo;
+use crate::flashblocks::get_nonce;
 
 sol!(
     // From https://github.com/Uniswap/flashblocks_number_contract/blob/main/src/FlashblockNumber.sol
@@ -56,17 +54,17 @@ sol!(
 
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]
-pub(super) struct FlashblocksBuilderTx {
-    pub base_builder_tx: BuilderTxBase<FlashblocksExtraCtx>,
-    pub flashtestations_builder_tx:
-        Option<FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>>,
+pub struct FlashblocksBuilderTx {
+    base_builder_tx: BuilderTxBase,
+    flashtestations_builder_tx:
+        Option<FlashtestationsBuilderTx>,
 }
 
 impl FlashblocksBuilderTx {
     pub(super) fn new(
         signer: Option<Signer>,
         flashtestations_builder_tx: Option<
-            FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
+            FlashtestationsBuilderTx,
         >,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(signer);
@@ -77,12 +75,12 @@ impl FlashblocksBuilderTx {
     }
 }
 
-impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for FlashblocksBuilderTx {
+impl BuilderTransactions<FlashblocksExecutionInfo> for FlashblocksBuilderTx {
     fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
@@ -125,13 +123,13 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for Flas
 
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]
-pub(super) struct FlashblocksNumberBuilderTx {
+pub struct FlashblocksNumberBuilderTx {
     pub signer: Signer,
     pub flashblock_number_address: Address,
     pub use_permit: bool,
-    pub base_builder_tx: BuilderTxBase<FlashblocksExtraCtx>,
-    pub flashtestations_builder_tx:
-        Option<FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>>,
+    base_builder_tx: BuilderTxBase,
+    flashtestations_builder_tx:
+        Option<FlashtestationsBuilderTx>,
 }
 
 impl FlashblocksNumberBuilderTx {
@@ -140,7 +138,7 @@ impl FlashblocksNumberBuilderTx {
         flashblock_number_address: Address,
         use_permit: bool,
         flashtestations_builder_tx: Option<
-            FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
+            FlashtestationsBuilderTx,
         >,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(Some(signer));
@@ -155,7 +153,7 @@ impl FlashblocksNumberBuilderTx {
 
     fn signed_increment_flashblocks_tx(
         &self,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let calldata = IFlashblockNumber::incrementFlashblockNumberCall {};
@@ -166,7 +164,7 @@ impl FlashblocksNumberBuilderTx {
         &self,
         flashtestations_signer: &Signer,
         current_flashblock_number: U256,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<Signature, BuilderTransactionError> {
         let struct_hash_calldata = IFlashblockNumber::computeStructHashCall {
@@ -185,7 +183,7 @@ impl FlashblocksNumberBuilderTx {
     fn signed_increment_flashblocks_permit_tx(
         &self,
         flashtestations_signer: &Signer,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let current_flashblock_calldata = IFlashblockNumber::flashblockNumberCall {};
@@ -203,7 +201,7 @@ impl FlashblocksNumberBuilderTx {
     fn increment_flashblocks_tx<T: SolCall + Clone>(
         &self,
         calldata: T,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
         let SimulationSuccessResult { gas_used, .. } = self.simulate_flashblocks_call(
@@ -233,7 +231,7 @@ impl FlashblocksNumberBuilderTx {
     fn simulate_flashblocks_readonly_call<T: SolCall>(
         &self,
         calldata: T,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         self.simulate_flashblocks_call(calldata, vec![], ctx, evm)
@@ -243,7 +241,7 @@ impl FlashblocksNumberBuilderTx {
         &self,
         calldata: T,
         expected_logs: Vec<B256>,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
         let tx_req = OpTransactionRequest::default()
@@ -261,14 +259,12 @@ impl FlashblocksNumberBuilderTx {
     }
 }
 
-impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
-    for FlashblocksNumberBuilderTx
-{
+impl BuilderTransactions<FlashblocksExecutionInfo> for FlashblocksNumberBuilderTx {
     fn simulate_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {

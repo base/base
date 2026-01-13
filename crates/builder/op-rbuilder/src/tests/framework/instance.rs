@@ -1,6 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
-    builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
@@ -90,8 +90,8 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
-        Box::pin(Self::new_with_config::<P>(args, default_node_config())).await
+    pub async fn new(args: OpRbuilderArgs) -> eyre::Result<Self> {
+        Box::pin(Self::new_with_config(args, default_node_config())).await
     }
 
     /// Creates a new local instance of the OP builder node with the given arguments,
@@ -99,10 +99,7 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new_with_config<P: PayloadBuilder>(
-        args: OpRbuilderArgs,
-        config: NodeConfig<OpChainSpec>,
-    ) -> eyre::Result<Self> {
+    pub async fn new_with_config(args: OpRbuilderArgs, config: NodeConfig<OpChainSpec>) -> eyre::Result<Self> {
         let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
@@ -126,7 +123,7 @@ impl LocalInstance {
             None
         };
 
-        let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
+        let builder_config = BuilderConfig::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -152,7 +149,7 @@ impl LocalInstance {
                 op_node
                     .components()
                     .pool(pool_component(&args))
-                    .payload(P::new_service(builder_config)?),
+                    .payload(FlashblocksServiceBuilder(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
@@ -210,17 +207,6 @@ impl LocalInstance {
         })
     }
 
-    /// Creates new local instance of the OP builder node with the standard builder configuration.
-    /// This method prefunds the default accounts with 1 ETH each.
-    pub async fn standard() -> eyre::Result<Self> {
-        clear_otel_env_vars();
-        let args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref node_command) = args.command else {
-            unreachable!()
-        };
-        Self::new::<StandardBuilder>(node_command.ext.clone()).await
-    }
-
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
@@ -229,9 +215,8 @@ impl LocalInstance {
         let Commands::Node(ref mut node_command) = args.command else {
             unreachable!()
         };
-        node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
-        Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
+        Self::new(node_command.ext.clone()).await
     }
 
     pub const fn config(&self) -> &NodeConfig<OpChainSpec> {

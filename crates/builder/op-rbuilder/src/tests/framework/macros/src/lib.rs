@@ -5,7 +5,6 @@ use syn::{Expr, ItemFn, Meta, Token, parse_macro_input, punctuated::Punctuated};
 // Define all variant information in one place
 struct VariantInfo {
     name: &'static str,
-    builder_type: &'static str,
     default_instance_call: &'static str,
     args_modifier: fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream,
     default_args_factory: fn() -> proc_macro2::TokenStream,
@@ -13,21 +12,12 @@ struct VariantInfo {
 
 const BUILDER_VARIANTS: &[VariantInfo] = &[
     VariantInfo {
-        name: "standard",
-        builder_type: "crate::builders::StandardBuilder",
-        default_instance_call: "crate::tests::LocalInstance::standard().await?",
-        args_modifier: |args| quote! { #args },
-        default_args_factory: || quote! { Default::default() },
-    },
-    VariantInfo {
         name: "flashblocks",
-        builder_type: "crate::builders::FlashblocksBuilder",
         default_instance_call: "crate::tests::LocalInstance::flashblocks().await?",
         args_modifier: |args| {
             quote! {
                 {
                     let mut args = #args;
-                    args.flashblocks.enabled = true;
                     args.flashblocks.flashblocks_port = crate::tests::get_available_port();
                     args
                 }
@@ -37,7 +27,6 @@ const BUILDER_VARIANTS: &[VariantInfo] = &[
             quote! {
                 {
                     let mut args = crate::args::OpRbuilderArgs::default();
-                    args.flashblocks.enabled = true;
                     args.flashblocks.flashblocks_port = crate::tests::get_available_port();
                     args
                 }
@@ -173,7 +162,6 @@ fn generate_instance_init(
     let variant_info =
         get_variant_info(variant).unwrap_or_else(|| panic!("Unknown variant: {variant}"));
 
-    let builder_type: proc_macro2::TokenStream = variant_info.builder_type.parse().unwrap();
     let default_call: proc_macro2::TokenStream =
         variant_info.default_instance_call.parse().unwrap();
 
@@ -181,18 +169,18 @@ fn generate_instance_init(
         (None, None) => default_call,
         (Some(args_expr), None) => {
             let modified_args = (variant_info.args_modifier)(&quote! { #args_expr });
-            quote! { crate::tests::LocalInstance::new::<#builder_type>(#modified_args).await? }
+            quote! { crate::tests::LocalInstance::new(#modified_args).await? }
         }
         (None, Some(config_expr)) => {
             let default_args = (variant_info.default_args_factory)();
             quote! {
-                crate::tests::LocalInstance::new_with_config::<#builder_type>(#default_args, #config_expr).await?
+                crate::tests::LocalInstance::new_with_config(#default_args, #config_expr).await?
             }
         }
         (Some(args_expr), Some(config_expr)) => {
             let modified_args = (variant_info.args_modifier)(&quote! { #args_expr });
             quote! {
-                crate::tests::LocalInstance::new_with_config::<#builder_type>(#modified_args, #config_expr).await?
+                crate::tests::LocalInstance::new_with_config(#modified_args, #config_expr).await?
             }
         }
     }
@@ -294,4 +282,9 @@ macro_rules! generate_if_variant_macros {
 }
 
 // Generate macros for all variants
-generate_if_variant_macros!(standard, flashblocks);
+generate_if_variant_macros!(flashblocks);
+
+#[proc_macro]
+pub fn if_standard(_input: TokenStream) -> TokenStream {
+    TokenStream::new()
+}

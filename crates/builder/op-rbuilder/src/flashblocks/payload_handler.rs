@@ -1,7 +1,5 @@
 use crate::{
-    builders::flashblocks::{
-        ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
-    },
+    flashblocks::{ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo},
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
 };
@@ -29,7 +27,7 @@ use tracing::warn;
 ///
 /// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
 /// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
-pub(crate) struct PayloadHandler<Client> {
+pub(super) struct PayloadHandler<Client> {
     // receives new payloads built by this builder.
     built_rx: mpsc::Receiver<OpBuiltPayload>,
     // receives incoming p2p messages from peers.
@@ -50,7 +48,7 @@ where
     Client: ClientBounds + 'static,
 {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(super) fn new(
         built_rx: mpsc::Receiver<OpBuiltPayload>,
         p2p_rx: mpsc::Receiver<Message>,
         p2p_tx: mpsc::Sender<Message>,
@@ -241,7 +239,7 @@ where
         cancel,
     );
 
-    let (built_payload, fb_payload) = crate::builders::flashblocks::payload::build_block(
+    let (built_payload, fb_payload) = super::payload::build_block(
         &mut state,
         &builder_ctx,
         &mut info,

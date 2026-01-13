@@ -17,16 +17,10 @@ use crate::{
     metrics::record_tee_metrics,
     tx_signer::{Signer, generate_key_from_seed, generate_signer},
 };
-use std::fmt::Debug;
-
-pub async fn bootstrap_flashtestations<ExtraCtx, Extra>(
+pub async fn bootstrap_flashtestations(
     args: FlashtestationsArgs,
     builder_key: Signer,
-) -> eyre::Result<FlashtestationsBuilderTx<ExtraCtx, Extra>>
-where
-    ExtraCtx: Debug + Default,
-    Extra: Debug + Default,
-{
+) -> eyre::Result<FlashtestationsBuilderTx> {
     let tee_service_signer = load_or_generate_tee_key(
         &args.flashtestations_key_path,
         args.debug,
