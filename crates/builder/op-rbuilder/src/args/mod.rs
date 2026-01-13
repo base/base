@@ -1,11 +1,12 @@
-use crate::{
-    builders::BuilderMode,
-    metrics::{LONG_VERSION, SHORT_VERSION},
-};
 use clap_builder::{CommandFactory, FromArgMatches};
 pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
+
+use crate::{
+    builders::BuilderMode,
+    metrics::{LONG_VERSION, SHORT_VERSION},
+};
 
 mod op;
 mod playground;

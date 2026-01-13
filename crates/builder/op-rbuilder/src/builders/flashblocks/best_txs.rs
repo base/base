@@ -1,7 +1,8 @@
+use std::{collections::HashSet, sync::Arc};
+
 use alloy_primitives::{Address, TxHash};
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
-use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
 use crate::tx::MaybeFlashblockFilter;
@@ -24,11 +25,7 @@ where
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
-        Self {
-            inner,
-            current_flashblock_number: 0,
-            commited_transactions: Default::default(),
-        }
+        Self { inner, current_flashblock_number: 0, commited_transactions: Default::default() }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
@@ -102,14 +99,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use alloy_consensus::Transaction;
+    use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
+    use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, pool::PendingPool};
+
     use crate::{
         builders::flashblocks::best_txs::BestFlashblocksTxs,
         mock_tx::{MockFbTransaction, MockFbTransactionFactory},
     };
-    use alloy_consensus::Transaction;
-    use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
-    use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, pool::PendingPool};
-    use std::sync::Arc;
 
     #[test]
     fn test_simple_case() {

@@ -1,10 +1,11 @@
-use alloy_primitives::Address;
-
-use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
 use core::{
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
 };
+
+use alloy_primitives::Address;
+
+use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
 
 /// Configuration values that are specific to the flashblocks builder.
 #[derive(Debug, Clone)]

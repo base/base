@@ -59,10 +59,7 @@ pub struct RemoteAttestationProvider {
 impl RemoteAttestationProvider {
     pub fn new(service_url: String) -> Self {
         let client = Client::new();
-        Self {
-            client,
-            service_url,
-        }
+        Self { client, service_url }
     }
 }
 
@@ -89,9 +86,7 @@ impl RemoteAttestationProvider {
 pub fn get_attestation_provider(config: AttestationConfig) -> RemoteAttestationProvider {
     if config.debug {
         RemoteAttestationProvider::new(
-            config
-                .quote_provider
-                .unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()),
+            config.quote_provider.unwrap_or(DEBUG_QUOTE_SERVICE_URL.to_string()),
         )
     } else {
         RemoteAttestationProvider::new(
@@ -210,9 +205,8 @@ pub fn compute_workload_id(raw_quote: &[u8]) -> eyre::Result<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::WORKLOAD_ID;
-
     use super::*;
+    use crate::tests::WORKLOAD_ID;
 
     #[test]
     fn test_compute_workload_id_from_test_quote() {
@@ -223,9 +217,6 @@ mod tests {
         let workload_id = compute_workload_id(quote_output)
             .expect("failed to compute workload ID from test quote");
 
-        assert_eq!(
-            workload_id, WORKLOAD_ID,
-            "workload ID mismatch for test quote"
-        );
+        assert_eq!(workload_id, WORKLOAD_ID, "workload ID mismatch for test quote");
     }
 }

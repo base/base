@@ -1,8 +1,10 @@
-use crate::tests::{BlockTransactionsExt, LocalInstance};
+use std::time::Duration;
+
 use alloy_eips::{BlockNumberOrTag::Latest, Encodable2718, eip1559::MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::bytes;
 use macros::{if_flashblocks, if_standard, rb_test};
-use std::time::Duration;
+
+use crate::tests::{BlockTransactionsExt, LocalInstance};
 
 #[rb_test]
 async fn jovian_block_parameters_set(rbuilder: LocalInstance) -> eyre::Result<()> {
@@ -32,10 +34,7 @@ async fn jovian_block_parameters_set(rbuilder: LocalInstance) -> eyre::Result<()
     assert_eq!(block.header.extra_data.slice(0..1), bytes!("0x01"));
 
     // Min Base Fee of zero by default
-    assert_eq!(
-        block.header.extra_data.slice(9..=16),
-        bytes!("0x0000000000000000"),
-    );
+    assert_eq!(block.header.extra_data.slice(9..=16), bytes!("0x0000000000000000"),);
 
     Ok(())
 }
@@ -43,9 +42,8 @@ async fn jovian_block_parameters_set(rbuilder: LocalInstance) -> eyre::Result<()
 #[rb_test]
 async fn jovian_no_tx_pool_sync(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    let block = driver
-        .build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0))
-        .await?;
+    let block =
+        driver.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0)).await?;
 
     // Deposit transaction + user transaction
     if_flashblocks! {
@@ -88,10 +86,7 @@ async fn jovian_no_tx_pool_sync(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test]
 async fn jovian_minimum_base_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    let genesis = driver
-        .get_block(Latest)
-        .await?
-        .expect("must have genesis block");
+    let genesis = driver.get_block(Latest).await?.expect("must have genesis block");
 
     assert_eq!(genesis.header.base_fee_per_gas, Some(1));
 
@@ -102,10 +97,7 @@ async fn jovian_minimum_base_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
         .build_new_block_with_txs_timestamp(vec![], None, Some(block_timestamp), None, min_base_fee)
         .await?;
 
-    assert_eq!(
-        block_one.header.extra_data.slice(9..=16),
-        bytes!("0x000000000000000E"),
-    );
+    assert_eq!(block_one.header.extra_data.slice(9..=16), bytes!("0x000000000000000E"),);
 
     let overpriced_tx = driver
         .create_transaction()
@@ -123,10 +115,7 @@ async fn jovian_minimum_base_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
         .build_new_block_with_txs_timestamp(vec![], None, Some(block_timestamp), None, min_base_fee)
         .await?;
 
-    assert_eq!(
-        block_two.header.extra_data.slice(9..=16),
-        bytes!("0x000000000000000E"),
-    );
+    assert_eq!(block_two.header.extra_data.slice(9..=16), bytes!("0x000000000000000E"),);
 
     assert!(block_two.includes(overpriced_tx.tx_hash()));
     assert!(!block_two.includes(underpriced_tx.tx_hash()));
@@ -137,10 +126,7 @@ async fn jovian_minimum_base_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test]
 async fn jovian_minimum_fee_must_be_set(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    let genesis = driver
-        .get_block(Latest)
-        .await?
-        .expect("must have genesis block");
+    let genesis = driver.get_block(Latest).await?.expect("must have genesis block");
     let block_timestamp = Duration::from_secs(genesis.header.timestamp) + Duration::from_secs(1);
     let response = driver
         .build_new_block_with_txs_timestamp(vec![], None, Some(block_timestamp), None, None)

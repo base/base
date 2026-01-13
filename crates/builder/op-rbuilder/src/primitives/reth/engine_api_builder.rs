@@ -1,15 +1,5 @@
 //! RPC component builder
 
-use reth_node_api::{AddOnsContext, NodeTypes};
-use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
-use reth_node_core::version::{CLIENT_CODE, version_metadata};
-use reth_optimism_node::OpEngineTypes;
-pub use reth_optimism_rpc::OpEngineApi;
-use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
-use reth_payload_builder::PayloadStore;
-use reth_rpc_engine_api::EngineCapabilities;
-
-use crate::traits::NodeComponents;
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, BlockHash, U64};
 use alloy_rpc_types_engine::{
@@ -22,12 +12,20 @@ use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion, SuperchainSignal,
 };
-use reth_node_api::{EngineApiValidator, EngineTypes};
+use reth_node_api::{AddOnsContext, EngineApiValidator, EngineTypes, NodeTypes};
+use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
+use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_rpc::OpEngineApiServer;
+use reth_optimism_node::OpEngineTypes;
+pub use reth_optimism_rpc::OpEngineApi;
+use reth_optimism_rpc::{OpEngineApiServer, engine::OP_ENGINE_CAPABILITIES};
+use reth_payload_builder::PayloadStore;
 use reth_rpc_api::IntoEngineApiRpcModule;
+use reth_rpc_engine_api::EngineCapabilities;
 use reth_storage_api::{BlockReader, HeaderProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
+
+use crate::traits::NodeComponents;
 
 /// Builder for basic [`OpEngineApi`] implementation.
 #[derive(Debug, Clone)]
@@ -40,9 +38,7 @@ where
     EV: Default,
 {
     fn default() -> Self {
-        Self {
-            engine_validator_builder: EV::default(),
-        }
+        Self { engine_validator_builder: EV::default() }
     }
 }
 
@@ -55,9 +51,7 @@ where
     type EngineApi = OpEngineApiExt<N::Provider, N::Pool, EV::Validator>;
 
     async fn build_engine_api(self, ctx: &AddOnsContext<'_, N>) -> eyre::Result<Self::EngineApi> {
-        let Self {
-            engine_validator_builder,
-        } = self;
+        let Self { engine_validator_builder } = self;
 
         let engine_validator = engine_validator_builder.build(ctx).await?;
         let client = ClientVersionV1 {
@@ -116,9 +110,7 @@ where
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
-        self.inner
-            .new_payload_v3(payload, versioned_hashes, parent_beacon_block_root)
-            .await
+        self.inner.new_payload_v3(payload, versioned_hashes, parent_beacon_block_root).await
     }
 
     async fn new_payload_v4(
@@ -129,12 +121,7 @@ where
         execution_requests: Requests,
     ) -> RpcResult<PayloadStatus> {
         self.inner
-            .new_payload_v4(
-                payload,
-                versioned_hashes,
-                parent_beacon_block_root,
-                execution_requests,
-            )
+            .new_payload_v4(payload, versioned_hashes, parent_beacon_block_root, execution_requests)
             .await
     }
 
@@ -143,9 +130,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        self.inner
-            .fork_choice_updated_v1(fork_choice_state, payload_attributes)
-            .await
+        self.inner.fork_choice_updated_v1(fork_choice_state, payload_attributes).await
     }
 
     async fn fork_choice_updated_v2(
@@ -153,9 +138,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        self.inner
-            .fork_choice_updated_v2(fork_choice_state, payload_attributes)
-            .await
+        self.inner.fork_choice_updated_v2(fork_choice_state, payload_attributes).await
     }
 
     async fn fork_choice_updated_v3(
@@ -163,9 +146,7 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        self.inner
-            .fork_choice_updated_v3(fork_choice_state, payload_attributes)
-            .await
+        self.inner.fork_choice_updated_v3(fork_choice_state, payload_attributes).await
     }
 
     async fn get_payload_v2(
@@ -201,9 +182,7 @@ where
         start: U64,
         count: U64,
     ) -> RpcResult<ExecutionPayloadBodiesV1> {
-        self.inner
-            .get_payload_bodies_by_range_v1(start, count)
-            .await
+        self.inner.get_payload_bodies_by_range_v1(start, count).await
     }
 
     async fn signal_superchain_v1(&self, signal: SuperchainSignal) -> RpcResult<ProtocolVersion> {

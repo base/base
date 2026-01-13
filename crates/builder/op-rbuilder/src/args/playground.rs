@@ -27,13 +27,19 @@
 //! directory to use. This is useful for testing against different playground
 //! configurations.
 
-use alloy_primitives::hex;
-use clap::{CommandFactory, parser::ValueSource};
 use core::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     ops::Range,
     time::Duration,
 };
+use std::{
+    fs::read_to_string,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use alloy_primitives::hex;
+use clap::{CommandFactory, parser::ValueSource};
 use eyre::{Result, eyre};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_network_peers::TrustedPeer;
@@ -41,11 +47,6 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 use secp256k1::SecretKey;
 use serde_json::Value;
-use std::{
-    fs::read_to_string,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
 use url::{Host, Url};
 
 use super::Cli;
@@ -80,10 +81,7 @@ impl PlaygroundOptions {
     /// Creates a new `PlaygroundOptions` instance with the specified genesis path.
     pub(super) fn new(path: &Path) -> Result<Self> {
         if !path.exists() {
-            return Err(eyre!(
-                "Playground data directory {} does not exist",
-                path.display()
-            ));
+            return Err(eyre!("Playground data directory {} does not exist", path.display()));
         }
 
         let chain = OpChainSpecParser::parse(&existing_path(path, "l2-genesis.json")?)?;
@@ -127,9 +125,8 @@ impl PlaygroundOptions {
         // either via the command line or an environment variable. Otherwise, don't
         // override the user provided values.
         let matches = Cli::command().get_matches();
-        let matches = matches
-            .subcommand_matches("node")
-            .expect("validated that we are in the node command");
+        let matches =
+            matches.subcommand_matches("node").expect("validated that we are in the node command");
 
         if matches.value_source("chain").is_default() {
             node.chain = self.chain;
@@ -223,9 +220,7 @@ fn extract_chain_block_time(basepath: &Path) -> Result<Duration> {
 
 fn extract_deterministic_p2p_key(basepath: &Path) -> Result<SecretKey> {
     let key = read_to_string(existing_path(basepath, "enode-key-1.txt")?)?;
-    Ok(SecretKey::from_slice(
-        &hex::decode(key).map_err(|e| eyre!("Invalid hex key: {e}"))?,
-    )?)
+    Ok(SecretKey::from_slice(&hex::decode(key).map_err(|e| eyre!("Invalid hex key: {e}"))?)?)
 }
 
 fn read_docker_compose(basepath: &Path) -> Result<serde_yaml::Value> {
@@ -238,9 +233,7 @@ fn extract_service_command_flag(basepath: &Path, service: &str, flag: &str) -> R
     let docker_compose = read_docker_compose(basepath)?;
     let args = docker_compose["services"][service]["command"]
         .as_sequence()
-        .ok_or(eyre!(
-            "docker-compose.yaml is missing command line arguments for {service}"
-        ))?
+        .ok_or(eyre!("docker-compose.yaml is missing command line arguments for {service}"))?
         .iter()
         .map(|s| {
             s.as_str().ok_or_else(|| {
@@ -254,9 +247,8 @@ fn extract_service_command_flag(basepath: &Path, service: &str, flag: &str) -> R
         .position(|arg| *arg == flag)
         .ok_or_else(|| eyre!("docker_compose: {flag} not found on {service} service"))?;
 
-    let value = args
-        .get(index + 1)
-        .ok_or_else(|| eyre!("docker_compose: {flag} value not found"))?;
+    let value =
+        args.get(index + 1).ok_or_else(|| eyre!("docker_compose: {flag} value not found"))?;
 
     Ok(value.to_string())
 }
@@ -274,9 +266,7 @@ fn extract_trusted_peer_port(basepath: &Path) -> Result<u16> {
     // command line arguments used to start the op-geth service
 
     let Some(opgeth_args) = docker_compose["services"]["op-geth"]["command"][1].as_str() else {
-        return Err(eyre!(
-            "docker-compose.yaml is missing command line arguments for op-geth"
-        ));
+        return Err(eyre!("docker-compose.yaml is missing command line arguments for op-geth"));
     };
 
     let opgeth_args = opgeth_args.split_whitespace().collect::<Vec<_>>();
@@ -289,16 +279,12 @@ fn extract_trusted_peer_port(basepath: &Path) -> Result<u16> {
         .get(port_param_position + 1)
         .ok_or_else(|| eyre!("docker_compose: --port value not found"))?;
 
-    let port_value = port_value
-        .parse::<u16>()
-        .map_err(|e| eyre!("Invalid port value: {e}"))?;
+    let port_value = port_value.parse::<u16>().map_err(|e| eyre!("Invalid port value: {e}"))?;
 
     // now we need to find the external port of the op-geth service from the docker-compose.yaml
     // ports mapping used to start the op-geth service
     let Some(opgeth_ports) = docker_compose["services"]["op-geth"]["ports"].as_sequence() else {
-        return Err(eyre!(
-            "docker-compose.yaml is missing ports mapping for op-geth"
-        ));
+        return Err(eyre!("docker-compose.yaml is missing ports mapping for op-geth"));
     };
     let ports_mapping = opgeth_ports
         .iter()

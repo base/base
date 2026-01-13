@@ -1,10 +1,5 @@
-use crate::{
-    builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
-    metrics::OpRBuilderMetrics,
-    traits::ClientBounds,
-    tx_data_store::TxDataStore,
-};
+use std::sync::Arc;
+
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::EvmEnv;
@@ -15,8 +10,15 @@ use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
 };
 use reth_optimism_primitives::OpTransactionSigned;
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+use crate::{
+    builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
+    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
+    metrics::OpRBuilderMetrics,
+    traits::ClientBounds,
+    tx_data_store::TxDataStore,
+};
 
 #[derive(Debug, Clone)]
 pub(super) struct OpPayloadSyncerCtx {

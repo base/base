@@ -74,9 +74,7 @@ fn init_tests() {
             .with(tracing_subscriber::fmt::layer())
             .with(filter_fn(move |metadata| {
                 metadata.level() <= &level
-                    && !prefix_blacklist
-                        .iter()
-                        .any(|prefix| metadata.target().starts_with(prefix))
+                    && !prefix_blacklist.iter().any(|prefix| metadata.target().starts_with(prefix))
             }))
             .init();
     }

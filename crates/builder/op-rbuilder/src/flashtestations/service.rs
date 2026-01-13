@@ -1,10 +1,12 @@
-use alloy_primitives::{B256, Bytes, keccak256};
 use std::{
+    fmt::Debug,
     fs::{self, OpenOptions},
     io::Write,
     os::unix::fs::OpenOptionsExt,
     path::Path,
 };
+
+use alloy_primitives::{B256, Bytes, keccak256};
 use tracing::{info, warn};
 
 use super::{
@@ -17,7 +19,6 @@ use crate::{
     metrics::record_tee_metrics,
     tx_signer::{Signer, generate_key_from_seed, generate_signer},
 };
-use std::fmt::Debug;
 
 pub async fn bootstrap_flashtestations<ExtraCtx, Extra>(
     args: FlashtestationsArgs,
@@ -33,14 +34,10 @@ where
         &args.debug_tee_key_seed,
     )?;
 
-    info!(
-        "Flashtestations TEE address: {}",
-        tee_service_signer.address
-    );
+    info!("Flashtestations TEE address: {}", tee_service_signer.address);
 
-    let registry_address = args
-        .registry_address
-        .expect("registry address required when flashtestations enabled");
+    let registry_address =
+        args.registry_address.expect("registry address required when flashtestations enabled");
     let builder_policy_address = args
         .builder_policy_address
         .expect("builder policy address required when flashtestations enabled");
@@ -80,17 +77,10 @@ where
 
     // Use an external rpc when the builder is not the same as the builder actively building blocks onchain
     let registered = if let Some(rpc_url) = args.rpc_url {
-        let tx_manager = TxManager::new(
-            tee_service_signer,
-            builder_key,
-            rpc_url.clone(),
-            registry_address,
-        );
+        let tx_manager =
+            TxManager::new(tee_service_signer, builder_key, rpc_url.clone(), registry_address);
         // Submit report onchain by registering the key of the tee service
-        match tx_manager
-            .register_tee_service(attestation.clone(), ext_data.clone())
-            .await
-        {
+        match tx_manager.register_tee_service(attestation.clone(), ext_data.clone()).await {
             Ok(_) => true,
             Err(e) => {
                 warn!(error = %e, "Failed to register tee service via rpc");
@@ -156,9 +146,8 @@ fn load_tee_key(path: &Path) -> Option<Signer> {
     }
 
     info!("Loading TEE key from {:?}", path);
-    let key_hex = fs::read_to_string(path)
-        .inspect_err(|e| warn!("failed to read key file: {:?}", e))
-        .ok()?;
+    let key_hex =
+        fs::read_to_string(path).inspect_err(|e| warn!("failed to read key file: {:?}", e)).ok()?;
 
     let secret_bytes = B256::try_from(
         hex::decode(key_hex.trim())

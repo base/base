@@ -1,6 +1,7 @@
-use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance, TransactionBuilderExt};
 use alloy_provider::Provider;
 use macros::{if_flashblocks, if_standard, rb_test};
+
+use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance, TransactionBuilderExt};
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
@@ -15,18 +16,11 @@ async fn tx_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
-    let unfit_tx = driver
-        .create_transaction()
-        .with_max_priority_fee_per_gas(50)
-        .send()
-        .await?;
+    let unfit_tx = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let block = driver.build_new_block().await?;
 
     // tx should not be included because we set the tx_size_limit to 1
-    assert!(
-        !block.includes(unfit_tx.tx_hash()),
-        "transaction should not be included in the block"
-    );
+    assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
 
     Ok(())
 }
@@ -47,10 +41,7 @@ async fn block_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let (unfit_tx, block) = driver.build_new_block_with_valid_transaction().await?;
 
     // tx should not be included because we set the tx_size_limit to 1
-    assert!(
-        !block.includes(&unfit_tx),
-        "transaction should not be included in the block"
-    );
+    assert!(!block.includes(&unfit_tx), "transaction should not be included in the block");
 
     Ok(())
 }
@@ -72,21 +63,9 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     // We already have 2 so we will spawn one more to check that it won't be included (it won't fit
     // because of builder tx)
-    let fit_tx_1 = driver
-        .create_transaction()
-        .with_max_priority_fee_per_gas(50)
-        .send()
-        .await?;
-    let fit_tx_2 = driver
-        .create_transaction()
-        .with_max_priority_fee_per_gas(50)
-        .send()
-        .await?;
-    let fit_tx_3 = driver
-        .create_transaction()
-        .with_max_priority_fee_per_gas(50)
-        .send()
-        .await?;
+    let fit_tx_1 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
+    let fit_tx_2 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
+    let fit_tx_3 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let unfit_tx_4 = driver.create_transaction().send().await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
@@ -107,10 +86,7 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
         assert!(!block.includes(fit_tx_3.tx_hash()), "tx should not be in block");
     }
 
-    assert!(
-        !block.includes(unfit_tx_4.tx_hash()),
-        "unfit tx should not be in block"
-    );
+    assert!(!block.includes(unfit_tx_4.tx_hash()), "unfit tx should not be in block");
     assert!(
         driver.latest_full().await?.transactions.len() == 5,
         "builder + deposit + 3 valid txs should be in the block"
@@ -160,10 +136,7 @@ async fn da_footprint_fills_to_limit(rbuilder: LocalInstance) -> eyre::Result<()
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify that blob_gas_used (DA footprint) is set and respects limits
-    assert!(
-        block.header.blob_gas_used.is_some(),
-        "blob_gas_used should be set in Jovian"
-    );
+    assert!(block.header.blob_gas_used.is_some(), "blob_gas_used should be set in Jovian");
 
     let blob_gas = block.header.blob_gas_used.unwrap();
 

@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
@@ -7,7 +9,6 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
-use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
@@ -162,13 +163,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut simulation_state = self.new_simulation_state(state_provider.clone(), db);
-        self.simulate_builder_txs(
-            state_provider,
-            info,
-            ctx,
-            &mut simulation_state,
-            top_of_block,
-        )
+        self.simulate_builder_txs(state_provider, info, ctx, &mut simulation_state, top_of_block)
     }
 
     fn add_builder_txs(
@@ -188,9 +183,8 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                 top_of_block,
             )?;
 
-            let mut evm = builder_ctx
-                .evm_config
-                .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
+            let mut evm =
+                builder_ctx.evm_config.evm_with_env(&mut *db, builder_ctx.evm_env.clone());
 
             let mut invalid = HashSet::new();
 
@@ -251,8 +245,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
 
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signed_tx.signer());
-                info.executed_transactions
-                    .push(builder_tx.signed_tx.clone().into_inner());
+                info.executed_transactions.push(builder_tx.signed_tx.clone().into_inner());
             }
 
             // Release the db reference by dropping evm
@@ -330,9 +323,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
             Ok(res) => res,
             Err(err) => {
                 if err.is_invalid_tx_err() {
-                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(
-                        err,
-                    )));
+                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(err)));
                 } else {
                     return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
                 }
@@ -340,20 +331,10 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         };
 
         match result {
-            ExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
-            } => {
-                let topics: HashSet<B256> = logs
-                    .into_iter()
-                    .flat_map(|log| log.topics().to_vec())
-                    .collect();
-                if !expected_logs
-                    .iter()
-                    .all(|expected_topic| topics.contains(expected_topic))
-                {
+            ExecutionResult::Success { output, gas_used, logs, .. } => {
+                let topics: HashSet<B256> =
+                    logs.into_iter().flat_map(|log| log.topics().to_vec()).collect();
+                if !expected_logs.iter().all(|expected_topic| topics.contains(expected_topic)) {
                     return Err(BuilderTransactionError::InvalidContract(
                         to,
                         InvalidContractDataError::InvalidLogs(
@@ -398,10 +379,7 @@ pub(super) struct BuilderTxBase<ExtraCtx = ()> {
 
 impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
     pub(super) fn new(signer: Option<Signer>) -> Self {
-        Self {
-            signer,
-            _marker: std::marker::PhantomData,
-        }
+        Self { signer, _marker: std::marker::PhantomData }
     }
 
     pub(super) fn simulate_builder_tx(
@@ -431,11 +409,7 @@ impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
     fn estimate_builder_tx_gas(&self, input: &[u8]) -> u64 {
         // Count zero and non-zero bytes
         let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
-            if byte == 0 {
-                (zeros + 1, nonzeros)
-            } else {
-                (zeros, nonzeros + 1)
-            }
+            if byte == 0 { (zeros + 1, nonzeros) } else { (zeros, nonzeros + 1) }
         });
 
         // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
@@ -472,9 +446,7 @@ impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
             ..Default::default()
         });
         // Sign the transaction
-        let builder_tx = signer
-            .sign_tx(tx)
-            .map_err(BuilderTransactionError::SigningError)?;
+        let builder_tx = signer.sign_tx(tx).map_err(BuilderTransactionError::SigningError)?;
 
         Ok(builder_tx)
     }

@@ -1,10 +1,5 @@
 use std::{sync::Arc, time::Instant};
 
-use crate::{
-    metrics::OpRBuilderMetrics,
-    primitives::bundle::{Bundle, BundleResult},
-    tx::{FBPooledTransaction, MaybeFlashblockFilter, MaybeRevertingTransaction},
-};
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
 use jsonrpsee::{
@@ -18,6 +13,12 @@ use reth_rpc_api::eth::{RpcReceipt, helpers::FullEthApi};
 use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use tracing::error;
+
+use crate::{
+    metrics::OpRBuilderMetrics,
+    primitives::bundle::{Bundle, BundleResult},
+    tx::{FBPooledTransaction, MaybeFlashblockFilter, MaybeRevertingTransaction},
+};
 
 // Namespace overrides for revert protection support
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -83,9 +84,7 @@ where
             self.metrics.failed_bundles.increment(1);
         }
 
-        self.metrics
-            .bundle_receive_duration
-            .record(request_start_time.elapsed());
+        self.metrics.bundle_receive_duration.record(request_start_time.elapsed());
 
         bundle_result
     }
@@ -98,10 +97,8 @@ where
             Ok(Some(receipt))
         } else if self.reverted_cache.get(&hash).await.is_some() {
             // Found the transaction in the reverted cache
-            Err(
-                EthApiError::InvalidParams("the transaction was dropped from the pool".into())
-                    .into(),
-            )
+            Err(EthApiError::InvalidParams("the transaction was dropped from the pool".into())
+                .into())
         } else {
             Ok(None)
         }
@@ -115,10 +112,8 @@ where
     Eth: FullEthApi + Send + Sync + Clone + 'static,
 {
     async fn send_bundle_inner(&self, bundle: Bundle) -> RpcResult<BundleResult> {
-        let last_block_number = self
-            .provider
-            .best_block_number()
-            .map_err(|_e| EthApiError::InternalEthError)?;
+        let last_block_number =
+            self.provider.best_block_number().map_err(|_e| EthApiError::InternalEthError)?;
 
         // Only one transaction in the bundle is expected
         let bundle_transaction = match bundle.transactions.len() {
@@ -137,9 +132,7 @@ where
             }
         };
 
-        let conditional = bundle
-            .conditional(last_block_number)
-            .map_err(EthApiError::from)?;
+        let conditional = bundle.conditional(last_block_number).map_err(EthApiError::from)?;
 
         let recovered = recover_raw_transaction(&bundle_transaction)?;
         let pool_transaction =
@@ -155,9 +148,7 @@ where
             .await
             .map_err(EthApiError::from)?;
 
-        let result = BundleResult {
-            bundle_hash: outcome.hash,
-        };
+        let result = BundleResult { bundle_hash: outcome.hash };
         Ok(result)
     }
 }

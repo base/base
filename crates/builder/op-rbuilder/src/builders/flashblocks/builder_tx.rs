@@ -1,10 +1,11 @@
+use core::fmt::Debug;
+
 use alloy_eips::Encodable2718;
 use alloy_evm::{Database, Evm};
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{Address, B256, Signature, U256};
 use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, SolEvent, sol};
-use core::fmt::Debug;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::{ConfigureEvm, precompiles::PrecompilesMap};
 use reth_provider::StateProvider;
@@ -70,10 +71,7 @@ impl FlashblocksBuilderTx {
         >,
     ) -> Self {
         let base_builder_tx = BuilderTxBase::new(signer);
-        Self {
-            base_builder_tx,
-            flashtestations_builder_tx,
-        }
+        Self { base_builder_tx, flashtestations_builder_tx }
     }
 }
 
@@ -222,12 +220,7 @@ impl FlashblocksNumberBuilderTx {
         )?;
         let da_size =
             op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
-        Ok(BuilderTransactionCtx {
-            signed_tx,
-            gas_used,
-            da_size,
-            is_top_of_block: true,
-        })
+        Ok(BuilderTransactionCtx { signed_tx, gas_used, da_size, is_top_of_block: true })
     }
 
     fn simulate_flashblocks_readonly_call<T: SolCall>(

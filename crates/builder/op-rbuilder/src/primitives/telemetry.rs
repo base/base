@@ -1,6 +1,7 @@
-use crate::args::TelemetryArgs;
 use tracing_subscriber::{Layer, filter::Targets};
 use url::Url;
+
+use crate::args::TelemetryArgs;
 
 /// Setup telemetry layer with sampling and custom endpoint configuration
 pub fn setup_telemetry_layer(

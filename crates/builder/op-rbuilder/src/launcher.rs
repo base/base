@@ -1,6 +1,19 @@
+use core::fmt::Debug;
+use std::{marker::PhantomData, sync::Arc};
+
 use eyre::Result;
-use reth_node_builder::WithLaunchContext;
+use moka::future::Cache;
+use reth_cli_commands::launcher::Launcher;
+use reth_db::mdbx::DatabaseEnv;
+use reth_node_builder::{NodeBuilder, WithLaunchContext};
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_cli::chainspec::OpChainSpecParser;
+use reth_optimism_node::{
+    OpNode,
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
+};
 use reth_optimism_rpc::OpEthApiBuilder;
+use reth_transaction_pool::TransactionPool;
 
 use crate::{
     args::*,
@@ -12,19 +25,6 @@ use crate::{
     tx::FBPooledTransaction,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
-use core::fmt::Debug;
-use moka::future::Cache;
-use reth_cli_commands::launcher::Launcher;
-use reth_db::mdbx::DatabaseEnv;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_cli::chainspec::OpChainSpecParser;
-use reth_node_builder::NodeBuilder;
-use reth_optimism_node::{
-    OpNode,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
-};
-use reth_transaction_pool::TransactionPool;
-use std::{marker::PhantomData, sync::Arc};
 
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
@@ -74,9 +74,7 @@ where
     B: PayloadBuilder,
 {
     pub fn new() -> Self {
-        Self {
-            _builder: PhantomData,
-        }
+        Self { _builder: PhantomData }
     }
 }
 
@@ -163,13 +161,11 @@ where
                         reverted_cache,
                     );
 
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
+                    ctx.modules.add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 let tx_data_store_ext = TxDataStoreExt::new(tx_data_store);
-                ctx.modules
-                    .add_or_replace_configured(tx_data_store_ext.into_rpc())?;
+                ctx.modules.add_or_replace_configured(tx_data_store_ext.into_rpc())?;
 
                 Ok(())
             })

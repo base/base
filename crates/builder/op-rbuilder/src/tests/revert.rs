@@ -73,17 +73,10 @@ async fn disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
-        let valid_tx = driver
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
+        let valid_tx = driver.create_transaction().random_valid_transfer().send().await?;
 
-        let reverting_tx = driver
-            .create_transaction()
-            .random_reverting_transaction()
-            .send()
-            .await?;
+        let reverting_tx =
+            driver.create_transaction().random_reverting_transaction().send().await?;
         let block = driver.build_new_block().await?;
 
         assert!(block.includes(valid_tx.tx_hash()));
@@ -99,16 +92,9 @@ async fn disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
 async fn disabled_bundle_endpoint_error(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
-    let res = driver
-        .create_transaction()
-        .with_bundle(BundleOpts::default())
-        .send()
-        .await;
+    let res = driver.create_transaction().with_bundle(BundleOpts::default()).send().await;
 
-    assert!(
-        res.is_err(),
-        "Expected error because method is not available"
-    );
+    assert!(res.is_err(), "Expected error because method is not available");
     Ok(())
 }
 
@@ -133,12 +119,7 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
         .await?;
 
     let block2 = driver.build_new_block().await?; // Block 2
-    assert!(
-        block2
-            .transactions
-            .hashes()
-            .includes(valid_bundle.tx_hash())
-    );
+    assert!(block2.transactions.hashes().includes(valid_bundle.tx_hash()));
 
     let bundle_opts = BundleOpts::default().with_block_number_max(4);
 
@@ -194,11 +175,7 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .create_transaction()
         .with_revert()
         .with_reverted_hash()
-        .with_bundle(
-            BundleOpts::default()
-                .with_block_number_max(4)
-                .with_block_number_min(4),
-        )
+        .with_bundle(BundleOpts::default().with_block_number_max(4).with_block_number_min(4))
         .send()
         .await?;
 
@@ -257,22 +234,14 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     }
 
     // Max block cannot be a past block
-    assert!(
-        send_bundle(&driver, BundleOpts::default().with_block_number_max(1))
-            .await
-            .is_err()
-    );
+    assert!(send_bundle(&driver, BundleOpts::default().with_block_number_max(1)).await.is_err());
 
     // Bundles are valid if their max block in in between the current block and the max block range
     let current_block = 2;
     let next_valid_block = current_block + 1;
 
     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
-        assert!(
-            send_bundle(&driver, BundleOpts::default().with_block_number_max(i))
-                .await
-                .is_ok()
-        );
+        assert!(send_bundle(&driver, BundleOpts::default().with_block_number_max(i)).await.is_ok());
     }
 
     // A bundle with a block out of range is invalid
@@ -290,9 +259,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     assert!(
         send_bundle(
             &driver,
-            BundleOpts::default()
-                .with_block_number_max(1)
-                .with_block_number_min(2)
+            BundleOpts::default().with_block_number_max(1).with_block_number_min(2)
         )
         .await
         .is_err()
@@ -310,12 +277,9 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
         .is_ok()
     );
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_max(next_valid_block)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_max(next_valid_block))
+            .await
+            .is_ok()
     );
 
     // A bundle with a min block equal to max block is valid
@@ -334,38 +298,26 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     // A bundle with only min block that's within the default range is valid
     let default_max = current_block + MAX_BLOCK_RANGE_BLOCKS;
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(current_block)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(current_block))
+            .await
+            .is_ok()
     );
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(default_max - 1)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(default_max - 1))
+            .await
+            .is_ok()
     );
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(default_max)
-        )
-        .await
-        .is_ok()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(default_max))
+            .await
+            .is_ok()
     );
 
     // A bundle with only min block that exceeds the default max range is invalid
     assert!(
-        send_bundle(
-            &driver,
-            BundleOpts::default().with_block_number_min(default_max + 1)
-        )
-        .await
-        .is_err()
+        send_bundle(&driver, BundleOpts::default().with_block_number_min(default_max + 1))
+            .await
+            .is_err()
     );
 
     Ok(())
@@ -382,16 +334,9 @@ async fn allow_reverted_transactions_without_bundle(rbuilder: LocalInstance) -> 
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
-        let valid_tx = driver
-            .create_transaction()
-            .random_valid_transfer()
-            .send()
-            .await?;
-        let reverting_tx = driver
-            .create_transaction()
-            .random_reverting_transaction()
-            .send()
-            .await?;
+        let valid_tx = driver.create_transaction().random_valid_transfer().send().await?;
+        let reverting_tx =
+            driver.create_transaction().random_reverting_transaction().send().await?;
         let block = driver.build_new_block().await?;
 
         assert!(block.includes(valid_tx.tx_hash()));

@@ -1,3 +1,13 @@
+use std::sync::Arc;
+
+use eyre::WrapErr as _;
+use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
+use reth_node_api::NodeTypes;
+use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
+use reth_optimism_evm::OpEvmConfig;
+use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
+use reth_provider::CanonStateSubscriptions;
+
 use super::{FlashblocksConfig, payload::OpPayloadBuilder};
 use crate::{
     builders::{
@@ -15,14 +25,6 @@ use crate::{
     metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
-use eyre::WrapErr as _;
-use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
-use reth_node_api::NodeTypes;
-use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
-use reth_optimism_evm::OpEvmConfig;
-use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
-use reth_provider::CanonStateSubscriptions;
-use std::sync::Arc;
 
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
@@ -96,10 +98,8 @@ impl FlashblocksServiceBuilder {
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
-        ctx.task_executor().spawn_critical(
-            "flashblocks payload handler",
-            Box::pin(payload_handler.run()),
-        );
+        ctx.task_executor()
+            .spawn_critical("flashblocks payload handler", Box::pin(payload_handler.run()));
 
         tracing::info!("Flashblocks payload builder service started");
         Ok(payload_builder_handle)
