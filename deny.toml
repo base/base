@@ -1,3 +1,89 @@
 [bans]
 deny = ["reth"]
-multiple-versions = "allow"
+multiple-versions = "deny"
+
+# Skip crates with multiple versions from upstream dependencies that we cannot control
+# These are primarily from reth, alloy, and kona dependencies
+skip = [
+    # Alloy version mismatch between workspace (0.4.x) and kona-registry (0.2.x)
+    "alloy-hardforks",
+    "alloy-op-hardforks",
+
+    # Windows platform crates - different versions used by various upstream deps
+    "windows-sys",
+    "windows",
+    "windows-core",
+    "windows-implement",
+    "windows-interface",
+    "windows-result",
+    "windows-targets",
+    "windows_aarch64_gnullvm",
+    "windows_aarch64_msvc",
+    "windows_i686_gnu",
+    "windows_i686_gnullvm",
+    "windows_i686_msvc",
+    "windows_x86_64_gnu",
+    "windows_x86_64_gnullvm",
+    "windows_x86_64_msvc",
+
+    # Core macro/derive crates - commonly have version differences across ecosystem
+    "syn",
+    "darling",
+    "darling_core",
+    "darling_macro",
+    "thiserror",
+    "thiserror-impl",
+    "strum",
+    "strum_macros",
+    "proptest-derive",
+
+    # Crypto/random crates - version differences from different crypto stacks
+    "rand",
+    "rand_core",
+    "rand_chacha",
+    "getrandom",
+    "secp256k1",
+    "secp256k1-sys",
+
+    # Hash/collection crates
+    "hashbrown",
+    "foldhash",
+    "itertools",
+    "lru",
+    "dashmap",
+
+    # System/platform crates
+    "rustix",
+    "linux-raw-sys",
+    "socket2",
+    "bitflags",
+    "redox_syscall",
+    "redox_users",
+
+    # Network crates
+    "yamux",
+    "tungstenite",
+    "tokio-tungstenite",
+
+    # Metrics
+    "metrics-util",
+    "metrics-exporter-prometheus",
+
+    # Other common duplicates from upstream
+    "base64",
+    "bindgen",
+    "cargo_metadata",
+    "core-foundation",
+    "crossterm",
+    "if-addrs",
+    "openssl-probe",
+    "procfs",
+    "procfs-core",
+    "security-framework",
+    "send_wrapper",
+    "toml_datetime",
+    "toml_edit",
+    "unicode-width",
+    "unsigned-varint",
+    "webpki-roots",
+]
