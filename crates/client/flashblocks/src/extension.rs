@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
+use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
@@ -50,7 +50,7 @@ impl FlashblocksExtension {
 
 impl BaseNodeExtension for FlashblocksExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
         let Some(cfg) = self.config else {
             info!(message = "flashblocks integration is disabled");
             return builder;
@@ -64,7 +64,7 @@ impl BaseNodeExtension for FlashblocksExtension {
         let state_for_start = state;
 
         // Start state processor, subscriber, and canonical subscription after node is started
-        let builder = builder.on_node_started(move |ctx| {
+        let builder = builder.add_node_started_hook(move |ctx| {
             info!(message = "Starting Flashblocks state processor");
             state_for_start.start(ctx.provider().clone());
             subscriber.start();
@@ -84,7 +84,7 @@ impl BaseNodeExtension for FlashblocksExtension {
         });
 
         // Extend with RPC modules
-        builder.extend_rpc_modules(move |ctx| {
+        builder.add_rpc_module(move |ctx| {
             info!(message = "Starting Flashblocks RPC");
 
             let api_ext = EthApiExt::new(
