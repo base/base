@@ -58,9 +58,13 @@ multiple-versions = "deny"
 # Skip crates with multiple versions from upstream dependencies that we cannot control
 # These are primarily from reth, alloy, and kona dependencies
 skip = [
-    # Alloy version mismatch between workspace (0.4.x) and kona-registry (0.2.x)
+    # Alloy version mismatch between workspace and kona dependencies
     "alloy-hardforks",
     "alloy-op-hardforks",
+
+    # Kona crates - git vs registry sources from different dependency paths
+    "kona-genesis",
+    "kona-registry",
 
     # Windows platform crates - different versions used by various upstream deps
     "windows-sys",
@@ -121,6 +125,10 @@ skip = [
     "metrics-util",
     "metrics-exporter-prometheus",
 
+    # Serialization crates - version differences across ecosystem
+    "serde_spanned",
+    "toml",
+
     # Other common duplicates from upstream
     "base64",
     "bindgen",
@@ -146,12 +154,13 @@ skip = [
     "procfs-core",
     "security-framework",
     "send_wrapper",
-    "serde_spanned",
-    "toml",
     "toml_datetime",
     "toml_edit",
     "unicode-width",
     "webpki-roots",
+
+    # libp2p dependency chain version mismatch
+    "unsigned-varint",
 ]
 
 [sources]

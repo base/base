@@ -16,20 +16,24 @@ workspace = true
 url.workspace = true
 clap.workspace = true
 eyre.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
 
 # Alloy
 alloy-chains.workspace = true
+alloy-primitives.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 
 # Kona
+kona-cli = { workspace = true, features = ["secrets"] }
 kona-genesis.workspace = true
 kona-registry.workspace = true
+kona-sources.workspace = true
 
 # Tracing
 tracing.workspace = true
-
-# Error Handling
-thiserror.workspace = true
-serde_json.workspace = true
 
 # Base
 base-jwt = { workspace = true, features = ["engine-validation"] }
