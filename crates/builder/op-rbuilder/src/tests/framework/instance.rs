@@ -60,7 +60,7 @@ use crate::{
 /// This is necessary because clap reads env vars for args with `env = "..."` attributes,
 /// and external OTEL env vars (e.g., `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) may contain
 /// values that are incompatible with the CLI's expected values.
-fn clear_otel_env_vars() {
+pub fn clear_otel_env_vars() {
     for key in [
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",

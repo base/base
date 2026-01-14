@@ -6,8 +6,8 @@
 mod events;
 pub use events::{EventLog, Pool, TxEvent};
 
-mod exex;
-pub use exex::tracex_exex;
+mod subscription;
+pub use subscription::tracex_subscription;
 
 mod rpc;
 pub use rpc::{

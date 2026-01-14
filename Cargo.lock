@@ -1680,11 +1680,11 @@ dependencies = [
  "op-alloy-rpc-types",
  "rand 0.9.2",
  "rayon",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-db",
  "reth-db-common",
  "reth-evm",
- "reth-exex",
  "reth-optimism-chainspec",
  "reth-optimism-evm",
  "reth-optimism-node",
@@ -1824,7 +1824,6 @@ dependencies = [
  "jsonrpsee",
  "lru 0.16.3",
  "metrics",
- "reth-exex",
  "reth-node-api",
  "reth-primitives-traits",
  "reth-provider",
@@ -1833,6 +1832,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
