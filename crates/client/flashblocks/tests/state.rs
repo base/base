@@ -190,7 +190,7 @@ impl<'a> FlashblockBuilder<'a> {
     fn new_base(harness: &'a TestHarness) -> Self {
         Self {
             canonical_block_number: None,
-            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone()],
+            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
             receipts: Some({
                 let mut receipts = alloy_primitives::map::HashMap::default();
                 receipts.insert(
@@ -232,11 +232,11 @@ impl<'a> FlashblockBuilder<'a> {
 
         let mut cumulative_gas_used = 0;
         for txn in transactions.iter() {
-            cumulative_gas_used = cumulative_gas_used + txn.gas_limit();
+            cumulative_gas_used += txn.gas_limit();
             self.transactions.push(txn.encoded_2718().into());
             if let Some(ref mut receipts) = self.receipts {
                 receipts.insert(
-                    txn.hash().clone(),
+                    *txn.hash(),
                     OpReceipt::Eip1559(Receipt {
                         status: true.into(),
                         cumulative_gas_used,
@@ -248,7 +248,7 @@ impl<'a> FlashblockBuilder<'a> {
         self
     }
 
-    fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
+    const fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
         self.canonical_block_number = Some(num);
         self
     }
@@ -341,7 +341,7 @@ async fn test_state_overrides_persisted_across_flashblocks() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -359,7 +359,7 @@ async fn test_state_overrides_persisted_across_flashblocks() {
         .get_state_overrides()
         .expect("should be set from txn execution in flashblock index 1");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -419,7 +419,7 @@ async fn test_state_overrides_persisted_across_blocks() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -482,7 +482,7 @@ async fn test_state_overrides_persisted_across_blocks() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -538,7 +538,7 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -572,7 +572,7 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -601,7 +601,7 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         .get_state_overrides()
         .expect("should be set from txn execution");
 
-    assert!(overrides.get(&Account::Alice.address()).is_some());
+    assert!(overrides.contains_key(&Account::Alice.address()));
     assert_eq!(
         overrides
             .get(&Account::Bob.address())
@@ -771,7 +771,7 @@ async fn test_non_sequential_payload_clears_pending_state() {
     )
     .await;
 
-    assert_eq!(test.flashblocks.get_pending_blocks().is_none(), true);
+    assert!(test.flashblocks.get_pending_blocks().is_none());
 }
 
 #[tokio::test]
@@ -918,11 +918,11 @@ async fn test_sequential_nonces_across_flashblocks() {
         .expect("state overrides should exist");
 
     assert!(
-        overrides.get(&Account::Bob.address()).is_some(),
+        overrides.contains_key(&Account::Bob.address()),
         "Bob should have received funds from flashblock 1"
     );
     assert!(
-        overrides.get(&Account::Charlie.address()).is_some(),
+        overrides.contains_key(&Account::Charlie.address()),
         "Charlie should have received funds from flashblock 2"
     );
 }

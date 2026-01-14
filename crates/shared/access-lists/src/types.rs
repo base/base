@@ -26,11 +26,6 @@ impl FlashblockAccessList {
         let mut encoded = Vec::new();
         account_changes.encode(&mut encoded);
 
-        FlashblockAccessList {
-            account_changes,
-            min_tx_index,
-            max_tx_index,
-            fal_hash: keccak256(encoded),
-        }
+        Self { account_changes, min_tx_index, max_tx_index, fal_hash: keccak256(encoded) }
     }
 }

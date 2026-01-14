@@ -12,6 +12,7 @@ sol!(
 );
 
 sol!(
+    #[allow(clippy::too_many_arguments)]
     #[sol(rpc)]
     MockERC20,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/MockERC20.sol/MockERC20.json")

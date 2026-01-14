@@ -22,7 +22,7 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
-    let target_tx_hash = target_tx.tx_hash().clone();
+    let target_tx_hash = target_tx.tx_hash();
 
     // Send to mempool manually (send() doesn't return the Recovered tx)
     let provider = rbuilder.provider().await?;
@@ -38,7 +38,7 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(50) // High priority - executes first
         .build()
         .await;
-    let backrun_ok_hash = backrun_ok.tx_hash().clone();
+    let backrun_ok_hash = backrun_ok.tx_hash();
 
     let backrun_revert = driver
         .create_transaction()
@@ -47,7 +47,7 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
         .with_revert() // This tx will revert
         .build()
         .await;
-    let backrun_revert_hash = backrun_revert.tx_hash().clone();
+    let backrun_revert_hash = backrun_revert.tx_hash();
 
     // 3. Insert backrun bundle into store
     //    Bundle format: [target_tx, backrun_txs...]
@@ -120,7 +120,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
-    let target_tx_hash = target_tx.tx_hash().clone();
+    let target_tx_hash = target_tx.tx_hash();
 
     // Send to mempool manually
     let provider = rbuilder.provider().await?;
@@ -134,7 +134,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(60)
         .build()
         .await;
-    let bundle_a_tx1_hash = bundle_a_tx1.tx_hash().clone();
+    let bundle_a_tx1_hash = bundle_a_tx1.tx_hash();
 
     let bundle_a_tx2 = driver
         .create_transaction()
@@ -142,7 +142,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(50)
         .build()
         .await;
-    let bundle_a_tx2_hash = bundle_a_tx2.tx_hash().clone();
+    let bundle_a_tx2_hash = bundle_a_tx2.tx_hash();
 
     // 3. Create Bundle B with LOW total priority fee
     //    Two txs: 30 + 25 = 55 total
@@ -152,7 +152,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(30)
         .build()
         .await;
-    let bundle_b_tx1_hash = bundle_b_tx1.tx_hash().clone();
+    let bundle_b_tx1_hash = bundle_b_tx1.tx_hash();
 
     let bundle_b_tx2 = driver
         .create_transaction()
@@ -160,7 +160,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(25)
         .build()
         .await;
-    let bundle_b_tx2_hash = bundle_b_tx2.tx_hash().clone();
+    let bundle_b_tx2_hash = bundle_b_tx2.tx_hash();
 
     // 4. Insert Bundle B FIRST (lower total fee), then Bundle A (higher total fee)
     //    This verifies that sorting reorders them correctly
@@ -282,7 +282,7 @@ async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(100)
         .build()
         .await;
-    let target_tx_hash = target_tx.tx_hash().clone();
+    let target_tx_hash = target_tx.tx_hash();
 
     // Send to mempool manually
     let provider = rbuilder.provider().await?;
@@ -298,7 +298,7 @@ async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(30)
         .build()
         .await;
-    let backrun_1_hash = backrun_1.tx_hash().clone();
+    let backrun_1_hash = backrun_1.tx_hash();
 
     let backrun_2 = driver
         .create_transaction()
@@ -306,7 +306,7 @@ async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
-    let backrun_2_hash = backrun_2.tx_hash().clone();
+    let backrun_2_hash = backrun_2.tx_hash();
 
     // 3. Insert backrun bundle into store
     let bundle = AcceptedBundle {
@@ -379,7 +379,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
-    let target_tx_hash = target_tx.tx_hash().clone();
+    let target_tx_hash = target_tx.tx_hash();
 
     let provider = rbuilder.provider().await?;
     let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
@@ -391,7 +391,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit() -> eyre::Result<()> {
         .with_gas_limit(1_000_000)
         .build()
         .await;
-    let backrun_hash = backrun.tx_hash().clone();
+    let backrun_hash = backrun.tx_hash();
 
     let bundle = AcceptedBundle {
         uuid: Uuid::new_v4(),
@@ -459,7 +459,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
-    let target_tx_hash = target_tx.tx_hash().clone();
+    let target_tx_hash = target_tx.tx_hash();
 
     let provider = rbuilder.provider().await?;
     let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
@@ -472,7 +472,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit() -> eyre::Result<()> {
         .with_input(vec![0u8; 1000].into())
         .build()
         .await;
-    let backrun_hash = backrun.tx_hash().clone();
+    let backrun_hash = backrun.tx_hash();
 
     let bundle = AcceptedBundle {
         uuid: Uuid::new_v4(),
@@ -533,7 +533,7 @@ async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
-    let target_tx_hash = target_tx.tx_hash().clone();
+    let target_tx_hash = target_tx.tx_hash();
 
     let provider = rbuilder.provider().await?;
     let _ = provider.send_raw_transaction(target_tx.encoded_2718().as_slice()).await?;
@@ -545,7 +545,7 @@ async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
         .with_nonce(0)
         .build()
         .await;
-    let backrun_tx_hash = backrun_tx.tx_hash().clone();
+    let backrun_tx_hash = backrun_tx.tx_hash();
 
     // Send a conflicting tx with same nonce but higher fee - it will be included first
     let conflicting_tx = driver
@@ -555,7 +555,7 @@ async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
         .with_nonce(0)
         .send()
         .await?;
-    let conflicting_tx_hash = conflicting_tx.tx_hash().clone();
+    let conflicting_tx_hash = *conflicting_tx.tx_hash();
 
     let bundle = AcceptedBundle {
         uuid: Uuid::new_v4(),

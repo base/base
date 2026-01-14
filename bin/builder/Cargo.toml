@@ -22,7 +22,6 @@ reth-optimism-cli = { workspace = true, optional = true }
 
 # misc
 eyre.workspace = true
-tracing.workspace = true
 
 [features]
 default = [ "jemalloc" ]

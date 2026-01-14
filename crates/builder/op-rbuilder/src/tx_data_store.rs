@@ -338,8 +338,7 @@ mod tests {
             .unwrap();
 
         let sig = from.sign_transaction_sync(&mut txn).unwrap();
-        let envelope =
-            OpTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig).clone());
+        let envelope = OpTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig));
         Recovered::new_unchecked(envelope, from.address())
     }
 
@@ -435,8 +434,7 @@ mod tests {
         assert_eq!(data.backrun_bundles[0].backrun_txs.len(), 1);
         assert_eq!(*data.backrun_bundles[0].backrun_txs[0].hash(), backrun_tx1.tx_hash());
 
-        let replacement_bundle =
-            create_test_accepted_bundle(vec![target_tx.clone(), backrun_tx2.clone()]);
+        let replacement_bundle = create_test_accepted_bundle(vec![target_tx, backrun_tx2.clone()]);
         assert!(store.insert_backrun_bundle(replacement_bundle).is_ok());
         assert_eq!(store.len(), 1);
 
@@ -464,7 +462,7 @@ mod tests {
         let alice_bundle = create_test_accepted_bundle(vec![target_tx.clone(), alice_backrun]);
         store.insert_backrun_bundle(alice_bundle).unwrap();
 
-        let charlie_bundle = create_test_accepted_bundle(vec![target_tx.clone(), charlie_backrun]);
+        let charlie_bundle = create_test_accepted_bundle(vec![target_tx, charlie_backrun]);
         store.insert_backrun_bundle(charlie_bundle).unwrap();
 
         let data = store.get(&target_tx_hash);

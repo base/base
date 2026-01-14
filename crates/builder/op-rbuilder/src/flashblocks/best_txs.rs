@@ -87,9 +87,9 @@ mod tests {
         let tx_1 = f.create_eip1559();
         let tx_2 = f.create_eip1559();
         let tx_3 = f.create_eip1559();
-        pool.add_transaction(Arc::new(tx_1.into()), 0);
-        pool.add_transaction(Arc::new(tx_2.into()), 0);
-        pool.add_transaction(Arc::new(tx_3.into()), 0);
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(Arc::new(tx_3), 0);
 
         // Create iterator
         let mut iterator = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));

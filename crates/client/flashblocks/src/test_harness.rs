@@ -113,7 +113,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let process_canonical = self.inner.process_canonical;
 
         let state_for_start = state.clone();
-        let state_for_rpc = state.clone();
+        let state_for_rpc = state;
 
         // Start state processor and subscriptions after node is started
         let builder = builder.on_node_started(move |ctx| {
@@ -123,7 +123,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             state_for_start.start(provider.clone());
 
             // Spawn a task to forward canonical state notifications to the in-memory state
-            let provider_for_notify = provider.clone();
+            let provider_for_notify = provider;
             let mut canon_notify_stream =
                 BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
             tokio::spawn(async move {
@@ -136,7 +136,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
 
             // If process_canonical is enabled, spawn a task to process canonical blocks
             if process_canonical {
-                let state_for_canonical = state_for_start.clone();
+                let state_for_canonical = state_for_start;
                 let mut canonical_stream =
                     BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
                 tokio::spawn(async move {
@@ -168,7 +168,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
-            let fb_for_task = fb.clone();
+            let fb_for_task = fb;
             let mut receiver = receiver
                 .lock()
                 .expect("flashblock receiver mutex poisoned")

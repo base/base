@@ -107,7 +107,7 @@ mod tests {
         let alice = PrivateKeySigner::random();
         let bob = PrivateKeySigner::random();
 
-        let tx = create_transaction(alice.clone(), 5, bob.address(), U256::from(1000));
+        let tx = create_transaction(alice, 5, bob.address(), U256::from(1000));
 
         assert_eq!(tx.gas_limit(), 21_000);
     }
@@ -118,7 +118,7 @@ mod tests {
         let bob = PrivateKeySigner::random();
 
         let tx1 = create_transaction(alice.clone(), 1, bob.address(), U256::from(100));
-        let tx2 = create_transaction(alice.clone(), 2, bob.address(), U256::from(200));
+        let tx2 = create_transaction(alice, 2, bob.address(), U256::from(200));
 
         let bundle = create_test_bundle(vec![tx1, tx2], Some(100), Some(1000), Some(2000));
 

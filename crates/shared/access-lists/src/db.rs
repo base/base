@@ -38,17 +38,17 @@ where
     }
 
     /// Returns a reference to the underlying database
-    pub fn db(&self) -> &DB {
+    pub const fn db(&self) -> &DB {
         &self.db
     }
 
     /// Returns a mutable reference to the underlying database
-    pub fn db_mut(&mut self) -> &mut DB {
+    pub const fn db_mut(&mut self) -> &mut DB {
         &mut self.db
     }
 
     /// Sets the transaction index of the transaction currently being executed
-    pub fn set_index(&mut self, index: u64) {
+    pub const fn set_index(&mut self, index: u64) {
         self.index = index;
     }
 

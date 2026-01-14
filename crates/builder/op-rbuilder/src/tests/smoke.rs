@@ -81,7 +81,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
-    let driver = rbuilder.driver().await?.with_gas_limit(10_00_000);
+    let driver = rbuilder.driver().await?.with_gas_limit(1_000_000);
 
     let done = AtomicBool::new(false);
 

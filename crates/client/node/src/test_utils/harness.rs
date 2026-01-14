@@ -68,13 +68,10 @@ impl TestHarnessBuilder {
     pub async fn build(self) -> Result<TestHarness> {
         init_silenced_tracing();
 
-        let chain_spec = match self.chain_spec {
-            Some(spec) => spec,
-            None => {
-                let genesis = crate::test_utils::build_test_genesis();
-                Arc::new(OpChainSpec::from_genesis(genesis))
-            }
-        };
+        let chain_spec = self.chain_spec.unwrap_or_else(|| {
+            let genesis = crate::test_utils::build_test_genesis();
+            Arc::new(OpChainSpec::from_genesis(genesis))
+        });
 
         let node = LocalNode::new(self.extensions, chain_spec).await?;
         let engine = node.engine_api()?;
@@ -106,7 +103,7 @@ impl TestHarness {
     /// Create a harness from pre-built parts.
     ///
     /// This is useful when you need to capture extension state before building the harness.
-    pub fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
+    pub const fn from_parts(node: LocalNode, engine: EngineApi<IpcEngine>) -> Self {
         Self { node, engine }
     }
 
@@ -140,7 +137,7 @@ impl TestHarness {
     pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
         // Ensure the block always starts with the required L1 block info deposit.
         if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
-            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
+            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX);
         }
 
         let latest_block = self
