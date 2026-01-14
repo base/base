@@ -18,11 +18,13 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskManager;
 
-use crate::{BaseBuilder, BaseNodeExtension, OpProvider, test_utils::engine::EngineApi};
+use crate::{
+    BaseBuilder, BaseNodeExtension, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
+};
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = OpProvider;
@@ -81,7 +83,7 @@ impl LocalNode {
             RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
         rpc_args.auth_ipc_path = unique_ipc_path;
 
-        let op_node = OpNode::new(RollupArgs::default());
+        let op_node = BaseNode::new(RollupArgs::default());
 
         let (db, db_path) = Self::create_test_database()?;
 
@@ -97,7 +99,7 @@ impl LocalNode {
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(exec.clone())
-            .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(op_node.components())
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));

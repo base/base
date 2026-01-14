@@ -2,11 +2,14 @@
 
 use eyre::Result;
 use reth_node_builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig};
-use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
-use crate::{BaseBuilder, BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};
+use crate::{
+    BaseBuilder, BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig,
+    node::BaseNode,
+};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]
@@ -39,15 +42,15 @@ impl BaseNodeRunner {
         rollup_args: RollupArgs,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         builder: BaseNodeBuilder,
-    ) -> Result<NodeHandleFor<OpNode>> {
+    ) -> Result<NodeHandleFor<BaseNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
-        let op_node = OpNode::new(rollup_args);
+        let base_node = BaseNode::new(rollup_args);
 
         let builder = builder
-            .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
-            .with_components(op_node.components())
-            .with_add_ons(op_node.add_ons())
+            .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+            .with_components(base_node.components())
+            .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
         let builder = extensions
