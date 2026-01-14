@@ -1688,8 +1688,9 @@ dependencies = [
 name = "base-client-cli"
 version = "0.0.0"
 dependencies = [
- "alloy-rpc-types-engine",
+ "base-jwt",
  "clap",
+ "eyre",
  "url",
 ]
 
