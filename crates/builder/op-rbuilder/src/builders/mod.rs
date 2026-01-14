@@ -79,11 +79,6 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Secret key of the builder that is used to sign the end of block transaction.
     pub builder_signer: Option<Signer>,
 
-    /// When set to true, transactions are simulated by the builder and excluded from the block
-    /// if they revert. They may still be included in the block if individual transactions
-    /// opt-out of revert protection.
-    pub revert_protection: bool,
-
     /// When enabled, this will invoke the flashtestions workflow. This involves a
     /// bootstrapping step that generates a new pubkey for the TEE service
     pub flashtestations_config: FlashtestationsArgs,
@@ -144,7 +139,6 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
                     .as_ref()
                     .map_or_else(|| "None".into(), |signer| signer.address.to_string()),
             )
-            .field("revert_protection", &self.revert_protection)
             .field("flashtestations", &self.flashtestations_config)
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
@@ -163,7 +157,6 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
     fn default() -> Self {
         Self {
             builder_signer: None,
-            revert_protection: false,
             flashtestations_config: FlashtestationsArgs::default(),
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
@@ -187,7 +180,6 @@ where
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
         Ok(Self {
             builder_signer: args.builder_signer,
-            revert_protection: args.enable_revert_protection,
             flashtestations_config: args.flashtestations.clone(),
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),

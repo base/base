@@ -157,8 +157,6 @@ pub struct OpRBuilderMetrics {
     pub valid_bundles: Counter,
     /// Number of bundles that failed to execute
     pub failed_bundles: Counter,
-    /// Number of reverted bundles
-    pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
     /// Count of the number of times transactions had metering information
@@ -192,7 +190,6 @@ pub struct OpRBuilderMetrics {
 }
 
 impl OpRBuilderMetrics {
-    #[expect(clippy::too_many_arguments)]
     pub fn set_payload_builder_metrics(
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,
@@ -200,7 +197,6 @@ impl OpRBuilderMetrics {
         num_txs_simulated: impl IntoF64 + Copy,
         num_txs_simulated_success: impl IntoF64 + Copy,
         num_txs_simulated_fail: impl IntoF64 + Copy,
-        num_bundles_reverted: impl IntoF64,
         reverted_gas_used: impl IntoF64,
     ) {
         self.payload_transaction_simulation_duration.record(payload_transaction_simulation_time);
@@ -213,7 +209,6 @@ impl OpRBuilderMetrics {
         self.payload_num_tx_simulated_success_gauge.set(num_txs_simulated_success);
         self.payload_num_tx_simulated_fail.record(num_txs_simulated_fail);
         self.payload_num_tx_simulated_fail_gauge.set(num_txs_simulated_fail);
-        self.bundles_reverted.record(num_bundles_reverted);
         self.payload_reverted_tx_gas_used.set(reverted_gas_used);
     }
 }
@@ -224,8 +219,6 @@ pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
     gauge!("op_rbuilder_flags_flashblocks_enabled").set(builder_args.flashblocks.enabled as i32);
     gauge!("op_rbuilder_flags_flashtestations_enabled")
         .set(builder_args.flashtestations.flashtestations_enabled as i32);
-    gauge!("op_rbuilder_flags_enable_revert_protection")
-        .set(builder_args.enable_revert_protection as i32);
 }
 
 /// Record TEE workload ID and measurement metrics

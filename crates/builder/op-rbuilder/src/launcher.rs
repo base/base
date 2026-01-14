@@ -2,7 +2,6 @@ use core::fmt::Debug;
 use std::{marker::PhantomData, sync::Arc};
 
 use eyre::Result;
-use moka::future::Cache;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, WithLaunchContext};
@@ -13,16 +12,13 @@ use reth_optimism_node::{
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
-use reth_transaction_pool::TransactionPool;
+use reth_optimism_txpool::OpPooledTransaction;
 
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, PayloadBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
-    monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    revert_protection::{EthApiExtServer, RevertProtectionExt},
-    tx::FBPooledTransaction,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
@@ -70,8 +66,6 @@ where
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
-        let reverted_cache = Cache::builder().max_capacity(100).build();
-        let reverted_cache_copy = reverted_cache.clone();
         let tx_data_store = builder_config.tx_data_store.clone();
 
         let mut addons: OpAddOns<
@@ -81,7 +75,7 @@ where
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()
             .with_sequencer(rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
+            .with_enable_tx_conditional(false)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .build();
@@ -96,13 +90,8 @@ where
                 op_node
                     .components()
                     .pool(
-                        OpPoolBuilder::<FBPooledTransaction>::default()
-                            .with_enable_tx_conditional(
-                                // Revert protection uses the same internal pool logic as conditional transactions
-                                // to garbage collect transactions out of the bundle range.
-                                rollup_args.enable_tx_conditional
-                                    || builder_args.enable_revert_protection,
-                            )
+                        OpPoolBuilder::<OpPooledTransaction>::default()
+                            .with_enable_tx_conditional(false)
                             .with_supervisor(
                                 rollup_args.supervisor_http.clone(),
                                 rollup_args.supervisor_safety_level,
@@ -112,34 +101,13 @@ where
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
-                if builder_args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
-
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(
-                        pool,
-                        provider,
-                        ctx.registry.eth_api().clone(),
-                        reverted_cache,
-                    );
-
-                    ctx.modules.add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                }
-
                 let tx_data_store_ext = TxDataStoreExt::new(tx_data_store);
                 ctx.modules.add_or_replace_configured(tx_data_store_ext.into_rpc())?;
 
                 Ok(())
             })
-            .on_node_started(move |ctx| {
+            .on_node_started(move |_ctx| {
                 VERSION.register_version_metrics();
-                if builder_args.log_pool_transactions {
-                    tracing::info!("Logging pool transactions");
-                    let listener = ctx.pool.all_transactions_event_listener();
-                    let task = monitor_tx_pool(listener, reverted_cache_copy);
-                    ctx.task_executor.spawn_critical("txlogging", task);
-                }
                 Ok(())
             })
             .launch()
