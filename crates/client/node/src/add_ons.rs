@@ -18,13 +18,12 @@ use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
 };
 use reth_optimism_rpc::{
-    SequencerClient,
-    eth::{OpEthApiBuilder, ext::OpEthExtApi},
+    eth::OpEthApiBuilder,
     miner::{MinerApiExtServer, OpMinerExtApi},
     witness::OpDebugWitnessApi,
 };
 use reth_optimism_txpool::OpPooledTx;
-use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, L2EthApiExtServer};
+use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;
@@ -50,13 +49,6 @@ pub struct BaseAddOns<
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
     pub gas_limit_config: OpGasLimitConfig,
-    /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
-    /// network.
-    pub sequencer_url: Option<String>,
-    /// Headers to use for the sequencer client requests.
-    pub sequencer_headers: Vec<String>,
-    /// Enable transaction conditionals.
-    enable_tx_conditional: bool,
     min_suggested_priority_fee: u64,
 }
 
@@ -71,20 +63,9 @@ where
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: OpDAConfig,
         gas_limit_config: OpGasLimitConfig,
-        sequencer_url: Option<String>,
-        sequencer_headers: Vec<String>,
-        enable_tx_conditional: bool,
         min_suggested_priority_fee: u64,
     ) -> Self {
-        Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
-            min_suggested_priority_fee,
-        }
+        Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee }
     }
 }
 
@@ -126,23 +107,12 @@ where
         self,
         engine_api_builder: T,
     ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
-            min_suggested_priority_fee,
-            ..
-        } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
+            self;
         BaseAddOns::new(
             rpc_add_ons.with_engine_api(engine_api_builder),
             da_config,
             gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -152,23 +122,12 @@ where
         self,
         payload_validator_builder: T,
     ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
-            min_suggested_priority_fee,
-            ..
-        } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
+            self;
         BaseAddOns::new(
             rpc_add_ons.with_payload_validator(payload_validator_builder),
             da_config,
             gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -181,23 +140,12 @@ where
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, PVB, EB, EVB, T> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
-            min_suggested_priority_fee,
-            ..
-        } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
+            self;
         BaseAddOns::new(
             rpc_add_ons.with_rpc_middleware(rpc_middleware),
             da_config,
             gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -254,15 +202,7 @@ where
         self,
         ctx: reth_node_api::AddOnsContext<'_, N>,
     ) -> eyre::Result<Self::Handle> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
-            ..
-        } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
 
         let builder = reth_optimism_payload_builder::OpPayloadBuilder::new(
             ctx.node.pool().clone(),
@@ -276,18 +216,6 @@ where
             builder,
         );
         let miner_ext = OpMinerExtApi::new(da_config, gas_limit_config);
-
-        let sequencer_client = if let Some(url) = sequencer_url {
-            Some(SequencerClient::new_with_headers(url, sequencer_headers).await?)
-        } else {
-            None
-        };
-
-        let tx_conditional_ext: OpEthExtApi<N::Pool, N::Provider> = OpEthExtApi::new(
-            sequencer_client,
-            ctx.node.pool().clone(),
-            ctx.node.provider().clone(),
-        );
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
@@ -313,14 +241,6 @@ where
                 if modules.module_config().contains_any(&RethRpcModule::Debug) {
                     debug!(target: "reth::cli", "Installing debug rpc endpoint");
                     auth_module.merge_auth_methods(registry.debug_api().into_rpc())?;
-                }
-
-                if enable_tx_conditional {
-                    // extend the eth namespace if configured in the regular http server
-                    modules.merge_if_module_configured(
-                        RethRpcModule::Eth,
-                        tx_conditional_ext.into_rpc(),
-                    )?;
                 }
 
                 Ok(())
@@ -391,8 +311,6 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     da_config: Option<OpDAConfig>,
     /// Gas limit configuration for the OP builder.
     gas_limit_config: Option<OpGasLimitConfig>,
-    /// Enable transaction conditionals.
-    enable_tx_conditional: bool,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -410,7 +328,6 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
             sequencer_headers: Vec::new(),
             da_config: None,
             gas_limit_config: None,
-            enable_tx_conditional: false,
             min_suggested_priority_fee: 1_000_000,
             _nt: PhantomData,
             rpc_middleware: Identity::new(),
@@ -444,12 +361,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configure if transaction conditional should be enabled.
-    pub const fn with_enable_tx_conditional(mut self, enable_tx_conditional: bool) -> Self {
-        self.enable_tx_conditional = enable_tx_conditional;
-        self
-    }
-
     /// Configure the minimum priority fee (tip)
     pub const fn with_min_suggested_priority_fee(mut self, min: u64) -> Self {
         self.min_suggested_priority_fee = min;
@@ -471,7 +382,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             tokio_runtime,
             _nt,
@@ -482,7 +392,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             _nt,
             rpc_middleware,
@@ -508,7 +417,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             rpc_middleware,
             tokio_runtime,
@@ -529,9 +437,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),
             gas_limit_config.unwrap_or_default(),
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }

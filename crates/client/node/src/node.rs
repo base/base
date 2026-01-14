@@ -72,14 +72,10 @@ impl BaseNode {
             self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(
-                OpPoolBuilder::default()
-                    .with_enable_tx_conditional(self.args.enable_tx_conditional)
-                    .with_supervisor(
-                        self.args.supervisor_http.clone(),
-                        self.args.supervisor_safety_level,
-                    ),
-            )
+            .pool(OpPoolBuilder::default().with_supervisor(
+                self.args.supervisor_http.clone(),
+                self.args.supervisor_safety_level,
+            ))
             .executor(OpExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
@@ -97,7 +93,6 @@ impl BaseNode {
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
-            .with_enable_tx_conditional(self.args.enable_tx_conditional)
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
     }
 
