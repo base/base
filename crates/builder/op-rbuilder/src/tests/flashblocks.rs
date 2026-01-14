@@ -32,7 +32,7 @@ async fn smoke_dynamic_base() -> eyre::Result<()> {
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -67,7 +67,7 @@ async fn smoke_dynamic_unichain() -> eyre::Result<()> {
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -102,7 +102,7 @@ async fn smoke_classic_unichain() -> eyre::Result<()> {
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block().await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -137,7 +137,7 @@ async fn smoke_classic_base() -> eyre::Result<()> {
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block().await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -174,7 +174,7 @@ async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
         let block = driver
             .build_new_block_with_current_timestamp(Some(Duration::from_millis(i * 100)))
             .await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:#?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(block.transactions.len(), 6, "Got: {:#?}", block.transactions); // 5 normal txn + deposit
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -208,8 +208,8 @@ async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
     }
     let block =
         driver.build_new_block_with_current_timestamp(Some(Duration::from_millis(999))).await?;
-    // We could only produce block with deposits + builder tx because of short time frame
-    assert_eq!(block.transactions.len(), 2);
+    // We could only produce block with deposits because of short time frame
+    assert_eq!(block.transactions.len(), 1);
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     assert_eq!(1, flashblocks.len());
@@ -242,7 +242,7 @@ async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify that flashblocks are still produced (block should have transactions)
-    assert!(block.transactions.len() > 2, "Block should contain transactions"); // deposit + builder tx + user tx
+    assert_eq!(block.transactions.len(), 2, "Block should contain deposit + user transaction");
 
     // Verify that state root is not calculated (should be zero)
     assert_eq!(

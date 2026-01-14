@@ -23,10 +23,10 @@ async fn miner_gas_limit() -> eyre::Result<()> {
 }
 
 /// This test ensures that block will fill up to the limit, each transaction is 53,000 gas
-/// We will set our limit to 1Mgas and ensure that throttling occurs
-/// There is a deposit transaction for 182,706 gas, and builder transactions are 21,600 gas
+/// We will set our limit to 730,000 gas and ensure that throttling occurs
+/// There is a deposit transaction for 182,706 gas
 ///
-/// Flashblocks = (785,000 - 182,706 - 21,600 - 21,600) / 53,000 = 10.54 = 10 transactions can fit
+/// (730,000 - 182,706) / 53,000 = 10.32 = 10 transactions can fit
 #[tokio::test]
 async fn block_fill() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -34,7 +34,7 @@ async fn block_fill() -> eyre::Result<()> {
 
     let call = driver
         .provider()
-        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (785_000,))
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (730_000,))
         .await?;
     assert!(call, "miner_setGasLimit should be executed successfully");
 
@@ -62,11 +62,7 @@ async fn block_fill() -> eyre::Result<()> {
     }
     assert!(!block.includes(unfit_tx.tx_hash()), "unfit tx should not be in block");
 
-    assert_eq!(
-        block.transactions.len(),
-        13,
-        "deposit + builder + 10 valid txs should be in the block"
-    );
+    assert_eq!(block.transactions.len(), 11, "deposit + 10 valid txs should be in the block");
 
     Ok(())
 }

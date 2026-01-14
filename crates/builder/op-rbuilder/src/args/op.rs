@@ -6,13 +6,12 @@
 
 use std::path::PathBuf;
 
-use alloy_primitives::Address;
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
 
-use crate::{gas_limiter::args::GasLimiterArgs, tx_signer::Signer};
+use crate::gas_limiter::args::GasLimiterArgs;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -21,9 +20,6 @@ pub struct OpRbuilderArgs {
     /// Rollup configuration
     #[command(flatten)]
     pub rollup_args: RollupArgs,
-    /// Builder secret key for signing last transaction in block
-    #[arg(long = "rollup.builder-secret-key", env = "BUILDER_SECRET_KEY")]
-    pub builder_signer: Option<Signer>,
 
     /// chain block time in milliseconds
     #[arg(long = "rollup.chain-block-time", default_value = "1000", env = "CHAIN_BLOCK_TIME")]
@@ -117,16 +113,6 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_DISABLE_STATE_ROOT"
     )]
     pub flashblocks_disable_state_root: bool,
-
-    /// Flashblocks number contract address
-    ///
-    /// This is the address of the contract that will be used to increment the flashblock number.
-    /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
-    #[arg(
-        long = "flashblocks.number-contract-address",
-        env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
-    )]
-    pub flashblocks_number_contract_address: Option<Address>,
 }
 
 impl Default for FlashblocksArgs {

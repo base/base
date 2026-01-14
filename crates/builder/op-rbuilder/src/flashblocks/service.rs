@@ -10,8 +10,8 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
 use super::{
-    BuilderConfig, FlashblocksBuilderTx, generator::BlockPayloadJobGenerator,
-    payload::OpPayloadBuilder, payload_handler::PayloadHandler, wspub::WebSocketPublisher,
+    BuilderConfig, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder,
+    payload_handler::PayloadHandler, wspub::WebSocketPublisher,
 };
 use crate::{
     metrics::OpRBuilderMetrics,
@@ -26,7 +26,6 @@ impl FlashblocksServiceBuilder {
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        builder_tx: FlashblocksBuilderTx,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>
     where
         Node: NodeBounds,
@@ -48,7 +47,6 @@ impl FlashblocksServiceBuilder {
             pool,
             ctx.provider().clone(),
             self.0.clone(),
-            builder_tx,
             built_payload_tx,
             ws_pub,
             metrics.clone(),
@@ -104,10 +102,6 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        let builder_tx = FlashblocksBuilderTx::new(
-            self.0.builder_signer,
-            self.0.flashblocks.flashblocks_number_contract_address,
-        );
-        self.spawn_payload_builder_service(ctx, pool, builder_tx)
+        self.spawn_payload_builder_service(ctx, pool)
     }
 }

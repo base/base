@@ -47,7 +47,6 @@ use crate::{
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
     tx_data_store::{TxData, TxDataStore},
-    tx_signer::Signer,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -108,8 +107,6 @@ pub struct OpPayloadBuilderCtx {
     pub block_env_attributes: OpNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
-    /// The builder signer
-    pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Extra context for the payload builder
@@ -137,14 +134,6 @@ impl OpPayloadBuilderCtx {
 
     pub(crate) const fn target_flashblock_count(&self) -> u64 {
         self.extra.target_flashblock_count
-    }
-
-    pub(crate) const fn is_first_flashblock(&self) -> bool {
-        self.flashblock_index() == 0
-    }
-
-    pub(crate) const fn is_last_flashblock(&self) -> bool {
-        self.flashblock_index() == self.target_flashblock_count()
     }
 
     /// Returns the parent block the payload will be build on.

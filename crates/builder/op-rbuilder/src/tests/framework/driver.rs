@@ -62,7 +62,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         }
     }
 
-    /// Specifies the block builder signing key used to sign builder transactions.
+    /// Specifies the signer used to sign transactions.
     /// If not specified, a random signer will be used.
     pub const fn with_signer(mut self, signer: Signer) -> Self {
         self.signer = Some(signer);
@@ -252,7 +252,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 
     /// Builds a new block using the current state of the chain and the transactions in the pool with a list
-    /// of mandatory builder transactions. Those are usually deposit transactions.
+    /// of sequencer transactions. Those are usually deposit transactions.
     pub async fn build_new_block_with_txs(
         &self,
         txs: Vec<Bytes>,

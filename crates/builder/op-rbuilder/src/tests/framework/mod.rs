@@ -70,6 +70,9 @@ pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 /// It injects itself into
 #[ctor::ctor]
 fn init_tests() {
+    // Clear OTEL env vars that may interfere with CLI argument parsing
+    clear_otel_env_vars();
+
     use tracing_subscriber::{filter::filter_fn, prelude::*};
     if let Ok(v) = std::env::var("TEST_TRACE") {
         let level = match v.as_str() {
