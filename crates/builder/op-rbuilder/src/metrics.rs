@@ -181,6 +181,8 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundle_insert_duration: Histogram,
     /// Duration of executing all backrun bundles for a target transaction
     pub backrun_bundle_execution_duration: Histogram,
+    /// Number of transactions skipped due to priority fee ordering violations
+    pub priority_fee_ordering_violations: Counter,
 }
 
 impl OpRBuilderMetrics {

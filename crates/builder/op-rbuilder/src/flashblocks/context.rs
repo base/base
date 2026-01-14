@@ -482,6 +482,7 @@ impl OpPayloadBuilderCtx {
                         last_priority = last_priority,
                         "Skipping transaction due to priority fee ordering violation"
                     );
+                    self.metrics.priority_fee_ordering_violations.increment(1);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }
