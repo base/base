@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 base-bundles.workspace = true
+base-primitives = { workspace = true, features = ["op-rbuilder"] }
 base-flashtypes.workspace = true
 
 reth-optimism-node.workspace = true
@@ -58,6 +59,7 @@ reth-rpc-eth-types.workspace = true
 reth-optimism-rpc.workspace = true
 reth-tasks.workspace = true
 reth-tracing-otlp = { workspace = true, optional = true }
+
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -199,7 +201,7 @@ testing = [
 
 interop = []
 
-telemetry = [ "opentelemetry", "reth-tracing-otlp" ]
+telemetry = [ "opentelemetry", "dep:reth-tracing-otlp" ]
 
 custom-engine-api = []
 

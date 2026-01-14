@@ -33,9 +33,8 @@ use revm::{
 };
 use tracing::{trace, warn};
 
-use crate::{
-    builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
-};
+use crate::{builders::context::OpPayloadBuilderCtx, tx_signer::Signer};
+use base_primitives::op_rbuilder::reth::ExecutionInfo;
 
 #[derive(Debug, Default)]
 pub struct SimulationSuccessResult<T: SolCall> {

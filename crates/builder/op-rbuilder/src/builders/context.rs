@@ -43,12 +43,12 @@ use tracing::{debug, info, trace};
 use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
-    primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
     tx_data_store::{TxData, TxDataStore},
     tx_signer::Signer,
 };
+use base_primitives::op_rbuilder::reth::{ExecutionInfo, TxnExecutionResult};
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]

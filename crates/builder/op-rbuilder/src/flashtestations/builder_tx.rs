@@ -26,9 +26,9 @@ use crate::{
         IERC20Permit,
         IFlashtestationRegistry::{self, TEEServiceRegistered},
     },
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
+use base_primitives::op_rbuilder::reth::ExecutionInfo;
 
 #[derive(Debug)]
 pub struct FlashtestationsBuilderTxArgs {

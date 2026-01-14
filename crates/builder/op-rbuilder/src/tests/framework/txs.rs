@@ -1,10 +1,11 @@
 use core::cmp::max;
 use std::{collections::VecDeque, sync::Arc};
-
+use crate::{tests::funded_signer, tx::FBPooledTransaction, tx_signer::Signer};
 use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
+use base_primitives::op_rbuilder::bundle::{Bundle, BundleResult};
 use dashmap::DashMap;
 use futures::StreamExt;
 use moka::future::Cache;
@@ -15,12 +16,7 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use crate::{
-    primitives::bundle::{Bundle, BundleResult},
-    tests::funded_signer,
-    tx::FBPooledTransaction,
-    tx_signer::Signer,
-};
+// local test helpers
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BundleOpts {
@@ -202,15 +198,26 @@ impl TransactionBuilder {
 
         if let Some(bundle_opts) = bundle_opts {
             // Send the transaction as a bundle with the bundle options
+            // Map the test `BundleOpts` into the API `Bundle` shape.
+            let block_number = if let Some(max) = bundle_opts.block_number_max {
+                // prefer explicit max (target) when provided
+                max
+            } else if let Some(min) = bundle_opts.block_number_min {
+                // otherwise use min as the target
+                min
+            } else {
+                0u64
+            };
+
             let bundle = Bundle {
-                transactions: vec![transaction_encoded.into()],
-                reverting_hashes: if with_reverted_hash { Some(vec![txn_hash]) } else { None },
-                block_number_min: bundle_opts.block_number_min,
-                block_number_max: bundle_opts.block_number_max,
+                txs: vec![transaction_encoded.into()],
+                block_number,
                 flashblock_number_min: bundle_opts.flashblock_number_min,
                 flashblock_number_max: bundle_opts.flashblock_number_max,
                 min_timestamp: bundle_opts.min_timestamp,
                 max_timestamp: bundle_opts.max_timestamp,
+                reverting_tx_hashes: if with_reverted_hash { vec![txn_hash] } else { vec![] },
+                ..Default::default()
             };
 
             let result: BundleResult =

@@ -12,13 +12,15 @@ use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion, SuperchainSignal,
 };
-use reth_node_api::{AddOnsContext, EngineApiValidator, EngineTypes, NodeTypes};
+use reth_node_api::{AddOnsContext, EngineApiValidator, FullNodeComponents, NodeTypes};
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpEngineTypes;
+use reth_optimism_primitives::OpPrimitives;
 pub use reth_optimism_rpc::OpEngineApi;
-use reth_optimism_rpc::{OpEngineApiServer, engine::OP_ENGINE_CAPABILITIES};
+use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
+use reth_optimism_rpc::OpEngineApiServer;
 use reth_payload_builder::PayloadStore;
 use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineCapabilities;
@@ -44,7 +46,9 @@ where
 
 impl<N, EV> EngineApiBuilder<N> for OpEngineApiBuilder<EV>
 where
-    N: NodeComponents,
+    N: FullNodeComponents<
+        Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = OpChainSpec, Primitives = OpPrimitives>,
+    >,
     EV: PayloadValidatorBuilder<N>,
     EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
 {
@@ -155,7 +159,7 @@ where
     async fn get_payload_v2(
         &self,
         payload_id: PayloadId,
-    ) -> RpcResult<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV2> {
+    ) -> RpcResult<<OpEngineTypes as reth_node_api::EngineTypes>::ExecutionPayloadEnvelopeV2> {
         self.inner.get_payload_v2(payload_id).await
     }
 
@@ -221,7 +225,7 @@ where
 /// This follows the Optimism specs that can be found at:
 /// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
 #[rpc(server, namespace = "engine", server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned))]
-pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
+pub trait OpRbuilderEngineApi<Engine: reth_node_api::EngineTypes> {
     /// Sends the given payload to the execution layer client, as specified for the Shanghai fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
@@ -382,27 +386,18 @@ pub trait OpRbuilderEngineApi<Engine: EngineTypes> {
         count: U64,
     ) -> RpcResult<ExecutionPayloadBodiesV1>;
 
-    /// Signals superchain information to the Engine.
-    /// Returns the latest supported OP-Stack protocol version of the execution engine.
-    /// See also <https://specs.optimism.io/protocol/exec-engine.html#engine_signalsuperchainv1>
-    #[method(name = "engine_signalSuperchainV1")]
-    async fn signal_superchain_v1(&self, _signal: SuperchainSignal) -> RpcResult<ProtocolVersion>;
+    /// For OP-Superchain v1, this returns the protocol version for the given signal.
+    #[method(name = "signalSuperchainV1")]
+    async fn signal_superchain_v1(&self, signal: SuperchainSignal) -> RpcResult<ProtocolVersion>;
 
-    /// Returns the execution client version information.
-    ///
-    /// Note:
-    /// > The `client_version` parameter identifies the consensus client.
-    ///
-    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/identification.md#engine_getclientversionv1>
+    /// For OP-Superchain v1, this returns the client version for the given version.
     #[method(name = "getClientVersionV1")]
     async fn get_client_version_v1(
         &self,
-        client_version: ClientVersionV1,
+        client: ClientVersionV1,
     ) -> RpcResult<Vec<ClientVersionV1>>;
 
-    /// Returns the list of Engine API methods supported by the execution layer client software.
-    ///
-    /// See also <https://github.com/ethereum/execution-apis/blob/6452a6b194d7db269bf1dbd087a267251d3cc7f8/src/engine/common.md#capabilities>
+    /// Returns the capabilities of the engine.
     #[method(name = "exchangeCapabilities")]
     async fn exchange_capabilities(&self, capabilities: Vec<String>) -> RpcResult<Vec<String>>;
 }

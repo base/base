@@ -12,9 +12,9 @@ use crate::{
         builder_tx::BuilderTxBase, context::OpPayloadBuilderCtx,
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
+use base_primitives::op_rbuilder::reth::ExecutionInfo;
 
 // This will be the end of block transaction of a regular block
 #[derive(Debug, Clone)]

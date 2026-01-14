@@ -20,11 +20,11 @@ use crate::{
     builders::{BuilderConfig, PayloadBuilder},
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
+use base_primitives::op_rbuilder::reth::engine_api_builder::OpEngineApiBuilder;
 
 /// Launcher for the OP builder node.
 #[derive(Debug)]

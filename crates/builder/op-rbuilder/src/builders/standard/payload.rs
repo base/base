@@ -1,5 +1,4 @@
 use std::{sync::Arc, time::Instant};
-
 use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };

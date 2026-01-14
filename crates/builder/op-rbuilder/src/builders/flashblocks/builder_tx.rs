@@ -23,9 +23,9 @@ use crate::{
         get_nonce,
     },
     flashtestations::builder_tx::FlashtestationsBuilderTx,
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
+use base_primitives::op_rbuilder::reth::ExecutionInfo;
 
 sol!(
     // From https://github.com/Uniswap/flashblocks_number_contract/blob/main/src/FlashblockNumber.sol

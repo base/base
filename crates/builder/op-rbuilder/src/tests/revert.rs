@@ -4,12 +4,12 @@ use op_alloy_network::Optimism;
 
 use crate::{
     args::OpRbuilderArgs,
-    primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
     tests::{
         BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, ONE_ETH,
         OpRbuilderArgsTestExt, TransactionBuilderExt,
     },
 };
+use base_primitives::op_rbuilder::bundle::MAX_BLOCK_RANGE_BLOCKS;
 
 /// This test ensures that the transactions that get reverted and not included in the block,
 /// are eventually dropped from the pool once their block range is reached.

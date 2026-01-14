@@ -45,7 +45,6 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
@@ -55,6 +54,7 @@ use crate::{
     tx_data_store::TxDataStore,
     tx_signer::Signer,
 };
+use base_primitives::op_rbuilder::reth::engine_api_builder::OpEngineApiBuilder;
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
 /// This is necessary because clap reads env vars for args with `env = "..."` attributes,

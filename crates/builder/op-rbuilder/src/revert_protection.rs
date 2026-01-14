@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Instant};
-
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
+use base_primitives::op_rbuilder::bundle::{Bundle, BundleConditionalExt, BundleResult};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -16,7 +16,6 @@ use tracing::error;
 
 use crate::{
     metrics::OpRBuilderMetrics,
-    primitives::bundle::{Bundle, BundleResult},
     tx::{FBPooledTransaction, MaybeFlashblockFilter, MaybeRevertingTransaction},
 };
 
@@ -117,14 +116,14 @@ where
             self.provider.best_block_number().map_err(|_e| EthApiError::InternalEthError)?;
 
         // Only one transaction in the bundle is expected
-        let bundle_transaction = match bundle.transactions.len() {
+        let bundle_transaction = match bundle.txs.len() {
             0 => {
                 return Err(EthApiError::InvalidParams(
                     "bundle must contain at least one transaction".into(),
                 )
                 .into());
             }
-            1 => bundle.transactions[0].clone(),
+            1 => bundle.txs[0].clone(),
             _ => {
                 return Err(EthApiError::InvalidParams(
                     "bundle must contain exactly one transaction".into(),
@@ -138,7 +137,7 @@ where
         let recovered = recover_raw_transaction(&bundle_transaction)?;
         let pool_transaction =
             FBPooledTransaction::from(OpPooledTransaction::from_pooled(recovered))
-                .with_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default())
+                .with_reverted_hashes(bundle.reverting_tx_hashes.clone())
                 .with_flashblock_number_min(conditional.flashblock_number_min)
                 .with_flashblock_number_max(conditional.flashblock_number_max)
                 .with_conditional(conditional.transaction_conditional);

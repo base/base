@@ -6,5 +6,8 @@
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+#[cfg(feature = "op-rbuilder")]
+pub mod op_rbuilder;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_utils::*;
