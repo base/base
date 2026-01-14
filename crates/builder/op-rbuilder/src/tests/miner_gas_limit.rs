@@ -22,11 +22,14 @@ async fn miner_gas_limit() -> eyre::Result<()> {
     Ok(())
 }
 
-/// This test ensures that block will fill up to the limit, each transaction is 53,000 gas
-/// We will set our limit to 730,000 gas and ensure that throttling occurs
-/// There is a deposit transaction for 182,706 gas
+/// This test ensures that block will fill up to the limit.
 ///
-/// (730,000 - 182,706) / 53,000 = 10.32 = 10 transactions can fit
+/// - Gas limit: 730,000
+/// - Deposit transaction gas: 182,706
+/// - Each user transaction gas: 53,000
+///
+/// Available gas = 730,000 - 182,706 = 547,294
+/// Transactions that fit = 547,294 / 53,000 = 10.32 = 10 transactions
 #[tokio::test]
 async fn block_fill() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;

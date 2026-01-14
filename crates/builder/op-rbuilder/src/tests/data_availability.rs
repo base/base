@@ -100,8 +100,14 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
 
     // DA footprint scalar from JOVIAN_DATA is 400
     // Set a constrained gas limit so DA footprint becomes the limiting factor
-    // With gas limit = 200_000 and scalar = 400:
-    // Max DA bytes = 200_000 / 400 = 500 bytes
+    //
+    // - Gas limit: 400,000
+    // - DA footprint scalar: 400
+    // - Each user tx DA size: ~100 bytes
+    // - DA footprint per tx: 100 bytes × 400 = 40,000
+    // - Max DA bytes: 400,000 / 400 = 1,000 bytes
+    //
+    // With deposit tx overhead, approximately 9 user transactions can fit
     let gas_limit = 400_000u64;
     let call = driver
         .provider()

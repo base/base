@@ -28,7 +28,7 @@ use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
-    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateProvider, StateRootProvider,
+    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
     StorageRootProvider,
 };
 use reth_revm::{
@@ -407,7 +407,6 @@ where
                     &ctx,
                     &mut info,
                     &mut state,
-                    &state_provider,
                     &mut best_txs,
                     &block_cancel,
                     &best_payload,
@@ -465,7 +464,6 @@ where
         ctx: &OpPayloadBuilderCtx,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
-        _state_provider: impl StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,

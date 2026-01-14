@@ -228,7 +228,6 @@ async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
             flashblocks_leeway_time: 100,
             flashblocks_fixed: false,
             flashblocks_disable_state_root: true,
-            ..Default::default()
         },
         ..Default::default()
     };
