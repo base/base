@@ -2,16 +2,16 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{TxHash, U256};
 use alloy_provider::Provider;
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
-use macros::rb_test;
 use uuid::Uuid;
 
-use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
+use crate::tests::{ChainDriverExt, framework::ONE_ETH, setup_test_instance};
 
 /// Tests that backrun bundles are all-or-nothing:
 /// - If any backrun tx in a bundle reverts, the entire bundle is excluded
 /// - Even successful txs in the bundle are not included
-#[rb_test(flashblocks)]
-async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
 
@@ -107,8 +107,9 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
 /// Tests that multiple backrun bundles for the same target tx are sorted by total priority fee
 /// - Bundles with higher total priority fee are processed first
 /// - Both bundles can land if they don't conflict
-#[rb_test(flashblocks)]
-async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(5, ONE_ETH).await?;
 
@@ -268,8 +269,9 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
 }
 
 /// Tests that backrun bundles are rejected if total bundle priority fee < target tx priority fee
-#[rb_test(flashblocks)]
-async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
 
@@ -360,8 +362,9 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
     Ok(())
 }
 
-#[rb_test(flashblocks)]
-async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn backrun_bundle_rejected_exceeds_gas_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
 
@@ -436,8 +439,9 @@ async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> e
     Ok(())
 }
 
-#[rb_test(flashblocks)]
-async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn backrun_bundle_rejected_exceeds_da_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(2, ONE_ETH).await?;
 
@@ -517,8 +521,9 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
 }
 
 /// Tests that backrun bundles with invalid tx errors (e.g. nonce too low) are skipped gracefully
-#[rb_test(flashblocks)]
-async fn backrun_bundle_invalid_tx_skipped(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(3, ONE_ETH).await?;
 

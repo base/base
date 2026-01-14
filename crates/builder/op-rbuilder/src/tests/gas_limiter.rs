@@ -1,27 +1,28 @@
 use std::collections::HashSet;
 
-use macros::rb_test;
 use tracing::info;
 
 use crate::{
     args::OpRbuilderArgs,
     gas_limiter::args::GasLimiterArgs,
-    tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
+    tests::{ChainDriverExt, TransactionBuilderExt, setup_test_instance_with_args},
 };
 
 /// Integration test for the gas limiter functionality.
 /// Tests that gas limits are properly enforced during actual block building
 /// and transaction execution.
-#[rb_test(args = OpRbuilderArgs {
-    gas_limiter: GasLimiterArgs {
-        gas_limiter_enabled: true,
-        max_gas_per_address: 200000,  // 200k gas per address - low for testing
-        refill_rate_per_block: 100000,  // 100k gas refill per block
-        cleanup_interval: 100,
-    },
-    ..Default::default()
-})]
-async fn gas_limiter_blocks_excessive_usage(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn gas_limiter_blocks_excessive_usage() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        gas_limiter: GasLimiterArgs {
+            gas_limiter_enabled: true,
+            max_gas_per_address: 200000, // 200k gas per address - low for testing
+            refill_rate_per_block: 100000, // 100k gas refill per block
+            cleanup_interval: 100,
+        },
+        ..Default::default()
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
 
     // Fund some accounts for testing

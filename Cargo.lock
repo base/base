@@ -5593,16 +5593,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-dependencies = [
- "paste",
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
 name = "match-lookup"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6304,7 +6294,6 @@ dependencies = [
  "jsonrpsee-core",
  "jsonrpsee-types",
  "k256",
- "macros",
  "metrics",
  "moka",
  "nanoid",

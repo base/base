@@ -1,14 +1,14 @@
 use alloy_consensus::Transaction;
 use alloy_network::TransactionResponse;
 use futures::{StreamExt, future::join_all, stream};
-use macros::rb_test;
 
-use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
+use crate::tests::{ChainDriverExt, framework::ONE_ETH, setup_test_instance};
 
 /// This test ensures that the transactions are ordered by fee priority within each flashblock.
 /// We expect breaks in global ordering that align with flashblock boundaries.
-#[rb_test(flashblocks)]
-async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn fee_priority_ordering() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(10, ONE_ETH).await?;
 

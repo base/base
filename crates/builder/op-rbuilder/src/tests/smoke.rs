@@ -5,13 +5,12 @@ use core::{
 use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
-use macros::{if_flashblocks, if_standard, rb_test};
 use tokio::{join, task::yield_now};
 use tracing::info;
 
 use crate::{
     args::OpRbuilderArgs,
-    tests::{LocalInstance, TransactionBuilderExt},
+    tests::{TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args},
 };
 
 /// This is a smoke test that ensures that transactions are included in blocks
@@ -19,8 +18,9 @@ use crate::{
 ///
 /// Generated blocks are also validated against an external op-reth node to
 /// ensure their correctness.
-#[rb_test]
-async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn chain_produces_blocks() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
@@ -35,23 +35,9 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         let transactions = block.transactions;
 
-        if_standard! {
-            assert_eq!(
-                transactions.len(),
-                2,
-                "Empty blocks should have exactly two transactions"
-            );
-        }
-
-        if_flashblocks! {
-            // in flashblocks we add an additional transaction on the first
-            // flashblocks and then one on the last flashblock
-            assert_eq!(
-                transactions.len(),
-                3,
-                "Empty blocks should have exactly three transactions"
-            );
-        }
+        // in flashblocks we add an additional transaction on the first
+        // flashblocks and then one on the last flashblock
+        assert_eq!(transactions.len(), 3, "Empty blocks should have exactly three transactions");
     }
 
     // ensure that transactions are included in blocks and each block has all the transactions
@@ -74,26 +60,10 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
 
         let txs = block.transactions;
 
-        if_standard! {
-            assert_eq!(
-                txs.len(),
-                2 + count,
-                "Block should have {} transactions",
-                2 + count
-            );
-        }
-
-        if_flashblocks! {
-            // in flashblocks we add an additional transaction on the first
-            // flashblocks and then one on the last flashblock, so it will have
-            // one more transaction than the standard builder
-            assert_eq!(
-                txs.len(),
-                3 + count,
-                "Block should have {} transactions",
-                3 + count
-            );
-        }
+        // in flashblocks we add an additional transaction on the first
+        // flashblocks and then one on the last flashblock, so it will have
+        // one more transaction than the standard builder
+        assert_eq!(txs.len(), 3 + count, "Block should have {} transactions", 3 + count);
 
         for tx_hash in tx_hashes {
             assert!(
@@ -108,8 +78,9 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// Ensures that payloads are generated correctly even when the builder is busy
 /// with other requests, such as fcu or getPayload.
-#[rb_test(multi_threaded)]
-async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test(flavor = "multi_thread")]
+async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?.with_gas_limit(10_00_000);
 
     let done = AtomicBool::new(false);
@@ -175,8 +146,9 @@ async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> 
     Ok(())
 }
 
-#[rb_test]
-async fn test_no_tx_pool(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn test_no_tx_pool() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     // make sure we can build a couple of blocks first
@@ -188,11 +160,10 @@ async fn test_no_tx_pool(rbuilder: LocalInstance) -> eyre::Result<()> {
     Ok(())
 }
 
-#[rb_test(args = OpRbuilderArgs {
-    max_gas_per_txn: Some(25000),
-    ..Default::default()
-})]
-async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
+    let args = OpRbuilderArgs { max_gas_per_txn: Some(25000), ..Default::default() };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
@@ -217,21 +188,7 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
-    if_standard! {
-        assert_eq!(
-            txs.len(),
-            3,
-            "Should have 3 transactions"
-        );
-    }
-
-    if_flashblocks! {
-        assert_eq!(
-            txs.len(),
-            4,
-            "Should have 4 transactions"
-        );
-    }
+    assert_eq!(txs.len(), 4, "Should have 4 transactions");
 
     // assert we included the tx with gas under limit
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
@@ -244,10 +201,9 @@ async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::
     Ok(())
 }
 
-#[rb_test(args = OpRbuilderArgs {
-    ..Default::default()
-})]
-async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
@@ -268,21 +224,7 @@ async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyr
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
 
-    if_standard! {
-        assert_eq!(
-            txs.len(),
-            3,
-            "Should have 3 transactions"
-        );
-    }
-
-    if_flashblocks! {
-        assert_eq!(
-            txs.len(),
-            4,
-            "Should have 4 transactions"
-        );
-    }
+    assert_eq!(txs.len(), 4, "Should have 4 transactions");
 
     Ok(())
 }
