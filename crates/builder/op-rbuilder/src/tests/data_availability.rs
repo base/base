@@ -52,21 +52,20 @@ async fn block_size_limit() -> eyre::Result<()> {
 /// This test ensures that block will fill up to the limit.
 /// Size of each transaction is 100
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
-/// We should not forget about builder transaction so we will spawn only 2 regular txs.
 #[tokio::test]
 async fn block_fill() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
-    // Set block big enough so it could fit 3 transactions without tx size limit
+    // Set DA limit so only 3 user transactions can fit (each tx is ~100 bytes)
+    // Limit = 100 * 3 = 300 bytes, so 3 txs fit and the 4th won't
     let call = driver
         .provider()
-        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100 * 4))
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100 * 3))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
-    // We already have 2 so we will spawn one more to check that it won't be included (it won't fit
-    // because of builder tx)
+    // Send transactions - some should fit within the DA limit and one should not
     let fit_tx_1 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let fit_tx_2 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
     let fit_tx_3 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
@@ -75,16 +74,16 @@ async fn block_fill() -> eyre::Result<()> {
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // in flashblocks the DA quota is divided by the number of flashblocks
-    // so we will include only one tx in the block because not all of them
-    // will fit within DA quote / flashblocks count.
-    assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
-    assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
-    assert!(!block.includes(fit_tx_3.tx_hash()), "tx should not be in block");
+    // so we will include only some txs in the block because not all of them
+    // will fit within DA quota / flashblocks count.
+    assert!(block.includes(fit_tx_1.tx_hash()), "tx 1 should be in block");
+    assert!(block.includes(fit_tx_2.tx_hash()), "tx 2 should be in block");
+    assert!(block.includes(fit_tx_3.tx_hash()), "tx 3 should be in block");
 
-    assert!(!block.includes(unfit_tx_4.tx_hash()), "unfit tx should not be in block");
+    assert!(!block.includes(unfit_tx_4.tx_hash()), "tx 4 should not fit in block due to DA limit");
     assert!(
-        driver.latest_full().await?.transactions.len() == 5,
-        "builder + deposit + 3 valid txs should be in the block"
+        driver.latest_full().await?.transactions.len() == 4,
+        "deposit + 3 valid txs should be in the block"
     );
 
     Ok(())
@@ -93,7 +92,7 @@ async fn block_fill() -> eyre::Result<()> {
 /// This test ensures that the DA footprint limit (Jovian) is respected and the block fills
 /// to the DA footprint limit. The DA footprint is calculated as:
 /// total_da_bytes_used * da_footprint_gas_scalar (stored in blob_gas_used).
-/// This must not exceed the block gas limit, accounting for the builder transaction.
+/// This must not exceed the block gas limit.
 #[tokio::test]
 async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -101,8 +100,14 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
 
     // DA footprint scalar from JOVIAN_DATA is 400
     // Set a constrained gas limit so DA footprint becomes the limiting factor
-    // With gas limit = 200_000 and scalar = 400:
-    // Max DA bytes = 200_000 / 400 = 500 bytes
+    //
+    // - Gas limit: 400,000
+    // - DA footprint scalar: 400
+    // - Each user tx DA size: ~100 bytes
+    // - DA footprint per tx: 100 bytes × 400 = 40,000
+    // - Max DA bytes: 400,000 / 400 = 1,000 bytes
+    //
+    // With deposit tx overhead, approximately 9 user transactions can fit
     let gas_limit = 400_000u64;
     let call = driver
         .provider()
@@ -118,8 +123,8 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
     let mut tx_hashes = Vec::new();
-    for _ in 0..10 {
-        // 400 * 100 = 400_000 total da footprint
+    for _ in 0..12 {
+        // Send more transactions to ensure some don't fit
         let tx = driver
             .create_transaction()
             .random_valid_transfer()
@@ -145,19 +150,15 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
     );
 
     // Verify the block fills up to the DA footprint limit (flashblocks mode)
-    for (i, tx_hash) in tx_hashes.iter().enumerate().take(7) {
+    // With more capacity now (no builder tx), more txs can fit
+    for (i, tx_hash) in tx_hashes.iter().enumerate().take(9) {
         assert!(block.includes(tx_hash), "tx {} should be included in the block", i);
     }
 
-    // Verify the last 2 tx doesn't fit due to DA footprint limit
+    // Verify some txs don't fit due to DA footprint limit
     assert!(
-        !block.includes(&tx_hashes[8]),
-        "tx 8 should not fit in the block due to DA footprint limit"
-    );
-
-    assert!(
-        !block.includes(&tx_hashes[9]),
-        "tx 9 should not fit in the block due to DA footprint limit"
+        !block.includes(&tx_hashes[11]),
+        "tx 11 should not fit in the block due to DA footprint limit"
     );
 
     Ok(())

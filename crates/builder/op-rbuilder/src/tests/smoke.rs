@@ -28,20 +28,22 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
     const SAMPLE_SIZE: usize = 10;
 
-    // ensure that each block has at least two transactions when
+    // ensure that each block has the deposit transaction when
     // no user transactions are sent.
-    // the deposit transaction and the block generator's transaction
     for _ in 0..SAMPLE_SIZE {
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         let transactions = block.transactions;
 
-        // in flashblocks we add an additional transaction on the first
-        // flashblocks and then one on the last flashblock
-        assert_eq!(transactions.len(), 3, "Empty blocks should have exactly three transactions");
+        // Only the deposit transaction should be present
+        assert_eq!(
+            transactions.len(),
+            1,
+            "Empty blocks should have exactly one transaction (deposit)"
+        );
     }
 
     // ensure that transactions are included in blocks and each block has all the transactions
-    // sent to it during its block time + the two mandatory transactions
+    // sent to it during its block time plus the deposit transaction
     for _ in 0..SAMPLE_SIZE {
         let count = rand::random_range(1..8);
         let mut tx_hashes = HashSet::<TxHash>::default();
@@ -60,10 +62,8 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
         let txs = block.transactions;
 
-        // in flashblocks we add an additional transaction on the first
-        // flashblocks and then one on the last flashblock, so it will have
-        // one more transaction than the standard builder
-        assert_eq!(txs.len(), 3 + count, "Block should have {} transactions", 3 + count);
+        // Each block contains the deposit transaction plus user transactions
+        assert_eq!(txs.len(), 1 + count, "Block should have {} transactions", 1 + count);
 
         for tx_hash in tx_hashes {
             assert!(
@@ -188,7 +188,8 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
-    assert_eq!(txs.len(), 4, "Should have 4 transactions");
+    // deposit + valid user tx (high gas tx excluded due to limit)
+    assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + valid user tx)");
 
     // assert we included the tx with gas under limit
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
@@ -224,7 +225,8 @@ async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
 
-    assert_eq!(txs.len(), 4, "Should have 4 transactions");
+    // deposit + big tx (no gas limit to exclude it)
+    assert_eq!(txs.len(), 2, "Should have 2 transactions (deposit + big tx)");
 
     Ok(())
 }

@@ -20,8 +20,9 @@ async fn jovian_block_parameters_set() -> eyre::Result<()> {
 
     assert!(block.header.blob_gas_used.is_some());
 
-    // Two user transactions + two builder transactions, all minimum size (flashblocks mode)
-    assert_eq!(block.header.blob_gas_used.unwrap(), 160_000);
+    // Two user transactions (no deposit in blob_gas, deposits are L1 data), all minimum size (flashblocks mode)
+    // Each tx contributes ~40,000 to blob_gas_used
+    assert_eq!(block.header.blob_gas_used.unwrap(), 80_000);
 
     // Version byte
     assert_eq!(block.header.extra_data.slice(0..1), bytes!("0x01"));

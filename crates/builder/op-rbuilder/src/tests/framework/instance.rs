@@ -40,11 +40,9 @@ use crate::{
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tests::{
-        EngineApi, Ipc, TransactionPoolObserver, builder_signer, create_test_db,
-        framework::driver::ChainDriver,
+        EngineApi, Ipc, TransactionPoolObserver, create_test_db, framework::driver::ChainDriver,
     },
     tx_data_store::TxDataStore,
-    tx_signer::Signer,
 };
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
@@ -70,7 +68,6 @@ pub fn clear_otel_env_vars() {
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
-    signer: Signer,
     config: NodeConfig<OpChainSpec>,
     args: OpRbuilderArgs,
     task_manager: Option<TaskManager>,
@@ -100,16 +97,12 @@ impl LocalInstance {
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
-        let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
             oneshot::channel::<AllTransactionsEvents<OpPooledTransaction>>();
-
-        let signer = args.builder_signer.unwrap_or(builder_signer());
-        args.builder_signer = Some(signer);
 
         let builder_config = BuilderConfig::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
@@ -163,7 +156,6 @@ impl LocalInstance {
 
         Ok(Self {
             args,
-            signer,
             config,
             exit_future,
             _node_handle: node_handle,
@@ -189,10 +181,6 @@ impl LocalInstance {
 
     pub const fn args(&self) -> &OpRbuilderArgs {
         &self.args
-    }
-
-    pub const fn signer(&self) -> &Signer {
-        &self.signer
     }
 
     pub fn flashblocks_ws_url(&self) -> String {

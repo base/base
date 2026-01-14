@@ -28,7 +28,7 @@ use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
-    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateProvider, StateRootProvider,
+    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
     StorageRootProvider,
 };
 use reth_revm::{
@@ -45,7 +45,7 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 use super::wspub::WebSocketPublisher;
 use crate::{
     flashblocks::{
-        BuilderConfig, FlashblocksBuilderTx, FlashblocksExtraCtx,
+        BuilderConfig, FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
@@ -95,8 +95,6 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
     pub config: BuilderConfig,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
-    /// The end of builder transaction type
-    pub builder_tx: FlashblocksBuilderTx,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
 }
@@ -109,23 +107,12 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         pool: Pool,
         client: Client,
         config: BuilderConfig,
-        builder_tx: FlashblocksBuilderTx,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
-        Self {
-            evm_config,
-            pool,
-            client,
-            payload_tx,
-            ws_pub,
-            config,
-            metrics,
-            builder_tx,
-            address_gas_limiter,
-        }
+        Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics, address_gas_limiter }
     }
 }
 
@@ -209,7 +196,6 @@ where
             cancel,
             da_config: self.config.da_config.clone(),
             gas_limit_config: self.config.gas_limit_config.clone(),
-            builder_signer: self.config.builder_signer,
             metrics: Default::default(),
             extra,
             max_gas_per_txn: self.config.max_gas_per_txn,
@@ -273,18 +259,6 @@ where
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
-        // We add first builder tx right after deposits
-        if !ctx.attributes().no_tx_pool
-            && let Err(e) =
-                self.builder_tx.add_builder_txs(&state_provider, &mut info, &ctx, &mut state, false)
-        {
-            error!(
-                target: "payload_builder",
-                "Error adding builder txs to fallback block: {}",
-                e
-            );
-        };
-
         let (payload, fb_payload) = build_block(
             &mut state,
             &ctx,
@@ -341,15 +315,6 @@ where
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let da_per_batch =
             ctx.da_config.max_da_block_size().map(|da_limit| da_limit / flashblocks_per_block);
-        // Check that builder tx won't affect fb limit too much
-        if let Some(da_limit) = da_per_batch {
-            // We error if we can't insert any tx aside from builder tx in flashblock
-            if info.cumulative_da_bytes_used >= da_limit {
-                error!(
-                    "Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included."
-                );
-            }
-        }
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
 
@@ -442,7 +407,6 @@ where
                     &ctx,
                     &mut info,
                     &mut state,
-                    &state_provider,
                     &mut best_txs,
                     &block_cancel,
                     &best_payload,
@@ -500,14 +464,13 @@ where
         ctx: &OpPayloadBuilderCtx,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
-        state_provider: impl StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
-        let mut target_gas_for_batch = ctx.extra.target_gas_for_batch;
+        let target_gas_for_batch = ctx.extra.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
 
@@ -524,36 +487,6 @@ where
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
-
-        let builder_txs =
-            match self.builder_tx.add_builder_txs(&state_provider, info, ctx, state, true) {
-                Ok(builder_txs) => builder_txs,
-                Err(e) => {
-                    error!(target: "payload_builder", "Error simulating builder txs: {}", e);
-                    vec![]
-                }
-            };
-
-        // only reserve builder tx gas / da size that has not been committed yet
-        // committed builder txs would have counted towards the gas / da used
-        let builder_tx_gas = builder_txs
-            .iter()
-            .filter(|tx| !tx.is_top_of_block)
-            .fold(0, |acc, tx| acc + tx.gas_used);
-        let builder_tx_da_size: u64 =
-            builder_txs.iter().filter(|tx| !tx.is_top_of_block).fold(0, |acc, tx| acc + tx.da_size);
-        target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
-
-        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-        if let Some(da_limit) = target_da_for_batch.as_mut() {
-            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
-        }
-
-        if let (Some(footprint), Some(scalar)) =
-            (target_da_footprint_for_batch.as_mut(), info.da_footprint_scalar)
-        {
-            *footprint = footprint.saturating_sub(builder_tx_da_size.saturating_mul(scalar as u64));
-        }
 
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(BestPayloadTransactions::new(
@@ -599,10 +532,6 @@ where
             .payload_transaction_simulation_duration
             .record(payload_transaction_simulation_time);
         ctx.metrics.payload_transaction_simulation_gauge.set(payload_transaction_simulation_time);
-
-        if let Err(e) = self.builder_tx.add_builder_txs(&state_provider, info, ctx, state, false) {
-            error!(target: "payload_builder", "Error simulating builder txs: {}", e);
-        };
 
         let total_block_built_duration = Instant::now();
         let build_result = build_block(
