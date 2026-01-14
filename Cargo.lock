@@ -2159,6 +2159,7 @@ dependencies = [
  "lru 0.16.3",
  "metrics",
  "reth-exex",
+ "metrics-derive",
  "reth-node-api",
  "reth-primitives-traits",
  "reth-provider",

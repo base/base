@@ -19,3 +19,6 @@ pub use tracker::Tracker;
 
 mod extension;
 pub use extension::{TxPoolExtension, TxpoolConfig};
+
+mod metrics;
+pub use metrics::Metrics;
