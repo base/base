@@ -23,3 +23,6 @@ pub mod test_utils;
 
 pub mod node;
 pub use node::BaseNode;
+
+mod add_ons;
+pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
