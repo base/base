@@ -6,20 +6,13 @@ use core::{
     task::{Context, Poll},
     time::Duration,
 };
-use std::{
-    net::SocketAddr,
-    sync::{Arc, LazyLock},
-};
+use std::sync::{Arc, LazyLock};
 
-use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
+use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use base_flashtypes::FlashblocksPayloadV1;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
-use http::{Request, Response, StatusCode};
-use http_body_util::Full;
-use hyper::{body::Bytes as HyperBytes, server::conn::http1, service::service_fn};
-use hyper_util::rt::TokioIo;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
 use parking_lot::Mutex;
@@ -38,7 +31,7 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::TaskManager;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
+use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
@@ -48,7 +41,7 @@ use crate::{
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tests::{
         EngineApi, Ipc, TransactionPoolObserver, builder_signer, create_test_db,
-        framework::driver::ChainDriver, get_available_port,
+        framework::driver::ChainDriver,
     },
     tx_data_store::TxDataStore,
     tx_signer::Signer,
@@ -410,122 +403,5 @@ impl FlashblocksListener {
     pub async fn stop(self) -> eyre::Result<()> {
         self.cancellation_token.cancel();
         self.handle.await?
-    }
-}
-
-/// A utility service to spawn a server that returns a mock quote for an attestation request
-#[derive(Debug)]
-pub struct AttestationServer {
-    tee_address: Address,
-    extra_registration_data: Bytes,
-    mock_attestation: Bytes,
-    server_handle: Option<JoinHandle<()>>,
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    port: u16,
-    error_on_request: bool,
-}
-
-impl AttestationServer {
-    pub const fn new(
-        tee_address: Address,
-        extra_registration_data: Bytes,
-        mock_attestation: Bytes,
-    ) -> Self {
-        Self {
-            tee_address,
-            extra_registration_data,
-            mock_attestation,
-            server_handle: None,
-            shutdown_tx: None,
-            port: 0,
-            error_on_request: false,
-        }
-    }
-
-    pub const fn set_error(&mut self, error: bool) {
-        self.error_on_request = error;
-    }
-
-    pub async fn start(&mut self) -> eyre::Result<u16> {
-        self.port = get_available_port();
-        let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
-        let listener = TcpListener::bind(addr).await?;
-
-        let mock_attestation = self.mock_attestation.clone();
-        // Concatenate tee_address bytes and extra_registration_data bytes, then hex encode
-        let combined = [
-            self.tee_address.as_slice(), // 20 bytes address
-            keccak256(self.extra_registration_data.clone()).as_slice(), // 32 byte hash
-            &[0u8; 12],                  // padding to 64 bytes
-        ]
-        .concat();
-        let set_error = self.error_on_request;
-
-        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-        self.shutdown_tx = Some(shutdown_tx);
-
-        // Create the service
-        self.server_handle = Some(tokio::spawn(async move {
-            loop {
-                let mock_attestation = mock_attestation.clone();
-                let expected_path = format!("/{}", hex::encode(&combined));
-                tokio::select! {
-                    // Handle shutdown signal
-                    _ = &mut shutdown_rx => {
-                        break;
-                    }
-                    result = listener.accept() => {
-                        let (stream, _) = result.expect("failed to accept attestation request");
-
-                     tokio::task::spawn(async move {
-                        let service = service_fn(move |req: Request<hyper::body::Incoming>| {
-                            let response =
-                            if set_error {
-                                Response::builder()
-                                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(Full::new(HyperBytes::new()))
-                                .unwrap()
-                            }
-                            else if req.uri().path() == expected_path {
-                                Response::builder()
-                                    .header("content-type", "application/octet-stream")
-                                    .body(Full::new(mock_attestation.clone().into()))
-                                    .unwrap()
-                            } else {
-                                    Response::builder()
-                                    .status(StatusCode::NOT_FOUND)
-                                    .body(Full::new(HyperBytes::new()))
-                                    .unwrap()
-                                };
-                            async { Ok::<_, hyper::Error>(response) }
-                        });
-
-                        let io = TokioIo::new(stream);
-                        if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
-                            tracing::error!(message = "Error serving attestations", error = %err);
-                        }
-                    });
-                }
-                }
-            }
-        }));
-
-        // Give the spawned task a chance to start
-        tokio::task::yield_now().await;
-
-        Ok(self.port)
-    }
-
-    pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
-    }
-}
-
-impl Drop for AttestationServer {
-    fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        tracing::info!("AttestationServer dropped, terminating server");
     }
 }

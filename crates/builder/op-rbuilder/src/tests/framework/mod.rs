@@ -23,9 +23,6 @@ pub const FUNDED_PRIVATE_KEY: &str =
 // anvil default key[8]
 pub const FLASHBLOCKS_DEPLOY_KEY: &str =
     "0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97";
-// anvil default key[9]
-pub const FLASHTESTATION_DEPLOY_KEY: &str =
-    "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
 
 pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 

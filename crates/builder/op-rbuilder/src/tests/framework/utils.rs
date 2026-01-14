@@ -18,7 +18,7 @@ use reth_optimism_chainspec::OpChainSpec;
 use super::{FUNDED_PRIVATE_KEY, TransactionBuilder};
 use crate::{
     tests::{
-        BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FLASHTESTATION_DEPLOY_KEY, Protocol,
+        BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, Protocol,
         flashblocks_number_contract::FlashblocksNumber, framework::driver::ChainDriver,
     },
     tx_signer::Signer,
@@ -263,13 +263,4 @@ pub fn flashblocks_number_signer() -> Signer {
             .expect("invalid hardcoded flashblocks number deployer private key"),
     )
     .expect("Failed to create signer from hardcoded flashblocks number deployer private key")
-}
-
-pub fn flashtestations_signer() -> Signer {
-    Signer::try_from_secret(
-        FLASHTESTATION_DEPLOY_KEY
-            .parse()
-            .expect("invalid hardcoded flashtestations deployer private key"),
-    )
-    .expect("Failed to create signer from hardcoded flashtestations deployer private key")
 }

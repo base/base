@@ -127,15 +127,6 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
     )]
     pub flashblocks_number_contract_address: Option<Address>,
-
-    /// Use permit signatures if flashtestations is enabled with the flashtestation key
-    /// to increment the flashblocks number
-    #[arg(
-        long = "flashblocks.number-contract-use-permit",
-        env = "FLASHBLOCK_NUMBER_CONTRACT_USE_PERMIT",
-        default_value = "false"
-    )]
-    pub flashblocks_number_contract_use_permit: bool,
 }
 
 impl Default for FlashblocksArgs {

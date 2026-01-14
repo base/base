@@ -12,7 +12,9 @@ repository.workspace = true
 workspace = true
 
 [features]
-test-utils = []
+test-utils = [
+	"kona-engine?/test-utils"
+]
 engine-validation = [
 	"dep:alloy-provider",
 	"dep:alloy-transport-http",
