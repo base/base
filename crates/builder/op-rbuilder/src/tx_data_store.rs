@@ -20,13 +20,13 @@ use reth_transaction_pool::PoolTransaction;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::{metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
+use crate::metrics::OpRBuilderMetrics;
 
 #[derive(Clone, Debug)]
 pub struct StoredBackrunBundle {
     pub bundle_id: Uuid,
     pub sender: Address,
-    pub backrun_txs: Vec<FBPooledTransaction>,
+    pub backrun_txs: Vec<OpPooledTransaction>,
     pub total_priority_fee: u128,
 }
 
@@ -112,8 +112,8 @@ impl TxDataStore {
 
         let target_tx_hash = bundle.txs[0].tx_hash();
 
-        // Convert OpTxEnvelope transactions to FBPooledTransaction
-        let backrun_txs: Vec<FBPooledTransaction> = bundle.txs[1..]
+        // Convert OpTxEnvelope transactions to OpPooledTransaction
+        let backrun_txs: Vec<OpPooledTransaction> = bundle.txs[1..]
             .iter()
             .filter_map(|tx| {
                 let (envelope, signer) = tx.clone().into_parts();
@@ -121,8 +121,7 @@ impl TxDataStore {
                     envelope.try_into().ok()?;
                 let recovered_pooled =
                     alloy_consensus::transaction::Recovered::new_unchecked(pooled_envelope, signer);
-                let pooled = OpPooledTransaction::from_pooled(recovered_pooled);
-                Some(FBPooledTransaction::from(pooled))
+                Some(OpPooledTransaction::from_pooled(recovered_pooled))
             })
             .collect();
 

@@ -20,7 +20,6 @@ use crate::{
 
 #[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashtestations: FlashtestationsArgs {
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
@@ -65,7 +64,6 @@ async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Re
 
 #[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashtestations: FlashtestationsArgs {
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
@@ -105,7 +103,6 @@ async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> 
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
         ..Default::default()
@@ -166,7 +163,6 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
 
 #[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashtestations: FlashtestationsArgs {
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
@@ -199,7 +195,6 @@ async fn test_flashtestations_permit_registration(rbuilder: LocalInstance) -> ey
 
 #[rb_test(args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashtestations: FlashtestationsArgs {
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
@@ -248,7 +243,6 @@ async fn test_flashtestations_permit_block_proof(rbuilder: LocalInstance) -> eyr
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
         ..Default::default()
@@ -316,7 +310,6 @@ async fn test_flashtestations_permit_with_flashblocks_number_contract(
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
         flashblocks_number_contract_use_permit: true,

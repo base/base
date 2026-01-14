@@ -24,9 +24,6 @@ mod backrun;
 mod ordering;
 
 #[cfg(test)]
-mod revert;
-
-#[cfg(test)]
 mod smoke;
 
 #[cfg(test)]

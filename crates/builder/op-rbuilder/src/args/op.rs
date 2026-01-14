@@ -36,16 +36,10 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
-    /// Signals whether to log pool transaction events
-    #[arg(long = "builder.log-pool-transactions", default_value = "false")]
-    pub log_pool_transactions: bool,
-
     /// How much time extra to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
-    /// Whether to enable revert protection by default
-    #[arg(long = "builder.enable-revert-protection", default_value = "false")]
-    pub enable_revert_protection: bool,
+
     /// Whether to enable TIPS Resource Metering
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,

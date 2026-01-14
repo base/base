@@ -45,7 +45,6 @@ use crate::{
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
-    tx::MaybeRevertingTransaction,
     tx_data_store::{TxData, TxDataStore},
     tx_signer::Signer,
 };
@@ -381,7 +380,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
-        let mut num_bundles_reverted = 0;
         let mut reverted_gas_used = 0;
         let base_fee = self.base_fee();
 
@@ -403,20 +401,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
-            let reverted_hashes = tx.reverted_hashes().clone();
             let conditional = tx.conditional().cloned();
 
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
-
-            // exclude reverting transaction if:
-            // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
-            // Note that we need to use the Option to signal whether the transaction comes from a bundle,
-            // otherwise, we would exclude all transactions that are not in the reverted hashes.
-            let is_bundle_tx = reverted_hashes.is_some();
-            let exclude_reverting_txs =
-                is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
                 info!(
@@ -424,7 +413,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
                     tx_da_size = ?tx_da_size,
-                    exclude_reverting_txs = ?exclude_reverting_txs,
                     result = %result,
                 );
             };
@@ -530,20 +518,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 num_txs_simulated_success += 1;
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
             } else {
+                log_txn(TxnExecutionResult::Reverted);
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used as i32;
                 self.metrics.reverted_tx_gas_used.record(gas_used as f64);
-                if is_bundle_tx {
-                    num_bundles_reverted += 1;
-                }
-                if exclude_reverting_txs {
-                    log_txn(TxnExecutionResult::RevertedAndExcluded);
-                    info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), result = ?result, "skipping reverted transaction");
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                } else {
-                    log_txn(TxnExecutionResult::Reverted);
-                }
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the
@@ -722,7 +700,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             num_txs_simulated,
             num_txs_simulated_success,
             num_txs_simulated_fail,
-            num_bundles_reverted,
             reverted_gas_used,
         );
 
@@ -732,7 +709,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             txs_executed = num_txs_considered,
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,
-            bundles_reverted = num_bundles_reverted,
         );
         Ok(None)
     }

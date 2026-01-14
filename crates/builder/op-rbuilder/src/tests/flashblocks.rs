@@ -221,7 +221,6 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         enabled: true,
         flashblocks_port: 1239,
@@ -274,7 +273,6 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         enabled: true,
         flashblocks_port: 1239,
@@ -322,7 +320,6 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         enabled: true,
         flashblocks_port: 1239,
@@ -402,7 +399,6 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
-    enable_revert_protection: true,
     flashblocks: FlashblocksArgs {
         flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
         ..Default::default()

@@ -3,24 +3,19 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use dashmap::DashMap;
 use futures::StreamExt;
-use moka::future::Cache;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
+use reth_optimism_txpool::OpPooledTransaction;
 use reth_primitives::Recovered;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use tokio::sync::watch;
 use tracing::debug;
 
-use crate::{
-    primitives::bundle::{Bundle, BundleResult},
-    tests::funded_signer,
-    tx::FBPooledTransaction,
-    tx_signer::Signer,
-};
+use crate::{primitives::bundle::Bundle, tests::funded_signer, tx_signer::Signer};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BundleOpts {
@@ -72,7 +67,6 @@ pub struct TransactionBuilder {
     base_fee: Option<u128>,
     tx: TxEip1559,
     bundle_opts: Option<BundleOpts>,
-    with_reverted_hash: bool,
 }
 
 impl TransactionBuilder {
@@ -84,7 +78,6 @@ impl TransactionBuilder {
             base_fee: None,
             tx: TxEip1559 { chain_id: 901, gas_limit: 210000, ..Default::default() },
             bundle_opts: None,
-            with_reverted_hash: false,
         }
     }
 
@@ -143,11 +136,6 @@ impl TransactionBuilder {
         self
     }
 
-    pub const fn with_reverted_hash(mut self) -> Self {
-        self.with_reverted_hash = true;
-        self
-    }
-
     pub fn with_revert(mut self) -> Self {
         self.tx.input = hex!("60006000fd").into();
         self
@@ -193,18 +181,16 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
-        let with_reverted_hash = self.with_reverted_hash;
         let bundle_opts = self.bundle_opts;
         let provider = self.provider.clone();
         let transaction = self.build().await;
-        let txn_hash = transaction.tx_hash();
         let transaction_encoded = transaction.encoded_2718();
 
         if let Some(bundle_opts) = bundle_opts {
             // Send the transaction as a bundle with the bundle options
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
-                reverting_hashes: if with_reverted_hash { Some(vec![txn_hash]) } else { None },
+                reverting_hashes: None,
                 block_number_min: bundle_opts.block_number_min,
                 block_number_max: bundle_opts.block_number_max,
                 flashblock_number_min: bundle_opts.flashblock_number_min,
@@ -213,10 +199,17 @@ impl TransactionBuilder {
                 max_timestamp: bundle_opts.max_timestamp,
             };
 
-            let result: BundleResult =
+            let result: serde_json::Value =
                 provider.client().request("eth_sendBundle", (bundle,)).await?;
 
-            return Ok(PendingTransactionBuilder::new(provider.root().clone(), result.bundle_hash));
+            // Extract bundle_hash from response
+            let bundle_hash = result
+                .get("bundleHash")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| eyre::eyre!("Missing bundleHash in response"))?
+                .parse()?;
+
+            return Ok(PendingTransactionBuilder::new(provider.root().clone(), bundle_hash));
         }
 
         Ok(provider.send_raw_transaction(transaction_encoded.as_slice()).await?)
@@ -245,10 +238,7 @@ impl Drop for TransactionPoolObserver {
 }
 
 impl TransactionPoolObserver {
-    pub fn new(
-        stream: AllTransactionsEvents<FBPooledTransaction>,
-        reverts: Cache<B256, ()>,
-    ) -> Self {
+    pub fn new(stream: AllTransactionsEvents<OpPooledTransaction>) -> Self {
         let mut stream = stream;
         let observations = Arc::new(ObservationsMap::new());
         let observations_clone = Arc::clone(&observations);
@@ -286,7 +276,6 @@ impl TransactionPoolObserver {
                             Some(FullTransactionEvent::Discarded(hash)) => {
                                 tracing::debug!("Transaction discarded: {hash}");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Discarded);
-                                reverts.insert(hash, ()).await;
                             },
                             Some(FullTransactionEvent::Invalid(hash)) => {
                                 tracing::debug!("Transaction invalid: {hash}");

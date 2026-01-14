@@ -621,12 +621,9 @@ where
         }
 
         let best_txs_start_time = Instant::now();
-        best_txs.refresh_iterator(
-            BestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
-            ),
-            flashblock_index,
-        );
+        best_txs.refresh_iterator(BestPayloadTransactions::new(
+            self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+        ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         ctx.metrics.transaction_pool_fetch_duration.record(transaction_pool_fetch_time);
         ctx.metrics.transaction_pool_fetch_gauge.set(transaction_pool_fetch_time);

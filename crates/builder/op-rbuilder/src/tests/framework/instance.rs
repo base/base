@@ -20,7 +20,6 @@ use http::{Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper::{body::Bytes as HyperBytes, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
-use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
 use parking_lot::Mutex;
@@ -36,6 +35,7 @@ use reth_optimism_node::{
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
+use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::TaskManager;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
@@ -46,12 +46,10 @@ use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
         framework::driver::ChainDriver, get_available_port,
     },
-    tx::FBPooledTransaction,
     tx_data_store::TxDataStore,
     tx_signer::Signer,
 };
@@ -109,19 +107,17 @@ impl LocalInstance {
         args: OpRbuilderArgs,
         config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
+        clear_otel_env_vars();
         let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
-        let reverted_cache = Cache::builder().max_capacity(100).build();
-        let reverted_cache_clone = reverted_cache.clone();
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
-            oneshot::channel::<AllTransactionsEvents<FBPooledTransaction>>();
+            oneshot::channel::<AllTransactionsEvents<OpPooledTransaction>>();
 
         let signer = args.builder_signer.unwrap_or(builder_signer());
         args.builder_signer = Some(signer);
-        args.rollup_args.enable_tx_conditional = true;
 
         let attestation_server = if args.flashtestations.flashtestations_enabled {
             let server = spawn_attestation_provider().await?;
@@ -145,7 +141,7 @@ impl LocalInstance {
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()
             .with_sequencer(args.rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+            .with_enable_tx_conditional(false)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .build();
@@ -161,24 +157,6 @@ impl LocalInstance {
                     .payload(P::new_service(builder_config)?),
             )
             .with_add_ons(addons)
-            .extend_rpc_modules(move |ctx| {
-                if args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
-
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(
-                        pool,
-                        provider,
-                        ctx.registry.eth_api().clone(),
-                        reverted_cache,
-                    );
-
-                    ctx.modules.add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                }
-
-                Ok(())
-            })
             .on_rpc_started(move |_, _| {
                 let _ = rpc_ready_tx.send(());
                 Ok(())
@@ -207,7 +185,7 @@ impl LocalInstance {
             exit_future,
             _node_handle: node_handle,
             task_manager: Some(task_manager),
-            pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
+            pool_observer: TransactionPoolObserver::new(pool_monitor),
             attestation_server,
             tx_data_store,
         })
@@ -216,7 +194,6 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the standard builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
-        clear_otel_env_vars();
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref node_command) = args.command else { unreachable!() };
         Self::new::<StandardBuilder>(node_command.ext.clone()).await
@@ -225,7 +202,6 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
-        clear_otel_env_vars();
         let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks.enabled = true;
@@ -367,14 +343,10 @@ fn task_manager() -> TaskManager {
     TaskManager::new(tokio::runtime::Handle::current())
 }
 
-fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
+fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<OpPooledTransaction> {
     let rollup_args = &args.rollup_args;
-    OpPoolBuilder::<FBPooledTransaction>::default()
-        .with_enable_tx_conditional(
-            // Revert protection uses the same internal pool logic as conditional transactions
-            // to garbage collect transactions out of the bundle range.
-            rollup_args.enable_tx_conditional || args.enable_revert_protection,
-        )
+    OpPoolBuilder::<OpPooledTransaction>::default()
+        .with_enable_tx_conditional(false)
         .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)
 }
 
