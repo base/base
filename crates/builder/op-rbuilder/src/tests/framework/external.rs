@@ -110,12 +110,12 @@ impl ExternalNode {
 
 impl ExternalNode {
     /// Access to the RPC API of the validation node.
-    pub fn provider(&self) -> &RootProvider<Optimism> {
+    pub const fn provider(&self) -> &RootProvider<Optimism> {
         &self.provider
     }
 
     /// Access to the Engine API of the validation node.
-    pub fn engine_api(&self) -> &EngineApi<Ipc> {
+    pub const fn engine_api(&self) -> &EngineApi<Ipc> {
         &self.engine_api
     }
 }

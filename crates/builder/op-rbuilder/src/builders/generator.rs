@@ -358,7 +358,7 @@ pub(super) struct ResolvePayload<T> {
 }
 
 impl<T> ResolvePayload<T> {
-    pub(super) fn new(future: WaitForValue<T>) -> Self {
+    pub(super) const fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
 }
@@ -412,13 +412,14 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(value) = self.cell.get() {
-            Poll::Ready(value)
-        } else {
-            // Instead of register, we use notified() to get a future
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
+        self.cell.get().map_or_else(
+            || {
+                // Instead of register, we use notified() to get a future
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            Poll::Ready,
+        )
     }
 }
 

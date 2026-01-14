@@ -88,7 +88,7 @@ where
     Pool: TransactionPool + 'static,
     Validator: EngineApiValidator<OpEngineTypes>,
 {
-    pub fn new(engine: OpEngineApi<Provider, OpEngineTypes, Pool, Validator, OpChainSpec>) -> Self {
+    pub const fn new(engine: OpEngineApi<Provider, OpEngineTypes, Pool, Validator, OpChainSpec>) -> Self {
         Self { inner: engine }
     }
 }

@@ -36,7 +36,7 @@ impl<B> BuilderLauncher<B>
 where
     B: PayloadBuilder,
 {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { _builder: PhantomData }
     }
 }

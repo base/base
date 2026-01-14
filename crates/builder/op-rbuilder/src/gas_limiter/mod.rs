@@ -37,11 +37,9 @@ impl AddressGasLimiter {
     /// Check if there's enough gas for this address and consume it. Returns
     /// Ok(()) if there's enough otherwise returns an error.
     pub fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
-        if let Some(inner) = &self.inner {
-            inner.consume_gas(address, gas_requested)
-        } else {
-            Ok(())
-        }
+        self.inner
+            .as_ref()
+            .map_or(Ok(()), |inner| inner.consume_gas(address, gas_requested))
     }
 
     /// Should be called upon each new block. Refills buckets/Garbage collection
@@ -123,7 +121,7 @@ impl AddressGasLimiterInner {
 }
 
 impl TokenBucket {
-    fn new(capacity: u64) -> Self {
+    const fn new(capacity: u64) -> Self {
         Self { capacity, available: capacity }
     }
 }

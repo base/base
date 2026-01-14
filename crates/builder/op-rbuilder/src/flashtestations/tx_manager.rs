@@ -47,7 +47,7 @@ pub struct TxManager {
 }
 
 impl TxManager {
-    pub fn new(
+    pub const fn new(
         tee_service_signer: Signer,
         builder_signer: Signer,
         rpc_url: String,

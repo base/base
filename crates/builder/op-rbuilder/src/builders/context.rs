@@ -84,10 +84,12 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
+    #[allow(clippy::missing_const_for_fn)]
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     pub(super) fn with_extra_ctx(self, extra_ctx: ExtraCtx) -> Self {
         Self { extra_ctx, ..self }
     }
@@ -121,19 +123,18 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the block gas limit to target.
     pub fn block_gas_limit(&self) -> u64 {
-        match self.gas_limit_config.gas_limit() {
-            Some(gas_limit) => gas_limit,
-            None => self.attributes().gas_limit.unwrap_or(self.evm_env.block_env.gas_limit),
-        }
+        self.gas_limit_config.gas_limit().unwrap_or_else(|| {
+            self.attributes().gas_limit.unwrap_or(self.evm_env.block_env.gas_limit)
+        })
     }
 
     /// Returns the block number for the block.
-    pub fn block_number(&self) -> u64 {
+    pub const fn block_number(&self) -> u64 {
         as_u64_saturated!(self.evm_env.block_env.number)
     }
 
     /// Returns the current base fee
-    pub fn base_fee(&self) -> u64 {
+    pub const fn base_fee(&self) -> u64 {
         self.evm_env.block_env.basefee
     }
 

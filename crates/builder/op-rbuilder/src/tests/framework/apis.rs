@@ -84,16 +84,16 @@ impl<P: Protocol> EngineApi<P> {
 
 // http specific
 impl EngineApi<Http> {
-    pub fn with_http(url: &str) -> EngineApi<Http> {
-        EngineApi::<Http> {
+    pub fn with_http(url: &str) -> Self {
+        Self {
             address: Address::Http(url.parse().expect("Invalid URL")),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,
         }
     }
 
-    pub fn with_localhost_port(port: u16) -> EngineApi<Http> {
-        EngineApi::<Http> {
+    pub fn with_localhost_port(port: u16) -> Self {
+        Self {
             address: Address::Http(
                 format!("http://localhost:{port}").parse().expect("Invalid URL"),
             ),
@@ -126,8 +126,8 @@ impl EngineApi<Http> {
 
 // ipc specific
 impl EngineApi<Ipc> {
-    pub fn with_ipc(path: &str) -> EngineApi<Ipc> {
-        EngineApi::<Ipc> {
+    pub fn with_ipc(path: &str) -> Self {
+        Self {
             address: Address::Ipc(path.into()),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,

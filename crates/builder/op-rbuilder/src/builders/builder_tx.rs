@@ -55,12 +55,12 @@ pub struct BuilderTransactionCtx {
 }
 
 impl BuilderTransactionCtx {
-    pub fn set_top_of_block(mut self) -> Self {
+    pub const fn set_top_of_block(mut self) -> Self {
         self.is_top_of_block = true;
         self
     }
 
-    pub fn set_bottom_of_block(mut self) -> Self {
+    pub const fn set_bottom_of_block(mut self) -> Self {
         self.is_top_of_block = false;
         self
     }
@@ -105,36 +105,34 @@ pub enum BuilderTransactionError {
 
 impl From<secp256k1::Error> for BuilderTransactionError {
     fn from(error: secp256k1::Error) -> Self {
-        BuilderTransactionError::SigningError(error)
+        Self::SigningError(error)
     }
 }
 
 impl From<EVMError<ProviderError, OpTransactionError>> for BuilderTransactionError {
     fn from(error: EVMError<ProviderError, OpTransactionError>) -> Self {
-        BuilderTransactionError::EvmExecutionError(Box::new(error))
+        Self::EvmExecutionError(Box::new(error))
     }
 }
 
 impl From<EthTxEnvError> for BuilderTransactionError {
     fn from(error: EthTxEnvError) -> Self {
-        BuilderTransactionError::EvmExecutionError(Box::new(error))
+        Self::EvmExecutionError(Box::new(error))
     }
 }
 
 impl From<BuilderTransactionError> for PayloadBuilderError {
     fn from(error: BuilderTransactionError) -> Self {
         match error {
-            BuilderTransactionError::EvmExecutionError(e) => {
-                PayloadBuilderError::EvmExecutionError(e)
-            }
-            _ => PayloadBuilderError::other(error),
+            BuilderTransactionError::EvmExecutionError(e) => Self::EvmExecutionError(e),
+            _ => Self::other(error),
         }
     }
 }
 
 impl BuilderTransactionError {
     pub fn other(error: impl core::error::Error + Send + Sync + 'static) -> Self {
-        BuilderTransactionError::Other(Box::new(error))
+        Self::Other(Box::new(error))
     }
 
     pub fn msg(msg: impl core::fmt::Display) -> Self {
@@ -378,7 +376,7 @@ pub(super) struct BuilderTxBase<ExtraCtx = ()> {
 }
 
 impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
-    pub(super) fn new(signer: Option<Signer>) -> Self {
+    pub(super) const fn new(signer: Option<Signer>) -> Self {
         Self { signer, _marker: std::marker::PhantomData }
     }
 

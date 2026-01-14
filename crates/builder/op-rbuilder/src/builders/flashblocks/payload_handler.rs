@@ -25,7 +25,7 @@ impl<Client> PayloadHandler<Client>
 where
     Client: ClientBounds + 'static,
 {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         built_rx: mpsc::Receiver<OpBuiltPayload>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,

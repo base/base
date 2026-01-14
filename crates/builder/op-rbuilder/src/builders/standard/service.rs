@@ -35,7 +35,7 @@ impl StandardServiceBuilder {
             evm_config,
             pool,
             ctx.provider().clone(),
-            self.0.clone(),
+            self.0,
             builder_tx,
         );
 

@@ -100,7 +100,7 @@ pub struct FlashblocksExtraCtx {
 }
 
 impl FlashblocksExtraCtx {
-    fn next(
+    const fn next(
         self,
         target_gas_for_batch: u64,
         target_da_for_batch: Option<u64>,
@@ -118,22 +118,22 @@ impl FlashblocksExtraCtx {
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
-    pub(crate) fn flashblock_index(&self) -> u64 {
+    pub(crate) const fn flashblock_index(&self) -> u64 {
         self.extra_ctx.flashblock_index
     }
 
     /// Returns the target flashblock count
-    pub(crate) fn target_flashblock_count(&self) -> u64 {
+    pub(crate) const fn target_flashblock_count(&self) -> u64 {
         self.extra_ctx.target_flashblock_count
     }
 
     /// Returns if the flashblock is the first fallback block
-    pub(crate) fn is_first_flashblock(&self) -> bool {
+    pub(crate) const fn is_first_flashblock(&self) -> bool {
         self.flashblock_index() == 0
     }
 
     /// Returns if the flashblock is the last one
-    pub(crate) fn is_last_flashblock(&self) -> bool {
+    pub(crate) const fn is_last_flashblock(&self) -> bool {
         self.flashblock_index() == self.target_flashblock_count()
     }
 }

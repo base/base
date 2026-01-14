@@ -118,7 +118,7 @@ pub struct Bundle {
 
 impl From<BundleConditionalError> for EthApiError {
     fn from(err: BundleConditionalError) -> Self {
-        EthApiError::InvalidParams(err.to_string())
+        Self::InvalidParams(err.to_string())
     }
 }
 

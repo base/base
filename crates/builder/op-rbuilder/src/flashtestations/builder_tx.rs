@@ -91,7 +91,7 @@ where
         }
     }
 
-    pub fn tee_signer(&self) -> &Signer {
+    pub const fn tee_signer(&self) -> &Signer {
         &self.tee_service_signer
     }
 
@@ -132,7 +132,7 @@ where
         state_provider: impl StateProvider + Clone,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     ) -> Result<(), BuilderTransactionError> {
-        let state = StateProviderDatabase::new(state_provider.clone());
+        let state = StateProviderDatabase::new(state_provider);
         let mut simulation_state =
             State::builder().with_database(state).with_bundle_update().build();
         let mut evm = ctx.evm_config.evm_with_env(&mut simulation_state, ctx.evm_env.clone());

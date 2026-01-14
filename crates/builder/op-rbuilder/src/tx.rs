@@ -288,7 +288,7 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
     where
         Self: Sized,
     {
-        FBPooledTransaction {
+        Self {
             inner: self.inner.with_conditional(conditional),
             reverted_hashes: self.reverted_hashes,
             flashblock_number_min: self.flashblock_number_min,

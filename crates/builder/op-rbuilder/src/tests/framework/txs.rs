@@ -33,32 +33,32 @@ pub struct BundleOpts {
 }
 
 impl BundleOpts {
-    pub fn with_block_number_min(mut self, block_number_min: u64) -> Self {
+    pub const fn with_block_number_min(mut self, block_number_min: u64) -> Self {
         self.block_number_min = Some(block_number_min);
         self
     }
 
-    pub fn with_block_number_max(mut self, block_number_max: u64) -> Self {
+    pub const fn with_block_number_max(mut self, block_number_max: u64) -> Self {
         self.block_number_max = Some(block_number_max);
         self
     }
 
-    pub fn with_flashblock_number_min(mut self, flashblock_number_min: u64) -> Self {
+    pub const fn with_flashblock_number_min(mut self, flashblock_number_min: u64) -> Self {
         self.flashblock_number_min = Some(flashblock_number_min);
         self
     }
 
-    pub fn with_flashblock_number_max(mut self, flashblock_number_max: u64) -> Self {
+    pub const fn with_flashblock_number_max(mut self, flashblock_number_max: u64) -> Self {
         self.flashblock_number_max = Some(flashblock_number_max);
         self
     }
 
-    pub fn with_min_timestamp(mut self, min_timestamp: u64) -> Self {
+    pub const fn with_min_timestamp(mut self, min_timestamp: u64) -> Self {
         self.min_timestamp = Some(min_timestamp);
         self
     }
 
-    pub fn with_max_timestamp(mut self, max_timestamp: u64) -> Self {
+    pub const fn with_max_timestamp(mut self, max_timestamp: u64) -> Self {
         self.max_timestamp = Some(max_timestamp);
         self
     }
@@ -88,12 +88,12 @@ impl TransactionBuilder {
         }
     }
 
-    pub fn with_to(mut self, to: Address) -> Self {
+    pub const fn with_to(mut self, to: Address) -> Self {
         self.tx.to = TxKind::Call(to);
         self
     }
 
-    pub fn with_create(mut self) -> Self {
+    pub const fn with_create(mut self) -> Self {
         self.tx.to = TxKind::Create;
         self
     }
@@ -103,32 +103,32 @@ impl TransactionBuilder {
         self
     }
 
-    pub fn with_signer(mut self, signer: Signer) -> Self {
+    pub const fn with_signer(mut self, signer: Signer) -> Self {
         self.signer = Some(signer);
         self
     }
 
-    pub fn with_chain_id(mut self, chain_id: u64) -> Self {
+    pub const fn with_chain_id(mut self, chain_id: u64) -> Self {
         self.tx.chain_id = chain_id;
         self
     }
 
-    pub fn with_nonce(mut self, nonce: u64) -> Self {
+    pub const fn with_nonce(mut self, nonce: u64) -> Self {
         self.tx.nonce = nonce;
         self
     }
 
-    pub fn with_gas_limit(mut self, gas_limit: u64) -> Self {
+    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
         self.tx.gas_limit = gas_limit;
         self
     }
 
-    pub fn with_max_fee_per_gas(mut self, max_fee_per_gas: u128) -> Self {
+    pub const fn with_max_fee_per_gas(mut self, max_fee_per_gas: u128) -> Self {
         self.tx.max_fee_per_gas = max_fee_per_gas;
         self
     }
 
-    pub fn with_max_priority_fee_per_gas(mut self, max_priority_fee_per_gas: u128) -> Self {
+    pub const fn with_max_priority_fee_per_gas(mut self, max_priority_fee_per_gas: u128) -> Self {
         self.tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
         self
     }
@@ -138,12 +138,12 @@ impl TransactionBuilder {
         self
     }
 
-    pub fn with_bundle(mut self, bundle_opts: BundleOpts) -> Self {
+    pub const fn with_bundle(mut self, bundle_opts: BundleOpts) -> Self {
         self.bundle_opts = Some(bundle_opts);
         self
     }
 
-    pub fn with_reverted_hash(mut self) -> Self {
+    pub const fn with_reverted_hash(mut self) -> Self {
         self.with_reverted_hash = true;
         self
     }
