@@ -198,6 +198,35 @@ const (
 	DefenderWins                     // 2
 )
 
+// ProposalStatus represents the proposal status of a fault dispute game.
+type ProposalStatus uint8
+
+const (
+	Unchallenged                      ProposalStatus = 0
+	Challenged                        ProposalStatus = 1
+	UnchallengedAndValidProofProvided ProposalStatus = 2
+	ChallengedAndValidProofProvided   ProposalStatus = 3
+	ProposalResolved                  ProposalStatus = 4
+)
+
+// String returns the string representation of the ProposalStatus.
+func (s ProposalStatus) String() string {
+	switch s {
+	case Unchallenged:
+		return "Unchallenged"
+	case Challenged:
+		return "Challenged"
+	case UnchallengedAndValidProofProvided:
+		return "UnchallengedAndValidProofProvided"
+	case ChallengedAndValidProofProvided:
+		return "ChallengedAndValidProofProvided"
+	case ProposalResolved:
+		return "ProposalResolved"
+	default:
+		return fmt.Sprintf("ProposalStatus(%d)", s)
+	}
+}
+
 // FdgClient is a client for interacting with the OPSuccinctFaultDisputeGame contract.
 type FdgClient struct {
 	caller *opsbind.OPSuccinctFaultDisputeGameCaller
@@ -258,6 +287,15 @@ func (fdg *FdgClient) IsProven(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("call claimData: %w", err)
 	}
 	return claimData.Prover != common.Address{}, nil
+}
+
+// ProposalStatus returns the proposal status from claimData.
+func (fdg *FdgClient) ProposalStatus(ctx context.Context) (ProposalStatus, error) {
+	claimData, err := fdg.caller.ClaimData(opts(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("call claimData: %w", err)
+	}
+	return ProposalStatus(claimData.Status), nil
 }
 
 // AnchorStateRegistryAddr returns the anchor state registry address.
@@ -361,6 +399,28 @@ func WaitForDefenderWins(ctx context.Context, t devtest.T, fdg *FdgClient) {
 			t.Errorf("timeout waiting for defender win: status=%d (0=InProgress, 1=ChallengerWins, 2=DefenderWins)", lastStatus)
 			t.FailNow()
 		case <-time.After(time.Second):
+		}
+	}
+}
+
+// WaitForProposalStatus waits until the game reaches the target proposal status.
+func WaitForProposalStatus(ctx context.Context, t devtest.T, fdg *FdgClient, target ProposalStatus) {
+	for {
+		status, err := fdg.ProposalStatus(ctx)
+		require.NoError(t, err, "failed to get proposal status")
+
+		if status == target {
+			t.Logger().Info("Game reached target proposal status", "status", status)
+			return
+		}
+
+		t.Logger().Info("Waiting for proposal status...", "current", status, "target", target)
+
+		select {
+		case <-ctx.Done():
+			t.Errorf("timeout waiting for proposal status %d (current: %d)", target, status)
+			t.FailNow()
+		case <-time.After(2 * time.Second):
 		}
 	}
 }
