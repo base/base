@@ -1942,6 +1942,7 @@ dependencies = [
  "jsonrpsee",
  "lru 0.16.3",
  "metrics",
+ "metrics-derive",
  "reth-node-api",
  "reth-primitives-traits",
  "reth-provider",
