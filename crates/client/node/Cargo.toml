@@ -29,11 +29,13 @@ test-utils = [
 	"dep:op-alloy-rpc-types-engine",
 	"dep:reth-ipc",
 	"dep:reth-node-core",
+	"dep:reth-chainspec",
 	"dep:reth-primitives-traits",
 	"dep:reth-rpc-layer",
 	"dep:reth-tasks",
 	"dep:tower",
 	"dep:tracing-subscriber",
+	"dep:url",
 	"reth-chainspec/test-utils",
 	"reth-db/test-utils",
 	"reth-evm/test-utils",
@@ -58,7 +60,6 @@ reth-optimism-txpool.workspace = true
 reth-rpc-api.workspace = true
 reth-rpc-server-types.workspace = true
 reth-transaction-pool.workspace = true
-reth-engine-local.workspace = true
 reth-evm.workspace = true
 reth-node-api.workspace = true
 reth-optimism-forks.workspace = true
@@ -72,7 +73,7 @@ reth-node-core = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 reth-optimism-rpc = { workspace = true, features = ["client"] }
 reth-optimism-primitives.workspace = true
-reth-chainspec.workspace = true
+reth-chainspec = { workspace = true, optional = true }
 reth-tasks = { workspace = true, optional = true }
 
 # alloy
@@ -83,13 +84,11 @@ alloy-rpc-types = { workspace = true, optional = true }
 alloy-rpc-types-engine = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, optional = true }
-alloy-rpc-types-eth.workspace = true
 alloy-signer = { workspace = true, optional = true }
 
 # op-alloy
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
-op-alloy-consensus.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -104,7 +103,7 @@ futures-util.workspace = true
 tracing.workspace = true
 derive_more = { workspace = true, features = ["debug"] }
 tracing-subscriber = { workspace = true, optional = true }
-url.workspace = true
+url = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 
 # tower for middleware

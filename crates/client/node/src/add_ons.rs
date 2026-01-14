@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use base_client_engine::BaseEngineValidatorBuilder;
-use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
@@ -12,7 +11,7 @@ use reth_node_builder::{
         RpcContext, RpcHandle,
     },
 };
-use reth_optimism_forks::{OpHardfork, OpHardforks};
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
 use reth_optimism_payload_builder::{
     OpAttributes, OpPayloadPrimitives,
@@ -21,17 +20,15 @@ use reth_optimism_payload_builder::{
 use reth_optimism_rpc::{
     SequencerClient,
     eth::{OpEthApiBuilder, ext::OpEthExtApi},
-    historical::{HistoricalRpc, HistoricalRpcClient},
     miner::{MinerApiExtServer, OpMinerExtApi},
     witness::OpDebugWitnessApi,
 };
 use reth_optimism_txpool::OpPooledTx;
 use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, L2EthApiExtServer};
 use reth_rpc_server_types::RethRpcModule;
-use reth_tracing::tracing::{debug, info};
+use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;
 use serde::de::DeserializeOwned;
-use url::Url;
 
 /// Add-ons w.r.t. optimism.
 ///
@@ -58,10 +55,6 @@ pub struct BaseAddOns<
     pub sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     pub sequencer_headers: Vec<String>,
-    /// RPC endpoint for historical data.
-    ///
-    /// This can be used to forward pre-bedrock rpc requests (op-mainnet).
-    pub historical_rpc: Option<String>,
     /// Enable transaction conditionals.
     enable_tx_conditional: bool,
     min_suggested_priority_fee: u64,
@@ -80,7 +73,6 @@ where
         gas_limit_config: OpGasLimitConfig,
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
-        historical_rpc: Option<String>,
         enable_tx_conditional: bool,
         min_suggested_priority_fee: u64,
     ) -> Self {
@@ -90,7 +82,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             enable_tx_conditional,
             min_suggested_priority_fee,
         }
@@ -141,7 +132,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             enable_tx_conditional,
             min_suggested_priority_fee,
             ..
@@ -152,7 +142,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             enable_tx_conditional,
             min_suggested_priority_fee,
         )
@@ -171,7 +160,6 @@ where
             sequencer_headers,
             enable_tx_conditional,
             min_suggested_priority_fee,
-            historical_rpc,
             ..
         } = self;
         BaseAddOns::new(
@@ -180,7 +168,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             enable_tx_conditional,
             min_suggested_priority_fee,
         )
@@ -202,7 +189,6 @@ where
             sequencer_headers,
             enable_tx_conditional,
             min_suggested_priority_fee,
-            historical_rpc,
             ..
         } = self;
         BaseAddOns::new(
@@ -211,7 +197,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             enable_tx_conditional,
             min_suggested_priority_fee,
         )
@@ -276,31 +261,8 @@ where
             sequencer_url,
             sequencer_headers,
             enable_tx_conditional,
-            historical_rpc,
             ..
         } = self;
-
-        let maybe_pre_bedrock_historical_rpc = historical_rpc
-            .and_then(|historical_rpc| {
-                ctx.node
-                    .provider()
-                    .chain_spec()
-                    .op_fork_activation(OpHardfork::Bedrock)
-                    .block_number()
-                    .filter(|activation| *activation > 0)
-                    .map(|bedrock_block| (historical_rpc, bedrock_block))
-            })
-            .map(|(historical_rpc, bedrock_block)| -> eyre::Result<_> {
-                info!(target: "reth::cli", %bedrock_block, ?historical_rpc, "Using historical RPC endpoint pre bedrock");
-                let provider = ctx.node.provider().clone();
-                let client = HistoricalRpcClient::new(&historical_rpc)?;
-                let layer = HistoricalRpc::new(provider, client, bedrock_block);
-                Ok(layer)
-            })
-            .transpose()?
-            ;
-
-        let rpc_add_ons = rpc_add_ons.option_layer_rpc_middleware(maybe_pre_bedrock_historical_rpc);
 
         let builder = reth_optimism_payload_builder::OpPayloadBuilder::new(
             ctx.node.pool().clone(),
@@ -425,8 +387,6 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
-    /// RPC endpoint for historical data.
-    historical_rpc: Option<String>,
     /// Data availability configuration for the OP builder.
     da_config: Option<OpDAConfig>,
     /// Gas limit configuration for the OP builder.
@@ -441,8 +401,6 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     rpc_middleware: RpcMiddleware,
     /// Optional tokio runtime to use for the RPC server.
     tokio_runtime: Option<tokio::runtime::Handle>,
-    /// A URL pointing to a secure websocket service that streams out flashblocks.
-    flashblocks_url: Option<Url>,
 }
 
 impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
@@ -450,7 +408,6 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
         Self {
             sequencer_url: None,
             sequencer_headers: Vec::new(),
-            historical_rpc: None,
             da_config: None,
             gas_limit_config: None,
             enable_tx_conditional: false,
@@ -458,7 +415,6 @@ impl<NetworkT> Default for BaseAddOnsBuilder<NetworkT> {
             _nt: PhantomData,
             rpc_middleware: Identity::new(),
             tokio_runtime: None,
-            flashblocks_url: None,
         }
     }
 }
@@ -500,12 +456,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configures the endpoint for historical RPC forwarding.
-    pub fn with_historical_rpc(mut self, historical_rpc: Option<String>) -> Self {
-        self.historical_rpc = historical_rpc;
-        self
-    }
-
     /// Configures a custom tokio runtime for the RPC server.
     ///
     /// Caution: This runtime must not be created from within asynchronous context.
@@ -519,20 +469,17 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         let Self {
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             da_config,
             gas_limit_config,
             enable_tx_conditional,
             min_suggested_priority_fee,
             tokio_runtime,
             _nt,
-            flashblocks_url,
             ..
         } = self;
         BaseAddOnsBuilder {
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             da_config,
             gas_limit_config,
             enable_tx_conditional,
@@ -540,14 +487,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             _nt,
             rpc_middleware,
             tokio_runtime,
-            flashblocks_url,
         }
-    }
-
-    /// With a URL pointing to a flashblocks secure websocket subscription.
-    pub fn with_flashblocks(mut self, flashblocks_url: Option<Url>) -> Self {
-        self.flashblocks_url = flashblocks_url;
-        self
     }
 }
 
@@ -570,10 +510,8 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             gas_limit_config,
             enable_tx_conditional,
             min_suggested_priority_fee,
-            historical_rpc,
             rpc_middleware,
             tokio_runtime,
-            flashblocks_url,
             ..
         } = self;
 
@@ -582,8 +520,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
                 OpEthApiBuilder::default()
                     .with_sequencer(sequencer_url.clone())
                     .with_sequencer_headers(sequencer_headers.clone())
-                    .with_min_suggested_priority_fee(min_suggested_priority_fee)
-                    .with_flashblocks(flashblocks_url),
+                    .with_min_suggested_priority_fee(min_suggested_priority_fee),
                 PVB::default(),
                 EB::default(),
                 EVB::default(),
@@ -594,7 +531,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             gas_limit_config.unwrap_or_default(),
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             enable_tx_conditional,
             min_suggested_priority_fee,
         )
