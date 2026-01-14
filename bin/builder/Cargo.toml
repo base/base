@@ -1,6 +1,6 @@
 [package]
-name = "op-rbuilder-bin"
-description = "OP-Rbuilder Binary"
+name = "base-builder"
+description = "Base Builder Binary"
 
 version.workspace = true
 edition.workspace = true
