@@ -2,7 +2,7 @@
 //! (tracing subscription and status RPC) on the Base node builder.
 
 use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
-use reth::providers::CanonStateSubscriptions;
+use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
 

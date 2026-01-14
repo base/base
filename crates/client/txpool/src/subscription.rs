@@ -3,8 +3,8 @@
 use futures::StreamExt;
 use reth_node_api::NodePrimitives;
 use reth_provider::CanonStateNotification;
-use reth_transaction_pool::TransactionPool;
 use reth_tracing::tracing::debug;
+use reth_transaction_pool::TransactionPool;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::tracker::Tracker;

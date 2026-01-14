@@ -16,6 +16,7 @@ test-utils = [
 	"base-client-node/test-utils",
 	"dep:derive_more",
 	"dep:eyre",
+	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-evm/test-utils",
 	"reth-primitives/test-utils",

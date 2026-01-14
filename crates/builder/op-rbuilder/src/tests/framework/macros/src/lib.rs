@@ -239,6 +239,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
                 let _guard = tracing::subscriber::set_global_default(subscriber);
                 tracing::info!("{} start", stringify!(#test_name));
 
+                crate::tests::clear_otel_env_vars();
                 let instance = #instance_init;
                 #original_name(instance).await
             }

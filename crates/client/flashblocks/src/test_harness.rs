@@ -21,8 +21,8 @@ use base_client_node::{
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
-use reth_optimism_chainspec::OpChainSpec;
 use reth_chain_state::CanonStateSubscriptions;
+use reth_optimism_chainspec::OpChainSpec;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
