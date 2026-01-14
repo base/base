@@ -3,8 +3,7 @@ use std::collections::HashSet;
 use tracing::info;
 
 use crate::{
-    args::OpRbuilderArgs,
-    gas_limiter::args::GasLimiterArgs,
+    args::{GasLimiterArgs, OpRbuilderArgs},
     tests::{ChainDriverExt, TransactionBuilderExt, setup_test_instance_with_args},
 };
 

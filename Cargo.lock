@@ -1716,6 +1716,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-builder-cli"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "reth-optimism-node",
+ "shellexpand",
+]
+
+[[package]]
 name = "base-bundles"
 version = "0.0.0"
 dependencies = [
@@ -7300,6 +7310,7 @@ dependencies = [
  "alloy-transport-http",
  "anyhow",
  "async-trait",
+ "base-builder-cli",
  "base-bundles",
  "base-flashtypes",
  "chrono",

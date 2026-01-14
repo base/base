@@ -1,11 +1,11 @@
 use std::{cmp::min, sync::Arc, time::Instant};
 
 use alloy_primitives::Address;
+use base_builder_cli::GasLimiterArgs;
 use dashmap::DashMap;
 
-use crate::gas_limiter::{args::GasLimiterArgs, error::GasLimitError, metrics::GasLimiterMetrics};
+use crate::gas_limiter::{error::GasLimitError, metrics::GasLimiterMetrics};
 
-pub mod args;
 pub mod error;
 mod metrics;
 

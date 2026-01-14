@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base-builder-cli.workspace = true
 base-bundles.workspace = true
 base-flashtypes.workspace = true
 

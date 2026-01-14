@@ -13,8 +13,9 @@ use reth_optimism_primitives::OpTransactionSigned;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    args::GasLimiterArgs,
     flashblocks::{BuilderConfig, FlashblocksExtraCtx, OpPayloadBuilderCtx},
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
+    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
     tx_data_store::TxDataStore,

@@ -1,11 +1,11 @@
+// Re-export CLI args from base-builder-cli
+pub use base_builder_cli::{FlashblocksArgs, GasLimiterArgs, OpRbuilderArgs, TelemetryArgs};
 use clap_builder::{CommandFactory, FromArgMatches};
-pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 
 use crate::metrics::{LONG_VERSION, SHORT_VERSION};
 
-mod op;
 mod playground;
 
 /// This trait is used to extend Reth's CLI with additional functionality that
