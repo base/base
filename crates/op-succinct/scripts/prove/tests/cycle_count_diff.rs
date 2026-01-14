@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, fs::File, sync::Arc};
 
 use anyhow::Result;
-use common::post_to_github_pr;
+use common::{post_to_github_pr, DEFAULT_RANGE};
 use op_succinct_host_utils::{
     block_range::get_rolling_block_range,
     fetcher::OPSuccinctDataFetcher,
@@ -10,7 +10,7 @@ use op_succinct_host_utils::{
     witness_generation::WitnessGenerator,
 };
 use op_succinct_proof_utils::initialize_host;
-use op_succinct_prove::{execute_multi, DEFAULT_RANGE};
+use op_succinct_prove::execute_multi;
 
 mod common;
 
