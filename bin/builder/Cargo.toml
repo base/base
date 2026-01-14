@@ -19,7 +19,6 @@ op-rbuilder.workspace = true
 
 # reth
 reth-cli-util.workspace = true
-reth-optimism-cli = { workspace = true, optional = true }
 
 [build-dependencies]
 vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
@@ -28,4 +27,3 @@ vergen-git2.workspace = true
 [features]
 default = [ "jemalloc" ]
 jemalloc = [ "op-rbuilder/jemalloc", "reth-cli-util/jemalloc" ]
-telemetry = [ "op-rbuilder/telemetry", "reth-optimism-cli" ]
