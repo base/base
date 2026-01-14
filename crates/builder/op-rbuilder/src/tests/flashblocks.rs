@@ -1,26 +1,27 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
-use macros::rb_test;
 
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{LocalInstance, TransactionBuilderExt},
+    tests::{setup_test_instance_with_args, TransactionBuilderExt},
 };
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 2000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        flashblocks_fixed: false,
+#[tokio::test]
+async fn smoke_dynamic_base() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 2000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 100,
+            flashblocks_fixed: false,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -41,19 +42,21 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        flashblocks_fixed: false,
+#[tokio::test]
+async fn smoke_dynamic_unichain() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 1000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 100,
+            flashblocks_fixed: false,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -74,19 +77,21 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 50,
-        flashblocks_fixed: true,
+#[tokio::test]
+async fn smoke_classic_unichain() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 1000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 50,
+            flashblocks_fixed: true,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -107,19 +112,21 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 2000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 50,
-        flashblocks_fixed: true,
+#[tokio::test]
+async fn smoke_classic_base() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 2000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 50,
+            flashblocks_fixed: true,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -140,19 +147,21 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        flashblocks_fixed: false,
+#[tokio::test]
+async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 1000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 100,
+            flashblocks_fixed: false,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -175,19 +184,21 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 0,
-        flashblocks_fixed: false,
+#[tokio::test]
+async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 1000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 0,
+            flashblocks_fixed: false,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -206,20 +217,22 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
     flashblocks_listener.stop().await
 }
 
-#[rb_test(flashblocks, args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    flashblocks: FlashblocksArgs {
-        flashblocks_port: 1239,
-        flashblocks_addr: "127.0.0.1".into(),
-        flashblocks_block_time: 200,
-        flashblocks_leeway_time: 100,
-        flashblocks_fixed: false,
-        flashblocks_disable_state_root: true,
+#[tokio::test]
+async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 1000,
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 100,
+            flashblocks_fixed: false,
+            flashblocks_disable_state_root: true,
+            ..Default::default()
+        },
         ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> eyre::Result<()> {
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
 
     // Send a transaction to ensure block has some activity

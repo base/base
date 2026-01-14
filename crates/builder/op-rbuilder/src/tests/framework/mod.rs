@@ -14,6 +14,36 @@ pub use instance::*;
 pub use txs::*;
 pub use utils::*;
 
+use crate::args::OpRbuilderArgs;
+use reth_node_builder::NodeConfig;
+use reth_optimism_chainspec::OpChainSpec;
+
+/// Sets up a test instance with default flashblocks configuration.
+/// This is the simplified replacement for the rb_test macro.
+pub async fn setup_test_instance() -> eyre::Result<LocalInstance> {
+    clear_otel_env_vars();
+    LocalInstance::flashblocks().await
+}
+
+/// Sets up a test instance with custom OpRbuilderArgs.
+/// The flashblocks_port will be automatically set to an available port.
+pub async fn setup_test_instance_with_args(mut args: OpRbuilderArgs) -> eyre::Result<LocalInstance> {
+    clear_otel_env_vars();
+    args.flashblocks.flashblocks_port = get_available_port();
+    LocalInstance::new(args).await
+}
+
+/// Sets up a test instance with custom OpRbuilderArgs and NodeConfig.
+/// The flashblocks_port will be automatically set to an available port.
+pub async fn setup_test_instance_with_config(
+    mut args: OpRbuilderArgs,
+    config: NodeConfig<OpChainSpec>,
+) -> eyre::Result<LocalInstance> {
+    clear_otel_env_vars();
+    args.flashblocks.flashblocks_port = get_available_port();
+    LocalInstance::new_with_config(args, config).await
+}
+
 // anvil default key[1]
 pub const BUILDER_PRIVATE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";

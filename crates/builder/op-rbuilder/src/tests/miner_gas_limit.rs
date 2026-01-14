@@ -1,12 +1,12 @@
 use alloy_provider::Provider;
-use macros::{if_flashblocks, if_standard, rb_test};
 
-use crate::tests::{BlockTransactionsExt, LocalInstance};
+use crate::tests::{BlockTransactionsExt, setup_test_instance};
 
 /// This test ensures that the miner gas limit is respected
 /// We will set the limit to 60,000 and see that the builder will not include any transactions
-#[rb_test]
-async fn miner_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn miner_gas_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     let call =
@@ -26,10 +26,10 @@ async fn miner_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// We will set our limit to 1Mgas and ensure that throttling occurs
 /// There is a deposit transaction for 182,706 gas, and builder transactions are 21,600 gas
 ///
-/// Standard = (785,000 - 182,706 - 21,600) / 53,000 = 10.95 = 10 transactions can fit
 /// Flashblocks = (785,000 - 182,706 - 21,600 - 21,600) / 53,000 = 10.54 = 10 transactions can fit
-#[rb_test]
-async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn block_fill() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     let call = driver
@@ -62,29 +62,20 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     }
     assert!(!block.includes(unfit_tx.tx_hash()), "unfit tx should not be in block");
 
-    if_standard! {
-        assert_eq!(
-            block.transactions.len(),
-            12,
-            "deposit + builder + 15 valid txs should be in the block"
-        );
-    }
-
-    if_flashblocks! {
-        assert_eq!(
-            block.transactions.len(),
-            13,
-            "deposit + builder + 15 valid txs should be in the block"
-        );
-    }
+    assert_eq!(
+        block.transactions.len(),
+        13,
+        "deposit + builder + 10 valid txs should be in the block"
+    );
 
     Ok(())
 }
 
 /// This test ensures that the gasLimit can be reset to the default value
 /// by setting it to 0
-#[rb_test]
-async fn reset_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn reset_gas_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     let call =

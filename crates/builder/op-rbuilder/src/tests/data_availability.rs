@@ -1,12 +1,12 @@
 use alloy_provider::Provider;
-use macros::{if_flashblocks, if_standard, rb_test};
 
-use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance, TransactionBuilderExt};
+use crate::tests::{BlockTransactionsExt, ChainDriverExt, setup_test_instance, TransactionBuilderExt};
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[rb_test]
-async fn tx_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn tx_size_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
@@ -27,8 +27,9 @@ async fn tx_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
 
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[rb_test]
-async fn block_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn block_size_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     // Set block da size to be small, so it won't include tx
@@ -50,8 +51,9 @@ async fn block_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// Size of each transaction is 100
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
 /// We should not forget about builder transaction so we will spawn only 2 regular txs.
-#[rb_test]
-async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn block_fill() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     // Set block big enough so it could fit 3 transactions without tx size limit
@@ -70,21 +72,12 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
-    if_standard! {
-        // Now the first 2 txs will fit into the block
-        assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
-        assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
-        assert!(block.includes(fit_tx_3.tx_hash()), "tx should be in block");
-    }
-
-    if_flashblocks! {
-        // in flashblocks the DA quota is divided by the number of flashblocks
-        // so we will include only one tx in the block because not all of them
-        // will fit within DA quote / flashblocks count.
-        assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
-        assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
-        assert!(!block.includes(fit_tx_3.tx_hash()), "tx should not be in block");
-    }
+    // in flashblocks the DA quota is divided by the number of flashblocks
+    // so we will include only one tx in the block because not all of them
+    // will fit within DA quote / flashblocks count.
+    assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
+    assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
+    assert!(!block.includes(fit_tx_3.tx_hash()), "tx should not be in block");
 
     assert!(!block.includes(unfit_tx_4.tx_hash()), "unfit tx should not be in block");
     assert!(
@@ -99,8 +92,9 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
 /// to the DA footprint limit. The DA footprint is calculated as:
 /// total_da_bytes_used * da_footprint_gas_scalar (stored in blob_gas_used).
 /// This must not exceed the block gas limit, accounting for the builder transaction.
-#[rb_test]
-async fn da_footprint_fills_to_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+#[tokio::test]
+async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
     // DA footprint scalar from JOVIAN_DATA is 400
@@ -148,44 +142,25 @@ async fn da_footprint_fills_to_limit(rbuilder: LocalInstance) -> eyre::Result<()
         gas_limit
     );
 
-    // Verify the block fills up to the DA footprint limit
-    // accounting for builder tx DA contribution
-    if_standard! {
-        for i in 0..8 {
-            assert!(
-                block.includes(&tx_hashes[i]),
-                "tx {} should be included in the block",
-                i
-            );
-        }
-
-        // Verify the last tx doesn't fit due to DA footprint limit
+    // Verify the block fills up to the DA footprint limit (flashblocks mode)
+    for i in 0..7 {
         assert!(
-            !block.includes(&tx_hashes[9]),
-            "tx 9 should not fit in the block due to DA footprint limit"
+            block.includes(&tx_hashes[i]),
+            "tx {} should be included in the block",
+            i
         );
     }
 
-    if_flashblocks! {
-        for i in 0..7 {
-            assert!(
-                block.includes(&tx_hashes[i]),
-                "tx {} should be included in the block",
-                i
-            );
-        }
+    // Verify the last 2 tx doesn't fit due to DA footprint limit
+    assert!(
+        !block.includes(&tx_hashes[8]),
+        "tx 8 should not fit in the block due to DA footprint limit"
+    );
 
-        // Verify the last 2 tx doesn't fit due to DA footprint limit
-        assert!(
-            !block.includes(&tx_hashes[8]),
-            "tx 8 should not fit in the block due to DA footprint limit"
-        );
-
-        assert!(
-            !block.includes(&tx_hashes[9]),
-            "tx 9 should not fit in the block due to DA footprint limit"
-        );
-    }
+    assert!(
+        !block.includes(&tx_hashes[9]),
+        "tx 9 should not fit in the block due to DA footprint limit"
+    );
 
     Ok(())
 }
