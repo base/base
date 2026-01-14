@@ -38,7 +38,7 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     flashblocks::payload::FlashblocksExecutionInfo,
@@ -442,6 +442,12 @@ impl OpPayloadBuilderCtx {
             timestamp: self.attributes().timestamp(),
         };
 
+        // Track the last priority fee to enforce descending order.
+        // Due to a reth bug (fixed in PR #19940), late-arriving high-priority transactions
+        // can break the ordering guarantee. This check ensures we skip out-of-order txs,
+        // deferring them to the next flashblock.
+        let mut last_priority_fee: Option<u128> = None;
+
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
             let conditional = tx.conditional().cloned();
@@ -461,6 +467,25 @@ impl OpPayloadBuilderCtx {
             };
 
             num_txs_considered += 1;
+
+            // Check priority fee ordering - skip if current tx has higher priority than last.
+            // This handles cases where late-arriving high-priority txs break the ordering.
+            if let Some(current_priority) = tx.effective_tip_per_gas(base_fee) {
+                if let Some(last_priority) = last_priority_fee {
+                    if current_priority > last_priority {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            current_priority = current_priority,
+                            last_priority = last_priority,
+                            "Skipping transaction due to priority fee ordering violation"
+                        );
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                }
+                last_priority_fee = Some(current_priority);
+            }
 
             let TxData { metering: _resource_usage, backrun_bundles } =
                 self.tx_data_store.get(&tx_hash);
