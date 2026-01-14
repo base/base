@@ -1,7 +1,7 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool features
 //! (tracing ExEx and status RPC) on the Base node builder.
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
+use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use tracing::info;
 
 use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_exex};
@@ -33,19 +33,20 @@ impl TxPoolExtension {
 
 impl BaseNodeExtension for TxPoolExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+    fn apply(self: Box<Self>, mut builder: BaseBuilder) -> BaseBuilder {
         let config = self.config;
 
-        // Install the tracing ExEx if enabled
-        let logs_enabled = config.tracing_logs_enabled;
-        let builder =
-            builder.install_exex_if(config.tracing_enabled, "tracex", move |ctx| async move {
+        // Install the tracing ExEx if enabled (directly on inner builder - no accumulation needed)
+        if config.tracing_enabled {
+            let logs_enabled = config.tracing_logs_enabled;
+            builder.builder = builder.builder.install_exex("tracex", move |ctx| async move {
                 Ok(tracex_exex(ctx, logs_enabled))
             });
+        }
 
         // Extend with RPC modules
         let sequencer_rpc = config.sequencer_rpc;
-        builder.extend_rpc_modules(move |ctx| {
+        builder.add_rpc_module(move |ctx| {
             info!(message = "Starting Transaction Status RPC");
             let proxy_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status proxy");

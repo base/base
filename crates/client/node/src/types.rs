@@ -11,9 +11,12 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpNode;
 use reth_provider::providers::BlockchainProvider;
 
-type OpNodeTypes = FullNodeTypesAdapter<OpNode, Arc<DatabaseEnv>, OpProvider>;
-type OpComponentsBuilder = <OpNode as Node<OpNodeTypes>>::ComponentsBuilder;
-type OpAddOns = <OpNode as Node<OpNodeTypes>>::AddOns;
+/// Internal alias for the OP node type adapter.
+pub(crate) type OpNodeTypes = FullNodeTypesAdapter<OpNode, Arc<DatabaseEnv>, OpProvider>;
+/// Internal alias for the OP node components builder.
+pub(crate) type OpComponentsBuilder = <OpNode as Node<OpNodeTypes>>::ComponentsBuilder;
+/// Internal alias for the OP node add-ons.
+pub(crate) type OpAddOns = <OpNode as Node<OpNodeTypes>>::AddOns;
 
 /// A [`BlockchainProvider`] instance.
 pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<DatabaseEnv>>>;

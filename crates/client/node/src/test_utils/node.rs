@@ -22,7 +22,7 @@ use reth_optimism_node::{OpNode, args::RollupArgs};
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskManager;
 
-use crate::{BaseNodeExtension, OpProvider, test_utils::engine::EngineApi};
+use crate::{BaseBuilder, BaseNodeExtension, OpProvider, test_utils::engine::EngineApi};
 
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = OpProvider;
@@ -103,8 +103,9 @@ impl LocalNode {
             .on_component_initialized(move |_ctx| Ok(()));
 
         // Apply all extensions
-        let builder =
-            extensions.into_iter().fold(builder, |builder, extension| extension.apply(builder));
+        let builder = extensions
+            .into_iter()
+            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
 
         // Launch with EngineNodeLauncher
         let NodeHandle { node: node_handle, node_exit_future } = builder
@@ -164,6 +165,11 @@ impl LocalNode {
         let url = format!("http://{}", self.http_api_addr);
         let client = RpcClient::builder().http(url.parse()?);
         Ok(RootProvider::<Optimism>::new(client))
+    }
+
+    /// HTTP RPC address for the local node.
+    pub const fn http_addr(&self) -> SocketAddr {
+        self.http_api_addr
     }
 
     /// Build an Engine API client that talks to the node's IPC endpoint.

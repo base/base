@@ -13,7 +13,7 @@ use std::{
 };
 
 use base_client_node::{
-    BaseNodeExtension,
+    BaseBuilder, BaseNodeExtension,
     test_utils::{
         LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing,
     },
@@ -21,10 +21,11 @@ use base_client_node::{
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
+use futures_util::TryStreamExt as _;
+use reth_exex::ExExEvent;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::CanonStateSubscriptions;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::StreamExt;
 
 use crate::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
@@ -107,7 +108,7 @@ impl FlashblocksTestExtension {
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
-    fn apply(self: Box<Self>, builder: base_client_node::OpBuilder) -> base_client_node::OpBuilder {
+    fn apply(self: Box<Self>, mut builder: BaseBuilder) -> BaseBuilder {
         let state = self.inner.state.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
@@ -115,74 +116,74 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let state_for_exex = state.clone();
         let state_for_rpc = state.clone();
 
-        builder
-            .install_exex("flashblocks-canon", move |mut ctx| {
-                let fb = state_for_exex.clone();
-                async move {
-                    Ok(async move {
-                        use reth_exex::ExExEvent;
-                        while let Some(note) = ctx.notifications.try_next().await? {
-                            if let Some(committed) = note.committed_chain() {
-                                let hash = committed.tip().num_hash();
-                                if process_canonical {
-                                    // Many suites drive canonical updates manually to reproduce race conditions, so
-                                    // allowing this to be disabled keeps canonical replay deterministic.
-                                    let chain = Arc::unwrap_or_clone(committed);
-                                    for (_, block) in chain.into_blocks() {
-                                        fb.on_canonical_block_received(block);
-                                    }
+        // Install the canon ExEx (directly on inner builder - no accumulation needed)
+        builder.builder = builder.builder.install_exex("flashblocks-canon", move |mut ctx| {
+            let fb = state_for_exex.clone();
+            async move {
+                Ok(async move {
+                    while let Some(note) = ctx.notifications.try_next().await? {
+                        if let Some(committed) = note.committed_chain() {
+                            let hash = committed.tip().num_hash();
+                            if process_canonical {
+                                // Many suites drive canonical updates manually to reproduce race conditions, so
+                                // allowing this to be disabled keeps canonical replay deterministic.
+                                let chain = Arc::unwrap_or_clone(committed);
+                                for (_, block) in chain.into_blocks() {
+                                    fb.on_canonical_block_received(block);
                                 }
-                                let _ = ctx.events.send(ExExEvent::FinishedHeight(hash));
                             }
+                            let _ = ctx.events.send(ExExEvent::FinishedHeight(hash));
                         }
-                        Ok(())
-                    })
+                    }
+                    Ok(())
+                })
+            }
+        });
+
+        builder.add_rpc_module(move |ctx| {
+            let fb = state_for_rpc;
+            let provider = ctx.provider().clone();
+
+            // Start the state processor with the provider
+            fb.start(provider.clone());
+
+            let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
+                ctx.provider().subscribe_to_canonical_state(),
+            );
+            tokio::spawn(async move {
+                use tokio_stream::StreamExt;
+                while let Some(Ok(notification)) = canon_stream.next().await {
+                    provider.canonical_in_memory_state().notify_canon_state(notification);
                 }
-            })
-            .extend_rpc_modules(move |ctx| {
-                let fb = state_for_rpc;
-                let provider = ctx.provider().clone();
+            });
+            let api_ext = EthApiExt::new(
+                ctx.registry.eth_api().clone(),
+                ctx.registry.eth_handlers().filter.clone(),
+                fb.clone(),
+            );
+            ctx.modules.replace_configured(api_ext.into_rpc())?;
 
-                // Start the state processor with the provider
-                fb.start(provider.clone());
+            // Register eth_subscribe subscription endpoint for flashblocks
+            // Uses replace_configured since eth_subscribe already exists from reth's standard module
+            // Pass eth_api to enable proxying standard subscription types to reth's implementation
+            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
+            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
-                let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
-                    ctx.provider().subscribe_to_canonical_state(),
-                );
-                tokio::spawn(async move {
-                    use tokio_stream::StreamExt;
-                    while let Some(Ok(notification)) = canon_stream.next().await {
-                        provider.canonical_in_memory_state().notify_canon_state(notification);
-                    }
-                });
-                let api_ext = EthApiExt::new(
-                    ctx.registry.eth_api().clone(),
-                    ctx.registry.eth_handlers().filter.clone(),
-                    fb.clone(),
-                );
-                ctx.modules.replace_configured(api_ext.into_rpc())?;
+            let fb_for_task = fb.clone();
+            let mut receiver = receiver
+                .lock()
+                .expect("flashblock receiver mutex poisoned")
+                .take()
+                .expect("flashblock receiver should only be initialized once");
+            tokio::spawn(async move {
+                while let Some((payload, tx)) = receiver.recv().await {
+                    fb_for_task.on_flashblock_received(payload);
+                    let _ = tx.send(());
+                }
+            });
 
-                // Register eth_subscribe subscription endpoint for flashblocks
-                // Uses replace_configured since eth_subscribe already exists from reth's standard module
-                // Pass eth_api to enable proxying standard subscription types to reth's implementation
-                let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
-                ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
-
-                let fb_for_task = fb.clone();
-                let mut receiver = receiver
-                    .lock()
-                    .expect("flashblock receiver mutex poisoned")
-                    .take()
-                    .expect("flashblock receiver should only be initialized once");
-                tokio::spawn(async move {
-                    while let Some((payload, tx)) = receiver.recv().await {
-                        fb_for_task.on_flashblock_received(payload);
-                        let _ = tx.send(());
-                    }
-                });
-
-                Ok(())
-            })
+            Ok(())
+        })
     }
 }
 
