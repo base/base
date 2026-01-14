@@ -100,8 +100,8 @@ impl TransactionBuilder {
         self
     }
 
-    pub const fn with_signer(mut self, signer: Signer) -> Self {
-        self.signer = Some(signer);
+    pub fn with_signer(mut self, signer: &Signer) -> Self {
+        self.signer = Some(signer.clone());
         self
     }
 

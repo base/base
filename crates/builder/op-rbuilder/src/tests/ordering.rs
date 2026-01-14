@@ -22,7 +22,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
     let txs = join_all(accounts.iter().map(|signer| {
         driver
             .create_transaction()
-            .with_signer(*signer)
+            .with_signer(signer)
             .with_max_priority_fee_per_gas(rand::random_range(1..50))
             .send()
     }))

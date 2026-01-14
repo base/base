@@ -18,7 +18,7 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
     // 1. Build target tx first (we need Recovered<OpTxEnvelope> for bundle)
     let target_tx = driver
         .create_transaction()
-        .with_signer(accounts[0])
+        .with_signer(&accounts[0])
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
@@ -34,7 +34,7 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
     //    Both must have priority fee >= target's (20) to pass fee validation
     let backrun_ok = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(50) // High priority - executes first
         .build()
         .await;
@@ -42,7 +42,7 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
 
     let backrun_revert = driver
         .create_transaction()
-        .with_signer(accounts[2])
+        .with_signer(&accounts[2])
         .with_max_priority_fee_per_gas(25) // >= target's 20, but executes second (lower than 50)
         .with_revert() // This tx will revert
         .build()
@@ -116,7 +116,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
     // 1. Build target tx with priority fee 20
     let target_tx = driver
         .create_transaction()
-        .with_signer(accounts[0])
+        .with_signer(&accounts[0])
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
@@ -130,7 +130,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
     //    Two txs: 60 + 50 = 110 total
     let bundle_a_tx1 = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(60)
         .build()
         .await;
@@ -138,7 +138,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
 
     let bundle_a_tx2 = driver
         .create_transaction()
-        .with_signer(accounts[2])
+        .with_signer(&accounts[2])
         .with_max_priority_fee_per_gas(50)
         .build()
         .await;
@@ -148,7 +148,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
     //    Two txs: 30 + 25 = 55 total
     let bundle_b_tx1 = driver
         .create_transaction()
-        .with_signer(accounts[3])
+        .with_signer(&accounts[3])
         .with_max_priority_fee_per_gas(30)
         .build()
         .await;
@@ -156,7 +156,7 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
 
     let bundle_b_tx2 = driver
         .create_transaction()
-        .with_signer(accounts[4])
+        .with_signer(&accounts[4])
         .with_max_priority_fee_per_gas(25)
         .build()
         .await;
@@ -278,7 +278,7 @@ async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
     // 1. Build target tx with HIGH priority fee (100)
     let target_tx = driver
         .create_transaction()
-        .with_signer(accounts[0])
+        .with_signer(&accounts[0])
         .with_max_priority_fee_per_gas(100)
         .build()
         .await;
@@ -294,7 +294,7 @@ async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
     //    - Total: 30 + 20 = 50 < target's 100 → bundle rejected
     let backrun_1 = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(30)
         .build()
         .await;
@@ -302,7 +302,7 @@ async fn backrun_bundle_rejected_low_total_fee() -> eyre::Result<()> {
 
     let backrun_2 = driver
         .create_transaction()
-        .with_signer(accounts[2])
+        .with_signer(&accounts[2])
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
@@ -375,7 +375,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit() -> eyre::Result<()> {
 
     let target_tx = driver
         .create_transaction()
-        .with_signer(accounts[0])
+        .with_signer(&accounts[0])
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
@@ -386,7 +386,7 @@ async fn backrun_bundle_rejected_exceeds_gas_limit() -> eyre::Result<()> {
 
     let backrun = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(50)
         .with_gas_limit(1_000_000)
         .build()
@@ -455,7 +455,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit() -> eyre::Result<()> {
 
     let target_tx = driver
         .create_transaction()
-        .with_signer(accounts[0])
+        .with_signer(&accounts[0])
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
@@ -467,7 +467,7 @@ async fn backrun_bundle_rejected_exceeds_da_limit() -> eyre::Result<()> {
     // Create backrun with large calldata to exceed DA limit
     let backrun = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(50)
         .with_input(vec![0u8; 1000].into())
         .build()
@@ -529,7 +529,7 @@ async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
 
     let target_tx = driver
         .create_transaction()
-        .with_signer(accounts[0])
+        .with_signer(&accounts[0])
         .with_max_priority_fee_per_gas(20)
         .build()
         .await;
@@ -540,7 +540,7 @@ async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
 
     let backrun_tx = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(50)
         .with_nonce(0)
         .build()
@@ -550,7 +550,7 @@ async fn backrun_bundle_invalid_tx_skipped() -> eyre::Result<()> {
     // Send a conflicting tx with same nonce but higher fee - it will be included first
     let conflicting_tx = driver
         .create_transaction()
-        .with_signer(accounts[1])
+        .with_signer(&accounts[1])
         .with_max_priority_fee_per_gas(100)
         .with_nonce(0)
         .send()

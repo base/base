@@ -31,14 +31,14 @@ async fn gas_limiter_blocks_excessive_usage() -> eyre::Result<()> {
     // These transactions should not be throttled
     let tx1 = driver
         .create_transaction()
-        .with_signer(funded_accounts[0])
+        .with_signer(&funded_accounts[0])
         .random_valid_transfer()
         .send()
         .await?;
 
     let tx2 = driver
         .create_transaction()
-        .with_signer(funded_accounts[1])
+        .with_signer(&funded_accounts[1])
         .random_valid_transfer()
         .send()
         .await?;
@@ -55,7 +55,7 @@ async fn gas_limiter_blocks_excessive_usage() -> eyre::Result<()> {
     for i in 0..5 {
         let big_tx = driver
             .create_transaction()
-            .with_signer(funded_accounts[0])
+            .with_signer(&funded_accounts[0])
             .random_big_transaction()
             .send()
             .await?;
@@ -66,7 +66,7 @@ async fn gas_limiter_blocks_excessive_usage() -> eyre::Result<()> {
     // Meanwhile, the other address should not be throttled
     let legit_tx = driver
         .create_transaction()
-        .with_signer(funded_accounts[1])
+        .with_signer(&funded_accounts[1])
         .random_big_transaction()
         .send()
         .await?;
@@ -98,7 +98,7 @@ async fn gas_limiter_blocks_excessive_usage() -> eyre::Result<()> {
 
     let tx_after_refill = driver
         .create_transaction()
-        .with_signer(funded_accounts[0])
+        .with_signer(&funded_accounts[0])
         .random_valid_transfer()
         .send()
         .await?;

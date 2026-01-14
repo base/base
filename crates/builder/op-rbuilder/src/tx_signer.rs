@@ -1,49 +1,49 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use alloy_consensus::SignableTransaction;
-use alloy_primitives::{Address, B256, Signature, U256};
-use k256::sha2::Sha256;
+use alloy_primitives::{Address, B256, Signature};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
+use k256::sha2::{Digest, Sha256};
 use op_alloy_consensus::OpTypedTransaction;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
-use secp256k1::{Message, PublicKey, SECP256K1, Secp256k1, SecretKey, rand::rngs::OsRng};
-use sha3::{Digest, Keccak256};
 
 /// Simple struct to sign txs/messages.
 /// Mainly used to sign payout txs from the builder and to create test data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// This is a wrapper around [`PrivateKeySigner`] that provides convenient
+/// methods for signing OP Stack transactions.
+#[derive(Debug, Clone)]
 pub struct Signer {
+    inner: PrivateKeySigner,
+    /// The cached address of the signer for quick access.
     pub address: Address,
-    pub pubkey: PublicKey,
-    pub secret: SecretKey,
 }
 
+impl PartialEq for Signer {
+    fn eq(&self, other: &Self) -> bool {
+        self.address == other.address
+    }
+}
+
+impl Eq for Signer {}
+
 impl Signer {
-    pub fn try_from_secret(secret: B256) -> Result<Self, secp256k1::Error> {
-        let secret = SecretKey::from_slice(secret.as_ref())?;
-        let pubkey = secret.public_key(SECP256K1);
-        let address = public_key_to_address(&pubkey);
-
-        Ok(Self { address, pubkey, secret })
+    /// Creates a new signer from a secret key.
+    pub fn try_from_secret(secret: B256) -> eyre::Result<Self> {
+        let inner = PrivateKeySigner::from_bytes(&secret)?;
+        let address = inner.address();
+        Ok(Self { inner, address })
     }
 
-    pub fn sign_message(&self, message: B256) -> Result<Signature, secp256k1::Error> {
-        let s = SECP256K1
-            .sign_ecdsa_recoverable(&Message::from_digest_slice(&message[..])?, &self.secret);
-        let (rec_id, data) = s.serialize_compact();
-
-        let signature = Signature::new(
-            U256::try_from_be_slice(&data[..32]).expect("The slice has at most 32 bytes"),
-            U256::try_from_be_slice(&data[32..64]).expect("The slice has at most 32 bytes"),
-            i32::from(rec_id) != 0,
-        );
-        Ok(signature)
+    /// Signs a message hash and returns the signature.
+    pub fn sign_message(&self, message: B256) -> eyre::Result<Signature> {
+        self.inner.sign_hash_sync(&message).map_err(|e| eyre::eyre!("failed to sign message: {e}"))
     }
 
-    pub fn sign_tx(
-        &self,
-        tx: OpTypedTransaction,
-    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
+    /// Signs a transaction and returns the recovered signed transaction.
+    pub fn sign_tx(&self, tx: OpTypedTransaction) -> eyre::Result<Recovered<OpTransactionSigned>> {
         let signature_hash = match &tx {
             OpTypedTransaction::Legacy(tx) => tx.signature_hash(),
             OpTypedTransaction::Eip2930(tx) => tx.signature_hash(),
@@ -56,8 +56,19 @@ impl Signer {
         Ok(Recovered::new_unchecked(signed, self.address))
     }
 
+    /// Creates a random signer.
     pub fn random() -> Self {
-        Self::try_from_secret(B256::random()).expect("failed to create random signer")
+        let inner = PrivateKeySigner::random();
+        let address = inner.address();
+        Self { inner, address }
+    }
+
+    /// Returns the secret key bytes.
+    ///
+    /// # Warning
+    /// This exposes the private key material. Use with caution.
+    pub fn secret_bytes(&self) -> B256 {
+        B256::from_slice(&self.inner.credential().to_bytes())
     }
 }
 
@@ -66,60 +77,39 @@ impl FromStr for Signer {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::try_from_secret(B256::from_str(s)?)
-            .map_err(|e| eyre::eyre!("invalid secret key {:?}", e.to_string()))
     }
 }
 
+/// Thread-safe reference to a [`Signer`].
+///
+/// Use this type when sharing a signer across multiple components.
+/// Cloning is cheap (just an atomic reference count increment).
+pub type SignerRef = Arc<Signer>;
+
+/// Generates a new random signer.
 pub fn generate_signer() -> Signer {
-    let secp = Secp256k1::new();
-
-    // Generate cryptographically secure random private key
-    let private_key = SecretKey::new(&mut OsRng);
-
-    // Derive public key
-    let public_key = PublicKey::from_secret_key(&secp, &private_key);
-
-    // Derive Ethereum address
-    let address = public_key_to_address(&public_key);
-
-    Signer { address, pubkey: public_key, secret: private_key }
+    Signer::random()
 }
 
-/// Converts a public key to an Ethereum address
-pub fn public_key_to_address(public_key: &PublicKey) -> Address {
-    // Get uncompressed public key (65 bytes: 0x04 + 64 bytes)
-    let pubkey_bytes = public_key.serialize_uncompressed();
-
-    // Skip the 0x04 prefix and hash the remaining 64 bytes
-    let hash = Keccak256::digest(&pubkey_bytes[1..65]);
-
-    // Take last 20 bytes as address
-    Address::from_slice(&hash[12..32])
-}
-
-// Generate a key deterministically from a seed for debug and testing
-// Do not use in production
+/// Generates a key deterministically from a seed for debug and testing.
+///
+/// # Warning
+/// Do not use in production.
 pub fn generate_key_from_seed(seed: &str) -> Signer {
-    // Hash the seed
     let mut hasher = Sha256::new();
     hasher.update(seed.as_bytes());
     let hash = hasher.finalize();
 
-    // Create signing key
-    let secp = Secp256k1::new();
-    let private_key = SecretKey::from_slice(&hash).expect("Failed to create private key");
-    let public_key = PublicKey::from_secret_key(&secp, &private_key);
-    let address = public_key_to_address(&public_key);
-
-    Signer { address, pubkey: public_key, secret: private_key }
+    Signer::try_from_secret(B256::from_slice(&hash)).expect("Failed to create signer from seed")
 }
 
 #[cfg(test)]
 mod test {
     use alloy_consensus::{TxEip1559, transaction::SignerRecoverable};
-    use alloy_primitives::{TxKind as TransactionKind, address, fixed_bytes};
+    use alloy_primitives::{TxKind as TransactionKind, U256, address, fixed_bytes};
 
     use super::*;
+
     #[test]
     fn test_sign_transaction() {
         let secret =
@@ -147,32 +137,27 @@ mod test {
     }
 
     #[test]
-    fn test_public_key_format() {
-        let secp = Secp256k1::new();
-        let private_key = SecretKey::new(&mut OsRng);
-        let public_key = PublicKey::from_secret_key(&secp, &private_key);
-
-        let pubkey_bytes = public_key.serialize_uncompressed();
-
-        // Verify the public key format
-        assert_eq!(pubkey_bytes.len(), 65, "Uncompressed public key should be 65 bytes");
-        assert_eq!(pubkey_bytes[0], 0x04, "Uncompressed public key should start with 0x04");
-
-        // Verify report data would be 64 bytes
-        let report_data = &pubkey_bytes[1..65];
-        assert_eq!(report_data.len(), 64, "Report data should be exactly 64 bytes");
+    fn test_random_signer() {
+        let signer1 = Signer::random();
+        let signer2 = Signer::random();
+        assert_ne!(signer1.address, signer2.address);
     }
 
     #[test]
-    fn test_deterministic_address_derivation() {
-        // Test with a known private key to ensure deterministic results
-        let secp = Secp256k1::new();
-        let private_key = SecretKey::from_slice(&[0x42; 32]).unwrap();
-        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+    fn test_deterministic_seed() {
+        let signer1 = generate_key_from_seed("test_seed");
+        let signer2 = generate_key_from_seed("test_seed");
+        assert_eq!(signer1.address, signer2.address);
 
-        let address1 = public_key_to_address(&public_key);
-        let address2 = public_key_to_address(&public_key);
+        let signer3 = generate_key_from_seed("different_seed");
+        assert_ne!(signer1.address, signer3.address);
+    }
 
-        assert_eq!(address1, address2, "Address derivation should be deterministic");
+    #[test]
+    fn test_secret_bytes_roundtrip() {
+        let signer = Signer::random();
+        let secret = signer.secret_bytes();
+        let recovered = Signer::try_from_secret(secret).expect("should recover");
+        assert_eq!(signer.address, recovered.address);
     }
 }

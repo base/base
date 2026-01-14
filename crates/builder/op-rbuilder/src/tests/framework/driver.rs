@@ -64,8 +64,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
     /// Specifies the signer used to sign transactions.
     /// If not specified, a random signer will be used.
-    pub const fn with_signer(mut self, signer: Signer) -> Self {
-        self.signer = Some(signer);
+    pub fn with_signer(mut self, signer: &Signer) -> Self {
+        self.signer = Some(signer.clone());
         self
     }
 
@@ -141,7 +141,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             };
 
             // Create a temporary signer for the deposit
-            let signer = self.signer.unwrap_or_else(Signer::random);
+            let signer = self.signer.clone().unwrap_or_else(Signer::random);
             let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit_tx))?;
             signed_tx.encoded_2718().into()
         };
