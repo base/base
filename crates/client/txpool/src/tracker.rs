@@ -2,10 +2,12 @@
 
 use std::{
     num::NonZeroUsize,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::TxHash;
+use base_flashblocks::PendingBlocks;
 use chrono::Local;
 use lru::LruCache;
 use reth_node_api::{BlockBody, NodePrimitives};
@@ -75,11 +77,23 @@ impl Tracker {
         self.track_committed_chain(&notification.committed());
     }
 
+    /// Parse flashblock updates and track transaction inclusion in flashblocks.
+    pub fn handle_flashblock_notification(&mut self, pending_blocks: Arc<PendingBlocks>) {
+        self.track_flashblock_transactions(&pending_blocks);
+    }
+
     fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
                 self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
             }
+        }
+    }
+
+    fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks) {
+        // Get all transaction hashes from pending blocks
+        for tx_hash in pending_blocks.get_pending_transaction_hashes() {
+            self.transaction_fb_included(tx_hash);
         }
     }
 
@@ -167,6 +181,27 @@ impl Tracker {
             // If a tx is included/dropped, log it now.
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
             Self::record_histogram(time_in_mempool, event);
+        }
+    }
+
+    /// Track a transaction being included in a flashblock.
+    pub fn transaction_fb_included(&mut self, tx_hash: TxHash) {
+        // Only track if we have seen this transaction before
+        if let Some(event_log) = self.txs.peek(&tx_hash) {
+            // Record `fb_inclusion_duration` metric if transaction was pending
+            if let Some(pending_time) = event_log.pending_time {
+                let time_pending_to_fb_inclusion = Instant::now().duration_since(pending_time);
+                self.metrics
+                    .fb_inclusion_duration
+                    .record(time_pending_to_fb_inclusion.as_millis() as f64);
+
+                debug!(
+                    target: "tracex",
+                    tx_hash = ?tx_hash,
+                    duration_ms = time_pending_to_fb_inclusion.as_millis(),
+                    "Transaction included in flashblock"
+                );
+            }
         }
     }
 

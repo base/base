@@ -56,10 +56,16 @@ impl From<Args> for Option<FlashblocksConfig> {
 
 impl From<Args> for TxpoolConfig {
     fn from(args: Args) -> Self {
+        let flashblocks_config = args
+            .websocket_url
+            .as_ref()
+            .map(|url| FlashblocksConfig::new(url.clone(), args.max_pending_blocks_depth));
+
         Self {
             tracing_enabled: args.enable_transaction_tracing,
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
             sequencer_rpc: args.rollup_args.sequencer,
+            flashblocks_config,
         }
     }
 }

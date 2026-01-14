@@ -1,7 +1,10 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool features
 //! (tracing subscription and status RPC) on the Base node builder.
 
+use std::sync::Arc;
+
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
@@ -17,6 +20,8 @@ pub struct TxpoolConfig {
     pub tracing_logs_enabled: bool,
     /// Sequencer RPC endpoint for transaction status proxying.
     pub sequencer_rpc: Option<String>,
+    /// Optional Flashblocks configuration (includes state).
+    pub flashblocks_config: Option<FlashblocksConfig>,
 }
 
 /// Helper struct that wires the transaction pool features into the node builder.
@@ -42,6 +47,7 @@ impl BaseNodeExtension for TxPoolExtension {
         let sequencer_rpc = config.sequencer_rpc;
         let tracing_enabled = config.tracing_enabled;
         let logs_enabled = config.tracing_logs_enabled;
+        let flashblocks_config = config.flashblocks_config;
 
         builder.add_rpc_module(move |ctx| {
             info!(message = "Starting Transaction Status RPC");
@@ -54,7 +60,17 @@ impl BaseNodeExtension for TxPoolExtension {
                 let canonical_stream =
                     BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
                 let pool = ctx.pool().clone();
-                tokio::spawn(tracex_subscription(canonical_stream, pool, logs_enabled));
+
+                // Get flashblocks state from config if available
+                let flashblocks_state: Option<Arc<FlashblocksState>> =
+                    flashblocks_config.as_ref().map(|cfg| cfg.state.clone());
+
+                tokio::spawn(tracex_subscription(
+                    canonical_stream,
+                    flashblocks_state,
+                    pool,
+                    logs_enabled,
+                ));
             }
 
             Ok(())
