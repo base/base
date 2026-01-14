@@ -33,7 +33,7 @@ jobs:
       - name: Install native dependencies
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
           version: 1.0
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
@@ -66,7 +66,7 @@ jobs:
       - name: Install native dependencies
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
           version: 1.0
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
@@ -127,7 +127,7 @@ jobs:
       - name: Install native dependencies
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
           version: 1.0
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
@@ -184,7 +184,7 @@ jobs:
       - name: Install native dependencies
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config libtss2-dev
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
           version: 1.0
 
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
