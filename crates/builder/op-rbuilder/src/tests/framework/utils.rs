@@ -18,11 +18,8 @@ use reth_optimism_chainspec::OpChainSpec;
 use super::{FUNDED_PRIVATE_KEY, TransactionBuilder};
 use crate::{
     tests::{
-        BUILDER_PRIVATE_KEY, COMMIT_HASH, FLASHBLOCKS_DEPLOY_KEY, FLASHTESTATION_DEPLOY_KEY,
-        Protocol, SOURCE_LOCATORS, WORKLOAD_ID, block_builder_policy::BlockBuilderPolicy,
-        flashblocks_number_contract::FlashblocksNumber,
-        flashtestation_registry::FlashtestationRegistry, framework::driver::ChainDriver,
-        mock_dcap_attestation::MockAutomataDcapAttestationFee,
+        BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, Protocol,
+        flashblocks_number_contract::FlashblocksNumber, framework::driver::ChainDriver,
     },
     tx_signer::Signer,
 };
@@ -35,14 +32,6 @@ pub trait TransactionBuilderExt {
     fn deploy_flashblock_number_contract(self) -> Self;
     fn init_flashblock_number_contract(self, register_builder: bool) -> Self;
     fn add_authorized_builder(self, builder: Address) -> Self;
-    // flashtestations methods
-    fn deploy_flashtestation_registry_contract(self) -> Self;
-    fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self;
-    fn deploy_builder_policy_contract(self) -> Self;
-    fn init_builder_policy_contract(self, registry_address: Address) -> Self;
-    fn add_workload_to_policy(self) -> Self;
-    fn deploy_mock_dcap_contract(self) -> Self;
-    fn add_mock_quote(self) -> Self;
 }
 
 impl TransactionBuilderExt for TransactionBuilder {
@@ -86,75 +75,6 @@ impl TransactionBuilderExt for TransactionBuilder {
         let calldata = FlashblocksNumber::addBuilderCall { builder }.abi_encode();
 
         self.with_input(calldata.into()).with_signer(flashblocks_number_signer())
-    }
-
-    fn deploy_flashtestation_registry_contract(self) -> Self {
-        self.with_create()
-            .with_input(FlashtestationRegistry::BYTECODE.clone())
-            .with_gas_limit(5_000_000)
-            .with_signer(flashtestations_signer())
-    }
-
-    fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self {
-        let owner = flashtestations_signer();
-
-        let init_data = FlashtestationRegistry::initializeCall {
-            owner: owner.address,
-            _attestationContract: dcap_address,
-        }
-        .abi_encode();
-
-        self.with_input(init_data.into()).with_signer(owner)
-    }
-
-    fn deploy_builder_policy_contract(self) -> Self {
-        self.with_create()
-            .with_input(BlockBuilderPolicy::BYTECODE.clone())
-            .with_gas_limit(3_000_000)
-            .with_signer(flashtestations_signer())
-    }
-
-    fn init_builder_policy_contract(self, registry_address: Address) -> Self {
-        let owner = flashtestations_signer();
-
-        let init_data = BlockBuilderPolicy::initializeCall {
-            _initialOwner: owner.address,
-            _registry: registry_address,
-        }
-        .abi_encode();
-
-        self.with_input(init_data.into()).with_signer(flashtestations_signer())
-    }
-
-    fn add_workload_to_policy(self) -> Self {
-        let workload = BlockBuilderPolicy::addWorkloadToPolicyCall {
-            workloadId: WORKLOAD_ID,
-            commitHash: COMMIT_HASH.to_string(),
-            sourceLocators: SOURCE_LOCATORS.iter().map(|source| source.to_string()).collect(),
-        }
-        .abi_encode();
-
-        self.with_input(workload.into()).with_signer(flashtestations_signer())
-    }
-
-    fn deploy_mock_dcap_contract(self) -> Self {
-        self.with_create()
-            .with_input(MockAutomataDcapAttestationFee::BYTECODE.clone())
-            .with_gas_limit(1_000_000)
-            .with_signer(flashtestations_signer())
-    }
-
-    fn add_mock_quote(self) -> Self {
-        let quote = MockAutomataDcapAttestationFee::setQuoteResultCall {
-            // quote from http://ns31695324.ip-141-94-163.eu:10080/attest for builder key
-            rawQuote: include_bytes!("./artifacts/test-quote.bin").into(),
-            _success: true,
-            // response from verifyAndAttestOnChain from the real automata dcap contract on
-            // unichain sepolia 0x95175096a9B74165BE0ac84260cc14Fc1c0EF5FF
-            _output: include_bytes!("./artifacts/quote-output.bin").into(),
-        }
-        .abi_encode();
-        self.with_input(quote.into()).with_gas_limit(500_000).with_signer(flashtestations_signer())
     }
 }
 
@@ -343,13 +263,4 @@ pub fn flashblocks_number_signer() -> Signer {
             .expect("invalid hardcoded flashblocks number deployer private key"),
     )
     .expect("Failed to create signer from hardcoded flashblocks number deployer private key")
-}
-
-pub fn flashtestations_signer() -> Signer {
-    Signer::try_from_secret(
-        FLASHTESTATION_DEPLOY_KEY
-            .parse()
-            .expect("invalid hardcoded flashtestations deployer private key"),
-    )
-    .expect("Failed to create signer from hardcoded flashtestations deployer private key")
 }

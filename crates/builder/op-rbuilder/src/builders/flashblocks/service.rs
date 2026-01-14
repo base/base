@@ -21,7 +21,6 @@ use crate::{
         },
         generator::BlockPayloadJobGenerator,
     },
-    flashtestations::service::bootstrap_flashtestations,
     metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
@@ -120,43 +119,21 @@ where
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let signer = self.0.builder_signer;
-        let flashtestations_builder_tx = if let Some(builder_key) = signer
-            && self.0.flashtestations_config.flashtestations_enabled
-        {
-            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key)
-                .await
-            {
-                Ok(builder_tx) => Some(builder_tx),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         if let Some(builder_signer) = signer
             && let Some(flashblocks_number_contract_address) =
                 self.0.specific.flashblocks_number_contract_address
         {
-            let use_permit = self.0.specific.flashblocks_number_contract_use_permit;
             self.spawn_payload_builder_service(
                 ctx,
                 pool,
                 FlashblocksNumberBuilderTx::new(
                     builder_signer,
                     flashblocks_number_contract_address,
-                    use_permit,
-                    flashtestations_builder_tx,
                 ),
             )
         } else {
-            self.spawn_payload_builder_service(
-                ctx,
-                pool,
-                FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
-            )
+            self.spawn_payload_builder_service(ctx, pool, FlashblocksBuilderTx::new(signer))
         }
     }
 }
