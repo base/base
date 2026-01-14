@@ -472,18 +472,18 @@ impl OpPayloadBuilderCtx {
 
             // Check priority fee ordering - skip if current tx has higher priority than last.
             if let Some(current_priority) = tx.effective_tip_per_gas(base_fee) {
-                if let Some(last_priority) = last_priority_fee {
-                    if current_priority > last_priority {
-                        warn!(
-                            target: "payload_builder",
-                            tx_hash = ?tx_hash,
-                            current_priority = current_priority,
-                            last_priority = last_priority,
-                            "Skipping transaction due to priority fee ordering violation"
-                        );
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
-                        continue;
-                    }
+                if let Some(last_priority) = last_priority_fee
+                    && current_priority > last_priority
+                {
+                    warn!(
+                        target: "payload_builder",
+                        tx_hash = ?tx_hash,
+                        current_priority = current_priority,
+                        last_priority = last_priority,
+                        "Skipping transaction due to priority fee ordering violation"
+                    );
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
                 }
                 last_priority_fee = Some(current_priority);
             }
