@@ -8,18 +8,19 @@ use reth_node_builder::{
     WithLaunchContext,
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::OpNode;
 use reth_provider::providers::BlockchainProvider;
 
+use crate::node::BaseNode;
+
 /// Internal alias for the OP node type adapter.
-pub(crate) type OpNodeTypes = FullNodeTypesAdapter<OpNode, Arc<DatabaseEnv>, OpProvider>;
+pub(crate) type OpNodeTypes = FullNodeTypesAdapter<BaseNode, Arc<DatabaseEnv>, OpProvider>;
 /// Internal alias for the OP node components builder.
-pub(crate) type OpComponentsBuilder = <OpNode as Node<OpNodeTypes>>::ComponentsBuilder;
+pub(crate) type OpComponentsBuilder = <BaseNode as Node<OpNodeTypes>>::ComponentsBuilder;
 /// Internal alias for the OP node add-ons.
-pub(crate) type OpAddOns = <OpNode as Node<OpNodeTypes>>::AddOns;
+pub(crate) type OpAddOns = <BaseNode as Node<OpNodeTypes>>::AddOns;
 
 /// A [`BlockchainProvider`] instance.
-pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<DatabaseEnv>>>;
+pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, Arc<DatabaseEnv>>>;
 
 /// OP Builder is a [`WithLaunchContext`] reth node builder.
 pub type OpBuilder =
