@@ -1689,6 +1689,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-rpc-types-engine",
  "clap",
+ "rstest",
  "url",
 ]
 

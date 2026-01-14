@@ -8,3 +8,6 @@ pub use l1::L1ClientArgs;
 
 mod l2;
 pub use l2::L2ClientArgs;
+
+mod rpc;
+pub use rpc::RpcArgs;
