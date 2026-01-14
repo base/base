@@ -161,6 +161,8 @@ skip = [
 
     # libp2p dependency chain version mismatch
     "unsigned-varint",
+    "if-addrs",
+    "yamux",
 ]
 
 [sources]

@@ -33,7 +33,7 @@ pub enum ConfigError {
 pub struct L1ConfigFile {
     /// Path to a custom L1 chain configuration file.
     /// (overrides the default configuration from the registry)
-    #[arg(long, visible_alias = "rollup-l1-cfg", env = "KONA_NODE_L1_CHAIN_CONFIG")]
+    #[arg(long, visible_alias = "rollup-l1-cfg", env = "BASE_NODE_L1_CHAIN_CONFIG")]
     pub l1_config_file: Option<PathBuf>,
 }
 
@@ -77,7 +77,7 @@ impl L1ConfigFile {
 pub struct L2ConfigFile {
     /// Path to a custom L2 rollup configuration file.
     /// (overrides the default rollup configuration from the registry)
-    #[arg(long, visible_alias = "rollup-cfg", env = "KONA_NODE_ROLLUP_CONFIG")]
+    #[arg(long, visible_alias = "rollup-cfg", env = "BASE_NODE_ROLLUP_CONFIG")]
     pub l2_config_file: Option<PathBuf>,
 }
 
