@@ -1684,6 +1684,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-client-engine"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "alloy-rpc-types-engine",
+ "derive_more",
+ "eyre",
+ "jsonrpsee",
+ "rayon",
+ "reth-chain-state",
+ "reth-chainspec",
+ "reth-consensus",
+ "reth-engine-primitives",
+ "reth-engine-tree",
+ "reth-errors",
+ "reth-evm",
+ "reth-node-api",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-payload-builder",
+ "reth-payload-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-revm",
+ "reth-rpc",
+ "reth-rpc-api",
+ "reth-rpc-builder",
+ "reth-rpc-engine-api",
+ "reth-rpc-eth-types",
+ "reth-tokio-util",
+ "reth-tracing",
+ "reth-trie",
+ "reth-trie-parallel",
+ "revm-primitives 21.0.2",
+ "tracing",
+]
+
+[[package]]
 name = "base-client-node"
 version = "0.0.0"
 dependencies = [
@@ -1696,6 +1738,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-signer",
+ "base-client-engine",
  "base-primitives",
  "chrono",
  "derive_more",

@@ -1,0 +1,50 @@
+[package]
+name = "base-client-engine"
+description = "Engine validator for Base Node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-evm.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types.workspace = true
+alloy-rpc-types-engine.workspace = true
+jsonrpsee.workspace = true
+rayon.workspace = true
+reth-chain-state.workspace = true
+reth-chainspec.workspace = true
+reth-consensus.workspace = true
+reth-engine-primitives.workspace = true
+reth-engine-tree.workspace = true
+reth-errors.workspace = true
+reth-evm.workspace = true
+reth-node-api.workspace = true
+reth-node-builder.workspace = true
+reth-node-core.workspace = true
+reth-payload-builder.workspace = true
+reth-payload-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-provider.workspace = true
+reth-revm.workspace = true
+reth-rpc.workspace = true
+reth-rpc-api.workspace = true
+reth-rpc-builder.workspace = true
+reth-rpc-engine-api.workspace = true
+reth-rpc-eth-types.workspace = true
+reth-tokio-util.workspace = true
+reth-tracing.workspace = true
+reth-trie.workspace = true
+reth-trie-parallel.workspace = true
+revm-primitives.workspace = true
+tracing.workspace = true
+eyre.workspace = true
+derive_more.workspace = true

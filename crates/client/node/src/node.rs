@@ -2,6 +2,7 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
+use base_client_engine::BaseEngineValidatorBuilder;
 use reth_chainspec::ChainSpecProvider;
 use reth_engine_local::LocalPayloadAttributesBuilder;
 use reth_evm::ConfigureEvm;
@@ -14,9 +15,9 @@ use reth_node_builder::{
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
     node::{FullNodeTypes, NodeTypes},
     rpc::{
-        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
-        EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns,
-        RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
+        EngineApiBuilder, EngineValidatorAddOn, EngineValidatorBuilder, EthApiBuilder, Identity,
+        PayloadValidatorBuilder, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns,
+        RpcContext, RpcHandle,
     },
 };
 use reth_optimism_chainspec::OpChainSpec;
@@ -185,7 +186,7 @@ where
         OpEthApiBuilder,
         OpEngineValidatorBuilder,
         OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        BasicEngineValidatorBuilder<OpEngineValidatorBuilder>,
+        BaseEngineValidatorBuilder<OpEngineValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -231,7 +232,7 @@ pub struct BaseAddOns<
     EthB: EthApiBuilder<N>,
     PVB,
     EB = OpEngineApiBuilder<PVB>,
-    EVB = BasicEngineValidatorBuilder<PVB>,
+    EVB = BaseEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
