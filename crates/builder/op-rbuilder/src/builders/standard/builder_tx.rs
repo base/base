@@ -1,7 +1,6 @@
 use core::fmt::Debug;
 
 use alloy_evm::Database;
-use reth_provider::StateProvider;
 use reth_revm::State;
 use revm::DatabaseRef;
 
@@ -10,7 +9,6 @@ use crate::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
         builder_tx::BuilderTxBase, context::OpPayloadBuilderCtx,
     },
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
 
@@ -30,11 +28,8 @@ impl StandardBuilderTx {
 impl BuilderTransactions for StandardBuilderTx {
     fn simulate_builder_txs(
         &self,
-        _state_provider: impl StateProvider + Clone,
-        _info: &mut ExecutionInfo,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
-        _top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;

@@ -8,7 +8,6 @@ use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, SolEvent, sol};
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth_evm::{ConfigureEvm, precompiles::PrecompilesMap};
-use reth_provider::StateProvider;
 use reth_revm::State;
 use revm::{DatabaseRef, inspector::NoOpInspector};
 use tracing::warn;
@@ -22,7 +21,6 @@ use crate::{
         flashblocks::payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
         get_nonce,
     },
-    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
 
@@ -70,11 +68,8 @@ impl FlashblocksBuilderTx {
 impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for FlashblocksBuilderTx {
     fn simulate_builder_txs(
         &self,
-        _state_provider: impl StateProvider + Clone,
-        _info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         db: &mut State<impl Database + DatabaseRef>,
-        _top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
@@ -166,11 +161,8 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
 {
     fn simulate_builder_txs(
         &self,
-        _state_provider: impl StateProvider + Clone,
-        _info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         db: &mut State<impl Database + DatabaseRef>,
-        _top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
