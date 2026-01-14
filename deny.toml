@@ -46,6 +46,11 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+# Allow workspace crates that don't have explicit license fields
+exceptions = [
+    { name = "macros", allow = ["MIT"] },
+]
+
 [bans]
 deny = ["reth"]
 multiple-versions = "deny"
@@ -141,6 +146,8 @@ skip = [
     "procfs-core",
     "security-framework",
     "send_wrapper",
+    "serde_spanned",
+    "toml",
     "toml_datetime",
     "toml_edit",
     "unicode-width",

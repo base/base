@@ -3,6 +3,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod config;
+pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
+
 mod l1;
 pub use l1::L1ClientArgs;
 

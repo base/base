@@ -17,5 +17,19 @@ url.workspace = true
 clap.workspace = true
 eyre.workspace = true
 
+# Alloy
+alloy-chains.workspace = true
+
+# Kona
+kona-genesis.workspace = true
+kona-registry.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Error Handling
+thiserror.workspace = true
+serde_json.workspace = true
+
 # Base
 base-jwt = { workspace = true, features = ["engine-validation"] }
