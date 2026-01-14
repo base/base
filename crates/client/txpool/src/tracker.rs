@@ -14,7 +14,7 @@ use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 
-use crate::{EventLog, Pool, TxEvent};
+use crate::{EventLog, Metrics, Pool, TxEvent};
 
 /// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug)]
@@ -25,6 +25,8 @@ pub struct Tracker {
     tx_states: LruCache<TxHash, Pool>,
     /// Enable `info` logs for transaction tracing.
     enable_logs: bool,
+    /// Metrics for the `reth_transaction_tracing` component.
+    metrics: Metrics,
 }
 
 impl Tracker {
@@ -37,6 +39,7 @@ impl Tracker {
             txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             enable_logs,
+            metrics: Metrics::default(),
         }
     }
 
@@ -120,6 +123,12 @@ impl Tracker {
                     // The tx is already removed from the cache from `pop`.
                     return;
                 }
+
+                // Set pending_time if transitioning to pending
+                if event == TxEvent::QueuedToPending && event_log.pending_time.is_none() {
+                    event_log.pending_time = Some(Instant::now());
+                }
+
                 event_log.push(Local::now(), event);
                 self.txs.put(tx_hash, event_log);
 
@@ -144,6 +153,16 @@ impl Tracker {
             // Don't add it back to LRU so that we keep the LRU cache size small which will help longer-lived txs
             // but do update the event log with the final event (i.e., included/dropped).
             event_log.push(Local::now(), event);
+
+            // Record inclusion metric if transaction was pending and is now included
+            if event == TxEvent::BlockInclusion {
+                if let Some(pending_time) = event_log.pending_time {
+                    let time_pending_to_inclusion = Instant::now().duration_since(pending_time);
+                    self.metrics
+                        .transaction_inclusion_duration
+                        .record(time_pending_to_inclusion.as_millis() as f64);
+                }
+            }
 
             // If a tx is included/dropped, log it now.
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
@@ -193,7 +212,7 @@ impl Tracker {
         true
     }
 
-    /// Records a metrics histogram.
+    /// Records a metrics histogram. We have to use `histogram!` here because it supports tags.
     fn record_histogram(time_in_mempool: Duration, event: TxEvent) {
         metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
             .record(time_in_mempool.as_millis() as f64);

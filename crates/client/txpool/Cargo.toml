@@ -40,6 +40,7 @@ metrics.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 tracing.workspace = true
 serde.workspace = true
+metrics-derive.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
