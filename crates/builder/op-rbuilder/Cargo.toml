@@ -110,42 +110,42 @@ tokio-util.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
-anyhow = "1"
-opentelemetry.workspace = true
+anyhow.workspace = true
+opentelemetry = { workspace = true, optional = true }
 dashmap.workspace = true
 concurrent-queue.workspace = true
-hex = { workspace = true }
-futures = { workspace = true }
-futures-util = { workspace = true }
+hex.workspace = true
+futures.workspace = true
+futures-util.workspace = true
 
-tower = "0.5"
-time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
-chrono = "0.4"
-uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
-tokio-tungstenite = "0.26.2"
-rand = "0.9.0"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
-shellexpand = "3.1"
-serde_yaml = { version = "0.9" }
-moka = { version = "0.12", features = ["future"] }
-http = "1.0"
-sha3 = "0.10"
-reqwest = "0.12.23"
-k256 = "0.13.4"
+tower.workspace = true
+time.workspace = true
+chrono.workspace = true
+uuid = { workspace = true, features = ["serde", "v5", "v4"] }
+tokio-tungstenite.workspace = true
+rand.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+shellexpand.workspace = true
+serde_yaml.workspace = true
+moka.workspace = true
+http.workspace = true
+sha3.workspace = true
+reqwest.workspace = true
+k256.workspace = true
 
-nanoid = { version = "0.4", optional = true }
+nanoid = { workspace = true, optional = true }
 reth-ipc = { workspace = true, optional = true }
-tar = { version = "0.4", optional = true }
-ctor = { version = "0.4.2", optional = true }
-rlimit = { version = "0.10", optional = true }
-hyper = { version = "1.7.0", features = ["http1"], optional = true }
-hyper-util = { version = "0.1.11", optional = true }
-http-body-util = { version = "0.1.3", optional = true }
-testcontainers = "0.24.0"
-dirs-next = "2.0.0"
+tar = { workspace = true, optional = true }
+ctor = { workspace = true, optional = true }
+rlimit = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+testcontainers.workspace = true
+dirs-next.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-tikv-jemallocator = { version = "0.6", optional = true }
+tikv-jemallocator = { workspace = true, optional = true }
 
 [build-dependencies]
 vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
@@ -155,15 +155,15 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
-tempfile = "3.8"
-nanoid = { version = "0.4" }
-reth-ipc = { workspace = true }
+tempfile.workspace = true
+nanoid.workspace = true
+reth-ipc.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
-ctor = "0.4.2"
-rlimit = { version = "0.10" }
-hyper = { version = "1.7.0", features = ["http1"] }
-hyper-util = { version = "0.1.11" }
-http-body-util = { version = "0.1.3" }
+ctor.workspace = true
+rlimit.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
 
 [features]
 default = [ "jemalloc" ]
