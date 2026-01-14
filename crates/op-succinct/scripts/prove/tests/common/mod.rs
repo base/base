@@ -1,6 +1,8 @@
 use reqwest::Client;
 use serde_json::json;
 
+pub const DEFAULT_RANGE: u64 = 5;
+
 /// Posts the provided message on the provided PR on Github.
 pub async fn post_to_github_pr(
     owner: &str,
