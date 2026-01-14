@@ -1666,7 +1666,6 @@ name = "base-client-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
- "alloy-rpc-types-engine",
  "base-jwt",
  "clap",
  "eyre",
