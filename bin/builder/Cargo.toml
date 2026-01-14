@@ -13,15 +13,17 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# internal
-op-rbuilder = { path = "../../crates/builder/op-rbuilder" }
+# Workspace
+base-cli-utils.workspace = true
+op-rbuilder.workspace = true
 
 # reth
 reth-cli-util.workspace = true
 reth-optimism-cli = { workspace = true, optional = true }
 
-# misc
-eyre.workspace = true
+[build-dependencies]
+vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
+vergen-git2.workspace = true
 
 [features]
 default = [ "jemalloc" ]

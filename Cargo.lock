@@ -1638,10 +1638,12 @@ dependencies = [
 name = "base-builder"
 version = "0.0.0"
 dependencies = [
- "eyre",
+ "base-cli-utils",
  "op-rbuilder",
  "reth-cli-util",
  "reth-optimism-cli",
+ "vergen",
+ "vergen-git2",
 ]
 
 [[package]]

@@ -60,12 +60,16 @@ base-flashtypes = { path = "crates/shared/flashtypes" }
 base-primitives = { path = "crates/shared/primitives" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-jwt = { path = "crates/shared/jwt" }
+
 # Client
 base-client-cli = { path = "crates/client/cli" }
 base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
+
+# Builder
+op-rbuilder = { path = "crates/builder/op-rbuilder" }
 
 # reth
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
