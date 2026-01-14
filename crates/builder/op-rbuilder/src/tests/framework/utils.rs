@@ -55,7 +55,7 @@ impl TransactionBuilderExt for TransactionBuilder {
         self.with_create()
             .with_input(FlashblocksNumber::BYTECODE.clone())
             .with_gas_limit(2_000_000) // deployment costs ~1.6 million gas
-            .with_signer(flashblocks_number_signer())
+            .with_signer(&flashblocks_number_signer())
     }
 
     fn init_flashblock_number_contract(self, register_builder: bool) -> Self {
@@ -68,13 +68,13 @@ impl TransactionBuilderExt for TransactionBuilder {
         }
         .abi_encode();
 
-        self.with_input(init_data.into()).with_signer(flashblocks_number_signer())
+        self.with_input(init_data.into()).with_signer(&flashblocks_number_signer())
     }
 
     fn add_authorized_builder(self, builder: Address) -> Self {
         let calldata = FlashblocksNumber::addBuilderCall { builder }.abi_encode();
 
-        self.with_input(calldata.into()).with_signer(flashblocks_number_signer())
+        self.with_input(calldata.into()).with_signer(&flashblocks_number_signer())
     }
 }
 

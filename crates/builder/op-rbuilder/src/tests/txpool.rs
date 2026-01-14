@@ -27,7 +27,7 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     let acc_with_priority = accounts.last().unwrap();
 
     for _ in 0..50 {
-        let _ = driver.create_transaction().with_signer(*acc_no_priority).send().await?;
+        let _ = driver.create_transaction().with_signer(acc_no_priority).send().await?;
     }
 
     assert_eq!(
@@ -42,7 +42,7 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     for _ in 0..10 {
         let tx = driver
             .create_transaction()
-            .with_signer(*acc_with_priority)
+            .with_signer(acc_with_priority)
             .with_max_priority_fee_per_gas(10)
             .send()
             .await?;
