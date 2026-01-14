@@ -16,6 +16,7 @@ workspace = true
 # Workspace
 base-cli-utils.workspace = true
 op-rbuilder.workspace = true
+metrics.workspace = true
 
 # reth
 reth-cli-util.workspace = true

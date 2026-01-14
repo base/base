@@ -3,7 +3,23 @@ pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 
-use crate::metrics::{LONG_VERSION, SHORT_VERSION};
+/// Short version string.
+pub const SHORT_VERSION: &str = env!("OP_RBUILDER_SHORT_VERSION");
+
+/// Long version string with additional build info.
+pub const LONG_VERSION: &str = concat!(
+    env!("OP_RBUILDER_LONG_VERSION_0"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_1"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_2"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_3"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_4"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_5"),
+);
 
 mod op;
 mod playground;

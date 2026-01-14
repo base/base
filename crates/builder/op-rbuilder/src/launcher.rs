@@ -16,12 +16,18 @@ use reth_optimism_txpool::OpPooledTransaction;
 use crate::{
     args::{Cli, CliExt, OpRbuilderArgs},
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    metrics::VERSION,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
-pub fn launch() -> Result<()> {
+/// Launches the op-rbuilder node.
+///
+/// The `on_node_started` callback is invoked after the node has been started successfully.
+/// This is typically used to register version metrics.
+pub fn launch<F>(on_node_started: F) -> Result<()>
+where
+    F: Fn() + Send + Sync + 'static,
+{
     let cli = Cli::parsed();
 
     #[cfg(feature = "telemetry")]
@@ -45,27 +51,33 @@ pub fn launch() -> Result<()> {
     }
 
     tracing::info!("Starting OP builder in flashblocks mode");
-    let launcher = BuilderLauncher::new();
+    let launcher = BuilderLauncher::new(on_node_started);
     cli_app.run(launcher)?;
     Ok(())
 }
 
-#[derive(Debug)]
-pub struct BuilderLauncher;
+/// The builder launcher that implements the reth [`Launcher`] trait.
+pub struct BuilderLauncher<F> {
+    on_node_started: F,
+}
 
-impl BuilderLauncher {
-    pub const fn new() -> Self {
-        Self
+impl<F> std::fmt::Debug for BuilderLauncher<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuilderLauncher").finish_non_exhaustive()
     }
 }
 
-impl Default for BuilderLauncher {
-    fn default() -> Self {
-        Self::new()
+impl<F> BuilderLauncher<F> {
+    /// Creates a new [`BuilderLauncher`] with the given callback.
+    pub const fn new(on_node_started: F) -> Self {
+        Self { on_node_started }
     }
 }
 
-impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
+impl<F> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<F>
+where
+    F: Fn() + Send + Sync + 'static,
+{
     async fn entrypoint(
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
@@ -79,6 +91,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
         let tx_data_store = builder_config.tx_data_store.clone();
+        let on_node_started = self.on_node_started;
 
         let mut addons: OpAddOns<
             _,
@@ -119,7 +132,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                 Ok(())
             })
             .on_node_started(move |_ctx| {
-                VERSION.register_version_metrics();
+                on_node_started();
                 Ok(())
             })
             .launch()
