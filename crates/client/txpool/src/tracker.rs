@@ -256,7 +256,31 @@ impl Tracker {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use alloy_primitives::{map::HashMap, Address};
+    use base_client_node::test_utils::TestHarness;
+    use reth_optimism_primitives::OpTransactionSigned;
+    use reth_transaction_pool::test_utils::TransactionBuilder;
+
     use super::*;
+
+    // Test helper to create a transaction
+    fn create_test_transaction() -> OpTransactionSigned {
+        TransactionBuilder::default()
+            .nonce(0)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .to(Address::random())
+            .value(1000)
+            .chain_id(901)
+            .into_eip1559()
+            .as_eip1559()
+            .unwrap()
+            .clone()
+            .into()
+    }
 
     #[test]
     fn test_transaction_inserted_pending() {
@@ -561,5 +585,29 @@ mod tests {
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
+    }
+
+    #[test]
+    fn test_transaction_fb_included_with_pending_time() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Insert a pending transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Verify pending_time is set
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
+        let initial_metric_count = tracker.metrics.fb_inclusion_duration.get_sample_count();
+
+        // Track FB inclusion
+        tracker.transaction_fb_included(tx_hash);
+
+        // Verify transaction is still in cache (FB inclusion doesn't remove it)
+        assert!(tracker.txs.get(&tx_hash).is_some());
+
+        // Verify metric was recorded
+        let final_metric_count = tracker.metrics.fb_inclusion_duration.get_sample_count();
+        assert_eq!(final_metric_count, initial_metric_count + 1);
     }
 }

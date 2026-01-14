@@ -2138,6 +2138,8 @@ dependencies = [
 name = "base-txpool"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
  "base-client-node",
  "base-flashblocks",
@@ -2150,11 +2152,15 @@ dependencies = [
  "lru 0.16.3",
  "metrics",
  "metrics-derive",
+ "op-alloy-consensus",
+ "op-alloy-rpc-types",
  "reth-node-api",
+ "reth-optimism-primitives",
  "reth-primitives-traits",
  "reth-provider",
  "reth-tracing",
  "reth-transaction-pool",
+ "revm-database 9.0.6",
  "serde",
  "serde_json",
  "tokio",

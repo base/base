@@ -48,3 +48,10 @@ eyre.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+base-flashblocks = { workspace = true, features = ["test-utils"] }
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types.workspace = true
+reth-optimism-primitives.workspace = true
+revm-database.workspace = true
