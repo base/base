@@ -12,10 +12,7 @@ use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;
 
-use crate::{
-    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
-    tx_signer::Signer,
-};
+use crate::{gas_limiter::args::GasLimiterArgs, tx_signer::Signer};
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -61,8 +58,6 @@ pub struct OpRbuilderArgs {
     pub flashblocks: FlashblocksArgs,
     #[command(flatten)]
     pub telemetry: TelemetryArgs,
-    #[command(flatten)]
-    pub flashtestations: FlashtestationsArgs,
     #[command(flatten)]
     pub gas_limiter: GasLimiterArgs,
 }
@@ -139,15 +134,6 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
     )]
     pub flashblocks_number_contract_address: Option<Address>,
-
-    /// Use permit signatures if flashtestations is enabled with the flashtestation key
-    /// to increment the flashblocks number
-    #[arg(
-        long = "flashblocks.number-contract-use-permit",
-        env = "FLASHBLOCK_NUMBER_CONTRACT_USE_PERMIT",
-        default_value = "false"
-    )]
-    pub flashblocks_number_contract_use_permit: bool,
 }
 
 impl Default for FlashblocksArgs {

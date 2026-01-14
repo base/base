@@ -40,9 +40,6 @@ pub struct FlashblocksConfig {
     ///
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
     pub flashblocks_number_contract_address: Option<Address>,
-
-    /// whether to use permit signatures for the contract calls
-    pub flashblocks_number_contract_use_permit: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -54,7 +51,6 @@ impl Default for FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             flashblocks_number_contract_address: None,
-            flashblocks_number_contract_use_permit: false,
         }
     }
 }
@@ -79,9 +75,6 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         let flashblocks_number_contract_address =
             args.flashblocks.flashblocks_number_contract_address;
 
-        let flashblocks_number_contract_use_permit =
-            args.flashblocks.flashblocks_number_contract_use_permit;
-
         Ok(Self {
             ws_addr,
             interval,
@@ -89,7 +82,6 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             fixed,
             disable_state_root,
             flashblocks_number_contract_address,
-            flashblocks_number_contract_use_permit,
         })
     }
 }

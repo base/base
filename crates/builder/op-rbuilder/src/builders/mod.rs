@@ -10,7 +10,6 @@ use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     args::OpRbuilderArgs,
-    flashtestations::args::FlashtestationsArgs,
     gas_limiter::args::GasLimiterArgs,
     traits::{NodeBounds, PoolBounds},
     tx_signer::Signer,
@@ -79,10 +78,6 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Secret key of the builder that is used to sign the end of block transaction.
     pub builder_signer: Option<Signer>,
 
-    /// When enabled, this will invoke the flashtestions workflow. This involves a
-    /// bootstrapping step that generates a new pubkey for the TEE service
-    pub flashtestations_config: FlashtestationsArgs,
-
     /// The interval at which blocks are added to the chain.
     /// This is also the frequency at which the builder will be receiving FCU requests from the
     /// sequencer.
@@ -139,7 +134,6 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
                     .as_ref()
                     .map_or_else(|| "None".into(), |signer| signer.address.to_string()),
             )
-            .field("flashtestations", &self.flashtestations_config)
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
@@ -157,7 +151,6 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
     fn default() -> Self {
         Self {
             builder_signer: None,
-            flashtestations_config: FlashtestationsArgs::default(),
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
             da_config: OpDAConfig::default(),
@@ -180,7 +173,6 @@ where
     fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
         Ok(Self {
             builder_signer: args.builder_signer,
-            flashtestations_config: args.flashtestations.clone(),
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),

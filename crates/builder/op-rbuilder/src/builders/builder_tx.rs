@@ -145,23 +145,18 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
     // changes to the db so call new_simulation_state to simulate on a new copy of the state
     fn simulate_builder_txs(
         &self,
-        state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &mut State<impl Database + DatabaseRef>,
-        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
     fn simulate_builder_txs_with_state_copy(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         db: &State<impl Database>,
-        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
-        let mut simulation_state = self.new_simulation_state(state_provider.clone(), db);
-        self.simulate_builder_txs(state_provider, info, ctx, &mut simulation_state, top_of_block)
+        let mut simulation_state = self.new_simulation_state(state_provider, db);
+        self.simulate_builder_txs(ctx, &mut simulation_state)
     }
 
     fn add_builder_txs(
@@ -173,13 +168,8 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         {
-            let builder_txs = self.simulate_builder_txs_with_state_copy(
-                state_provider,
-                info,
-                builder_ctx,
-                db,
-                top_of_block,
-            )?;
+            let builder_txs =
+                self.simulate_builder_txs_with_state_copy(state_provider, builder_ctx, db)?;
 
             let mut evm =
                 builder_ctx.evm_config.evm_with_env(&mut *db, builder_ctx.evm_env.clone());
