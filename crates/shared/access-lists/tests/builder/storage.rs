@@ -44,7 +44,7 @@ fn test_sload_zero_value() {
     // Verify storage read is recorded (slot 0 for `value`)
     let contract_changes = contract_entry.unwrap();
     let slot_0 = U256::ZERO;
-    let has_storage_read = contract_changes.storage_reads.iter().any(|sr| *sr == slot_0);
+    let has_storage_read = contract_changes.storage_reads.contains(&slot_0);
     assert!(has_storage_read, "Contract should have storage read for slot 0 (value)");
 }
 
@@ -61,8 +61,7 @@ fn test_update_one_value() {
             .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
     );
 
-    let mut txs = Vec::new();
-    txs.push(
+    let txs = vec![
         OpTransaction::builder()
             .base(
                 TxEnv::builder()
@@ -81,8 +80,6 @@ fn test_update_one_value() {
                     .gas_limit(100_000),
             )
             .build_fill(),
-    );
-    txs.push(
         OpTransaction::builder()
             .base(
                 TxEnv::builder()
@@ -97,7 +94,7 @@ fn test_update_one_value() {
                     .gas_limit(100_000),
             )
             .build_fill(),
-    );
+    ];
 
     let access_list = execute_txns_build_access_list(txs, Some(overrides), None)
         .expect("access list build should succeed");
@@ -124,7 +121,7 @@ fn test_update_one_value() {
     );
 
     // Verify storage read is recorded
-    let has_storage_read = contract_changes.storage_reads.iter().any(|sr| *sr == slot_0);
+    let has_storage_read = contract_changes.storage_reads.contains(&slot_0);
     assert!(has_storage_read, "Contract should have storage read for slot 0");
 }
 

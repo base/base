@@ -299,7 +299,7 @@ mod tests {
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(chain_spec.clone(), &mut db);
 
-        let builder = UnifiedReceiptBuilder::new(chain_spec.clone());
+        let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_deposit_tx();
         let result = create_success_result();
 

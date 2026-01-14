@@ -137,7 +137,7 @@ fn create_base_flashblock(setup: &TestSetup) -> Flashblock {
         }),
         diff: ExecutionPayloadFlashblockDeltaV1 {
             blob_gas_used: Some(0),
-            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone(), setup.account_deploy_tx.clone()],
+            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX, setup.account_deploy_tx.clone()],
             ..Default::default()
         },
         metadata: Metadata { block_number: 1 },

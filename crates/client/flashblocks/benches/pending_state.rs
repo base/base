@@ -39,6 +39,7 @@ struct BenchSetup {
 }
 
 impl BenchSetup {
+    #[allow(clippy::arc_with_non_send_sync)]
     async fn new(tx_counts: &[usize]) -> Self {
         let harness =
             Arc::new(TestHarness::new().await.expect("flashblocks bench: harness should start"));
@@ -154,12 +155,11 @@ async fn wait_for_pending_state(
 ) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(pending) = state.get_pending_blocks().as_ref() {
-            if pending.latest_block_number() == target_block
-                && pending.latest_flashblock_index() == expected_index
-            {
-                return;
-            }
+        if let Some(pending) = state.get_pending_blocks().as_ref()
+            && pending.latest_block_number() == target_block
+            && pending.latest_flashblock_index() == expected_index
+        {
+            return;
         }
 
         if Instant::now() > deadline {
@@ -219,7 +219,7 @@ fn base_flashblock(
             withdrawals: Vec::new(),
             logs_bloom: Default::default(),
             withdrawals_root: Default::default(),
-            transactions: vec![BLOCK_INFO_TXN.clone()],
+            transactions: vec![BLOCK_INFO_TXN],
             blob_gas_used: Default::default(),
         },
         metadata: Metadata { block_number },

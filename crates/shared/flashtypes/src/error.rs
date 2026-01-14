@@ -31,10 +31,7 @@ mod tests {
     #[case::metadata_parse(FlashblockDecodeError::MetadataParse(serde_json::Error::custom(
         "test"
     )))]
-    #[case::decompress(FlashblockDecodeError::Decompress(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "test"
-    )))]
+    #[case::decompress(FlashblockDecodeError::Decompress(std::io::Error::other("test")))]
     #[case::utf8(FlashblockDecodeError::Utf8(String::from_utf8(vec![0xff, 0xfe]).unwrap_err()))]
     fn test_flashblock_decode_error_display(#[case] error: FlashblockDecodeError) {
         let display = format!("{}", error);

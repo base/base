@@ -1,5 +1,3 @@
-use std::u64;
-
 use alloy_eip7928::{
     AccountChanges, BalanceChange, CodeChange, NonceChange, SlotChanges, StorageChange,
 };
@@ -81,12 +79,12 @@ impl AccountChangesBuilder {
                 .storage_changes
                 .drain()
                 .map(|(slot, sc)| SlotChanges {
-                    slot: slot.into(),
+                    slot,
                     changes: sc
                         .into_iter()
                         .map(|(tx_idx, val)| StorageChange {
                             block_access_index: tx_idx,
-                            new_value: val.into(),
+                            new_value: val,
                         })
                         .collect(),
                 })

@@ -1642,7 +1642,6 @@ dependencies = [
  "op-rbuilder",
  "reth-cli-util",
  "reth-optimism-cli",
- "tracing",
 ]
 
 [[package]]

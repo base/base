@@ -128,7 +128,7 @@ mod tests {
         let alice = PrivateKeySigner::random();
         let bob = PrivateKeySigner::random();
 
-        let tx = create_transaction(alice.clone(), 1, bob.address(), U256::from(10_000));
+        let tx = create_transaction(alice, 1, bob.address(), U256::from(10_000));
         let tx_hash = tx.tx_hash();
         let tx_bytes = tx.encoded_2718();
 
@@ -150,7 +150,7 @@ mod tests {
         let alice = PrivateKeySigner::random();
         let bob = PrivateKeySigner::random();
 
-        let tx = create_transaction(alice.clone(), 1, bob.address(), U256::from(10_000));
+        let tx = create_transaction(alice, 1, bob.address(), U256::from(10_000));
         let tx_bytes = tx.encoded_2718();
 
         let uuid = Uuid::new_v4();
@@ -174,7 +174,7 @@ mod tests {
         let alice = PrivateKeySigner::random();
         let bob = PrivateKeySigner::random();
 
-        let tx = create_transaction(alice.clone(), 1, bob.address(), U256::from(10_000));
+        let tx = create_transaction(alice, 1, bob.address(), U256::from(10_000));
         let tx_hash = tx.tx_hash();
         let tx_bytes = tx.encoded_2718();
 
