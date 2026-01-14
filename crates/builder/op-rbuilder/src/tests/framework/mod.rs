@@ -11,12 +11,12 @@ pub use contracts::*;
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
+use reth_node_builder::NodeConfig;
+use reth_optimism_chainspec::OpChainSpec;
 pub use txs::*;
 pub use utils::*;
 
 use crate::args::OpRbuilderArgs;
-use reth_node_builder::NodeConfig;
-use reth_optimism_chainspec::OpChainSpec;
 
 /// Sets up a test instance with default flashblocks configuration.
 /// This is the simplified replacement for the rb_test macro.
@@ -27,7 +27,9 @@ pub async fn setup_test_instance() -> eyre::Result<LocalInstance> {
 
 /// Sets up a test instance with custom OpRbuilderArgs.
 /// The flashblocks_port will be automatically set to an available port.
-pub async fn setup_test_instance_with_args(mut args: OpRbuilderArgs) -> eyre::Result<LocalInstance> {
+pub async fn setup_test_instance_with_args(
+    mut args: OpRbuilderArgs,
+) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
     args.flashblocks.flashblocks_port = get_available_port();
     LocalInstance::new(args).await

@@ -1,6 +1,8 @@
 use alloy_provider::Provider;
 
-use crate::tests::{BlockTransactionsExt, ChainDriverExt, setup_test_instance, TransactionBuilderExt};
+use crate::tests::{
+    BlockTransactionsExt, ChainDriverExt, TransactionBuilderExt, setup_test_instance,
+};
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
@@ -144,11 +146,7 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
 
     // Verify the block fills up to the DA footprint limit (flashblocks mode)
     for i in 0..7 {
-        assert!(
-            block.includes(&tx_hashes[i]),
-            "tx {} should be included in the block",
-            i
-        );
+        assert!(block.includes(&tx_hashes[i]), "tx {} should be included in the block", i);
     }
 
     // Verify the last 2 tx doesn't fit due to DA footprint limit

@@ -10,7 +10,7 @@ use tracing::info;
 
 use crate::{
     args::OpRbuilderArgs,
-    tests::{setup_test_instance, setup_test_instance_with_args, TransactionBuilderExt},
+    tests::{TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args},
 };
 
 /// This is a smoke test that ensures that transactions are included in blocks
@@ -37,11 +37,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
         // in flashblocks we add an additional transaction on the first
         // flashblocks and then one on the last flashblock
-        assert_eq!(
-            transactions.len(),
-            3,
-            "Empty blocks should have exactly three transactions"
-        );
+        assert_eq!(transactions.len(), 3, "Empty blocks should have exactly three transactions");
     }
 
     // ensure that transactions are included in blocks and each block has all the transactions
@@ -67,12 +63,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         // in flashblocks we add an additional transaction on the first
         // flashblocks and then one on the last flashblock, so it will have
         // one more transaction than the standard builder
-        assert_eq!(
-            txs.len(),
-            3 + count,
-            "Block should have {} transactions",
-            3 + count
-        );
+        assert_eq!(txs.len(), 3 + count, "Block should have {} transactions", 3 + count);
 
         for tx_hash in tx_hashes {
             assert!(
@@ -171,10 +162,7 @@ async fn test_no_tx_pool() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        max_gas_per_txn: Some(25000),
-        ..Default::default()
-    };
+    let args = OpRbuilderArgs { max_gas_per_txn: Some(25000), ..Default::default() };
     let rbuilder = setup_test_instance_with_args(args).await?;
     let driver = rbuilder.driver().await?;
 
@@ -200,11 +188,7 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let txs = block.transactions;
 
-    assert_eq!(
-        txs.len(),
-        4,
-        "Should have 4 transactions"
-    );
+    assert_eq!(txs.len(), 4, "Should have 4 transactions");
 
     // assert we included the tx with gas under limit
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
@@ -240,11 +224,7 @@ async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
     let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
     assert!(inclusion_result.is_some());
 
-    assert_eq!(
-        txs.len(),
-        4,
-        "Should have 4 transactions"
-    );
+    assert_eq!(txs.len(), 4, "Should have 4 transactions");
 
     Ok(())
 }

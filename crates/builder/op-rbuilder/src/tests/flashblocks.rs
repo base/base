@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{setup_test_instance_with_args, TransactionBuilderExt},
+    tests::{TransactionBuilderExt, setup_test_instance_with_args},
 };
 
 #[tokio::test]

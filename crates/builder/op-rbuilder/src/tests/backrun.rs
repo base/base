@@ -4,7 +4,7 @@ use alloy_provider::Provider;
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
 use uuid::Uuid;
 
-use crate::tests::{ChainDriverExt, setup_test_instance, framework::ONE_ETH};
+use crate::tests::{ChainDriverExt, framework::ONE_ETH, setup_test_instance};
 
 /// Tests that backrun bundles are all-or-nothing:
 /// - If any backrun tx in a bundle reverts, the entire bundle is excluded

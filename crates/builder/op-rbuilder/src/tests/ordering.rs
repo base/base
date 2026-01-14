@@ -2,7 +2,7 @@ use alloy_consensus::Transaction;
 use alloy_network::TransactionResponse;
 use futures::{StreamExt, future::join_all, stream};
 
-use crate::tests::{ChainDriverExt, setup_test_instance, framework::ONE_ETH};
+use crate::tests::{ChainDriverExt, framework::ONE_ETH, setup_test_instance};
 
 /// This test ensures that the transactions are ordered by fee priority within each flashblock.
 /// We expect breaks in global ordering that align with flashblock boundaries.
