@@ -7,7 +7,8 @@ use clap::{ArgAction, Parser};
 use kona_registry::OPCHAINS;
 
 use crate::{
-    FileLogConfig, LogConfig, LogFormat, LogRotation, StdoutLogConfig, verbosity_to_level_filter,
+    FileLogConfig, LogConfig, LogFormat, LogRotation, MetricsArgs, StdoutLogConfig,
+    verbosity_to_level_filter,
 };
 
 /// Log-related CLI arguments.
@@ -98,6 +99,10 @@ pub struct GlobalArgs {
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
+
+    /// Prometheus CLI arguments.
+    #[command(flatten)]
+    pub metrics: MetricsArgs,
 }
 
 impl GlobalArgs {
