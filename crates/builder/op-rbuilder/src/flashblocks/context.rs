@@ -49,45 +49,6 @@ use crate::{
     tx_data_store::{TxData, TxDataStore},
 };
 
-#[derive(Debug, Default, Clone)]
-pub struct FlashblocksExtraCtx {
-    /// Current flashblock index
-    pub flashblock_index: u64,
-    /// Target flashblock count per block
-    pub target_flashblock_count: u64,
-    /// Total gas left for the current flashblock
-    pub target_gas_for_batch: u64,
-    /// Total DA bytes left for the current flashblock
-    pub target_da_for_batch: Option<u64>,
-    /// Total DA footprint left for the current flashblock
-    pub target_da_footprint_for_batch: Option<u64>,
-    /// Gas limit per flashblock
-    pub gas_per_batch: u64,
-    /// DA bytes limit per flashblock
-    pub da_per_batch: Option<u64>,
-    /// DA footprint limit per flashblock
-    pub da_footprint_per_batch: Option<u64>,
-    /// Whether to disable state root calculation for each flashblock
-    pub disable_state_root: bool,
-}
-
-impl FlashblocksExtraCtx {
-    pub const fn next(
-        self,
-        target_gas_for_batch: u64,
-        target_da_for_batch: Option<u64>,
-        target_da_footprint_for_batch: Option<u64>,
-    ) -> Self {
-        Self {
-            flashblock_index: self.flashblock_index + 1,
-            target_gas_for_batch,
-            target_da_for_batch,
-            target_da_footprint_for_batch,
-            ..self
-        }
-    }
-}
-
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
 pub struct OpPayloadBuilderCtx {
@@ -109,8 +70,24 @@ pub struct OpPayloadBuilderCtx {
     pub cancel: CancellationToken,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
-    /// Extra context for the payload builder
-    pub extra: FlashblocksExtraCtx,
+    /// Current flashblock index
+    pub flashblock_index: u64,
+    /// Target flashblock count per block
+    pub target_flashblock_count: u64,
+    /// Total gas left for the current flashblock
+    pub target_gas_for_batch: u64,
+    /// Total DA bytes left for the current flashblock
+    pub target_da_for_batch: Option<u64>,
+    /// Total DA footprint left for the current flashblock
+    pub target_da_footprint_for_batch: Option<u64>,
+    /// Gas limit per flashblock
+    pub gas_per_batch: u64,
+    /// DA bytes limit per flashblock
+    pub da_per_batch: Option<u64>,
+    /// DA footprint limit per flashblock
+    pub da_footprint_per_batch: Option<u64>,
+    /// Whether to disable state root calculation for each flashblock
+    pub disable_state_root: bool,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
@@ -124,16 +101,20 @@ impl OpPayloadBuilderCtx {
         Self { cancel, ..self }
     }
 
-    pub(super) fn with_extra_ctx(self, extra: FlashblocksExtraCtx) -> Self {
-        Self { extra, ..self }
-    }
-
-    pub(crate) const fn flashblock_index(&self) -> u64 {
-        self.extra.flashblock_index
-    }
-
-    pub(crate) const fn target_flashblock_count(&self) -> u64 {
-        self.extra.target_flashblock_count
+    /// Updates the target fields for the next flashblock iteration.
+    pub(super) fn with_next_targets(
+        self,
+        target_gas_for_batch: u64,
+        target_da_for_batch: Option<u64>,
+        target_da_footprint_for_batch: Option<u64>,
+    ) -> Self {
+        Self {
+            flashblock_index: self.flashblock_index + 1,
+            target_gas_for_batch,
+            target_da_for_batch,
+            target_da_footprint_for_batch,
+            ..self
+        }
     }
 
     /// Returns the parent block the payload will be build on.

@@ -45,7 +45,7 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 use super::wspub::WebSocketPublisher;
 use crate::{
     flashblocks::{
-        BuilderConfig, FlashblocksExtraCtx,
+        BuilderConfig,
         best_txs::BestFlashblocksTxs,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
@@ -147,13 +147,22 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
+    #[allow(clippy::too_many_arguments)]
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
             OpPayloadBuilderAttributes<op_alloy_consensus::OpTxEnvelope>,
         >,
         cancel: CancellationToken,
-        extra: FlashblocksExtraCtx,
+        flashblock_index: u64,
+        target_flashblock_count: u64,
+        target_gas_for_batch: u64,
+        target_da_for_batch: Option<u64>,
+        target_da_footprint_for_batch: Option<u64>,
+        gas_per_batch: u64,
+        da_per_batch: Option<u64>,
+        da_footprint_per_batch: Option<u64>,
+        disable_state_root: bool,
     ) -> eyre::Result<OpPayloadBuilderCtx> {
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
@@ -197,7 +206,15 @@ where
             da_config: self.config.da_config.clone(),
             gas_limit_config: self.config.gas_limit_config.clone(),
             metrics: Default::default(),
-            extra,
+            flashblock_index,
+            target_flashblock_count,
+            target_gas_for_batch,
+            target_da_for_batch,
+            target_da_footprint_for_batch,
+            gas_per_batch,
+            da_per_batch,
+            da_footprint_per_batch,
+            disable_state_root,
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
             tx_data_store: self.config.tx_data_store.clone(),
@@ -235,11 +252,15 @@ where
             .get_op_payload_builder_ctx(
                 config.clone(),
                 block_cancel.clone(),
-                FlashblocksExtraCtx {
-                    target_flashblock_count: self.config.flashblocks_per_block(),
-                    disable_state_root,
-                    ..Default::default()
-                },
+                0,
+                self.config.flashblocks_per_block(),
+                0,
+                None,
+                None,
+                0,
+                None,
+                None,
+                disable_state_root,
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
@@ -306,7 +327,7 @@ where
             flashblocks_interval = self.config.flashblocks.interval.as_millis(),
         );
         ctx.metrics.reduced_flashblocks_number.record(
-            self.config.flashblocks_per_block().saturating_sub(ctx.target_flashblock_count())
+            self.config.flashblocks_per_block().saturating_sub(ctx.target_flashblock_count)
                 as f64,
         );
         ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
@@ -316,21 +337,21 @@ where
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
 
-        let extra = FlashblocksExtraCtx {
-            flashblock_index: 1,
-            target_flashblock_count: flashblocks_per_block,
-            target_gas_for_batch: gas_per_batch,
-            target_da_for_batch: da_per_batch,
-            gas_per_batch,
-            da_per_batch,
-            da_footprint_per_batch,
-            disable_state_root,
-            target_da_footprint_for_batch: da_footprint_per_batch,
-        };
-
         let mut fb_cancel = block_cancel.child_token();
         let mut ctx = self
-            .get_op_payload_builder_ctx(config, fb_cancel.clone(), extra)
+            .get_op_payload_builder_ctx(
+                config,
+                fb_cancel.clone(),
+                1,
+                flashblocks_per_block,
+                gas_per_batch,
+                da_per_batch,
+                da_footprint_per_batch,
+                gas_per_batch,
+                da_per_batch,
+                da_footprint_per_batch,
+                disable_state_root,
+            )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         // Create best_transaction iterator
@@ -388,7 +409,7 @@ where
             };
             let _entered = fb_span.enter();
 
-            if ctx.flashblock_index() > ctx.target_flashblock_count() {
+            if ctx.flashblock_index > ctx.target_flashblock_count {
                 self.record_flashblocks_metrics(
                     &ctx,
                     &info,
@@ -427,7 +448,7 @@ where
                     error!(
                         target: "payload_builder",
                         "Failed to build flashblock {} for block number {}: {}",
-                        ctx.flashblock_index(),
+                        ctx.flashblock_index,
                         ctx.block_number(),
                         err
                     );
@@ -437,7 +458,8 @@ where
 
             tokio::select! {
                 Some(fb_cancel) = rx.recv() => {
-                    ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
+                    let (target_gas, target_da, target_da_footprint) = next_flashblocks_ctx;
+                    ctx = ctx.with_cancel(fb_cancel).with_next_targets(target_gas, target_da, target_da_footprint);
                 },
                 _ = block_cancel.cancelled() => {
                     self.record_flashblocks_metrics(
@@ -453,6 +475,8 @@ where
         }
     }
 
+    /// Returns `Ok(Some((target_gas, target_da, target_da_footprint)))` for the next flashblock,
+    /// or `Ok(None)` if building should stop.
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
@@ -466,11 +490,11 @@ where
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
         span: &tracing::Span,
-    ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
-        let flashblock_index = ctx.flashblock_index();
-        let target_gas_for_batch = ctx.extra.target_gas_for_batch;
-        let mut target_da_for_batch = ctx.extra.target_da_for_batch;
-        let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
+    ) -> eyre::Result<Option<(u64, Option<u64>, Option<u64>)>> {
+        let flashblock_index = ctx.flashblock_index;
+        let target_gas_for_batch = ctx.target_gas_for_batch;
+        let mut target_da_for_batch = ctx.target_da_for_batch;
+        let mut target_da_footprint_for_batch = ctx.target_da_footprint_for_batch;
 
         info!(
             target: "payload_builder",
@@ -518,7 +542,7 @@ where
             self.record_flashblocks_metrics(
                 ctx,
                 info,
-                ctx.target_flashblock_count(),
+                ctx.target_flashblock_count,
                 span,
                 "Payload building complete, channel closed or job cancelled",
             );
@@ -536,7 +560,7 @@ where
             state,
             ctx,
             info,
-            !ctx.extra.disable_state_root || ctx.attributes().no_tx_pool,
+            !ctx.disable_state_root || ctx.attributes().no_tx_pool,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics.total_block_built_duration.record(total_block_built_duration);
@@ -557,7 +581,7 @@ where
                     self.record_flashblocks_metrics(
                         ctx,
                         info,
-                        ctx.target_flashblock_count(),
+                        ctx.target_flashblock_count,
                         span,
                         "Payload building complete, channel closed or job cancelled",
                     );
@@ -581,7 +605,7 @@ where
                     .record(info.executed_transactions.len() as f64);
 
                 // Update bundle_state for next iteration
-                if let Some(da_limit) = ctx.extra.da_per_batch {
+                if let Some(da_limit) = ctx.da_per_batch {
                     if let Some(da) = target_da_for_batch.as_mut() {
                         *da += da_limit;
                     } else {
@@ -591,19 +615,13 @@ where
                     }
                 }
 
-                let target_gas_for_batch = ctx.extra.target_gas_for_batch + ctx.extra.gas_per_batch;
+                let next_target_gas_for_batch = ctx.target_gas_for_batch + ctx.gas_per_batch;
 
                 if let (Some(footprint), Some(da_footprint_limit)) =
-                    (target_da_footprint_for_batch.as_mut(), ctx.extra.da_footprint_per_batch)
+                    (target_da_footprint_for_batch.as_mut(), ctx.da_footprint_per_batch)
                 {
                     *footprint += da_footprint_limit;
                 }
-
-                let next_extra = ctx.extra.clone().next(
-                    target_gas_for_batch,
-                    target_da_for_batch,
-                    target_da_footprint_for_batch,
-                );
 
                 info!(
                     target: "payload_builder",
@@ -611,10 +629,10 @@ where
                     flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
-                    target_flashblocks = ctx.target_flashblock_count(),
+                    target_flashblocks = ctx.target_flashblock_count,
                 );
 
-                Ok(Some(next_extra))
+                Ok(Some((next_target_gas_for_batch, target_da_for_batch, target_da_footprint_for_batch)))
             }
         }
     }
@@ -629,10 +647,10 @@ where
         message: &str,
     ) {
         ctx.metrics.block_built_success.increment(1);
-        ctx.metrics.flashblock_count.record(ctx.flashblock_index() as f64);
+        ctx.metrics.flashblock_count.record(ctx.flashblock_index as f64);
         ctx.metrics
             .missing_flashblocks_count
-            .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
+            .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index) as f64);
         ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
         ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
@@ -640,10 +658,10 @@ where
             target: "payload_builder",
             message = message,
             flashblocks_per_block = flashblocks_per_block,
-            flashblock_index = ctx.flashblock_index(),
+            flashblock_index = ctx.flashblock_index,
         );
 
-        span.record("flashblock_count", ctx.flashblock_index());
+        span.record("flashblock_count", ctx.flashblock_index);
     }
 
     /// Calculate number of flashblocks.

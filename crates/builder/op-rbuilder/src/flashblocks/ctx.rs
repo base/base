@@ -14,8 +14,8 @@ use reth_optimism_primitives::OpTransactionSigned;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    flashblocks::{BuilderConfig, FlashblocksExtraCtx, OpPayloadBuilderCtx},
-    gas_limiter::AddressGasLimiter,
+    flashblocks::{BuilderConfig, OpPayloadBuilderCtx},
+    gas_limiter::{AddressGasLimiter},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
     tx_data_store::TxDataStore,
@@ -85,7 +85,15 @@ impl OpPayloadSyncerCtx {
             block_env_attributes,
             cancel,
             metrics: self.metrics,
-            extra: FlashblocksExtraCtx::default(),
+            flashblock_index: 0,
+            target_flashblock_count: 0,
+            target_gas_for_batch: 0,
+            target_da_for_batch: None,
+            target_da_footprint_for_batch: None,
+            gas_per_batch: 0,
+            da_per_batch: None,
+            da_footprint_per_batch: None,
+            disable_state_root: false,
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             tx_data_store: self.tx_data_store,

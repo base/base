@@ -16,7 +16,7 @@ pub(crate) mod service;
 pub(crate) mod wspub;
 
 pub use config::FlashblocksConfig;
-pub use context::{FlashblocksExtraCtx, OpPayloadBuilderCtx};
+pub use context::OpPayloadBuilderCtx;
 pub use payload::FlashblocksExecutionInfo;
 pub use service::FlashblocksServiceBuilder;
 
