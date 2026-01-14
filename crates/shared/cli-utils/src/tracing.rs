@@ -78,6 +78,13 @@ impl LogConfig {
         let filter =
             EnvFilter::builder().with_default_directive(self.global_level.into()).from_env_lossy();
 
+        self.init_tracing_subscriber_with_filter(filter)
+    }
+
+    /// Initialize the tracing subscriber with a custom filter.
+    ///
+    /// This sets the global default subscriber. Should only be called once.
+    pub fn init_tracing_subscriber_with_filter(&self, filter: EnvFilter) -> eyre::Result<()> {
         let registry = tracing_subscriber::registry().with(filter);
 
         // Build stdout layer
