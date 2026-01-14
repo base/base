@@ -6,7 +6,8 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::{logs, propagation::TraceContextPropagator, runtime, Resource};
 use tracing_subscriber::{
-    layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, Registry,
+    fmt::format::JsonFields, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+    Registry,
 };
 
 static INIT: OnceLock<Result<()>> = OnceLock::new();
@@ -69,9 +70,13 @@ pub fn setup_logger() {
             match log_format.to_lowercase().as_str() {
                 "json" => {
                     // Initialize with JSON formatting
+                    // Note: fmt_fields(JsonFields::new()) is required to properly serialize span
+                    // fields as JSON. Without it, DefaultFields is used which causes serialization
+                    // errors. See: https://github.com/tokio-rs/tracing/issues/1365
                     Some(Box::new(
                         tracing_subscriber::fmt::layer()
                             .event_format(tracing_subscriber::fmt::format().json())
+                            .fmt_fields(JsonFields::new())
                             .with_filter(build_env_filter()),
                     ))
                 }
