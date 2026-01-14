@@ -421,7 +421,6 @@ where
                 prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
-                *evm_config.block_executor_factory().receipt_builder(),
             );
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {

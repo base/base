@@ -51,7 +51,6 @@ alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-alloy-op-evm.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 
@@ -97,6 +96,7 @@ base-flashblocks = { path = ".", features = ["test-utils"] }
 rstest.workspace = true
 rand.workspace = true
 eyre.workspace = true
+revm = { workspace = true, features = ["std"] }
 reth-db.workspace = true
 once_cell.workspace = true
 reth-provider.workspace = true
