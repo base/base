@@ -20,7 +20,7 @@ pub struct SignerArgs {
     /// An optional flag to specify a local private key for the sequencer to sign unsafe blocks.
     #[arg(
         long = "p2p.sequencer.key",
-        env = "KONA_NODE_P2P_SEQUENCER_KEY",
+        env = "BASE_NODE_P2P_SEQUENCER_KEY",
         conflicts_with = "endpoint"
     )]
     pub sequencer_key: Option<B256>,
@@ -28,7 +28,7 @@ pub struct SignerArgs {
     /// This is mutually exclusive with `p2p.sequencer.key`.
     #[arg(
         long = "p2p.sequencer.key.path",
-        env = "KONA_NODE_P2P_SEQUENCER_KEY_PATH",
+        env = "BASE_NODE_P2P_SEQUENCER_KEY_PATH",
         conflicts_with = "sequencer_key"
     )]
     pub sequencer_key_path: Option<PathBuf>,
@@ -37,30 +37,30 @@ pub struct SignerArgs {
     /// This is required if any of the other signer flags are provided.
     #[arg(
         long = "p2p.signer.endpoint",
-        env = "KONA_NODE_P2P_SIGNER_ENDPOINT",
+        env = "BASE_NODE_P2P_SIGNER_ENDPOINT",
         requires = "address"
     )]
     pub endpoint: Option<Url>,
     /// The address to sign transactions for. Required if `signer.endpoint` is provided.
     #[arg(
         long = "p2p.signer.address",
-        env = "KONA_NODE_P2P_SIGNER_ADDRESS",
+        env = "BASE_NODE_P2P_SIGNER_ADDRESS",
         requires = "endpoint"
     )]
     pub address: Option<Address>,
     /// Headers to pass to the remote signer. Format `key=value`. Value can contain any character
     /// allowed in a HTTP header. When using env vars, split with commas. When using flags one
     /// key value pair per flag.
-    #[arg(long = "p2p.signer.header", env = "KONA_NODE_P2P_SIGNER_HEADER", requires = "endpoint")]
+    #[arg(long = "p2p.signer.header", env = "BASE_NODE_P2P_SIGNER_HEADER", requires = "endpoint")]
     pub header: Vec<String>,
     /// An optional path to CA certificates to be used for the remote signer.
-    #[arg(long = "p2p.signer.tls.ca", env = "KONA_NODE_P2P_SIGNER_TLS_CA", requires = "endpoint")]
+    #[arg(long = "p2p.signer.tls.ca", env = "BASE_NODE_P2P_SIGNER_TLS_CA", requires = "endpoint")]
     pub ca_cert: Option<PathBuf>,
     /// An optional path to the client certificate for the remote signer. If specified,
     /// `signer.tls.key` must also be specified.
     #[arg(
         long = "p2p.signer.tls.cert",
-        env = "KONA_NODE_P2P_SIGNER_TLS_CERT",
+        env = "BASE_NODE_P2P_SIGNER_TLS_CERT",
         requires = "key",
         requires = "endpoint"
     )]
@@ -69,7 +69,7 @@ pub struct SignerArgs {
     /// `signer.tls.cert` must also be specified.
     #[arg(
         long = "p2p.signer.tls.key",
-        env = "KONA_NODE_P2P_SIGNER_TLS_KEY",
+        env = "BASE_NODE_P2P_SIGNER_TLS_KEY",
         requires = "cert",
         requires = "endpoint"
     )]
