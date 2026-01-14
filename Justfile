@@ -14,8 +14,8 @@ alias wc := watch-check
 default:
     @just --list
 
-# Runs all ci checks.
-ci: fix check lychee zepter
+# Runs all ci checks (including builder)
+ci: fix check lychee zepter test-builder check-clippy-builder
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
@@ -151,9 +151,6 @@ fix-clippy-builder:
 # Fixes formatting for builder crates
 format-builder:
     cargo +nightly fmt -p op-rbuilder
-
-# Full builder CI check
-ci-builder: build-builder test-builder check-clippy-builder
 
 # Builds builder release binary
 build-builder-release:
