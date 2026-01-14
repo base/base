@@ -45,9 +45,8 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 use super::wspub::WebSocketPublisher;
 use crate::{
     flashblocks::{
-        BuilderConfig, FlashblocksExtraCtx,
+        BuilderConfig, FlashblocksBuilderTx, FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
-        builder_tx::BuilderTransactions,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
         generator::{BlockCell, BuildArguments, PayloadBuilder},
@@ -79,7 +78,7 @@ pub struct FlashblocksExecutionInfo {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
+pub(super) struct OpPayloadBuilder<Pool, Client> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -97,12 +96,12 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
-    pub builder_tx: BuilderTx,
+    pub builder_tx: FlashblocksBuilderTx,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
+impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     /// `OpPayloadBuilder` constructor.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -110,7 +109,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         pool: Pool,
         client: Client,
         config: BuilderConfig,
-        builder_tx: BuilderTx,
+        builder_tx: FlashblocksBuilderTx,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
@@ -130,12 +129,10 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
     }
 }
 
-impl<Pool, Client, BuilderTx> reth_basic_payload_builder::PayloadBuilder
-    for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> reth_basic_payload_builder::PayloadBuilder for OpPayloadBuilder<Pool, Client>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
-    BuilderTx: Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -158,11 +155,10 @@ where
     }
 }
 
-impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions<FlashblocksExecutionInfo> + Send + Sync,
 {
     fn get_op_payload_builder_ctx(
         &self,
@@ -778,11 +774,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, BuilderTx>
+impl<Pool, Client> PayloadBuilder for OpPayloadBuilder<Pool, Client>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions<FlashblocksExecutionInfo> + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;

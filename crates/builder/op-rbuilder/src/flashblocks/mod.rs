@@ -12,7 +12,6 @@ pub(crate) mod builder_tx;
 pub(crate) mod config;
 pub(crate) mod context;
 pub(crate) mod ctx;
-pub(crate) mod flashblocks_builder_tx;
 pub(crate) mod generator;
 pub(crate) mod payload;
 pub(crate) mod payload_handler;
@@ -20,12 +19,11 @@ pub(crate) mod service;
 pub(crate) mod wspub;
 
 pub use builder_tx::{
-    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, BuilderTxBase,
-    InvalidContractDataError, SimulationSuccessResult, get_balance, get_nonce,
+    BuilderTransactionCtx, BuilderTransactionError, FlashblocksBuilderTx, InvalidContractDataError,
+    SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use config::FlashblocksConfig;
 pub use context::{FlashblocksExtraCtx, OpPayloadBuilderCtx};
-pub use flashblocks_builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx};
 pub use payload::FlashblocksExecutionInfo;
 pub use service::FlashblocksServiceBuilder;
 
