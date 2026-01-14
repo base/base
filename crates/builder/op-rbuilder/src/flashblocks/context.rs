@@ -443,9 +443,11 @@ impl OpPayloadBuilderCtx {
         };
 
         // Track the last priority fee to enforce descending order.
-        // Due to a reth bug (fixed in PR #19940), late-arriving high-priority transactions
-        // can break the ordering guarantee. This check ensures we skip out-of-order txs,
-        // deferring them to the next flashblock.
+        // Due to a reth bug (https://github.com/paradigmxyz/reth/pull/19940), blocked
+        // transactions are discarded instead of saved, breaking nonce chain tracking.
+        // Later transactions from the same sender can't find the blocked one, so they
+        // get processed as if they have no dependencies and may be yielded out of order.
+        // This check skips out-of-order txs, deferring them to the next flashblock.
         let mut last_priority_fee: Option<u128> = None;
 
         while let Some(tx) = best_txs.next(()) {
@@ -469,7 +471,6 @@ impl OpPayloadBuilderCtx {
             num_txs_considered += 1;
 
             // Check priority fee ordering - skip if current tx has higher priority than last.
-            // This handles cases where late-arriving high-priority txs break the ordering.
             if let Some(current_priority) = tx.effective_tip_per_gas(base_fee) {
                 if let Some(last_priority) = last_priority_fee {
                     if current_priority > last_priority {
