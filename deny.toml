@@ -1,3 +1,51 @@
+[advisories]
+# Ignore unmaintained/vulnerable crates that come from upstream dependencies we cannot control
+ignore = [
+    # rustls-pemfile is unmaintained but comes from bollard -> testcontainers (dev dependency)
+    # No safe upgrade available, waiting for upstream to migrate to rustls-pki-types
+    "RUSTSEC-2025-0134",
+
+    # tokio-tar has a PAX header vulnerability but comes from testcontainers (dev dependency)
+    # No safe upgrade available, tokio-tar is archived
+    "RUSTSEC-2025-0111",
+
+    # backoff is unmaintained but comes from rollup-boost -> kona-engine (upstream dependency)
+    # No safe upgrade available
+    "RUSTSEC-2025-0012",
+
+    # bincode is unmaintained but comes from reth-nippy-jar (upstream reth dependency)
+    # No safe upgrade available
+    "RUSTSEC-2025-0141",
+
+    # instant is unmaintained but comes from backoff -> rollup-boost (upstream dependency)
+    # No safe upgrade available
+    "RUSTSEC-2024-0384",
+
+    # paste is unmaintained but widely used in ecosystem (alloy, reth, etc.)
+    # No safe upgrade available
+    "RUSTSEC-2024-0436",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+    "0BSD",
+    "BSL-1.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
 [bans]
 deny = ["reth"]
 multiple-versions = "deny"
@@ -61,7 +109,6 @@ skip = [
     "redox_users",
 
     # Network crates
-    "yamux",
     "tungstenite",
     "tokio-tungstenite",
 
@@ -75,7 +122,20 @@ skip = [
     "cargo_metadata",
     "core-foundation",
     "crossterm",
-    "if-addrs",
+    "gloo-timers",
+    "indexmap",
+    "kona-genesis",
+    "opentelemetry",
+    "opentelemetry-http",
+    "opentelemetry-otlp",
+    "opentelemetry-proto",
+    "opentelemetry_sdk",
+    "prost",
+    "prost-derive",
+    "rustc-hash",
+    "tonic",
+    "tower",
+    "tracing-opentelemetry",
     "openssl-probe",
     "procfs",
     "procfs-core",
@@ -84,6 +144,16 @@ skip = [
     "toml_datetime",
     "toml_edit",
     "unicode-width",
-    "unsigned-varint",
     "webpki-roots",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+# Allow git sources from known upstream repositories
+allow-git = [
+    "https://github.com/paradigmxyz/reth",
+    "https://github.com/op-rs/kona",
+    "https://github.com/flashbots/rollup-boost.git",
 ]

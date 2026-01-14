@@ -15,4 +15,7 @@ workspace = true
 # General
 url.workspace = true
 clap.workspace = true
-alloy-rpc-types-engine.workspace = true
+eyre.workspace = true
+
+# Base
+base-jwt = { workspace = true, features = ["engine-validation"] }
