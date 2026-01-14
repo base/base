@@ -1709,6 +1709,7 @@ name = "base-builder"
 version = "0.0.0"
 dependencies = [
  "base-cli-utils",
+ "metrics",
  "op-rbuilder",
  "reth-cli-util",
  "vergen",
