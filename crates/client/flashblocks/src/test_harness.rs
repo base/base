@@ -13,7 +13,7 @@ use std::{
 };
 
 use base_client_node::{
-    BaseNodeExtension,
+    BaseBuilder, BaseNodeExtension,
     test_utils::{
         LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing,
     },
@@ -107,7 +107,7 @@ impl FlashblocksTestExtension {
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
-    fn apply(self: Box<Self>, builder: base_client_node::OpBuilder) -> base_client_node::OpBuilder {
+    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
         let state = self.inner.state.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
@@ -116,7 +116,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let state_for_rpc = state.clone();
 
         // Start state processor and subscriptions after node is started
-        let builder = builder.on_node_started(move |ctx| {
+        let builder = builder.add_node_started_hook(move |ctx| {
             let provider = ctx.provider().clone();
 
             // Start the state processor with the provider
@@ -152,7 +152,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             Ok(())
         });
 
-        builder.extend_rpc_modules(move |ctx| {
+        builder.add_rpc_module(move |ctx| {
             let fb = state_for_rpc;
 
             let api_ext = EthApiExt::new(

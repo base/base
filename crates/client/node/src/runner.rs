@@ -6,7 +6,7 @@ use reth_optimism_node::{OpNode, args::RollupArgs};
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 
-use crate::{BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};
+use crate::{BaseBuilder, BaseNodeBuilder, BaseNodeExtension, BaseNodeHandle, FromExtensionConfig};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]
@@ -50,8 +50,9 @@ impl BaseNodeRunner {
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let builder =
-            extensions.into_iter().fold(builder, |builder, extension| extension.apply(builder));
+        let builder = extensions
+            .into_iter()
+            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
 
         builder
             .launch_with_fn(|builder| {

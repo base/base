@@ -1,7 +1,7 @@
 //! Contains the [`TxPoolExtension`] which wires up the transaction pool features
 //! (tracing subscription and status RPC) on the Base node builder.
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
+use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
@@ -35,7 +35,7 @@ impl TxPoolExtension {
 
 impl BaseNodeExtension for TxPoolExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
         let config = self.config;
 
         // Extend with RPC modules and optionally start tracing subscription
@@ -43,7 +43,7 @@ impl BaseNodeExtension for TxPoolExtension {
         let tracing_enabled = config.tracing_enabled;
         let logs_enabled = config.tracing_logs_enabled;
 
-        builder.extend_rpc_modules(move |ctx| {
+        builder.add_rpc_module(move |ctx| {
             info!(message = "Starting Transaction Status RPC");
             let proxy_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status proxy");
