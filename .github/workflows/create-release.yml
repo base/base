@@ -16,8 +16,12 @@ on:
           - final
         default: rc
 
+# Permissions:
+# - contents:write is required to push tags (create-tag.sh)
+# - issues:write is required to create release tracking issues (create-issue.sh)
 permissions:
   contents: write
+  issues: write
 
 jobs:
   create-tag:
@@ -52,3 +56,7 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "The [Release workflow](../actions/workflows/release.yml) will now build and publish this release." >> $GITHUB_STEP_SUMMARY
           fi
+
+      - name: Create release tracking issue
+        run: |
+          ./scripts/release/create-issue.sh "${{ inputs.release_branch }}"
