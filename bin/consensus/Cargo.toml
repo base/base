@@ -19,7 +19,7 @@ base-cli-utils.workspace = true
 # CLI
 clap.workspace = true
 eyre.workspace = true
-
+metrics.workspace = true
 
 [build-dependencies]
 vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
