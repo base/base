@@ -57,7 +57,7 @@ reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-optimism-rpc.workspace = true
 reth-tasks.workspace = true
-reth-tracing-otlp = { workspace = true, optional = true }
+reth-tracing-otlp.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -110,7 +110,7 @@ thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
 anyhow = "1"
-opentelemetry = { workspace = true, optional = true }
+opentelemetry.workspace = true
 dashmap.workspace = true
 concurrent-queue.workspace = true
 hex = { workspace = true }
@@ -196,8 +196,6 @@ testing = [
 ]
 
 interop = []
-
-telemetry = [ "opentelemetry", "reth-tracing-otlp" ]
 
 custom-engine-api = []
 

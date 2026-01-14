@@ -24,7 +24,6 @@ use crate::{
 pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
 
-    #[cfg(feature = "telemetry")]
     let telemetry_args = match &cli.command {
         reth_optimism_cli::commands::Commands::Node(node_command) => {
             node_command.ext.telemetry.clone()
@@ -32,13 +31,10 @@ pub fn launch() -> Result<()> {
         _ => Default::default(),
     };
 
-    #[cfg(not(feature = "telemetry"))]
-    let cli_app = cli.configure();
-
-    #[cfg(feature = "telemetry")]
     let mut cli_app = cli.configure();
-    #[cfg(feature = "telemetry")]
-    {
+
+    // Only setup telemetry if an OTLP endpoint is provided
+    if telemetry_args.otlp_endpoint.is_some() {
         use crate::primitives::telemetry::setup_telemetry_layer;
         let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);

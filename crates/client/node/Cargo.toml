@@ -34,11 +34,14 @@ test-utils = [
 	"dep:reth-tasks",
 	"dep:tower",
 	"dep:tracing-subscriber",
+	"reth-chainspec/test-utils",
 	"reth-db/test-utils",
+	"reth-evm/test-utils",
 	"reth-node-builder/test-utils",
 	"reth-optimism-node/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
+	"reth-transaction-pool/test-utils",
 ]
 
 [dependencies]

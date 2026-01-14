@@ -1617,7 +1617,6 @@ dependencies = [
  "base-cli-utils",
  "op-rbuilder",
  "reth-cli-util",
- "reth-optimism-cli",
  "vergen",
  "vergen-git2",
 ]

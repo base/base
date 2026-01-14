@@ -220,10 +220,8 @@ where
         let block_build_start_time = Instant::now();
         let BuildArguments { mut cached_reads, config, cancel: block_cancel } = args;
 
-        // We log only every 100th block to reduce usage
-        let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number.is_multiple_of(self.config.sampling_ratio)
-        {
+        // We log only every Nth block based on sampling ratio to reduce usage
+        let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
             span!(Level::INFO, "build_payload")
         } else {
             tracing::Span::none()
