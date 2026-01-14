@@ -54,7 +54,7 @@ pub fn launch() -> Result<()> {
 pub struct BuilderLauncher;
 
 impl BuilderLauncher {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }

@@ -73,7 +73,7 @@ pub struct FlashblocksExtraCtx {
 }
 
 impl FlashblocksExtraCtx {
-    pub fn next(
+    pub const fn next(
         self,
         target_gas_for_batch: u64,
         target_da_for_batch: Option<u64>,
@@ -131,19 +131,19 @@ impl OpPayloadBuilderCtx {
         Self { extra, ..self }
     }
 
-    pub(crate) fn flashblock_index(&self) -> u64 {
+    pub(crate) const fn flashblock_index(&self) -> u64 {
         self.extra.flashblock_index
     }
 
-    pub(crate) fn target_flashblock_count(&self) -> u64 {
+    pub(crate) const fn target_flashblock_count(&self) -> u64 {
         self.extra.target_flashblock_count
     }
 
-    pub(crate) fn is_first_flashblock(&self) -> bool {
+    pub(crate) const fn is_first_flashblock(&self) -> bool {
         self.flashblock_index() == 0
     }
 
-    pub(crate) fn is_last_flashblock(&self) -> bool {
+    pub(crate) const fn is_last_flashblock(&self) -> bool {
         self.flashblock_index() == self.target_flashblock_count()
     }
 

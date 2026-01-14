@@ -262,7 +262,7 @@ impl FlashblocksBuilderTx {
 
         if ctx.is_last_flashblock() {
             let base_tx = self.simulate_base_builder_tx(ctx, &mut *db)?;
-            builder_txs.extend(base_tx.clone());
+            builder_txs.extend(base_tx);
         }
 
         Ok(builder_txs)
@@ -389,7 +389,7 @@ impl FlashblocksBuilderTx {
         ctx: &OpPayloadBuilderCtx,
         db: &State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
-        let mut simulation_state = self.new_simulation_state(state_provider.clone(), db);
+        let mut simulation_state = self.new_simulation_state(state_provider, db);
         self.simulate_builder_txs(ctx, &mut simulation_state)
     }
 

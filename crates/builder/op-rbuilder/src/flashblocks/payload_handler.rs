@@ -27,7 +27,7 @@ where
     Client: ClientBounds + 'static,
 {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn new(
+    pub(super) const fn new(
         built_rx: mpsc::Receiver<OpBuiltPayload>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,
