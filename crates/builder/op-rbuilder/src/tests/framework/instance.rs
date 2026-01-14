@@ -58,7 +58,7 @@ use crate::{
 /// This is necessary because clap reads env vars for args with `env = "..."` attributes,
 /// and external OTEL env vars (e.g., `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) may contain
 /// values that are incompatible with the CLI's expected values.
-fn clear_otel_env_vars() {
+pub fn clear_otel_env_vars() {
     for key in [
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",
@@ -194,6 +194,7 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the standard builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn standard() -> eyre::Result<Self> {
+        clear_otel_env_vars();
         let args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref node_command) = args.command else { unreachable!() };
         Self::new::<StandardBuilder>(node_command.ext.clone()).await
@@ -202,6 +203,7 @@ impl LocalInstance {
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
+        clear_otel_env_vars();
         let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks.enabled = true;

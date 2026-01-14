@@ -15,7 +15,11 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use crate::{primitives::bundle::Bundle, tests::funded_signer, tx_signer::Signer};
+use crate::{
+    primitives::bundle::{Bundle, BundleResult},
+    tests::funded_signer,
+    tx_signer::Signer,
+};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BundleOpts {
@@ -199,17 +203,10 @@ impl TransactionBuilder {
                 max_timestamp: bundle_opts.max_timestamp,
             };
 
-            let result: serde_json::Value =
+            let result: BundleResult =
                 provider.client().request("eth_sendBundle", (bundle,)).await?;
 
-            // Extract bundle_hash from response
-            let bundle_hash = result
-                .get("bundleHash")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| eyre::eyre!("Missing bundleHash in response"))?
-                .parse()?;
-
-            return Ok(PendingTransactionBuilder::new(provider.root().clone(), bundle_hash));
+            return Ok(PendingTransactionBuilder::new(provider.root().clone(), result.bundle_hash));
         }
 
         Ok(provider.send_raw_transaction(transaction_encoded.as_slice()).await?)

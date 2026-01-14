@@ -229,6 +229,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
         generated_functions.push(quote! {
             #test_attribute
             async fn #test_name() -> eyre::Result<()> {
+                crate::tests::clear_otel_env_vars();
                 let subscriber = tracing_subscriber::fmt()
                     .with_env_filter(std::env::var("RUST_LOG")
                         .unwrap_or_else(|_| "info".to_string()))
