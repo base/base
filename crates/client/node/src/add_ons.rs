@@ -426,8 +426,8 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         BaseAddOns::new(
             RpcAddOns::new(
                 OpEthApiBuilder::default()
-                    .with_sequencer(sequencer_url.clone())
-                    .with_sequencer_headers(sequencer_headers.clone())
+                    .with_sequencer(sequencer_url)
+                    .with_sequencer_headers(sequencer_headers)
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
                 PVB::default(),
                 EB::default(),
