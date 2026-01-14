@@ -47,6 +47,7 @@ pub enum Pool {
 #[derive(Debug, Clone)]
 pub struct EventLog {
     pub(crate) mempool_time: Instant,
+    pub(crate) pending_time: Option<Instant>,
     pub(crate) events: Vec<(DateTime<Local>, TxEvent)>,
     pub(crate) limit: usize,
 }
@@ -54,7 +55,9 @@ pub struct EventLog {
 impl EventLog {
     /// Create a new log seeded with the first event.
     pub fn new(t: DateTime<Local>, event: TxEvent) -> Self {
-        Self { mempool_time: Instant::now(), events: vec![(t, event)], limit: 10 }
+        let now = Instant::now();
+        let pending_time = if event == TxEvent::Pending { Some(now) } else { None };
+        Self { mempool_time: now, pending_time, events: vec![(t, event)], limit: 10 }
     }
 
     /// Append a new `(timestamp, event)` tuple to the log.

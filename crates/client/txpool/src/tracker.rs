@@ -14,7 +14,7 @@ use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 
-use crate::{EventLog, Pool, TxEvent};
+use crate::{EventLog, Metrics, Pool, TxEvent};
 
 /// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug)]
@@ -25,6 +25,8 @@ pub struct Tracker {
     tx_states: LruCache<TxHash, Pool>,
     /// Enable `info` logs for transaction tracing.
     enable_logs: bool,
+    /// Metrics for the `reth_transaction_tracing` component.
+    metrics: Metrics,
 }
 
 impl Tracker {
@@ -37,6 +39,7 @@ impl Tracker {
             txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             enable_logs,
+            metrics: Metrics::default(),
         }
     }
 
@@ -120,6 +123,12 @@ impl Tracker {
                     // The tx is already removed from the cache from `pop`.
                     return;
                 }
+
+                // Set pending_time if transitioning to pending
+                if event == TxEvent::QueuedToPending && event_log.pending_time.is_none() {
+                    event_log.pending_time = Some(Instant::now());
+                }
+
                 event_log.push(Local::now(), event);
                 self.txs.put(tx_hash, event_log);
 
@@ -144,6 +153,16 @@ impl Tracker {
             // Don't add it back to LRU so that we keep the LRU cache size small which will help longer-lived txs
             // but do update the event log with the final event (i.e., included/dropped).
             event_log.push(Local::now(), event);
+
+            // Record `inclusion_duration` metric if transaction was pending and is now included
+            if event == TxEvent::BlockInclusion
+                && let Some(pending_time) = event_log.pending_time
+            {
+                let time_pending_to_inclusion = Instant::now().duration_since(pending_time);
+                self.metrics
+                    .inclusion_duration
+                    .record(time_pending_to_inclusion.as_millis() as f64);
+            }
 
             // If a tx is included/dropped, log it now.
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
@@ -193,9 +212,319 @@ impl Tracker {
         true
     }
 
-    /// Records a metrics histogram.
+    /// Records a metrics histogram. We have to use `histogram!` here because it supports tags.
     fn record_histogram(time_in_mempool: Duration, event: TxEvent) {
         metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
             .record(time_in_mempool.as_millis() as f64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transaction_inserted_pending() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Insert a pending transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        assert_eq!(tracker.txs.len(), 1);
+
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
+        assert_eq!(event_log.events.len(), 1);
+        assert_eq!(event_log.events[0].1, TxEvent::Pending);
+        // Pending transactions should have pending_time set
+        assert!(event_log.pending_time.is_some());
+    }
+
+    #[test]
+    fn test_transaction_inserted_queued() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Insert a queued transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        assert_eq!(tracker.txs.len(), 1);
+
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
+        assert_eq!(event_log.events.len(), 1);
+        assert_eq!(event_log.events[0].1, TxEvent::Queued);
+        // Queued transactions should not have pending_time set yet
+        assert!(event_log.pending_time.is_none());
+    }
+
+    #[test]
+    fn test_transaction_inserted_duplicate_ignored() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Insert same transaction twice
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        let first_mempool_time = tracker.txs.get(&tx_hash).unwrap().mempool_time;
+
+        // Second insert should be ignored
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        assert_eq!(tracker.txs.len(), 1);
+
+        let event_log = tracker.txs.get(&tx_hash).unwrap();
+        // Should still have only 1 event (the first one)
+        assert_eq!(event_log.events.len(), 1);
+        assert_eq!(event_log.events[0].1, TxEvent::Pending);
+        // mempool_time should not have changed
+        assert_eq!(event_log.mempool_time, first_mempool_time);
+    }
+
+    #[test]
+    fn test_transaction_moved_queued_to_pending() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Start with queued transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+
+        // Verify no pending_time initially
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
+
+        // Move to pending
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Verify event was logged and pending_time was set
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
+        assert_eq!(event_log.events.len(), 2);
+        assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
+        assert!(event_log.pending_time.is_some());
+    }
+
+    #[test]
+    fn test_transaction_moved_pending_to_queued() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Start with pending transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Verify pending_time is set
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
+        let pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
+
+        // Move to queued
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+
+        // Verify event was logged and pending_time is preserved
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
+        assert_eq!(event_log.events.len(), 2);
+        assert_eq!(event_log.events[1].1, TxEvent::PendingToQueued);
+        // pending_time should be preserved (not reset)
+        assert_eq!(event_log.pending_time, pending_time);
+    }
+
+    #[test]
+    fn test_transaction_moved_same_pool_no_event() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Insert and move to pending
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Try moving to same pool again
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Should still only have 1 event
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
+        assert_eq!(event_log.events.len(), 1);
+    }
+
+    #[test]
+    fn test_transaction_completed_block_inclusion_with_pending_time() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Create a pending transaction (which sets pending_time)
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Verify pending_time is set
+        assert!(tracker.txs.peek(&tx_hash).unwrap().pending_time.is_some());
+
+        // Complete the transaction with block inclusion
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+
+        // Transaction should be removed from txs cache
+        assert!(tracker.txs.get(&tx_hash).is_none());
+    }
+
+    #[test]
+    fn test_transaction_completed_dropped() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Insert transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+
+        // Drop the transaction
+        tracker.transaction_completed(tx_hash, TxEvent::Dropped);
+
+        // Transaction should be removed from cache
+        assert!(tracker.txs.get(&tx_hash).is_none());
+    }
+
+    #[test]
+    fn test_transaction_replaced() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+        let replacement_hash = TxHash::random();
+
+        // Insert original transaction
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        assert_eq!(tracker.txs.len(), 1);
+
+        // Replace transaction
+        tracker.transaction_replaced(tx_hash, replacement_hash);
+
+        // Original should be gone, replacement should exist
+        assert!(tracker.txs.get(&tx_hash).is_none());
+        assert!(tracker.txs.get(&replacement_hash).is_some());
+
+        // Event log should be preserved with replacement event
+        let event_log = tracker.txs.get(&replacement_hash).unwrap();
+        assert_eq!(event_log.events.len(), 2);
+        assert_eq!(event_log.events[0].1, TxEvent::Pending);
+        assert_eq!(event_log.events[1].1, TxEvent::Replaced);
+    }
+
+    #[test]
+    fn test_transaction_replaced_nonexistent() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+        let replacement_hash = TxHash::random();
+
+        // Try to replace a transaction that doesn't exist
+        tracker.transaction_replaced(tx_hash, replacement_hash);
+
+        // Nothing should happen
+        assert_eq!(tracker.txs.len(), 0);
+    }
+
+    #[test]
+    fn test_is_overflowed() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Create an event log - starts with 1 event (Pending)
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Add events until we hit the limit (limit is 10, we have 1 event already)
+        for _ in 0..9 {
+            if let Some(mut event_log) = tracker.txs.pop(&tx_hash) {
+                event_log.push(Local::now(), TxEvent::PendingToQueued);
+                tracker.txs.put(tx_hash, event_log);
+            }
+        }
+
+        // Verify we're at the limit
+        assert_eq!(tracker.txs.get(&tx_hash).unwrap().events.len(), 10);
+
+        // Try to move again - should trigger overflow check
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+
+        // Transaction should be removed due to overflow
+        assert!(tracker.txs.get(&tx_hash).is_none());
+    }
+
+    #[test]
+    fn test_pending_time_set_only_once() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // Start with queued
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
+
+        // Move to pending (should set pending_time)
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+        let first_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
+        assert!(first_pending_time.is_some());
+
+        // Move back to queued
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+
+        // Move to pending again (should NOT reset pending_time)
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+        let second_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
+
+        // pending_time should be the same as the first time
+        assert_eq!(first_pending_time, second_pending_time);
+    }
+
+    #[test]
+    fn test_full_transaction_lifecycle_queued_to_pending_to_inclusion() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // 1. Transaction enters as queued
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+        assert_eq!(tracker.txs.len(), 1);
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
+
+        // 2. Transaction moves to pending
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
+
+        let event_log = tracker.txs.get(&tx_hash).unwrap();
+        assert_eq!(event_log.events.len(), 2);
+        assert_eq!(event_log.events[0].1, TxEvent::Queued);
+        assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
+
+        // 3. Transaction included in block
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        assert!(tracker.txs.get(&tx_hash).is_none());
+    }
+
+    #[test]
+    fn test_full_transaction_lifecycle_pending_to_inclusion() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        // 1. Transaction enters as pending
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+        assert_eq!(tracker.txs.len(), 1);
+        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
+
+        // 2. Transaction included in block
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        assert!(tracker.txs.get(&tx_hash).is_none());
+    }
+
+    #[test]
+    fn test_multiple_transactions_independence() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash1 = TxHash::random();
+        let tx_hash2 = TxHash::random();
+
+        // Insert two different transactions
+        tracker.transaction_inserted(tx_hash1, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash2, TxEvent::Queued);
+
+        assert_eq!(tracker.txs.len(), 2);
+
+        // Verify they're tracked independently
+        assert!(tracker.txs.get(&tx_hash1).unwrap().pending_time.is_some());
+        assert!(tracker.txs.get(&tx_hash2).unwrap().pending_time.is_none());
+
+        // Complete one
+        tracker.transaction_completed(tx_hash1, TxEvent::BlockInclusion);
+
+        // Only one should remain
+        assert_eq!(tracker.txs.len(), 1);
+        assert!(tracker.txs.get(&tx_hash2).is_some());
     }
 }
