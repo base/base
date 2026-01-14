@@ -687,4 +687,68 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn test_p2p_args_bootnode_enr() {
+        let args = MockCommand::parse_from([
+            "test",
+            "--p2p.bootnodes",
+            "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg",
+        ]);
+        assert_eq!(
+            args.p2p.bootnodes,
+            vec![
+                "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_p2p_args_listen_ip_dns_resolution() {
+        // Test that DNS hostnames are resolved to IP addresses
+        // Using localhost which should resolve reliably
+        let args = MockCommand::parse_from(["test", "--p2p.listen.ip", "localhost"]);
+        // localhost typically resolves to 127.0.0.1 or ::1
+        assert!(
+            args.p2p.listen_ip == "127.0.0.1".parse::<IpAddr>().unwrap()
+                || args.p2p.listen_ip == "::1".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_p2p_args_advertise_ip_dns_resolution() {
+        // Test that DNS hostnames are resolved to IP addresses for advertise_ip
+        let args = MockCommand::parse_from(["test", "--p2p.advertise.ip", "localhost"]);
+        // localhost typically resolves to 127.0.0.1 or ::1
+        let ip = args.p2p.advertise_ip.unwrap();
+        assert!(
+            ip == "127.0.0.1".parse::<IpAddr>().unwrap() || ip == "::1".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_host_with_ip() {
+        // Test that IP addresses are passed through directly
+        let ip = resolve_host("192.168.1.1").unwrap();
+        assert_eq!(ip, "192.168.1.1".parse::<IpAddr>().unwrap());
+
+        let ipv6 = resolve_host("::1").unwrap();
+        assert_eq!(ipv6, "::1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_host_with_dns() {
+        // Test DNS resolution with localhost
+        let ip = resolve_host("localhost").unwrap();
+        assert!(
+            ip == "127.0.0.1".parse::<IpAddr>().unwrap() || ip == "::1".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_resolve_host_invalid() {
+        // Test that invalid hostnames return an error
+        let result = resolve_host("this-hostname-definitely-does-not-exist.invalid");
+        assert!(result.is_err());
+    }
 }

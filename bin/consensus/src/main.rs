@@ -4,9 +4,12 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 pub mod cli;
+pub mod metrics;
 pub mod version;
 
 fn main() {
+    use clap::Parser;
+
     base_cli_utils::Backtracing::enable();
     base_cli_utils::SigsegvHandler::install();
 

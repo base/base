@@ -15,10 +15,27 @@ workspace = true
 [dependencies]
 # Workspace
 base-cli-utils.workspace = true
+base-client-cli.workspace = true
+
+# Kona
+kona-disc = { workspace = true, features = ["metrics"] }
+kona-derive = { workspace = true, features = ["metrics"] }
+kona-engine = { workspace = true, features = ["metrics"] }
+kona-genesis.workspace = true
+kona-gossip = { workspace = true, features = ["metrics"] }
+kona-node-service = { workspace = true, features = ["metrics"] }
+kona-providers-alloy = { workspace = true, features = ["metrics"] }
 
 # CLI
 clap.workspace = true
 eyre.workspace = true
+strum.workspace = true
+
+# Tracing
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+
+# Metrics
 metrics.workspace = true
 
 [build-dependencies]
