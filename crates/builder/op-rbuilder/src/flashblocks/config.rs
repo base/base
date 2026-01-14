@@ -33,6 +33,9 @@ pub struct FlashblocksConfig {
 
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
+
+    /// Whether to enforce priority fee ordering within flashblocks
+    pub enforce_priority_fee_ordering: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -43,6 +46,7 @@ impl Default for FlashblocksConfig {
             leeway_time: Duration::from_millis(50),
             fixed: false,
             disable_state_root: false,
+            enforce_priority_fee_ordering: true,
         }
     }
 }
@@ -64,7 +68,17 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
-        Ok(Self { ws_addr, interval, leeway_time, fixed, disable_state_root })
+        let enforce_priority_fee_ordering =
+            args.flashblocks.flashblocks_enforce_priority_fee_ordering;
+
+        Ok(Self {
+            ws_addr,
+            interval,
+            leeway_time,
+            fixed,
+            disable_state_root,
+            enforce_priority_fee_ordering,
+        })
     }
 }
 

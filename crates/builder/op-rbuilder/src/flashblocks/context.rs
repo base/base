@@ -117,6 +117,8 @@ pub struct OpPayloadBuilderCtx {
     pub address_gas_limiter: AddressGasLimiter,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
+    /// Whether to enforce priority fee ordering within flashblocks
+    pub enforce_priority_fee_ordering: bool,
 }
 
 impl OpPayloadBuilderCtx {
@@ -471,22 +473,24 @@ impl OpPayloadBuilderCtx {
             num_txs_considered += 1;
 
             // Check priority fee ordering - skip if current tx has higher priority than last.
-            if let Some(current_priority) = tx.effective_tip_per_gas(base_fee) {
-                if let Some(last_priority) = last_priority_fee
-                    && current_priority > last_priority
-                {
-                    warn!(
-                        target: "payload_builder",
-                        tx_hash = ?tx_hash,
-                        current_priority = current_priority,
-                        last_priority = last_priority,
-                        "Skipping transaction due to priority fee ordering violation"
-                    );
-                    self.metrics.priority_fee_ordering_violations.increment(1);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
+            if self.enforce_priority_fee_ordering {
+                if let Some(current_priority) = tx.effective_tip_per_gas(base_fee) {
+                    if let Some(last_priority) = last_priority_fee
+                        && current_priority > last_priority
+                    {
+                        warn!(
+                            target: "payload_builder",
+                            tx_hash = ?tx_hash,
+                            current_priority = current_priority,
+                            last_priority = last_priority,
+                            "Skipping transaction due to priority fee ordering violation"
+                        );
+                        self.metrics.priority_fee_ordering_violations.increment(1);
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                    last_priority_fee = Some(current_priority);
                 }
-                last_priority_fee = Some(current_priority);
             }
 
             let TxData { metering: _resource_usage, backrun_bundles } =

@@ -88,6 +88,7 @@ impl OpPayloadSyncerCtx {
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             tx_data_store: self.tx_data_store,
+            enforce_priority_fee_ordering: true, // default to enabled for tests
         }
     }
 }

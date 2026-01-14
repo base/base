@@ -113,6 +113,16 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_DISABLE_STATE_ROOT"
     )]
     pub flashblocks_disable_state_root: bool,
+
+    /// Whether to enforce priority fee ordering within flashblocks.
+    /// When enabled, transactions that would violate descending priority fee order are skipped
+    /// and deferred to the next flashblock.
+    #[arg(
+        long = "flashblocks.enforce-priority-fee-ordering",
+        default_value = "true",
+        env = "FLASHBLOCKS_ENFORCE_PRIORITY_FEE_ORDERING"
+    )]
+    pub flashblocks_enforce_priority_fee_ordering: bool,
 }
 
 impl Default for FlashblocksArgs {
