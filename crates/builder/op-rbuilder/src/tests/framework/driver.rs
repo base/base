@@ -51,10 +51,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 
     /// Creates a new ChainDriver for some EL node instance.
-    pub fn remote(
-        provider: RootProvider<Optimism>,
-        engine_api: EngineApi<RpcProtocol>,
-    ) -> Self {
+    pub fn remote(provider: RootProvider<Optimism>, engine_api: EngineApi<RpcProtocol>) -> Self {
         Self {
             engine_api,
             provider,

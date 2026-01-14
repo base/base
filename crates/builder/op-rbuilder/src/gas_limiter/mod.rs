@@ -37,9 +37,7 @@ impl AddressGasLimiter {
     /// Check if there's enough gas for this address and consume it. Returns
     /// Ok(()) if there's enough otherwise returns an error.
     pub fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
-        self.inner
-            .as_ref()
-            .map_or(Ok(()), |inner| inner.consume_gas(address, gas_requested))
+        self.inner.as_ref().map_or(Ok(()), |inner| inner.consume_gas(address, gas_requested))
     }
 
     /// Should be called upon each new block. Refills buckets/Garbage collection
