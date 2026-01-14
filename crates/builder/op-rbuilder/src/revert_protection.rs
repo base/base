@@ -31,6 +31,7 @@ pub trait EthApiExt<R: RpcObject> {
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
 
+#[derive(Debug)]
 pub struct RevertProtectionExt<Pool, Provider, Eth> {
     pool: Pool,
     provider: Provider,

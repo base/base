@@ -31,6 +31,7 @@ pub trait Protocol {
     ) -> impl Future<Output = impl SubscriptionClientT + Send + Sync + Unpin + 'static>;
 }
 
+#[derive(Debug)]
 pub struct Http;
 impl Protocol for Http {
     async fn client(
@@ -50,6 +51,7 @@ impl Protocol for Http {
     }
 }
 
+#[derive(Debug)]
 pub struct Ipc;
 impl Protocol for Ipc {
     async fn client(
@@ -67,6 +69,7 @@ impl Protocol for Ipc {
 }
 
 /// Helper for engine api operations
+#[derive(Debug)]
 pub struct EngineApi<P: Protocol = Ipc> {
     address: Address,
     jwt_secret: JwtSecret,

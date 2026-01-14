@@ -8,6 +8,7 @@ use alloy_primitives::Address;
 use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
 
 /// Configuration values that are specific to the flashblocks builder.
+#[allow(unnameable_types)]
 #[derive(Debug, Clone)]
 pub struct FlashblocksConfig {
     /// The address of the websockets endpoint that listens for subscriptions to

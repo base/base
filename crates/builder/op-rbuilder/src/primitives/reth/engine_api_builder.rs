@@ -77,6 +77,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct OpEngineApiExt<Provider, Pool, Validator> {
     inner: OpEngineApi<Provider, OpEngineTypes, Pool, Validator, OpChainSpec>,
 }

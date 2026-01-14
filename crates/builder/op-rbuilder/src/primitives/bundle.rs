@@ -146,6 +146,7 @@ pub enum BundleConditionalError {
     FlashblockMinGreaterThanMax { min: u64, max: u64 },
 }
 
+#[derive(Debug)]
 pub struct BundleConditional {
     pub transaction_conditional: TransactionConditional,
     pub flashblock_number_min: Option<u64>,

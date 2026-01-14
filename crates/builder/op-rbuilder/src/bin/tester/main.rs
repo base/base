@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use alloy_primitives::Address;
 use alloy_provider::{Identity, ProviderBuilder};
 use clap::Parser;

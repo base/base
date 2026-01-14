@@ -22,7 +22,7 @@ use crate::{
     tx_signer::Signer,
 };
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct BundleOpts {
     block_number_min: Option<u64>,
     block_number_max: Option<u64>,
@@ -64,7 +64,7 @@ impl BundleOpts {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TransactionBuilder {
     provider: RootProvider<Optimism>,
     signer: Option<Signer>,
@@ -225,6 +225,7 @@ impl TransactionBuilder {
 
 type ObservationsMap = DashMap<TxHash, VecDeque<TransactionEvent>>;
 
+#[derive(Debug)]
 pub struct TransactionPoolObserver {
     /// Stores a mapping of all observed transactions to their history of events.
     observations: Arc<ObservationsMap>,

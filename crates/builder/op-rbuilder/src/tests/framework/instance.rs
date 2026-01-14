@@ -77,6 +77,7 @@ fn clear_otel_env_vars() {
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
+#[derive(Debug)]
 pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
@@ -388,6 +389,7 @@ async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
 ///
 /// This provides a reusable way to capture and inspect flashblocks that are produced
 /// during test execution, eliminating the need for duplicate WebSocket listening code.
+#[derive(Debug)]
 pub struct FlashblocksListener {
     pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
     pub cancellation_token: CancellationToken,
@@ -470,6 +472,7 @@ impl FlashblocksListener {
 }
 
 /// A utility service to spawn a server that returns a mock quote for an attestation request
+#[derive(Debug)]
 pub struct AttestationServer {
     tee_address: Address,
     extra_registration_data: Bytes,

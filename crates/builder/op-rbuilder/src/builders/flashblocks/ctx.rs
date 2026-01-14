@@ -20,6 +20,7 @@ use crate::{
     tx_data_store::TxDataStore,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(super) struct OpPayloadSyncerCtx {
     /// The type that knows how to perform system calls and configure the evm.
@@ -36,6 +37,7 @@ pub(super) struct OpPayloadSyncerCtx {
     tx_data_store: TxDataStore,
 }
 
+#[allow(dead_code)]
 impl OpPayloadSyncerCtx {
     pub(super) fn new<Client>(
         client: &Client,

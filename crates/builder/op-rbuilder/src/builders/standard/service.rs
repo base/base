@@ -14,6 +14,8 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 
+#[allow(unnameable_types)]
+#[derive(Debug)]
 pub struct StandardServiceBuilder(pub BuilderConfig<()>);
 
 impl StandardServiceBuilder {

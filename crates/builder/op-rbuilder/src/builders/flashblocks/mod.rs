@@ -15,6 +15,7 @@ mod wspub;
 
 /// Block building strategy that progressively builds chunks of a block and makes them available
 /// through a websocket update, then merges them into a full block every chain block time.
+#[derive(Debug)]
 pub struct FlashblocksBuilder;
 
 impl super::PayloadBuilder for FlashblocksBuilder {

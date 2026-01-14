@@ -23,6 +23,7 @@ use crate::{
 /// The ChainDriver is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
+#[derive(Debug)]
 pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     engine_api: EngineApi<RpcProtocol>,
     provider: RootProvider<Optimism>,

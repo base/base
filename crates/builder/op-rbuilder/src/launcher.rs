@@ -27,6 +27,7 @@ use crate::{
 };
 
 /// Launcher for the OP builder node.
+#[derive(Debug)]
 pub struct BuilderLauncher<B> {
     _builder: PhantomData<B>,
 }

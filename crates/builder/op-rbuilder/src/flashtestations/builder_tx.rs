@@ -30,6 +30,7 @@ use crate::{
     tx_signer::Signer,
 };
 
+#[derive(Debug)]
 pub struct FlashtestationsBuilderTxArgs {
     pub attestation: Vec<u8>,
     pub extra_registration_data: Bytes,

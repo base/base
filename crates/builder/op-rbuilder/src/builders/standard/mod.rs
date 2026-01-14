@@ -10,6 +10,7 @@ mod service;
 
 /// Block building strategy that builds blocks using the standard approach by
 /// producing blocks every chain block time.
+#[derive(Debug)]
 pub struct StandardBuilder;
 
 impl super::PayloadBuilder for StandardBuilder {
