@@ -63,6 +63,7 @@ base-jwt = { path = "crates/shared/jwt" }
 
 # Client
 base-client-cli = { path = "crates/client/cli" }
+base-client-engine = { path = "crates/client/engine" }
 base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
