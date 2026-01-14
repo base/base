@@ -201,10 +201,7 @@ where
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
             tx_data_store: self.config.tx_data_store.clone(),
-            enforce_priority_fee_ordering: self
-                .config
-                .flashblocks
-                .enforce_priority_fee_ordering,
+            enforce_priority_fee_ordering: self.config.flashblocks.enforce_priority_fee_ordering,
         })
     }
 
