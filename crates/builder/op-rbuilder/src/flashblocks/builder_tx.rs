@@ -8,7 +8,8 @@ use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
     map::{HashMap, HashSet},
 };
-use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
+use alloy_rpc_types_eth::TransactionInput;
+use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolEvent, SolInterface, sol};
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
@@ -33,9 +34,36 @@ use revm::{
 };
 use tracing::{trace, warn};
 
-use crate::{
-    builders::context::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer,
-};
+use super::payload::FlashblocksExecutionInfo;
+use crate::{flashblocks::OpPayloadBuilderCtx, primitives::reth::ExecutionInfo, tx_signer::Signer};
+
+sol!(
+    // From https://github.com/Uniswap/flashblocks_number_contract/blob/main/src/FlashblockNumber.sol
+    #[sol(rpc, abi)]
+    #[derive(Debug)]
+    interface IFlashblockNumber {
+        uint256 public flashblockNumber;
+
+        function incrementFlashblockNumber() external;
+
+        function permitIncrementFlashblockNumber(uint256 currentFlashblockNumber, bytes memory signature) external;
+
+        function computeStructHash(uint256 currentFlashblockNumber) external pure returns (bytes32);
+
+        function hashTypedDataV4(bytes32 structHash) external view returns (bytes32);
+
+
+        // @notice Emitted when flashblock index is incremented
+        // @param newFlashblockIndex The new flashblock index (0-indexed within each L2 block)
+        event FlashblockIncremented(uint256 newFlashblockIndex);
+
+        /// -----------------------------------------------------------------------
+        /// Errors
+        /// -----------------------------------------------------------------------
+        error NonBuilderAddress(address addr);
+        error MismatchedFlashblockNumber(uint256 expectedFlashblockNumber, uint256 actualFlashblockNumber);
+    }
+);
 
 #[derive(Debug, Default)]
 pub struct SimulationSuccessResult<T: SolCall> {
@@ -140,30 +168,236 @@ impl BuilderTransactionError {
     }
 }
 
-pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Default = ()> {
-    // Simulates and returns the signed builder transactions. The simulation modifies and commit
-    // changes to the db so call new_simulation_state to simulate on a new copy of the state
-    fn simulate_builder_txs(
-        &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        db: &mut State<impl Database + DatabaseRef>,
-    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
+/// Unified flashblocks builder transaction handler.
+///
+/// Handles both regular flashblock building and flashblock number contract interactions
+/// based on whether `flashblock_number_address` is set.
+#[derive(Debug, Clone)]
+pub struct FlashblocksBuilderTx {
+    pub signer: Option<Signer>,
+    pub flashblock_number_address: Option<Address>,
+}
 
-    fn simulate_builder_txs_with_state_copy(
+impl FlashblocksBuilderTx {
+    /// Creates a new builder tx handler.
+    ///
+    /// When `flashblock_number_address` is `Some`, the builder will interact with the
+    /// flashblock number contract to increment the flashblock counter.
+    /// When `None`, it will use simple builder transactions.
+    pub const fn new(signer: Option<Signer>, flashblock_number_address: Option<Address>) -> Self {
+        Self { signer, flashblock_number_address }
+    }
+
+    /// Simulates and returns the signed builder transactions.
+    /// The simulation modifies and commits changes to the db.
+    pub fn simulate_builder_txs(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        db: &mut State<impl Database + DatabaseRef>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        match (self.signer, self.flashblock_number_address) {
+            // Flashblock number contract mode
+            (Some(signer), Some(flashblock_number_address)) => {
+                self.simulate_flashblock_number_txs(signer, flashblock_number_address, ctx, db)
+            }
+            // Simple builder tx mode (with or without signer)
+            _ => self.simulate_simple_builder_txs(ctx, db),
+        }
+    }
+
+    /// Simulates builder txs for flashblock number contract mode.
+    fn simulate_flashblock_number_txs(
+        &self,
+        signer: Signer,
+        flashblock_number_address: Address,
+        ctx: &OpPayloadBuilderCtx,
+        db: &mut State<impl Database + DatabaseRef>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
+
+        if ctx.is_first_flashblock() {
+            // fallback block builder tx
+            builder_txs.extend(self.simulate_base_builder_tx(ctx, &mut *db)?);
+        } else {
+            // we increment the flashblock number for the next flashblock so we don't increment in the last flashblock
+            let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
+            evm.modify_cfg(|cfg| {
+                cfg.disable_balance_check = true;
+                cfg.disable_block_gas_limit = true;
+            });
+
+            let flashblocks_num_tx = self.signed_increment_flashblocks_tx(
+                signer,
+                flashblock_number_address,
+                ctx,
+                &mut evm,
+            );
+
+            let tx = match flashblocks_num_tx {
+                Ok(tx) => Some(tx),
+                Err(e) => {
+                    warn!(target: "builder_tx", error = ?e, "flashblocks number contract tx simulation failed, defaulting to fallback builder tx");
+                    self.simulate_base_builder_tx(ctx, &mut *db)?.map(|tx| tx.set_top_of_block())
+                }
+            };
+
+            builder_txs.extend(tx);
+        }
+
+        Ok(builder_txs)
+    }
+
+    /// Simulates builder txs for simple mode (no flashblock number contract).
+    fn simulate_simple_builder_txs(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        db: &mut State<impl Database + DatabaseRef>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
+
+        if ctx.is_first_flashblock() {
+            let flashblocks_builder_tx = self.simulate_base_builder_tx(ctx, &mut *db)?;
+            builder_txs.extend(flashblocks_builder_tx);
+        }
+
+        if ctx.is_last_flashblock() {
+            let base_tx = self.simulate_base_builder_tx(ctx, &mut *db)?;
+            builder_txs.extend(base_tx);
+        }
+
+        Ok(builder_txs)
+    }
+
+    fn signed_increment_flashblocks_tx(
+        &self,
+        signer: Signer,
+        flashblock_number_address: Address,
+        ctx: &OpPayloadBuilderCtx,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
+        let calldata = IFlashblockNumber::incrementFlashblockNumberCall {};
+        self.increment_flashblocks_tx(signer, flashblock_number_address, calldata, ctx, evm)
+    }
+
+    fn increment_flashblocks_tx<T: SolCall + Clone>(
+        &self,
+        signer: Signer,
+        flashblock_number_address: Address,
+        calldata: T,
+        ctx: &OpPayloadBuilderCtx,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+    ) -> Result<BuilderTransactionCtx, BuilderTransactionError> {
+        let SimulationSuccessResult { gas_used, .. } = self.simulate_flashblocks_call(
+            signer,
+            flashblock_number_address,
+            calldata.clone(),
+            vec![IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH],
+            ctx,
+            evm,
+        )?;
+        let signed_tx = self.sign_tx(
+            flashblock_number_address,
+            signer,
+            gas_used,
+            calldata.abi_encode().into(),
+            ctx,
+            evm.db_mut(),
+        )?;
+        let da_size =
+            op_alloy_flz::tx_estimated_size_fjord_bytes(signed_tx.encoded_2718().as_slice());
+        Ok(BuilderTransactionCtx { signed_tx, gas_used, da_size, is_top_of_block: true })
+    }
+
+    fn simulate_flashblocks_call<T: SolCall>(
+        &self,
+        signer: Signer,
+        flashblock_number_address: Address,
+        calldata: T,
+        expected_logs: Vec<B256>,
+        ctx: &OpPayloadBuilderCtx,
+        evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
+    ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
+        let tx_req = OpTransactionRequest::default()
+            .gas_limit(ctx.block_gas_limit())
+            .max_fee_per_gas(ctx.base_fee().into())
+            .to(flashblock_number_address)
+            .from(signer.address) // use tee key as signer for simulations
+            .nonce(get_nonce(evm.db(), signer.address)?)
+            .input(TransactionInput::new(calldata.abi_encode().into()));
+        self.simulate_call::<T, IFlashblockNumber::IFlashblockNumberErrors>(
+            tx_req,
+            expected_logs,
+            evm,
+        )
+    }
+
+    fn simulate_base_builder_tx(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        db: impl DatabaseRef,
+    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
+        match self.signer {
+            Some(signer) => {
+                let message: Vec<u8> = format!("Block Number: {}", ctx.block_number()).into_bytes();
+                let gas_used = estimate_builder_tx_gas(&message);
+                let signed_tx = self.signed_builder_tx(ctx, db, signer, gas_used, message)?;
+                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
+                    signed_tx.encoded_2718().as_slice(),
+                );
+                Ok(Some(BuilderTransactionCtx {
+                    gas_used,
+                    da_size,
+                    signed_tx,
+                    is_top_of_block: false,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn signed_builder_tx(
+        &self,
+        ctx: &OpPayloadBuilderCtx,
+        db: impl DatabaseRef,
+        signer: Signer,
+        gas_used: u64,
+        message: Vec<u8>,
+    ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
+        let nonce = get_nonce(db, signer.address)?;
+
+        // Create the EIP-1559 transaction
+        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id: ctx.chain_id(),
+            nonce,
+            gas_limit: gas_used,
+            max_fee_per_gas: ctx.base_fee().into(),
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(Address::ZERO),
+            // Include the message as part of the transaction data
+            input: message.into(),
+            ..Default::default()
+        });
+        // Sign the transaction
+        let builder_tx = signer.sign_tx(tx).map_err(BuilderTransactionError::SigningError)?;
+
+        Ok(builder_tx)
+    }
+
+    pub fn simulate_builder_txs_with_state_copy(
         &self,
         state_provider: impl StateProvider + Clone,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut simulation_state = self.new_simulation_state(state_provider, db);
         self.simulate_builder_txs(ctx, &mut simulation_state)
     }
 
-    fn add_builder_txs(
+    pub fn add_builder_txs(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
-        builder_ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        builder_ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
@@ -264,7 +498,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         from: Signer,
         gas_used: u64,
         calldata: Bytes,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: impl DatabaseRef,
     ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
         let nonce = get_nonce(db, from.address)?;
@@ -282,10 +516,10 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         Ok(from.sign_tx(tx)?)
     }
 
-    fn commit_txs(
+    pub fn commit_txs(
         &self,
         signed_txs: Vec<Recovered<OpTransactionSigned>>,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database>,
     ) -> Result<(), BuilderTransactionError> {
         let mut evm = ctx.evm_config.evm_with_env(&mut *db, ctx.evm_env.clone());
@@ -359,85 +593,21 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
     }
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct BuilderTxBase<ExtraCtx = ()> {
-    pub signer: Option<Signer>,
-    _marker: std::marker::PhantomData<ExtraCtx>,
-}
+fn estimate_builder_tx_gas(input: &[u8]) -> u64 {
+    // Count zero and non-zero bytes
+    let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
+        if byte == 0 { (zeros + 1, nonzeros) } else { (zeros, nonzeros + 1) }
+    });
 
-impl<ExtraCtx: Debug + Default> BuilderTxBase<ExtraCtx> {
-    pub(super) const fn new(signer: Option<Signer>) -> Self {
-        Self { signer, _marker: std::marker::PhantomData }
-    }
+    // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
+    let zero_cost = zero_bytes * 4;
+    let nonzero_cost = nonzero_bytes * 16;
 
-    pub(super) fn simulate_builder_tx(
-        &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        db: impl DatabaseRef,
-    ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
-        match self.signer {
-            Some(signer) => {
-                let message: Vec<u8> = format!("Block Number: {}", ctx.block_number()).into_bytes();
-                let gas_used = self.estimate_builder_tx_gas(&message);
-                let signed_tx = self.signed_builder_tx(ctx, db, signer, gas_used, message)?;
-                let da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(
-                    signed_tx.encoded_2718().as_slice(),
-                );
-                Ok(Some(BuilderTransactionCtx {
-                    gas_used,
-                    da_size,
-                    signed_tx,
-                    is_top_of_block: false,
-                }))
-            }
-            None => Ok(None),
-        }
-    }
+    // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
+    let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
+    let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
 
-    fn estimate_builder_tx_gas(&self, input: &[u8]) -> u64 {
-        // Count zero and non-zero bytes
-        let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
-            if byte == 0 { (zeros + 1, nonzeros) } else { (zeros, nonzeros + 1) }
-        });
-
-        // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
-        let zero_cost = zero_bytes * 4;
-        let nonzero_cost = nonzero_bytes * 16;
-
-        // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
-        let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
-
-        std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
-    }
-
-    fn signed_builder_tx(
-        &self,
-        ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-        db: impl DatabaseRef,
-        signer: Signer,
-        gas_used: u64,
-        message: Vec<u8>,
-    ) -> Result<Recovered<OpTransactionSigned>, BuilderTransactionError> {
-        let nonce = get_nonce(db, signer.address)?;
-
-        // Create the EIP-1559 transaction
-        let tx = OpTypedTransaction::Eip1559(TxEip1559 {
-            chain_id: ctx.chain_id(),
-            nonce,
-            gas_limit: gas_used,
-            max_fee_per_gas: ctx.base_fee().into(),
-            max_priority_fee_per_gas: 0,
-            to: TxKind::Call(Address::ZERO),
-            // Include the message as part of the transaction data
-            input: message.into(),
-            ..Default::default()
-        });
-        // Sign the transaction
-        let builder_tx = signer.sign_tx(tx).map_err(BuilderTransactionError::SigningError)?;
-
-        Ok(builder_tx)
-    }
+    std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
 }
 
 pub fn get_nonce(db: impl DatabaseRef, address: Address) -> Result<u64, BuilderTransactionError> {

@@ -11,7 +11,6 @@ use crate::{
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 2000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -45,7 +44,6 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -79,7 +77,6 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -113,7 +110,6 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 2000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -147,7 +143,6 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -183,7 +178,6 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
@@ -215,7 +209,6 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 1000,
     flashblocks: FlashblocksArgs {
-        enabled: true,
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,

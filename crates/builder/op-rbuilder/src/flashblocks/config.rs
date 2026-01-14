@@ -5,7 +5,7 @@ use core::{
 
 use alloy_primitives::Address;
 
-use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
+use crate::{args::OpRbuilderArgs, flashblocks::BuilderConfig};
 
 /// Configuration values that are specific to the flashblocks builder.
 #[allow(unnameable_types)]
@@ -90,11 +90,11 @@ pub(super) trait FlashBlocksConfigExt {
     fn flashblocks_per_block(&self) -> u64;
 }
 
-impl FlashBlocksConfigExt for BuilderConfig<FlashblocksConfig> {
+impl FlashBlocksConfigExt for BuilderConfig {
     fn flashblocks_per_block(&self) -> u64 {
         if self.block_time.as_millis() == 0 {
             return 0;
         }
-        (self.block_time.as_millis() / self.specific.interval.as_millis()) as u64
+        (self.block_time.as_millis() / self.flashblocks.interval.as_millis()) as u64
     }
 }

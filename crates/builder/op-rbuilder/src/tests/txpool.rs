@@ -15,8 +15,7 @@ use crate::tests::{
             ..Default::default()
         },
         ..default_node_config()
-    },
-    standard
+    }
 )]
 async fn pending_pool_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;

@@ -76,7 +76,7 @@ mod tests {
         test_utils::{MockTransaction, MockTransactionFactory},
     };
 
-    use crate::builders::flashblocks::best_txs::BestFlashblocksTxs;
+    use crate::flashblocks::best_txs::BestFlashblocksTxs;
 
     #[test]
     fn test_simple_case() {

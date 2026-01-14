@@ -13,7 +13,7 @@ use reth_optimism_primitives::OpTransactionSigned;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
+    flashblocks::{BuilderConfig, FlashblocksExtraCtx, OpPayloadBuilderCtx},
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
@@ -41,7 +41,7 @@ pub(super) struct OpPayloadSyncerCtx {
 impl OpPayloadSyncerCtx {
     pub(super) fn new<Client>(
         client: &Client,
-        builder_config: BuilderConfig<FlashblocksConfig>,
+        builder_config: BuilderConfig,
         evm_config: OpEvmConfig,
         metrics: Arc<OpRBuilderMetrics>,
     ) -> eyre::Result<Self>
@@ -85,7 +85,7 @@ impl OpPayloadSyncerCtx {
             cancel,
             builder_signer: None,
             metrics: self.metrics,
-            extra_ctx: (),
+            extra: FlashblocksExtraCtx::default(),
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             tx_data_store: self.tx_data_store,

@@ -4,12 +4,13 @@ use reth_optimism_payload_builder::OpBuiltPayload;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::{builders::flashblocks::ctx::OpPayloadSyncerCtx, traits::ClientBounds};
+use crate::{flashblocks::ctx::OpPayloadSyncerCtx, traits::ClientBounds};
 
 /// Handles newly built flashblock payloads.
 ///
-/// When a payload is built by this node, an event is sent to the payload builder.
-pub(crate) struct PayloadHandler<Client> {
+/// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
+/// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
+pub(super) struct PayloadHandler<Client> {
     // receives new payloads built by this builder.
     built_rx: mpsc::Receiver<OpBuiltPayload>,
     // sends a `Events::BuiltPayload` to the reth payload builder when a new payload is received.
@@ -25,7 +26,8 @@ impl<Client> PayloadHandler<Client>
 where
     Client: ClientBounds + 'static,
 {
-    pub(crate) const fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) const fn new(
         built_rx: mpsc::Receiver<OpBuiltPayload>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,

@@ -1,4 +1,5 @@
-set positional-arguments
+set positional-arguments := true
+
 alias t := test
 alias f := fix
 alias b := build
@@ -18,31 +19,31 @@ ci: fix check lychee zepter
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
-  @command -v lychee >/dev/null 2>&1 || cargo install lychee
-  lychee --config ./lychee.toml .
+    @command -v lychee >/dev/null 2>&1 || cargo install lychee
+    lychee --config ./lychee.toml .
 
 # Checks formatting, udeps, clippy, and tests
 check: check-format check-udeps check-clippy test check-deny
 
 # Runs cargo deny to check dependencies
 check-deny:
-  @command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
-  cargo deny check bans --hide-inclusion-graph
+    @command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
+    cargo deny check bans --hide-inclusion-graph
 
 # Fixes formatting and clippy issues
 fix: format-fix clippy-fix zepter-fix
 
 # Runs zepter feature checks, installing zepter if necessary
 zepter:
-  @command -v zepter >/dev/null 2>&1 || cargo install zepter
-  zepter --version
-  zepter format features
-  zepter
+    @command -v zepter >/dev/null 2>&1 || cargo install zepter
+    zepter --version
+    zepter format features
+    zepter
 
 # Fixes zepter feature formatting.
 zepter-fix:
-  @command -v zepter >/dev/null 2>&1 || cargo install zepter
-  zepter format features --fix
+    @command -v zepter >/dev/null 2>&1 || cargo install zepter
+    zepter format features --fix
 
 # Runs tests across workspace with all features enabled (excludes builder crates)
 test: build-contracts
@@ -51,7 +52,7 @@ test: build-contracts
 
 # Runs cargo hack against the workspace
 hack:
-  cargo hack check --feature-powerset --no-dev-deps
+    cargo hack check --feature-powerset --no-dev-deps
 
 # Checks formatting (builder crates excluded via rustfmt.toml)
 check-format:
@@ -96,8 +97,8 @@ clean:
 
 # Checks if there are any unused dependencies (excludes builder crates)
 check-udeps: build-contracts
-  @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
-  cargo +nightly udeps --workspace --all-features --all-targets
+    @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
+    cargo +nightly udeps --workspace --all-features --all-targets
 
 # Checks that shared crates don't depend on client crates
 check-crate-deps:
@@ -143,6 +144,9 @@ test-builder:
 # Runs clippy on builder crates (using nightly, matching op-rbuilder's original)
 check-clippy-builder:
     cargo +nightly clippy -p op-rbuilder --all-features -- -D warnings
+
+fix-clippy-builder:
+    cargo +nightly clippy -p op-rbuilder --all-features --fix --allow-dirty --allow-staged
 
 # Fixes formatting for builder crates
 format-builder:

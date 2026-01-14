@@ -1,5 +1,4 @@
-use core::fmt::Debug;
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use eyre::Result;
 use reth_cli_commands::launcher::Launcher;
@@ -15,52 +14,65 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use reth_optimism_txpool::OpPooledTransaction;
 
 use crate::{
-    args::OpRbuilderArgs,
-    builders::{BuilderConfig, PayloadBuilder},
-    metrics::{VERSION, record_flag_gauge_metrics},
+    args::{Cli, CliExt, OpRbuilderArgs},
+    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
+    metrics::VERSION,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
-/// Launcher for the OP builder node.
-#[derive(Debug)]
-pub struct BuilderLauncher<B> {
-    _builder: PhantomData<B>,
+pub fn launch() -> Result<()> {
+    let cli = Cli::parsed();
+
+    #[cfg(feature = "telemetry")]
+    let telemetry_args = match &cli.command {
+        reth_optimism_cli::commands::Commands::Node(node_command) => {
+            node_command.ext.telemetry.clone()
+        }
+        _ => Default::default(),
+    };
+
+    #[cfg(not(feature = "telemetry"))]
+    let cli_app = cli.configure();
+
+    #[cfg(feature = "telemetry")]
+    let mut cli_app = cli.configure();
+    #[cfg(feature = "telemetry")]
+    {
+        use crate::primitives::telemetry::setup_telemetry_layer;
+        let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
+        cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
+    }
+
+    tracing::info!("Starting OP builder in flashblocks mode");
+    let launcher = BuilderLauncher::new();
+    cli_app.run(launcher)?;
+    Ok(())
 }
 
-impl<B> BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-{
+#[derive(Debug)]
+pub struct BuilderLauncher;
+
+impl BuilderLauncher {
     pub const fn new() -> Self {
-        Self { _builder: PhantomData }
+        Self
     }
 }
 
-impl<B> Default for BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-{
+impl Default for BuilderLauncher {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<B> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<B>
-where
-    B: PayloadBuilder,
-    BuilderConfig<B::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<B::Config> as TryFrom<OpRbuilderArgs>>::Error: Debug,
-{
+impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
     async fn entrypoint(
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
         builder_args: OpRbuilderArgs,
     ) -> Result<()> {
-        let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
+        let builder_config = BuilderConfig::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
-
-        record_flag_gauge_metrics(&builder_args);
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -97,7 +109,7 @@ where
                                 rollup_args.supervisor_safety_level,
                             ),
                     )
-                    .payload(B::new_service(builder_config)?),
+                    .payload(FlashblocksServiceBuilder(builder_config)),
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {

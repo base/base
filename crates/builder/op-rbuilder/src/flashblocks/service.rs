@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use derive_more::Debug;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
@@ -8,43 +9,28 @@ use reth_optimism_evm::OpEvmConfig;
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
-use super::{FlashblocksConfig, payload::OpPayloadBuilder};
+use super::{
+    BuilderConfig, FlashblocksBuilderTx, generator::BlockPayloadJobGenerator,
+    payload::OpPayloadBuilder, payload_handler::PayloadHandler, wspub::WebSocketPublisher,
+};
 use crate::{
-    builders::{
-        BuilderConfig,
-        builder_tx::BuilderTransactions,
-        flashblocks::{
-            builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
-            payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
-            payload_handler::PayloadHandler,
-            wspub::WebSocketPublisher,
-        },
-        generator::BlockPayloadJobGenerator,
-    },
     metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 
-#[allow(unnameable_types)]
 #[derive(Debug)]
-pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
+pub struct FlashblocksServiceBuilder(pub BuilderConfig);
 
 impl FlashblocksServiceBuilder {
-    fn spawn_payload_builder_service<Node, Pool, BuilderTx>(
+    fn spawn_payload_builder_service<Node, Pool>(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        builder_tx: BuilderTx,
+        builder_tx: FlashblocksBuilderTx,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
-            + Unpin
-            + Clone
-            + Send
-            + Sync
-            + 'static,
     {
         // TODO: is there a different global token?
         // this is effectively unused right now due to the usage of reth's `task_executor`.
@@ -54,7 +40,7 @@ impl FlashblocksServiceBuilder {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.0.specific.ws_addr, metrics.clone())
+            WebSocketPublisher::new(self.0.flashblocks.ws_addr, metrics.clone())
                 .wrap_err("failed to create ws publisher")?
                 .into();
         let payload_builder = OpPayloadBuilder::new(
@@ -81,7 +67,7 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        let syncer_ctx = crate::builders::flashblocks::ctx::OpPayloadSyncerCtx::new(
+        let syncer_ctx = super::ctx::OpPayloadSyncerCtx::new(
             &ctx.provider().clone(),
             self.0,
             OpEvmConfig::optimism(ctx.chain_spec()),
@@ -118,22 +104,10 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        let signer = self.0.builder_signer;
-
-        if let Some(builder_signer) = signer
-            && let Some(flashblocks_number_contract_address) =
-                self.0.specific.flashblocks_number_contract_address
-        {
-            self.spawn_payload_builder_service(
-                ctx,
-                pool,
-                FlashblocksNumberBuilderTx::new(
-                    builder_signer,
-                    flashblocks_number_contract_address,
-                ),
-            )
-        } else {
-            self.spawn_payload_builder_service(ctx, pool, FlashblocksBuilderTx::new(signer))
-        }
+        let builder_tx = FlashblocksBuilderTx::new(
+            self.0.builder_signer,
+            self.0.flashblocks.flashblocks_number_contract_address,
+        );
+        self.spawn_payload_builder_service(ctx, pool, builder_tx)
     }
 }
