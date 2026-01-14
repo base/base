@@ -1741,6 +1741,7 @@ dependencies = [
  "base-cli-utils",
  "clap",
  "eyre",
+ "metrics",
  "vergen",
  "vergen-git2",
 ]

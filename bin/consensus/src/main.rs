@@ -4,8 +4,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 pub mod cli;
-
-pub(crate) mod version;
+pub mod version;
 
 fn main() {
     base_cli_utils::Backtracing::enable();
