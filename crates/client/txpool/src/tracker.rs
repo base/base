@@ -155,13 +155,13 @@ impl Tracker {
             event_log.push(Local::now(), event);
 
             // Record inclusion metric if transaction was pending and is now included
-            if event == TxEvent::BlockInclusion {
-                if let Some(pending_time) = event_log.pending_time {
-                    let time_pending_to_inclusion = Instant::now().duration_since(pending_time);
-                    self.metrics
-                        .transaction_inclusion_duration
-                        .record(time_pending_to_inclusion.as_millis() as f64);
-                }
+            if event == TxEvent::BlockInclusion
+                && let Some(pending_time) = event_log.pending_time
+            {
+                let time_pending_to_inclusion = Instant::now().duration_since(pending_time);
+                self.metrics
+                    .transaction_inclusion_duration
+                    .record(time_pending_to_inclusion.as_millis() as f64);
             }
 
             // If a tx is included/dropped, log it now.
