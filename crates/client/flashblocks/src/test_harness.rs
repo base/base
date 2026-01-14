@@ -112,14 +112,15 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
 
+        let state_for_start = state.clone();
         let state_for_rpc = state.clone();
 
-        builder.extend_rpc_modules(move |ctx| {
-            let fb = state_for_rpc;
+        // Start state processor and subscriptions after node is started
+        let builder = builder.on_node_started(move |ctx| {
             let provider = ctx.provider().clone();
 
             // Start the state processor with the provider
-            fb.start(provider.clone());
+            state_for_start.start(provider.clone());
 
             // Spawn a task to forward canonical state notifications to the in-memory state
             let provider_for_notify = provider.clone();
@@ -135,18 +136,24 @@ impl BaseNodeExtension for FlashblocksTestExtension {
 
             // If process_canonical is enabled, spawn a task to process canonical blocks
             if process_canonical {
-                let fb_for_canonical = fb.clone();
+                let state_for_canonical = state_for_start.clone();
                 let mut canonical_stream =
                     BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
                 tokio::spawn(async move {
                     while let Some(Ok(notification)) = canonical_stream.next().await {
                         let committed = notification.committed();
                         for block in committed.blocks_iter() {
-                            fb_for_canonical.on_canonical_block_received(block.clone());
+                            state_for_canonical.on_canonical_block_received(block.clone());
                         }
                     }
                 });
             }
+
+            Ok(())
+        });
+
+        builder.extend_rpc_modules(move |ctx| {
+            let fb = state_for_rpc;
 
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
