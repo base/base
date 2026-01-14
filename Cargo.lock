@@ -1585,6 +1585,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-client-cli"
+version = "0.2.1"
+dependencies = [
+ "alloy-rpc-types-engine",
+ "clap",
+ "url",
+]
+
+[[package]]
 name = "base-client-node"
 version = "0.2.1"
 dependencies = [
