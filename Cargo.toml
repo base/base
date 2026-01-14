@@ -214,10 +214,26 @@ op-revm = { version = "12.0.2", default-features = false }
 
 # kona
 kona-cli = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d", default-features = false, features = ["secrets"] }
+kona-derive = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-disc = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-engine = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-genesis = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-gossip = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-node-service = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-peers = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-registry = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-rpc = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-sources = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+
+# rollup-boost
+rollup-boost = { git = "https://github.com/flashbots/rollup-boost", tag = "v0.7.11" }
+# rollup-boost version that matches kona's dependency (used for consensus binary)
+rollup-boost-kona = { package = "rollup-boost", git = "https://github.com/flashbots/rollup-boost.git", rev = "7fda98f" }
+
+# libp2p
+libp2p = { version = "0.56.0", default-features = false }
+discv5 = "0.10.1"
 
 # tokio
 tokio = "1.48.0"

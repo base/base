@@ -12,5 +12,21 @@ pub use l1::L1ClientArgs;
 mod l2;
 pub use l2::L2ClientArgs;
 
-mod signer;
+mod builder;
+pub use builder::BuilderClientArgs;
+
+mod rpc;
+pub use rpc::RpcArgs;
+
+mod sequencer;
+pub use sequencer::SequencerArgs;
+
+mod boost;
+pub use base_jwt::{JwtError, JwtSecret, default_jwt_secret};
+pub use boost::{FlashblocksFlags, FlashblocksWebsocketFlags, RollupBoostFlags};
+
+pub mod signer;
 pub use signer::{SignerArgs, SignerArgsParseError};
+
+pub mod p2p;
+pub use p2p::{P2PArgs, P2PConfigError};

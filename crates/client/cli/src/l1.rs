@@ -8,19 +8,19 @@ const DEFAULT_L1_TRUST_RPC: bool = true;
 #[derive(Clone, Debug, clap::Args)]
 pub struct L1ClientArgs {
     /// URL of the L1 execution client RPC API.
-    #[arg(long, visible_alias = "l1", env = "KONA_NODE_L1_ETH_RPC")]
+    #[arg(long, visible_alias = "l1", env = "BASE_NODE_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
     /// Whether to trust the L1 RPC.
     /// If false, block hash verification is performed for all retrieved blocks.
     #[arg(
         long,
         visible_alias = "l1.trust-rpc",
-        env = "KONA_NODE_L1_TRUST_RPC",
+        env = "BASE_NODE_L1_TRUST_RPC",
         default_value_t = DEFAULT_L1_TRUST_RPC
     )]
     pub l1_trust_rpc: bool,
     /// URL of the L1 beacon API.
-    #[arg(long, visible_alias = "l1.beacon", env = "KONA_NODE_L1_BEACON")]
+    #[arg(long, visible_alias = "l1.beacon", env = "BASE_NODE_L1_BEACON")]
     pub l1_beacon: Url,
     /// Duration in seconds of an L1 slot.
     ///
@@ -30,7 +30,7 @@ pub struct L1ClientArgs {
     #[arg(
         long,
         visible_alias = "l1.slot-duration-override",
-        env = "KONA_NODE_L1_SLOT_DURATION_OVERRIDE"
+        env = "BASE_NODE_L1_SLOT_DURATION_OVERRIDE"
     )]
     pub l1_slot_duration_override: Option<u64>,
 }
