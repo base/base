@@ -5,6 +5,7 @@ use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;
+use base_builder_cli::OpRbuilderArgs;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
@@ -12,7 +13,6 @@ use reth_optimism_node::OpPayloadAttributes;
 
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
 use crate::{
-    args::OpRbuilderArgs,
     tests::{
         DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, ExternalNode, Protocol,
         framework::DEFAULT_GAS_LIMIT,

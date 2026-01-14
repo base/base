@@ -49,9 +49,9 @@ use secp256k1::SecretKey;
 use serde_json::Value;
 use url::{Host, Url};
 
-use super::Cli;
+use crate::Cli;
 
-pub(super) struct PlaygroundOptions {
+pub(crate) struct PlaygroundOptions {
     /// Sets node.chain in NodeCommand
     pub chain: Arc<OpChainSpec>,
 
@@ -79,7 +79,7 @@ pub(super) struct PlaygroundOptions {
 
 impl PlaygroundOptions {
     /// Creates a new `PlaygroundOptions` instance with the specified genesis path.
-    pub(super) fn new(path: &Path) -> Result<Self> {
+    pub(crate) fn new(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Err(eyre!("Playground data directory {} does not exist", path.display()));
         }
@@ -110,7 +110,7 @@ impl PlaygroundOptions {
         })
     }
 
-    pub(super) fn apply(self, cli: Cli) -> Cli {
+    pub(crate) fn apply(self, cli: Cli) -> Cli {
         let mut cli = cli;
         let Commands::Node(ref mut node) = cli.command else {
             // playground defaults are only relevant if running the node commands.

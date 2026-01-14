@@ -5,13 +5,11 @@ use core::{
 use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
+use base_builder_cli::OpRbuilderArgs;
 use tokio::{join, task::yield_now};
 use tracing::info;
 
-use crate::{
-    args::OpRbuilderArgs,
-    tests::{TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args},
-};
+use crate::tests::{TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args};
 
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.

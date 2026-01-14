@@ -7,6 +7,7 @@ mod txs;
 mod utils;
 
 pub use apis::*;
+use base_builder_cli::OpRbuilderArgs;
 pub use contracts::*;
 pub use driver::*;
 pub use external::*;
@@ -15,8 +16,6 @@ use reth_node_builder::NodeConfig;
 use reth_optimism_chainspec::OpChainSpec;
 pub use txs::*;
 pub use utils::*;
-
-use crate::args::OpRbuilderArgs;
 
 /// Sets up a test instance with default flashblocks configuration.
 /// This is the simplified replacement for the rb_test macro.

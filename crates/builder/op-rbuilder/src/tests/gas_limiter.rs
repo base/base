@@ -1,11 +1,9 @@
 use std::collections::HashSet;
 
+use base_builder_cli::{GasLimiterArgs, OpRbuilderArgs};
 use tracing::info;
 
-use crate::{
-    args::{GasLimiterArgs, OpRbuilderArgs},
-    tests::{ChainDriverExt, TransactionBuilderExt, setup_test_instance_with_args},
-};
+use crate::tests::{ChainDriverExt, TransactionBuilderExt, setup_test_instance_with_args};
 
 /// Integration test for the gas limiter functionality.
 /// Tests that gas limits are properly enforced during actual block building

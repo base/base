@@ -1,17 +1,112 @@
-//! CLI argument definitions for the Base builder.
-//!
-//! This crate contains CLI argument structs used by the op-rbuilder and related components.
-//! It provides a separation of concerns by extracting CLI-related code into a dedicated crate.
-
+#![doc = include_str!("../README.md")]
 #![doc(issue_tracker_base_url = "https://github.com/base/node-reth/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+
+use clap_builder::{CommandFactory, FromArgMatches};
+use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 
 mod flashblocks;
-mod gas_limiter;
-mod op;
-mod telemetry;
-
 pub use flashblocks::FlashblocksArgs;
+
+mod gas_limiter;
 pub use gas_limiter::GasLimiterArgs;
+
+mod op;
 pub use op::OpRbuilderArgs;
+
+mod playground;
+use playground::PlaygroundOptions;
+
+mod telemetry;
 pub use telemetry::TelemetryArgs;
+
+/// CLI type alias for the OP builder.
+pub type Cli = reth_optimism_cli::Cli<OpChainSpecParser, OpRbuilderArgs>;
+
+/// Version information for CLI configuration.
+#[derive(Debug)]
+pub struct CliVersionInfo {
+    /// Short version string (e.g., "1.0.0 (abc123)")
+    pub short_version: &'static str,
+    /// Long version string with detailed build info
+    pub long_version: &'static str,
+    /// About description for the CLI
+    pub about: &'static str,
+    /// Author of the CLI
+    pub author: &'static str,
+    /// Name of the CLI binary
+    pub name: &'static str,
+    /// Default logs directory
+    pub logs_dir: std::ffi::OsString,
+}
+
+/// This trait is used to extend Reth's CLI with additional functionality that
+/// are specific to the OP builder, such as populating default values for CLI arguments
+/// when running in the playground mode.
+pub trait CliExt {
+    /// Populates the default values for the CLI arguments when the user specifies
+    /// the `--builder.playground` flag.
+    fn populate_defaults(self) -> Self;
+
+    /// Returns the Cli instance with the parsed command line arguments
+    /// and defaults populated if applicable.
+    fn parsed(version_info: CliVersionInfo) -> Self;
+
+    /// Returns the Cli instance with the parsed command line arguments
+    /// and replaces version, name, author, and about
+    fn set_version(version_info: CliVersionInfo) -> Self;
+}
+
+impl CliExt for Cli {
+    /// Checks if the node is started with the `--builder.playground` flag,
+    /// and if so, populates the default values for the CLI arguments from the
+    /// playground configuration.
+    ///
+    /// The `--builder.playground` flag is used to populate the CLI arguments with
+    /// default values for running the builder against the playground environment.
+    ///
+    /// The values are populated from the default directory of the playground
+    /// configuration, which is `$HOME/.playground/devnet/` by default.
+    ///
+    /// Any manually specified CLI arguments by the user will override the defaults.
+    fn populate_defaults(self) -> Self {
+        let Commands::Node(ref node_command) = self.command else {
+            // playground defaults are only relevant if running the node commands.
+            return self;
+        };
+
+        let Some(ref playground_dir) = node_command.ext.playground else {
+            // not running in playground mode.
+            return self;
+        };
+
+        let options = PlaygroundOptions::new(playground_dir).unwrap_or_else(|e| exit(e));
+
+        options.apply(self)
+    }
+
+    fn parsed(version_info: CliVersionInfo) -> Self {
+        Self::set_version(version_info).populate_defaults()
+    }
+
+    /// Parses commands and overrides versions
+    fn set_version(version_info: CliVersionInfo) -> Self {
+        let matches = Self::command()
+            .version(version_info.short_version)
+            .long_version(version_info.long_version)
+            .about(version_info.about)
+            .author(version_info.author)
+            .name(version_info.name)
+            .mut_arg("log_file_directory", |arg| arg.default_value(version_info.logs_dir))
+            .get_matches();
+        Self::from_arg_matches(&matches).expect("Parsing args")
+    }
+}
+
+/// Following clap's convention, a failure to parse the command line arguments
+/// will result in terminating the program with a non-zero exit code.
+fn exit(error: eyre::Report) -> ! {
+    eprintln!("{error}");
+    std::process::exit(-1);
+}

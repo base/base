@@ -4,7 +4,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
-pub mod args;
 pub mod flashblocks;
 pub mod gas_limiter;
 pub mod launcher;
