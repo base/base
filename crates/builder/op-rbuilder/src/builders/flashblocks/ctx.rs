@@ -20,6 +20,7 @@ use crate::{
     tx_data_store::TxDataStore,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(super) struct OpPayloadSyncerCtx {
     /// The type that knows how to perform system calls and configure the evm.
@@ -36,6 +37,7 @@ pub(super) struct OpPayloadSyncerCtx {
     tx_data_store: TxDataStore,
 }
 
+#[allow(dead_code)]
 impl OpPayloadSyncerCtx {
     pub(super) fn new<Client>(
         client: &Client,
@@ -57,11 +59,11 @@ impl OpPayloadSyncerCtx {
         })
     }
 
-    pub(super) fn evm_config(&self) -> &OpEvmConfig {
+    pub(super) const fn evm_config(&self) -> &OpEvmConfig {
         &self.evm_config
     }
 
-    pub(super) fn max_gas_per_txn(&self) -> Option<u64> {
+    pub(super) const fn max_gas_per_txn(&self) -> Option<u64> {
         self.max_gas_per_txn
     }
 
@@ -86,7 +88,7 @@ impl OpPayloadSyncerCtx {
             extra_ctx: (),
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
-            tx_data_store: self.tx_data_store.clone(),
+            tx_data_store: self.tx_data_store,
         }
     }
 }

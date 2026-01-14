@@ -23,6 +23,7 @@ use crate::{
 /// The ChainDriver is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
+#[derive(Debug)]
 pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     engine_api: EngineApi<RpcProtocol>,
     provider: RootProvider<Optimism>,
@@ -50,11 +51,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 
     /// Creates a new ChainDriver for some EL node instance.
-    pub fn remote(
-        provider: RootProvider<Optimism>,
-        engine_api: EngineApi<RpcProtocol>,
-    ) -> ChainDriver<RpcProtocol> {
-        ChainDriver {
+    pub fn remote(provider: RootProvider<Optimism>, engine_api: EngineApi<RpcProtocol>) -> Self {
+        Self {
             engine_api,
             provider,
             signer: Default::default(),
@@ -66,14 +64,14 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
     /// Specifies the block builder signing key used to sign builder transactions.
     /// If not specified, a random signer will be used.
-    pub fn with_signer(mut self, signer: Signer) -> Self {
+    pub const fn with_signer(mut self, signer: Signer) -> Self {
         self.signer = Some(signer);
         self
     }
 
     /// Specifies a custom gas limit for blocks being built, otherwise the limit is
     /// set to a default value of 10_000_000.
-    pub fn with_gas_limit(mut self, gas_limit: u64) -> Self {
+    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
     }
@@ -150,17 +148,18 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
         let mut wait_until = None;
         // If block_timestamp we need to produce new timestamp according to current clocks
-        let block_timestamp = if let Some(block_timestamp) = block_timestamp {
-            block_timestamp.as_secs()
-        } else {
-            // We take the following second, until which we will need to wait before issuing FCU
-            let latest_timestamp = (chrono::Utc::now().timestamp() + 1) as u64;
-            wait_until = Some(latest_timestamp);
-            latest_timestamp
-                + Duration::from_millis(self.args.chain_block_time)
-                    .as_secs()
-                    .max(Self::MIN_BLOCK_TIME.as_secs())
-        };
+        let block_timestamp = block_timestamp.map_or_else(
+            || {
+                // We take the following second, until which we will need to wait before issuing FCU
+                let latest_timestamp = (chrono::Utc::now().timestamp() + 1) as u64;
+                wait_until = Some(latest_timestamp);
+                latest_timestamp
+                    + Duration::from_millis(self.args.chain_block_time)
+                        .as_secs()
+                        .max(Self::MIN_BLOCK_TIME.as_secs())
+            },
+            |ts| ts.as_secs(),
+        );
 
         // This step will alight time at which we send FCU. ideally we must send FCU and the beginning of the second.
         if let Some(wait_until) = wait_until {

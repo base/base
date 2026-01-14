@@ -139,10 +139,10 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
         f.debug_struct("Config")
             .field(
                 "builder_signer",
-                &match self.builder_signer.as_ref() {
-                    Some(signer) => signer.address.to_string(),
-                    None => "None".into(),
-                },
+                &self
+                    .builder_signer
+                    .as_ref()
+                    .map_or_else(|| "None".into(), |signer| signer.address.to_string()),
             )
             .field("revert_protection", &self.revert_protection)
             .field("flashtestations", &self.flashtestations_config)

@@ -14,6 +14,8 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 
+#[allow(unnameable_types)]
+#[derive(Debug)]
 pub struct StandardServiceBuilder(pub BuilderConfig<()>);
 
 impl StandardServiceBuilder {
@@ -33,7 +35,7 @@ impl StandardServiceBuilder {
             evm_config,
             pool,
             ctx.provider().clone(),
-            self.0.clone(),
+            self.0,
             builder_tx,
         );
 

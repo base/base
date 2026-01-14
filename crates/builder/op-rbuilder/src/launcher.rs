@@ -27,6 +27,7 @@ use crate::{
 };
 
 /// Launcher for the OP builder node.
+#[derive(Debug)]
 pub struct BuilderLauncher<B> {
     _builder: PhantomData<B>,
 }
@@ -35,7 +36,7 @@ impl<B> BuilderLauncher<B>
 where
     B: PayloadBuilder,
 {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { _builder: PhantomData }
     }
 }

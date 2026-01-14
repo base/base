@@ -26,6 +26,8 @@ use crate::{
     traits::{NodeBounds, PoolBounds},
 };
 
+#[allow(unnameable_types)]
+#[derive(Debug)]
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
 impl FlashblocksServiceBuilder {
@@ -63,7 +65,7 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             builder_tx,
             built_payload_tx,
-            ws_pub.clone(),
+            ws_pub,
             metrics.clone(),
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
@@ -84,7 +86,7 @@ impl FlashblocksServiceBuilder {
             &ctx.provider().clone(),
             self.0,
             OpEvmConfig::optimism(ctx.chain_spec()),
-            metrics.clone(),
+            metrics,
         )
         .wrap_err("failed to create flashblocks payload builder context")?;
 

@@ -118,7 +118,7 @@ pub struct Bundle {
 
 impl From<BundleConditionalError> for EthApiError {
     fn from(err: BundleConditionalError) -> Self {
-        EthApiError::InvalidParams(err.to_string())
+        Self::InvalidParams(err.to_string())
     }
 }
 
@@ -146,6 +146,7 @@ pub enum BundleConditionalError {
     FlashblockMinGreaterThanMax { min: u64, max: u64 },
 }
 
+#[derive(Debug)]
 pub struct BundleConditional {
     pub transaction_conditional: TransactionConditional,
     pub flashblock_number_min: Option<u64>,

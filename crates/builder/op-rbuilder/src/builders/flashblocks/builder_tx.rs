@@ -64,7 +64,7 @@ pub(super) struct FlashblocksBuilderTx {
 }
 
 impl FlashblocksBuilderTx {
-    pub(super) fn new(
+    pub(super) const fn new(
         signer: Option<Signer>,
         flashtestations_builder_tx: Option<
             FlashtestationsBuilderTx<FlashblocksExtraCtx, FlashblocksExecutionInfo>,
@@ -88,7 +88,7 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> for Flas
 
         if ctx.is_first_flashblock() {
             let flashblocks_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
-            builder_txs.extend(flashblocks_builder_tx.clone());
+            builder_txs.extend(flashblocks_builder_tx);
         }
 
         if ctx.is_last_flashblock() {
@@ -133,7 +133,7 @@ pub(super) struct FlashblocksNumberBuilderTx {
 }
 
 impl FlashblocksNumberBuilderTx {
-    pub(super) fn new(
+    pub(super) const fn new(
         signer: Signer,
         flashblock_number_address: Address,
         use_permit: bool,

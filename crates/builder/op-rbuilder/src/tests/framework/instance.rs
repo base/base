@@ -77,6 +77,7 @@ fn clear_otel_env_vars() {
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
+#[derive(Debug)]
 pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
@@ -283,7 +284,7 @@ impl LocalInstance {
         &self.attestation_server
     }
 
-    pub fn tx_data_store(&self) -> &TxDataStore {
+    pub const fn tx_data_store(&self) -> &TxDataStore {
         &self.tx_data_store
     }
 
@@ -322,13 +323,13 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
-    let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir")).to_path_buf();
+    let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir"));
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
 
-    let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc")).to_path_buf();
+    let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc"));
 
-    let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc")).to_path_buf();
+    let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc"));
 
     let mut rpc = RpcServerArgs::default().with_auth_ipc();
     rpc.ws = false;
@@ -388,6 +389,7 @@ async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
 ///
 /// This provides a reusable way to capture and inspect flashblocks that are produced
 /// during test execution, eliminating the need for duplicate WebSocket listening code.
+#[derive(Debug)]
 pub struct FlashblocksListener {
     pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
     pub cancellation_token: CancellationToken,
@@ -470,6 +472,7 @@ impl FlashblocksListener {
 }
 
 /// A utility service to spawn a server that returns a mock quote for an attestation request
+#[derive(Debug)]
 pub struct AttestationServer {
     tee_address: Address,
     extra_registration_data: Bytes,
@@ -481,12 +484,12 @@ pub struct AttestationServer {
 }
 
 impl AttestationServer {
-    pub fn new(
+    pub const fn new(
         tee_address: Address,
         extra_registration_data: Bytes,
         mock_attestation: Bytes,
     ) -> Self {
-        AttestationServer {
+        Self {
             tee_address,
             extra_registration_data,
             mock_attestation,
@@ -497,7 +500,7 @@ impl AttestationServer {
         }
     }
 
-    pub fn set_error(&mut self, error: bool) {
+    pub const fn set_error(&mut self, error: bool) {
         self.error_on_request = error;
     }
 

@@ -42,7 +42,7 @@ pub struct ParsedQuote {
 }
 
 /// Configuration for attestation
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AttestationConfig {
     /// If true, uses the debug HTTP service instead of real TDX hardware
     pub debug: bool,

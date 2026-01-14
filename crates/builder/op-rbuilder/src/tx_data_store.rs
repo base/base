@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::{metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoredBackrunBundle {
     pub bundle_id: Uuid,
     pub sender: Address,
@@ -30,7 +30,7 @@ pub struct StoredBackrunBundle {
     pub total_priority_fee: u128,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct TxData {
     pub metering: Option<MeterBundleResponse>,
     pub backrun_bundles: Vec<StoredBackrunBundle>,
@@ -260,6 +260,7 @@ pub trait BaseApiExt {
     async fn clear_metering_information(&self) -> RpcResult<()>;
 }
 
+#[derive(Debug)]
 pub struct TxDataStoreExt {
     store: TxDataStore,
     metrics: OpRBuilderMetrics,

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 // Taken from reth [https://github.com/paradigmxyz/reth/blob/main/crates/node/core/build.rs]
 // The MIT License (MIT)
 //

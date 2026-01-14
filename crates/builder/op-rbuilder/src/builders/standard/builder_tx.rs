@@ -24,7 +24,7 @@ pub(super) struct StandardBuilderTx {
 }
 
 impl StandardBuilderTx {
-    pub(super) fn new(
+    pub(super) const fn new(
         signer: Option<Signer>,
         flashtestations_builder_tx: Option<FlashtestationsBuilderTx>,
     ) -> Self {
@@ -44,11 +44,11 @@ impl BuilderTransactions for StandardBuilderTx {
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
         let standard_builder_tx = self.base_builder_tx.simulate_builder_tx(ctx, &mut *db)?;
-        builder_txs.extend(standard_builder_tx.clone());
         if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-            if let Some(builder_tx) = standard_builder_tx {
-                self.commit_txs(vec![builder_tx.signed_tx], ctx, db)?;
+            if let Some(ref builder_tx) = standard_builder_tx {
+                self.commit_txs(vec![builder_tx.signed_tx.clone()], ctx, db)?;
             }
+            builder_txs.extend(standard_builder_tx);
             match flashtestations_builder_tx.simulate_builder_txs(
                 state_provider,
                 info,
@@ -61,6 +61,8 @@ impl BuilderTransactions for StandardBuilderTx {
                     warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
                 }
             }
+        } else {
+            builder_txs.extend(standard_builder_tx);
         }
         Ok(builder_txs)
     }

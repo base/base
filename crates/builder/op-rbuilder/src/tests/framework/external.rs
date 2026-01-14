@@ -37,6 +37,7 @@ const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
 ///
 /// If the built payload fails to validate, then the driver block production function will
 /// return an error during `ChainDriver::build_new_block`.
+#[derive(Debug)]
 pub struct ExternalNode {
     engine_api: EngineApi<Ipc>,
     provider: RootProvider<Optimism>,
@@ -109,12 +110,12 @@ impl ExternalNode {
 
 impl ExternalNode {
     /// Access to the RPC API of the validation node.
-    pub fn provider(&self) -> &RootProvider<Optimism> {
+    pub const fn provider(&self) -> &RootProvider<Optimism> {
         &self.provider
     }
 
     /// Access to the Engine API of the validation node.
-    pub fn engine_api(&self) -> &EngineApi<Ipc> {
+    pub const fn engine_api(&self) -> &EngineApi<Ipc> {
         &self.engine_api
     }
 }
