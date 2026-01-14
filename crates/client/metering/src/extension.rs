@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
+use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use tracing::info;
 
@@ -27,14 +27,14 @@ impl MeteringExtension {
 
 impl BaseNodeExtension for MeteringExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
         if !self.enabled {
             return builder;
         }
 
         let flashblocks_config = self.flashblocks_config;
 
-        builder.extend_rpc_modules(move |ctx| {
+        builder.add_rpc_module(move |ctx| {
             info!(message = "Starting Metering RPC");
 
             // Get flashblocks state from config, or create a default one if not configured
