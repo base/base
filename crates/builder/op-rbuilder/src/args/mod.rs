@@ -1,8 +1,9 @@
-use crate::metrics::{LONG_VERSION, SHORT_VERSION};
 use clap_builder::{CommandFactory, FromArgMatches};
 pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
+
+use crate::metrics::{LONG_VERSION, SHORT_VERSION};
 
 mod op;
 mod playground;
@@ -56,7 +57,7 @@ impl CliExt for Cli {
     }
 
     fn parsed() -> Self {
-        Cli::set_version().populate_defaults()
+        Self::set_version().populate_defaults()
     }
 
     /// Parses commands and overrides versions
@@ -65,7 +66,7 @@ impl CliExt for Cli {
             .map(|root| root.join("op-rbuilder/logs"))
             .unwrap()
             .into_os_string();
-        let matches = Cli::command()
+        let matches = Self::command()
             .version(SHORT_VERSION)
             .long_version(LONG_VERSION)
             .about("Block builder designed for the Optimism stack")
@@ -73,7 +74,7 @@ impl CliExt for Cli {
             .name("op-rbuilder")
             .mut_arg("log_file_directory", |arg| arg.default_value(logs_dir))
             .get_matches();
-        Cli::from_arg_matches(&matches).expect("Parsing args")
+        Self::from_arg_matches(&matches).expect("Parsing args")
     }
 }
 

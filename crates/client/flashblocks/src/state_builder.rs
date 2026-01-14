@@ -1,26 +1,22 @@
 use std::sync::Arc;
 
 use alloy_consensus::{
-    Block, Eip658Value, Header, TxReceipt,
+    Block, Header, TxReceipt,
     transaction::{Recovered, TransactionMeta},
 };
-use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
+use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth_evm::{
-    Evm, FromRecoveredTx, eth::receipt_builder::ReceiptBuilderCtx, op_revm::L1BlockInfo,
-};
+use reth_evm::{Evm, FromRecoveredTx, op_revm::L1BlockInfo};
 use reth_optimism_chainspec::OpHardforks;
-use reth_optimism_evm::OpRethReceiptBuilder;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
 
-use crate::{ExecutionError, PendingBlocks, StateProcessorError};
+use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
 
 /// Represents the result of executing or fetching a cached pending transaction.
 #[derive(Debug, Clone)]
@@ -42,8 +38,7 @@ pub struct PendingStateBuilder<E, ChainSpec> {
     evm: E,
     pending_block: Block<OpTxEnvelope, Header>,
     l1_block_info: L1BlockInfo,
-    chain_spec: ChainSpec,
-    receipt_builder: OpRethReceiptBuilder,
+    receipt_builder: UnifiedReceiptBuilder<ChainSpec>,
 
     prev_pending_blocks: Option<Arc<PendingBlocks>>,
     state_overrides: StateOverride,
@@ -64,7 +59,6 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         l1_block_info: L1BlockInfo,
         state_overrides: StateOverride,
-        receipt_builder: OpRethReceiptBuilder,
     ) -> Self {
         Self {
             pending_block,
@@ -74,8 +68,7 @@ where
             prev_pending_blocks,
             l1_block_info,
             state_overrides,
-            chain_spec,
-            receipt_builder,
+            receipt_builder: UnifiedReceiptBuilder::new(chain_spec),
         }
     }
 
@@ -195,45 +188,15 @@ where
                     .checked_add(gas_used)
                     .ok_or(ExecutionError::GasOverflow)?;
 
-                let is_canyon_active =
-                    self.chain_spec.is_canyon_active_at_timestamp(self.pending_block.timestamp);
-
-                let is_regolith_active =
-                    self.chain_spec.is_regolith_active_at_timestamp(self.pending_block.timestamp);
-
-                let receipt = match self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                    tx: &transaction,
-                    evm: &mut self.evm,
+                // Build receipt using the unified receipt builder - handles both
+                // deposit and non-deposit transactions seamlessly
+                let receipt = self.receipt_builder.build(
+                    &mut self.evm,
+                    &transaction,
                     result,
-                    state: &state,
-                    cumulative_gas_used: self.cumulative_gas_used,
-                }) {
-                    Ok(receipt) => receipt,
-                    Err(ctx) => {
-                        // This is a deposit transaction, so build the receipt from the context
-                        let receipt = alloy_consensus::Receipt {
-                            status: Eip658Value::Eip658(ctx.result.is_success()),
-                            cumulative_gas_used: ctx.cumulative_gas_used,
-                            logs: ctx.result.into_logs(),
-                        };
-
-                        let deposit_nonce = (is_regolith_active && transaction.is_deposit())
-                            .then(|| {
-                                self.evm
-                                    .db_mut()
-                                    .basic(transaction.signer())
-                                    .map(|acc| acc.unwrap_or_default().nonce)
-                            })
-                            .transpose()
-                            .map_err(|_| ExecutionError::DepositAccountLoad)?;
-
-                        self.receipt_builder.build_deposit_receipt(OpDepositReceipt {
-                            inner: receipt,
-                            deposit_nonce,
-                            deposit_receipt_version: is_canyon_active.then_some(1),
-                        })
-                    }
-                };
+                    self.cumulative_gas_used,
+                    self.pending_block.timestamp,
+                )?;
 
                 let meta = TransactionMeta {
                     tx_hash,
@@ -254,10 +217,13 @@ where
                     meta,
                 };
 
-                let op_receipt =
-                    OpRpcReceiptBuilder::new(&self.chain_spec, input, &mut self.l1_block_info)
-                        .unwrap()
-                        .build();
+                let op_receipt = OpRpcReceiptBuilder::new(
+                    self.receipt_builder.chain_spec(),
+                    input,
+                    &mut self.l1_block_info,
+                )
+                .map_err(|e| ExecutionError::RpcReceiptBuild(e.to_string()))?
+                .build();
                 self.next_log_index += receipt.logs().len();
 
                 let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {

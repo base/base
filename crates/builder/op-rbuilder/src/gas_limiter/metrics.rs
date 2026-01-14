@@ -40,8 +40,7 @@ impl GasLimiterMetrics {
     }
 
     pub(super) fn record_refresh(&self, removed_addresses: usize, duration: Duration) {
-        self.active_address_count
-            .decrement(removed_addresses as f64);
+        self.active_address_count.decrement(removed_addresses as f64);
         self.refresh_duration.record(duration);
     }
 }

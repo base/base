@@ -1,0 +1,43 @@
+[package]
+name = "base-jwt"
+description = "JWT secret handling and validation for Base node components"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+test-utils = []
+engine-validation = [
+	"dep:alloy-provider",
+	"dep:alloy-transport-http",
+	"dep:backon",
+	"dep:eyre",
+	"dep:kona-engine",
+	"dep:op-alloy-network",
+	"dep:op-alloy-provider",
+	"dep:tracing",
+	"dep:url",
+]
+
+[dependencies]
+# Core
+alloy-rpc-types-engine.workspace = true
+alloy-primitives.workspace = true
+thiserror.workspace = true
+
+# Optional: engine validation
+tracing = { workspace = true, optional = true }
+alloy-provider = { workspace = true, optional = true }
+alloy-transport-http = { workspace = true, optional = true }
+op-alloy-network = { workspace = true, optional = true }
+op-alloy-provider = { workspace = true, optional = true }
+kona-engine = { workspace = true, optional = true }
+backon = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+eyre = { workspace = true, optional = true }

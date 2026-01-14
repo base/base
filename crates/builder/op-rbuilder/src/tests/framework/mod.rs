@@ -6,7 +6,6 @@ mod instance;
 mod txs;
 mod utils;
 
-use alloy_primitives::{B256, b256};
 pub use apis::*;
 pub use contracts::*;
 pub use driver::*;
@@ -38,19 +37,6 @@ pub const DEFAULT_JWT_TOKEN: &str =
 
 pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 
-// flashtestations constants
-pub const TEE_DEBUG_ADDRESS: alloy_primitives::Address =
-    alloy_primitives::address!("6Af149F267e1e62dFc431F2de6deeEC7224746f4");
-
-pub const WORKLOAD_ID: B256 =
-    b256!("952569f637f3f7e36cd8f5a7578ae4d03a1cb05ddaf33b35d3054464bb1c862e");
-
-pub const SOURCE_LOCATORS: &[&str] = &[
-    "https://github.com/flashbots/flashbots-images/commit/53d431f58a0d1a76f6711518ef8d876ce8181fc2",
-];
-
-pub const COMMIT_HASH: &str = "53d431f58a0d1a76f6711518ef8d876ce8181fc2";
-
 /// This gets invoked before any tests, when the cargo test framework loads the test library.
 /// It injects itself into
 #[ctor::ctor]
@@ -74,9 +60,7 @@ fn init_tests() {
             .with(tracing_subscriber::fmt::layer())
             .with(filter_fn(move |metadata| {
                 metadata.level() <= &level
-                    && !prefix_blacklist
-                        .iter()
-                        .any(|prefix| metadata.target().starts_with(prefix))
+                    && !prefix_blacklist.iter().any(|prefix| metadata.target().starts_with(prefix))
             }))
             .init();
     }

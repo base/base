@@ -15,32 +15,27 @@ use std::{
 use base_client_node::{
     BaseNodeExtension,
     test_utils::{
-        LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
-        init_silenced_tracing,
+        LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing,
     },
 };
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
-use once_cell::sync::OnceCell;
+use reth_chain_state::CanonStateSubscriptions;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_provider::CanonStateSubscriptions;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::StreamExt;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 use crate::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
     FlashblocksState,
 };
 
-/// Convenience alias for the Flashblocks state backing the local node.
-pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
-
 /// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
 pub struct FlashblocksParts {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
-    state: Arc<LocalFlashblocksState>,
+    state: Arc<FlashblocksState>,
 }
 
 impl fmt::Debug for FlashblocksParts {
@@ -51,7 +46,7 @@ impl fmt::Debug for FlashblocksParts {
 
 impl FlashblocksParts {
     /// Clone the shared [`FlashblocksState`] handle.
-    pub fn state(&self) -> Arc<LocalFlashblocksState> {
+    pub fn state(&self) -> Arc<FlashblocksState> {
         self.state.clone()
     }
 
@@ -66,7 +61,7 @@ impl FlashblocksParts {
 
 /// Test extension for flashblocks functionality.
 ///
-/// This extension wires up the flashblocks ExEx and RPC modules for testing,
+/// This extension wires up the flashblocks canonical subscription and RPC modules for testing,
 /// with optional control over canonical block processing.
 #[derive(Clone, Debug)]
 pub struct FlashblocksTestExtension {
@@ -77,7 +72,7 @@ struct FlashblocksTestExtensionInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     #[allow(clippy::type_complexity)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
-    fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
+    state: Arc<FlashblocksState>,
     process_canonical: bool,
 }
 
@@ -99,7 +94,7 @@ impl FlashblocksTestExtension {
         let inner = FlashblocksTestExtensionInner {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
-            fb_cell: Arc::new(OnceCell::new()),
+            state: Arc::new(FlashblocksState::new(5)),
             process_canonical,
         };
         Self { inner: Arc::new(inner) }
@@ -107,102 +102,88 @@ impl FlashblocksTestExtension {
 
     /// Get the flashblocks parts after the node has been launched.
     pub fn parts(&self) -> Result<FlashblocksParts> {
-        let state = self.inner.fb_cell.get().ok_or_else(|| {
-            eyre::eyre!("FlashblocksState should be initialized during node launch")
-        })?;
-        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: state.clone() })
+        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: self.inner.state.clone() })
     }
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
     fn apply(self: Box<Self>, builder: base_client_node::OpBuilder) -> base_client_node::OpBuilder {
-        let fb_cell = self.inner.fb_cell.clone();
+        let state = self.inner.state.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
 
-        let fb_cell_for_exex = fb_cell.clone();
+        let state_for_start = state.clone();
+        let state_for_rpc = state.clone();
 
-        builder
-            .install_exex("flashblocks-canon", move |mut ctx| {
-                let fb_cell = fb_cell_for_exex.clone();
-                async move {
-                    let provider = ctx.provider().clone();
-                    let fb = init_flashblocks_state(&fb_cell, &provider);
-                    Ok(async move {
-                        use reth_exex::ExExEvent;
-                        while let Some(note) = ctx.notifications.try_next().await? {
-                            if let Some(committed) = note.committed_chain() {
-                                let hash = committed.tip().num_hash();
-                                if process_canonical {
-                                    // Many suites drive canonical updates manually to reproduce race conditions, so
-                                    // allowing this to be disabled keeps canonical replay deterministic.
-                                    let chain = Arc::unwrap_or_clone(committed);
-                                    for (_, block) in chain.into_blocks() {
-                                        fb.on_canonical_block_received(block);
-                                    }
-                                }
-                                let _ = ctx.events.send(ExExEvent::FinishedHeight(hash));
-                            }
-                        }
-                        Ok(())
-                    })
+        // Start state processor and subscriptions after node is started
+        let builder = builder.on_node_started(move |ctx| {
+            let provider = ctx.provider().clone();
+
+            // Start the state processor with the provider
+            state_for_start.start(provider.clone());
+
+            // Spawn a task to forward canonical state notifications to the in-memory state
+            let provider_for_notify = provider.clone();
+            let mut canon_notify_stream =
+                BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+            tokio::spawn(async move {
+                while let Some(Ok(notification)) = canon_notify_stream.next().await {
+                    provider_for_notify
+                        .canonical_in_memory_state()
+                        .notify_canon_state(notification);
                 }
-            })
-            .extend_rpc_modules(move |ctx| {
-                let fb_cell = fb_cell.clone();
-                let provider = ctx.provider().clone();
-                let fb = init_flashblocks_state(&fb_cell, &provider);
+            });
 
-                let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
-                    ctx.provider().subscribe_to_canonical_state(),
-                );
+            // If process_canonical is enabled, spawn a task to process canonical blocks
+            if process_canonical {
+                let state_for_canonical = state_for_start.clone();
+                let mut canonical_stream =
+                    BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
                 tokio::spawn(async move {
-                    use tokio_stream::StreamExt;
-                    while let Some(Ok(notification)) = canon_stream.next().await {
-                        provider.canonical_in_memory_state().notify_canon_state(notification);
+                    while let Some(Ok(notification)) = canonical_stream.next().await {
+                        let committed = notification.committed();
+                        for block in committed.blocks_iter() {
+                            state_for_canonical.on_canonical_block_received(block.clone());
+                        }
                     }
                 });
-                let api_ext = EthApiExt::new(
-                    ctx.registry.eth_api().clone(),
-                    ctx.registry.eth_handlers().filter.clone(),
-                    fb.clone(),
-                );
-                ctx.modules.replace_configured(api_ext.into_rpc())?;
+            }
 
-                // Register eth_subscribe subscription endpoint for flashblocks
-                // Uses replace_configured since eth_subscribe already exists from reth's standard module
-                // Pass eth_api to enable proxying standard subscription types to reth's implementation
-                let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
-                ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
+            Ok(())
+        });
 
-                let fb_for_task = fb.clone();
-                let mut receiver = receiver
-                    .lock()
-                    .expect("flashblock receiver mutex poisoned")
-                    .take()
-                    .expect("flashblock receiver should only be initialized once");
-                tokio::spawn(async move {
-                    while let Some((payload, tx)) = receiver.recv().await {
-                        fb_for_task.on_flashblock_received(payload);
-                        let _ = tx.send(());
-                    }
-                });
+        builder.extend_rpc_modules(move |ctx| {
+            let fb = state_for_rpc;
 
-                Ok(())
-            })
+            let api_ext = EthApiExt::new(
+                ctx.registry.eth_api().clone(),
+                ctx.registry.eth_handlers().filter.clone(),
+                fb.clone(),
+            );
+            ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+            // Register eth_subscribe subscription endpoint for flashblocks
+            // Uses replace_configured since eth_subscribe already exists from reth's standard module
+            // Pass eth_api to enable proxying standard subscription types to reth's implementation
+            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
+            ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
+
+            let fb_for_task = fb.clone();
+            let mut receiver = receiver
+                .lock()
+                .expect("flashblock receiver mutex poisoned")
+                .take()
+                .expect("flashblock receiver should only be initialized once");
+            tokio::spawn(async move {
+                while let Some((payload, tx)) = receiver.recv().await {
+                    fb_for_task.on_flashblock_received(payload);
+                    let _ = tx.send(());
+                }
+            });
+
+            Ok(())
+        })
     }
-}
-
-fn init_flashblocks_state(
-    cell: &Arc<OnceCell<Arc<LocalFlashblocksState>>>,
-    provider: &LocalNodeProvider,
-) -> Arc<LocalFlashblocksState> {
-    cell.get_or_init(|| {
-        let fb = Arc::new(FlashblocksState::new(provider.clone(), 5));
-        fb.start();
-        fb
-    })
-    .clone()
 }
 
 /// Local node wrapper that exposes helpers specific to Flashblocks tests.
@@ -245,7 +226,7 @@ impl FlashblocksLocalNode {
     }
 
     /// Access the shared Flashblocks state for assertions or manual driving.
-    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+    pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
     }
 
@@ -280,7 +261,7 @@ impl FlashblocksHarness {
     }
 
     /// Get a handle to the in-memory Flashblocks state backing the harness.
-    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+    pub fn flashblocks_state(&self) -> Arc<FlashblocksState> {
         self.parts.state()
     }
 

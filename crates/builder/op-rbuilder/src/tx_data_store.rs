@@ -1,13 +1,3 @@
-use crate::{metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
-use alloy_consensus::Transaction;
-use alloy_primitives::{Address, TxHash};
-use concurrent_queue::ConcurrentQueue;
-use jsonrpsee::{
-    core::{RpcResult, async_trait},
-    proc_macros::rpc,
-};
-use reth_optimism_txpool::OpPooledTransaction;
-use reth_transaction_pool::PoolTransaction;
 use std::{
     fmt::Debug,
     sync::{
@@ -16,19 +6,31 @@ use std::{
     },
     time::Instant,
 };
+
+use alloy_consensus::Transaction;
+use alloy_primitives::{Address, TxHash};
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
+use concurrent_queue::ConcurrentQueue;
+use jsonrpsee::{
+    core::{RpcResult, async_trait},
+    proc_macros::rpc,
+};
+use reth_optimism_txpool::OpPooledTransaction;
+use reth_transaction_pool::PoolTransaction;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-#[derive(Clone)]
+use crate::metrics::OpRBuilderMetrics;
+
+#[derive(Clone, Debug)]
 pub struct StoredBackrunBundle {
     pub bundle_id: Uuid,
     pub sender: Address,
-    pub backrun_txs: Vec<FBPooledTransaction>,
+    pub backrun_txs: Vec<OpPooledTransaction>,
     pub total_priority_fee: u128,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct TxData {
     pub metering: Option<MeterBundleResponse>,
     pub backrun_bundles: Vec<StoredBackrunBundle>,
@@ -50,10 +52,7 @@ impl Debug for TxDataStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TxDataStore")
             .field("entries", &self.data.by_tx_hash.len())
-            .field(
-                "metering_enabled",
-                &self.data.metering_enabled.load(Ordering::Relaxed),
-            )
+            .field("metering_enabled", &self.data.metering_enabled.load(Ordering::Relaxed))
             .finish()
     }
 }
@@ -90,10 +89,7 @@ impl TxDataStore {
             if metering_enabled {
                 self.metrics.metering_unknown_transaction.increment(1);
             }
-            return TxData {
-                metering: None,
-                backrun_bundles: vec![],
-            };
+            return TxData { metering: None, backrun_bundles: vec![] };
         };
 
         let data = entry.clone();
@@ -116,8 +112,8 @@ impl TxDataStore {
 
         let target_tx_hash = bundle.txs[0].tx_hash();
 
-        // Convert OpTxEnvelope transactions to FBPooledTransaction
-        let backrun_txs: Vec<FBPooledTransaction> = bundle.txs[1..]
+        // Convert OpTxEnvelope transactions to OpPooledTransaction
+        let backrun_txs: Vec<OpPooledTransaction> = bundle.txs[1..]
             .iter()
             .filter_map(|tx| {
                 let (envelope, signer) = tx.clone().into_parts();
@@ -125,8 +121,7 @@ impl TxDataStore {
                     envelope.try_into().ok()?;
                 let recovered_pooled =
                     alloy_consensus::transaction::Recovered::new_unchecked(pooled_envelope, signer);
-                let pooled = OpPooledTransaction::from_pooled(recovered_pooled);
-                Some(FBPooledTransaction::from(pooled))
+                Some(OpPooledTransaction::from_pooled(recovered_pooled))
             })
             .collect();
 
@@ -139,10 +134,8 @@ impl TxDataStore {
         self.evict_if_needed();
         let _ = self.data.lru.push(target_tx_hash);
 
-        let total_priority_fee: u128 = backrun_txs
-            .iter()
-            .map(|tx| tx.max_priority_fee_per_gas().unwrap_or(0))
-            .sum();
+        let total_priority_fee: u128 =
+            backrun_txs.iter().map(|tx| tx.max_priority_fee_per_gas().unwrap_or(0)).sum();
 
         let stored_bundle = StoredBackrunBundle {
             bundle_id: *bundle.uuid(),
@@ -153,10 +146,8 @@ impl TxDataStore {
 
         let replaced = {
             let mut entry = self.data.by_tx_hash.entry(target_tx_hash).or_default();
-            let replaced = if let Some(pos) = entry
-                .backrun_bundles
-                .iter()
-                .position(|b| b.sender == backrun_sender)
+            let replaced = if let Some(pos) =
+                entry.backrun_bundles.iter().position(|b| b.sender == backrun_sender)
             {
                 entry.backrun_bundles[pos] = stored_bundle;
                 true
@@ -164,9 +155,7 @@ impl TxDataStore {
                 entry.backrun_bundles.push(stored_bundle);
                 false
             };
-            entry
-                .backrun_bundles
-                .sort_by(|a, b| b.total_priority_fee.cmp(&a.total_priority_fee));
+            entry.backrun_bundles.sort_by(|a, b| b.total_priority_fee.cmp(&a.total_priority_fee));
             replaced
         };
 
@@ -188,9 +177,7 @@ impl TxDataStore {
             "Stored backrun bundle"
         );
 
-        self.metrics
-            .backrun_bundles_in_store
-            .set(self.data.by_tx_hash.len() as f64);
+        self.metrics.backrun_bundles_in_store.set(self.data.by_tx_hash.len() as f64);
 
         Ok(())
     }
@@ -215,9 +202,7 @@ impl TxDataStore {
             }
         }
 
-        self.metrics
-            .backrun_bundles_in_store
-            .set(self.data.by_tx_hash.len() as f64);
+        self.metrics.backrun_bundles_in_store.set(self.data.by_tx_hash.len() as f64);
     }
 
     pub fn insert_metering(&self, tx_hash: TxHash, metering_info: MeterBundleResponse) {
@@ -232,9 +217,7 @@ impl TxDataStore {
         for mut entry in self.data.by_tx_hash.iter_mut() {
             entry.metering = None;
         }
-        self.data
-            .by_tx_hash
-            .retain(|_, v| v.metering.is_some() || !v.backrun_bundles.is_empty());
+        self.data.by_tx_hash.retain(|_, v| v.metering.is_some() || !v.backrun_bundles.is_empty());
     }
 
     pub fn set_metering_enabled(&self, enabled: bool) {
@@ -276,6 +259,7 @@ pub trait BaseApiExt {
     async fn clear_metering_information(&self) -> RpcResult<()>;
 }
 
+#[derive(Debug)]
 pub struct TxDataStoreExt {
     store: TxDataStore,
     metrics: OpRBuilderMetrics,
@@ -283,10 +267,7 @@ pub struct TxDataStoreExt {
 
 impl TxDataStoreExt {
     pub fn new(store: TxDataStore) -> Self {
-        Self {
-            store,
-            metrics: OpRBuilderMetrics::default(),
-        }
+        Self { store, metrics: OpRBuilderMetrics::default() }
     }
 }
 
@@ -304,9 +285,7 @@ impl BaseApiExtServer for TxDataStoreExt {
                 None::<()>,
             )
         })?;
-        self.metrics
-            .backrun_bundle_insert_duration
-            .record(start.elapsed().as_secs_f64());
+        self.metrics.backrun_bundle_insert_duration.record(start.elapsed().as_secs_f64());
 
         Ok(())
     }
@@ -333,13 +312,14 @@ impl BaseApiExtServer for TxDataStoreExt {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::{SignableTransaction, transaction::Recovered};
     use alloy_primitives::{Address, B256, TxHash, U256};
     use alloy_provider::network::TxSignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_rpc_types::OpTransactionRequest;
+
+    use super::*;
 
     fn create_recovered_tx(
         from: &PrivateKeySigner,
@@ -453,10 +433,7 @@ mod tests {
         let data = store.get(&target_tx_hash);
         assert_eq!(data.backrun_bundles.len(), 1);
         assert_eq!(data.backrun_bundles[0].backrun_txs.len(), 1);
-        assert_eq!(
-            *data.backrun_bundles[0].backrun_txs[0].hash(),
-            backrun_tx1.tx_hash()
-        );
+        assert_eq!(*data.backrun_bundles[0].backrun_txs[0].hash(), backrun_tx1.tx_hash());
 
         let replacement_bundle =
             create_test_accepted_bundle(vec![target_tx.clone(), backrun_tx2.clone()]);
@@ -465,10 +442,7 @@ mod tests {
 
         let data = store.get(&target_tx_hash);
         assert_eq!(data.backrun_bundles.len(), 1);
-        assert_eq!(
-            *data.backrun_bundles[0].backrun_txs[0].hash(),
-            backrun_tx2.tx_hash()
-        );
+        assert_eq!(*data.backrun_bundles[0].backrun_txs[0].hash(), backrun_tx2.tx_hash());
 
         store.remove_backrun_bundles(&target_tx_hash);
         assert!(store.get(&target_tx_hash).backrun_bundles.is_empty());

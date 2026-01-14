@@ -78,11 +78,21 @@ pub enum ExecutionError {
     /// Failed to load cache account for depositor.
     #[error("failed to load cache account for deposit transaction sender")]
     DepositAccountLoad,
+
+    /// Failed to build RPC receipt.
+    #[error("failed to build RPC receipt: {0}")]
+    RpcReceiptBuild(String),
 }
 
 impl From<RecoveryError> for ExecutionError {
     fn from(err: RecoveryError) -> Self {
         Self::SenderRecovery(err.to_string())
+    }
+}
+
+impl From<crate::ReceiptBuildError> for ExecutionError {
+    fn from(err: crate::ReceiptBuildError) -> Self {
+        Self::RpcReceiptBuild(err.to_string())
     }
 }
 
@@ -120,6 +130,12 @@ pub enum StateProcessorError {
 
 impl From<RecoveryError> for StateProcessorError {
     fn from(err: RecoveryError) -> Self {
+        Self::Execution(ExecutionError::from(err))
+    }
+}
+
+impl From<crate::ReceiptBuildError> for StateProcessorError {
+    fn from(err: crate::ReceiptBuildError) -> Self {
         Self::Execution(ExecutionError::from(err))
     }
 }

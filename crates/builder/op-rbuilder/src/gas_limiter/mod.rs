@@ -31,19 +31,13 @@ struct TokenBucket {
 
 impl AddressGasLimiter {
     pub fn new(config: GasLimiterArgs) -> Self {
-        Self {
-            inner: AddressGasLimiterInner::try_new(config),
-        }
+        Self { inner: AddressGasLimiterInner::try_new(config) }
     }
 
     /// Check if there's enough gas for this address and consume it. Returns
     /// Ok(()) if there's enough otherwise returns an error.
     pub fn consume_gas(&self, address: Address, gas_requested: u64) -> Result<(), GasLimitError> {
-        if let Some(inner) = &self.inner {
-            inner.consume_gas(address, gas_requested)
-        } else {
-            Ok(())
-        }
+        self.inner.as_ref().map_or(Ok(()), |inner| inner.consume_gas(address, gas_requested))
     }
 
     /// Should be called upon each new block. Refills buckets/Garbage collection
@@ -60,11 +54,7 @@ impl AddressGasLimiterInner {
             return None;
         }
 
-        Some(Self {
-            config,
-            address_buckets: Default::default(),
-            metrics: Default::default(),
-        })
+        Some(Self { config, address_buckets: Default::default(), metrics: Default::default() })
     }
 
     fn consume_gas_inner(
@@ -108,16 +98,13 @@ impl AddressGasLimiterInner {
         let active_addresses = self.address_buckets.len();
 
         self.address_buckets.iter_mut().for_each(|mut bucket| {
-            bucket.available = min(
-                bucket.capacity,
-                bucket.available + self.config.refill_rate_per_block,
-            )
+            bucket.available =
+                min(bucket.capacity, bucket.available + self.config.refill_rate_per_block)
         });
 
         // Only clean up stale buckets every `cleanup_interval` blocks
         if block_number.is_multiple_of(self.config.cleanup_interval) {
-            self.address_buckets
-                .retain(|_, bucket| bucket.available <= bucket.capacity);
+            self.address_buckets.retain(|_, bucket| bucket.available <= bucket.capacity);
         }
 
         active_addresses - self.address_buckets.len()
@@ -127,24 +114,21 @@ impl AddressGasLimiterInner {
         let start = Instant::now();
         let removed_addresses = self.refresh_inner(block_number);
 
-        self.metrics
-            .record_refresh(removed_addresses, start.elapsed());
+        self.metrics.record_refresh(removed_addresses, start.elapsed());
     }
 }
 
 impl TokenBucket {
-    fn new(capacity: u64) -> Self {
-        Self {
-            capacity,
-            available: capacity,
-        }
+    const fn new(capacity: u64) -> Self {
+        Self { capacity, available: capacity }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::Address;
+
+    use super::*;
 
     fn create_test_config(max_gas: u64, refill_rate: u64, cleanup_interval: u64) -> GasLimiterArgs {
         GasLimiterArgs {

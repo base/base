@@ -1,9 +1,8 @@
-use super::DEFAULT_JWT_TOKEN;
+use core::{future::Future, marker::PhantomData};
+
 use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
-
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
-use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
@@ -16,6 +15,8 @@ use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
 use tracing::debug;
+
+use super::DEFAULT_JWT_TOKEN;
 
 #[derive(Clone, Debug)]
 pub enum Address {
@@ -30,6 +31,7 @@ pub trait Protocol {
     ) -> impl Future<Output = impl SubscriptionClientT + Send + Sync + Unpin + 'static>;
 }
 
+#[derive(Debug)]
 pub struct Http;
 impl Protocol for Http {
     async fn client(
@@ -49,6 +51,7 @@ impl Protocol for Http {
     }
 }
 
+#[derive(Debug)]
 pub struct Ipc;
 impl Protocol for Ipc {
     async fn client(
@@ -66,6 +69,7 @@ impl Protocol for Ipc {
 }
 
 /// Helper for engine api operations
+#[derive(Debug)]
 pub struct EngineApi<P: Protocol = Ipc> {
     address: Address,
     jwt_secret: JwtSecret,
@@ -80,20 +84,18 @@ impl<P: Protocol> EngineApi<P> {
 
 // http specific
 impl EngineApi<Http> {
-    pub fn with_http(url: &str) -> EngineApi<Http> {
-        EngineApi::<Http> {
+    pub fn with_http(url: &str) -> Self {
+        Self {
             address: Address::Http(url.parse().expect("Invalid URL")),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,
         }
     }
 
-    pub fn with_localhost_port(port: u16) -> EngineApi<Http> {
-        EngineApi::<Http> {
+    pub fn with_localhost_port(port: u16) -> Self {
+        Self {
             address: Address::Http(
-                format!("http://localhost:{port}")
-                    .parse()
-                    .expect("Invalid URL"),
+                format!("http://localhost:{port}").parse().expect("Invalid URL"),
             ),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,
@@ -124,8 +126,8 @@ impl EngineApi<Http> {
 
 // ipc specific
 impl EngineApi<Ipc> {
-    pub fn with_ipc(path: &str) -> EngineApi<Ipc> {
-        EngineApi::<Ipc> {
+    pub fn with_ipc(path: &str) -> Self {
+        Self {
             address: Address::Ipc(path.into()),
             jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
             _tag: PhantomData,
@@ -145,15 +147,9 @@ impl<P: Protocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        debug!(
-            "Fetching payload with id: {} at {}",
-            payload_id,
-            chrono::Utc::now()
-        );
-        Ok(
-            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-                .await?,
-        )
+        debug!("Fetching payload with id: {} at {}", payload_id, chrono::Utc::now());
+        Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+            .await?)
     }
 
     pub async fn new_payload(

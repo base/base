@@ -4,8 +4,3 @@ group_imports = "StdExternalCrate"
 use_small_heuristics = "Max"
 trailing_comma = "Vertical"
 use_field_init_shorthand = true
-
-# Ignore builder crates - they have their own formatting style
-ignore = [
-    "crates/builder/**",
-]

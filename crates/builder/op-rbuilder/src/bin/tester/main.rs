@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use alloy_primitives::Address;
 use alloy_provider::{Identity, ProviderBuilder};
 use clap::Parser;
@@ -74,9 +76,7 @@ pub async fn run_system(validation: bool) -> eyre::Result<()> {
     let mut driver = ChainDriver::<Http>::remote(provider, engine_api);
 
     if validation {
-        driver = driver
-            .with_validation_node(ExternalNode::reth().await?)
-            .await?;
+        driver = driver.with_validation_node(ExternalNode::reth().await?).await?;
     }
 
     // Infinite loop generating blocks

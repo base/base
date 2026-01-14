@@ -11,7 +11,59 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_revm::{database::StateProviderDatabase, db::State};
-use revm_database::states::bundle_state::BundleRetention;
+use reth_trie_common::TrieInput;
+use revm_database::states::{BundleState, bundle_state::BundleRetention};
+
+use crate::metrics::Metrics;
+
+/// Computes the pending trie input from the bundle state.
+///
+/// This function records metrics for cache misses and compute duration.
+pub(crate) fn compute_pending_trie_input<SP>(
+    state_provider: &SP,
+    bundle_state: &BundleState,
+    metrics: &Metrics,
+) -> EyreResult<PendingTrieInput>
+where
+    SP: reth_provider::StateProvider + ?Sized,
+{
+    metrics.pending_trie_cache_misses.increment(1);
+    let start = Instant::now();
+
+    let hashed = state_provider.hashed_post_state(bundle_state);
+    let (_state_root, trie_updates) = state_provider.state_root_with_updates(hashed.clone())?;
+
+    let elapsed = start.elapsed();
+    metrics.pending_trie_compute_duration.record(elapsed.as_secs_f64());
+
+    Ok(PendingTrieInput { trie_updates, hashed_state: hashed })
+}
+
+/// Pre-computed trie input from pending state for efficient state root calculation.
+///
+/// When metering bundles on top of pending flashblocks, we first compute the trie updates
+/// and hashed state for the pending state. This can then be prepended to the bundle's
+/// trie input, so state root calculation only performs I/O for the bundle's changes.
+#[derive(Debug, Clone)]
+pub struct PendingTrieInput {
+    /// Trie updates from computing pending state root.
+    pub trie_updates: reth_trie_common::updates::TrieUpdates,
+    /// Hashed state from pending flashblocks.
+    pub hashed_state: reth_trie_common::HashedPostState,
+}
+
+/// Pending state from flashblocks used as the base for bundle metering.
+///
+/// This contains the accumulated state changes from pending flashblocks,
+/// allowing bundle simulation to build on top of not-yet-canonical state.
+#[derive(Debug, Clone)]
+pub struct PendingState {
+    /// The accumulated bundle of state changes from pending flashblocks.
+    pub bundle_state: BundleState,
+    /// Optional pre-computed trie input for faster state root calculation.
+    /// If provided, state root calculation skips recomputing the pending state's trie.
+    pub trie_input: Option<PendingTrieInput>,
+}
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
@@ -32,18 +84,18 @@ pub struct MeterBundleOutput {
     pub state_root_time_us: u128,
 }
 
-/// Simulates and meters a bundle of transactions
+/// Simulates and meters a bundle of transactions.
 ///
-/// Takes a state provider, chain spec, parsed bundle, and block header,
+/// Takes a state provider, chain spec, parsed bundle, block header, and optional pending state,
 /// then executes transactions in sequence to measure gas usage and execution time.
 ///
-/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics,
-/// including separate timing for state root calculation.
+/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
+    pending_state: Option<PendingState>,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -51,9 +103,35 @@ where
     // Get bundle hash
     let bundle_hash = bundle.bundle_hash();
 
+    // Get pending trie input before starting timers. This ensures we only measure
+    // the bundle's incremental I/O cost, not I/O from pending flashblocks.
+    let metrics = Metrics::default();
+    let pending_trie = pending_state
+        .as_ref()
+        .map(|ps| -> EyreResult<PendingTrieInput> {
+            // Use cached trie input if available, otherwise compute it
+            if let Some(ref cached) = ps.trie_input {
+                metrics.pending_trie_cache_hits.increment(1);
+                Ok(cached.clone())
+            } else {
+                compute_pending_trie_input(&state_provider, &ps.bundle_state, &metrics)
+            }
+        })
+        .transpose()?;
+
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
-    let mut db = State::builder().with_database(state_db).with_bundle_update().build();
+
+    // Track bundle state changes. If metering with pending state, include it as bundle prestate.
+    let mut db = if let Some(ref ps) = pending_state {
+        State::builder()
+            .with_database(state_db)
+            .with_bundle_update()
+            .with_bundle_prestate(ps.bundle_state.clone())
+            .build()
+    } else {
+        State::builder().with_database(state_db).with_bundle_update().build()
+    };
 
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
@@ -112,14 +190,26 @@ where
         }
     }
 
-    // Calculate state root and measure its calculation time
+    // Calculate state root and measure its calculation time. The bundle already includes
+    // pending state if it was provided via with_bundle_prestate.
     db.merge_transitions(BundleRetention::Reverts);
     let bundle_update = db.take_bundle();
     let state_provider = db.database.as_ref();
 
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
-    let _ = state_provider.state_root_with_updates(hashed_state)?;
+
+    if let Some(cached_trie) = pending_trie {
+        // Prepend cached pending trie so state root calculation only performs I/O
+        // for this bundle's changes, not for pending flashblocks.
+        let mut trie_input = TrieInput::from_state(hashed_state);
+        trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
+        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+    } else {
+        // No pending state, just calculate bundle state root
+        let _ = state_provider.state_root_with_updates(hashed_state)?;
+    }
+
     let state_root_time_us = state_root_start.elapsed().as_micros();
     let total_time_us = total_start.elapsed().as_micros();
 
@@ -142,6 +232,7 @@ mod tests {
     use eyre::Context;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_provider::StateProviderFactory;
+    use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
     use super::*;
@@ -177,7 +268,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         assert!(output.results.is_empty());
         assert_eq!(output.total_gas_used, 0);
@@ -220,7 +312,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         assert_eq!(output.results.len(), 1);
         let result = &output.results[0];
@@ -297,7 +390,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         assert_eq!(output.results.len(), 2);
         assert!(output.total_time_us > 0);
@@ -369,7 +463,8 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let output = meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header)?;
+        let output =
+            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
 
         // Verify invariant: total time must include state root time
         assert!(
@@ -381,6 +476,101 @@ mod tests {
 
         // State root time should be non-zero
         assert!(output.state_root_time_us > 0, "state_root_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    /// Integration test: verifies meter_bundle uses flashblocks state correctly.
+    ///
+    /// A transaction using nonce=1 should fail without flashblocks state (since
+    /// canonical nonce is 0), but succeed when flashblocks state indicates nonce=1.
+    #[tokio::test]
+    async fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        // Create a transaction that requires nonce=1 (assuming canonical nonce is 0)
+        let to = Address::random();
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(1) // Requires pending state to have nonce=1
+            .to(to)
+            .value(100)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        // Without flashblocks state, transaction should fail (nonce mismatch)
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let result_without_flashblocks = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle.clone(),
+            &header,
+            None, // No pending state
+        );
+
+        assert!(
+            result_without_flashblocks.is_err(),
+            "Transaction with nonce=1 should fail without pending state (canonical nonce is 0)"
+        );
+
+        // Now create pending state with nonce=1 for Alice
+        // Use BundleState::new() to properly calculate state_size
+        let bundle_state = BundleState::new(
+            [(
+                Account::Alice.address(),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000_000u64),
+                    nonce: 0, // original
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                }),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000_000u64),
+                    nonce: 1, // pending (after first flashblock tx)
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                }),
+                Default::default(), // no storage changes
+            )],
+            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+            Vec::<(B256, Bytecode)>::new(),
+        );
+
+        let pending_state = PendingState { bundle_state, trie_input: None };
+
+        // With correct pending state, transaction should succeed
+        let state_provider2 = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let result_with_pending = meter_bundle(
+            state_provider2,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            Some(pending_state),
+        );
+
+        assert!(
+            result_with_pending.is_ok(),
+            "Transaction with nonce=1 should succeed with pending state showing nonce=1: {:?}",
+            result_with_pending.err()
+        );
 
         Ok(())
     }

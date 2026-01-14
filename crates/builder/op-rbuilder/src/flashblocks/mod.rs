@@ -1,9 +1,10 @@
 use core::{convert::TryFrom, time::Duration};
+
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
-    args::OpRbuilderArgs, flashtestations::args::FlashtestationsArgs,
-    gas_limiter::args::GasLimiterArgs, tx_data_store::TxDataStore, tx_signer::Signer,
+    args::OpRbuilderArgs, gas_limiter::args::GasLimiterArgs, tx_data_store::TxDataStore,
+    tx_signer::Signer,
 };
 
 pub(crate) mod best_txs;
@@ -13,7 +14,6 @@ pub(crate) mod context;
 pub(crate) mod ctx;
 pub(crate) mod flashblocks_builder_tx;
 pub(crate) mod generator;
-pub(crate) mod p2p;
 pub(crate) mod payload;
 pub(crate) mod payload_handler;
 pub(crate) mod service;
@@ -24,8 +24,7 @@ pub use builder_tx::{
     InvalidContractDataError, SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use config::FlashblocksConfig;
-pub use context::FlashblocksExtraCtx;
-pub use context::OpPayloadBuilderCtx;
+pub use context::{FlashblocksExtraCtx, OpPayloadBuilderCtx};
 pub use flashblocks_builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx};
 pub use payload::FlashblocksExecutionInfo;
 pub use service::FlashblocksServiceBuilder;
@@ -35,15 +34,6 @@ pub use service::FlashblocksServiceBuilder;
 pub struct BuilderConfig {
     /// Secret key of the builder that is used to sign the end of block transaction.
     pub builder_signer: Option<Signer>,
-
-    /// When set to true, transactions are simulated by the builder and excluded from the block
-    /// if they revert. They may still be included in the block if individual transactions
-    /// opt-out of revert protection.
-    pub revert_protection: bool,
-
-    /// When enabled, this will invoke the flashtestions workflow. This involves a
-    /// bootstrapping step that generates a new pubkey for the TEE service
-    pub flashtestations_config: FlashtestationsArgs,
 
     /// The interval at which blocks are added to the chain.
     /// This is also the frequency at which the builder will be receiving FCU requests from the
@@ -81,13 +71,11 @@ impl core::fmt::Debug for BuilderConfig {
         f.debug_struct("Config")
             .field(
                 "builder_signer",
-                &match self.builder_signer.as_ref() {
-                    Some(signer) => signer.address.to_string(),
-                    None => "None".into(),
-                },
+                &self
+                    .builder_signer
+                    .as_ref()
+                    .map_or_else(|| "None".into(), |signer| signer.address.to_string()),
             )
-            .field("revert_protection", &self.revert_protection)
-            .field("flashtestations", &self.flashtestations_config)
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
@@ -105,8 +93,6 @@ impl Default for BuilderConfig {
     fn default() -> Self {
         Self {
             builder_signer: None,
-            revert_protection: false,
-            flashtestations_config: FlashtestationsArgs::default(),
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
             da_config: OpDAConfig::default(),
@@ -127,8 +113,6 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
         let flashblocks = FlashblocksConfig::try_from(args.clone())?;
         Ok(Self {
             builder_signer: args.builder_signer,
-            revert_protection: args.enable_revert_protection,
-            flashtestations_config: args.flashtestations.clone(),
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),

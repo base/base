@@ -10,30 +10,28 @@ struct VariantInfo {
     default_args_factory: fn() -> proc_macro2::TokenStream,
 }
 
-const BUILDER_VARIANTS: &[VariantInfo] = &[
-    VariantInfo {
-        name: "flashblocks",
-        default_instance_call: "crate::tests::LocalInstance::flashblocks().await?",
-        args_modifier: |args| {
-            quote! {
-                {
-                    let mut args = #args;
-                    args.flashblocks.flashblocks_port = crate::tests::get_available_port();
-                    args
-                }
+const BUILDER_VARIANTS: &[VariantInfo] = &[VariantInfo {
+    name: "flashblocks",
+    default_instance_call: "crate::tests::LocalInstance::flashblocks().await?",
+    args_modifier: |args| {
+        quote! {
+            {
+                let mut args = #args;
+                args.flashblocks.flashblocks_port = crate::tests::get_available_port();
+                args
             }
-        },
-        default_args_factory: || {
-            quote! {
-                {
-                    let mut args = crate::args::OpRbuilderArgs::default();
-                    args.flashblocks.flashblocks_port = crate::tests::get_available_port();
-                    args
-                }
-            }
-        },
+        }
     },
-];
+    default_args_factory: || {
+        quote! {
+            {
+                let mut args = crate::args::OpRbuilderArgs::default();
+                args.flashblocks.flashblocks_port = crate::tests::get_available_port();
+                args
+            }
+        }
+    },
+}];
 
 fn get_variant_info(variant: &str) -> Option<&'static VariantInfo> {
     BUILDER_VARIANTS.iter().find(|v| v.name == variant)
@@ -195,9 +193,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
 
     // Create the original function without test attributes (helper function)
     let mut helper_fn = input_fn.clone();
-    helper_fn
-        .attrs
-        .retain(|attr| !attr.path().is_ident("test") && !attr.path().is_ident("tokio"));
+    helper_fn.attrs.retain(|attr| !attr.path().is_ident("test") && !attr.path().is_ident("tokio"));
 
     let original_name = &input_fn.sig.ident;
     let mut generated_functions = vec![quote! { #helper_fn }];
@@ -219,6 +215,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
         generated_functions.push(quote! {
             #test_attribute
             async fn #test_name() -> eyre::Result<()> {
+                crate::tests::clear_otel_env_vars();
                 let subscriber = tracing_subscriber::fmt()
                     .with_env_filter(std::env::var("RUST_LOG")
                         .unwrap_or_else(|_| "info".to_string()))
@@ -229,6 +226,7 @@ pub fn rb_test(args: TokenStream, input: TokenStream) -> TokenStream {
                 let _guard = tracing::subscriber::set_global_default(subscriber);
                 tracing::info!("{} start", stringify!(#test_name));
 
+                crate::tests::clear_otel_env_vars();
                 let instance = #instance_init;
                 #original_name(instance).await
             }
@@ -248,12 +246,7 @@ fn validate_signature(item_fn: &ItemFn) {
         panic!("Function must have exactly one parameter of type LocalInstance.");
     }
 
-    let output_types = item_fn
-        .sig
-        .output
-        .to_token_stream()
-        .to_string()
-        .replace(" ", "");
+    let output_types = item_fn.sig.output.to_token_stream().to_string().replace(" ", "");
 
     if output_types != "->eyre::Result<()>" {
         panic!("Function must return Result<(), eyre::Error>. Actual: {output_types}",);

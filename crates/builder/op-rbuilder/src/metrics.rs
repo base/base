@@ -1,13 +1,7 @@
-use alloy_primitives::{Address, hex};
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Gauge, Histogram, gauge},
-};
-
-use crate::{
-    args::OpRbuilderArgs,
-    flashtestations::attestation::{compute_workload_id_from_parsed, parse_report_body},
 };
 
 /// The latest version from Cargo.toml.
@@ -157,8 +151,6 @@ pub struct OpRBuilderMetrics {
     pub valid_bundles: Counter,
     /// Number of bundles that failed to execute
     pub failed_bundles: Counter,
-    /// Number of reverted bundles
-    pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
     /// Count of the number of times transactions had metering information
@@ -192,7 +184,6 @@ pub struct OpRBuilderMetrics {
 }
 
 impl OpRBuilderMetrics {
-    #[expect(clippy::too_many_arguments)]
     pub fn set_payload_builder_metrics(
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,
@@ -200,73 +191,20 @@ impl OpRBuilderMetrics {
         num_txs_simulated: impl IntoF64 + Copy,
         num_txs_simulated_success: impl IntoF64 + Copy,
         num_txs_simulated_fail: impl IntoF64 + Copy,
-        num_bundles_reverted: impl IntoF64,
         reverted_gas_used: impl IntoF64,
     ) {
-        self.payload_transaction_simulation_duration
-            .record(payload_transaction_simulation_time);
-        self.payload_transaction_simulation_gauge
-            .set(payload_transaction_simulation_time);
+        self.payload_transaction_simulation_duration.record(payload_transaction_simulation_time);
+        self.payload_transaction_simulation_gauge.set(payload_transaction_simulation_time);
         self.payload_num_tx_considered.record(num_txs_considered);
         self.payload_num_tx_considered_gauge.set(num_txs_considered);
         self.payload_num_tx_simulated.record(num_txs_simulated);
         self.payload_num_tx_simulated_gauge.set(num_txs_simulated);
-        self.payload_num_tx_simulated_success
-            .record(num_txs_simulated_success);
-        self.payload_num_tx_simulated_success_gauge
-            .set(num_txs_simulated_success);
-        self.payload_num_tx_simulated_fail
-            .record(num_txs_simulated_fail);
-        self.payload_num_tx_simulated_fail_gauge
-            .set(num_txs_simulated_fail);
-        self.bundles_reverted.record(num_bundles_reverted);
+        self.payload_num_tx_simulated_success.record(num_txs_simulated_success);
+        self.payload_num_tx_simulated_success_gauge.set(num_txs_simulated_success);
+        self.payload_num_tx_simulated_fail.record(num_txs_simulated_fail);
+        self.payload_num_tx_simulated_fail_gauge.set(num_txs_simulated_fail);
         self.payload_reverted_tx_gas_used.set(reverted_gas_used);
     }
-}
-
-/// Set gauge metrics for some flags so we can inspect which ones are set
-/// and which ones aren't.
-pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
-    gauge!("op_rbuilder_flags_flashblocks_enabled").set(1);
-    gauge!("op_rbuilder_flags_flashtestations_enabled")
-        .set(builder_args.flashtestations.flashtestations_enabled as i32);
-    gauge!("op_rbuilder_flags_enable_revert_protection")
-        .set(builder_args.enable_revert_protection as i32);
-}
-
-/// Record TEE workload ID and measurement metrics
-/// Parses the quote, computes workload ID, and records workload_id, mr_td (TEE measurement), and rt_mr0 (runtime measurement register 0)
-/// These identify the trusted execution environment configuration provided by GCP
-pub fn record_tee_metrics(raw_quote: &[u8], tee_address: &Address) -> eyre::Result<()> {
-    let parsed_quote = parse_report_body(raw_quote)?;
-    let workload_id = compute_workload_id_from_parsed(&parsed_quote);
-
-    let workload_id_hex = hex::encode(workload_id);
-    let mr_td_hex = hex::encode(parsed_quote.mr_td);
-    let rt_mr0_hex = hex::encode(parsed_quote.rt_mr0);
-
-    let tee_address_static: &'static str = Box::leak(tee_address.to_string().into_boxed_str());
-    let workload_id_static: &'static str = Box::leak(workload_id_hex.into_boxed_str());
-    let mr_td_static: &'static str = Box::leak(mr_td_hex.into_boxed_str());
-    let rt_mr0_static: &'static str = Box::leak(rt_mr0_hex.into_boxed_str());
-
-    // Record TEE address
-    let tee_address_labels: [(&str, &str); 1] = [("tee_address", tee_address_static)];
-    gauge!("op_rbuilder_tee_address", &tee_address_labels).set(1);
-
-    // Record workload ID
-    let workload_labels: [(&str, &str); 1] = [("workload_id", workload_id_static)];
-    gauge!("op_rbuilder_tee_workload_id", &workload_labels).set(1);
-
-    // Record MRTD (TEE measurement)
-    let mr_td_labels: [(&str, &str); 1] = [("mr_td", mr_td_static)];
-    gauge!("op_rbuilder_tee_mr_td", &mr_td_labels).set(1);
-
-    // Record RTMR0 (runtime measurement register 0)
-    let rt_mr0_labels: [(&str, &str); 1] = [("rt_mr0", rt_mr0_static)];
-    gauge!("op_rbuilder_tee_rt_mr0", &rt_mr0_labels).set(1);
-
-    Ok(())
 }
 
 /// Contains version information for the application.

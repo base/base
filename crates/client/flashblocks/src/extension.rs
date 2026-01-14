@@ -1,12 +1,11 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
-//! (both the canon ExEx and RPC surface) on the Base node builder.
+//! (canonical block subscription and RPC surface) on the Base node builder.
 
 use std::sync::Arc;
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder, OpProvider};
-use futures_util::TryStreamExt;
-use once_cell::sync::OnceCell;
-use reth_exex::ExExEvent;
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, OpBuilder};
+use reth_chain_state::CanonStateSubscriptions;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
 use url::Url;
 
@@ -15,34 +14,37 @@ use crate::{
     FlashblocksSubscriber,
 };
 
-/// The flashblocks cell holds a shared state reference.
-pub type FlashblocksCell<T> = Arc<OnceCell<Arc<T>>>;
-
 /// Flashblocks-specific configuration knobs.
 #[derive(Debug, Clone)]
 pub struct FlashblocksConfig {
     /// The websocket endpoint that streams flashblock updates.
-    pub websocket_url: String,
+    pub websocket_url: Url,
     /// Maximum number of pending flashblocks to retain in memory.
     pub max_pending_blocks_depth: u64,
+    /// Shared Flashblocks state.
+    pub state: Arc<FlashblocksState>,
 }
 
-/// Helper struct that wires the Flashblocks feature (canon ExEx and RPC) into the node builder.
-#[derive(Debug, Clone)]
+impl FlashblocksConfig {
+    /// Create a new Flashblocks configuration.
+    pub fn new(websocket_url: String, max_pending_blocks_depth: u64) -> Self {
+        let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
+        let ws_url = Url::parse(&websocket_url).expect("valid websocket URL");
+        Self { websocket_url: ws_url, max_pending_blocks_depth, state }
+    }
+}
+
+/// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node builder.
+#[derive(Debug)]
 pub struct FlashblocksExtension {
-    /// Shared Flashblocks state cache.
-    cell: FlashblocksCell<FlashblocksState<OpProvider>>,
-    /// Optional Flashblocks configuration.
+    /// Optional Flashblocks configuration (includes state).
     config: Option<FlashblocksConfig>,
 }
 
 impl FlashblocksExtension {
     /// Create a new Flashblocks extension helper.
-    pub const fn new(
-        cell: FlashblocksCell<FlashblocksState<OpProvider>>,
-        config: Option<FlashblocksConfig>,
-    ) -> Self {
-        Self { cell, config }
+    pub const fn new(config: Option<FlashblocksConfig>) -> Self {
+        Self { config }
     }
 }
 
@@ -54,68 +56,48 @@ impl BaseNodeExtension for FlashblocksExtension {
             return builder;
         };
 
-        let flashblocks_cell = self.cell;
-        let cfg_for_rpc = cfg.clone();
-        let flashblocks_cell_for_rpc = flashblocks_cell.clone();
+        let state = cfg.state;
+        let mut subscriber = FlashblocksSubscriber::new(state.clone(), cfg.websocket_url);
 
-        // Install the canon ExEx
-        let builder = builder.install_exex("flashblocks-canon", move |mut ctx| {
-            let flashblocks_cell = flashblocks_cell.clone();
-            async move {
-                let fb = flashblocks_cell
-                    .get_or_init(|| {
-                        Arc::new(FlashblocksState::new(
-                            ctx.provider().clone(),
-                            cfg.max_pending_blocks_depth,
-                        ))
-                    })
-                    .clone();
+        let state_for_canonical = state.clone();
+        let state_for_rpc = state.clone();
+        let state_for_start = state;
 
-                Ok(async move {
-                    while let Some(note) = ctx.notifications.try_next().await? {
-                        if let Some(committed) = note.committed_chain() {
-                            let tip = committed.tip().num_hash();
-                            let chain = Arc::unwrap_or_clone(committed);
-                            for (_, block) in chain.into_blocks() {
-                                fb.on_canonical_block_received(block);
-                            }
-                            let _ = ctx.events.send(ExExEvent::FinishedHeight(tip));
-                        }
+        // Start state processor, subscriber, and canonical subscription after node is started
+        let builder = builder.on_node_started(move |ctx| {
+            info!(message = "Starting Flashblocks state processor");
+            state_for_start.start(ctx.provider().clone());
+            subscriber.start();
+
+            let mut canonical_stream =
+                BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+            tokio::spawn(async move {
+                while let Some(Ok(notification)) = canonical_stream.next().await {
+                    let committed = notification.committed();
+                    for block in committed.blocks_iter() {
+                        state_for_canonical.on_canonical_block_received(block.clone());
                     }
-                    Ok(())
-                })
-            }
+                }
+            });
+
+            Ok(())
         });
 
         // Extend with RPC modules
         builder.extend_rpc_modules(move |ctx| {
             info!(message = "Starting Flashblocks RPC");
 
-            let ws_url = Url::parse(cfg_for_rpc.websocket_url.as_str())?;
-            let fb = flashblocks_cell_for_rpc
-                .get_or_init(|| {
-                    Arc::new(FlashblocksState::new(
-                        ctx.provider().clone(),
-                        cfg_for_rpc.max_pending_blocks_depth,
-                    ))
-                })
-                .clone();
-            fb.start();
-
-            let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
-            flashblocks_client.start();
-
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
-                fb.clone(),
+                state_for_rpc.clone(),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 
             // Register the eth_subscribe subscription endpoint for flashblocks
             // Uses replace_configured since eth_subscribe already exists from reth's standard module
             // Pass eth_api to enable proxying standard subscription types to reth's implementation
-            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb);
+            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), state_for_rpc);
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
             Ok(())
@@ -127,6 +109,6 @@ impl FromExtensionConfig for FlashblocksExtension {
     type Config = Option<FlashblocksConfig>;
 
     fn from_config(config: Self::Config) -> Self {
-        Self::new(Arc::new(OnceCell::new()), config)
+        Self::new(config)
     }
 }

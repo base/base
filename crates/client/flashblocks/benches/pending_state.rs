@@ -114,8 +114,8 @@ fn pending_state_benches(c: &mut Criterion) {
 }
 
 async fn build_pending_state(input: BenchInput) {
-    let state = FlashblocksState::new(input.provider, 5);
-    state.start();
+    let state = FlashblocksState::new(5);
+    state.start(input.provider);
     state.on_canonical_block_received(input.canonical_block);
 
     for flashblock in input.flashblocks {
@@ -148,7 +148,7 @@ fn init_bench_tracing() {
 }
 
 async fn wait_for_pending_state(
-    state: &FlashblocksState<LocalNodeProvider>,
+    state: &FlashblocksState,
     target_block: BlockNumber,
     expected_index: u64,
 ) {

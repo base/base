@@ -1,3 +1,8 @@
+use std::{
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
 use reth_basic_payload_builder::{
@@ -12,10 +17,6 @@ use reth_primitives_traits::HeaderTy;
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::TaskSpawner;
-use std::{
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
-};
 use tokio::{
     sync::{Notify, oneshot},
     time::{Duration, Sleep},
@@ -108,10 +109,7 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// Returns the pre-cached reads for the given parent header if it matches the cached state's
     /// block.
     fn maybe_pre_cached(&self, parent: B256) -> Option<CachedReads> {
-        self.pre_cached
-            .as_ref()
-            .filter(|pc| pc.block == parent)
-            .map(|pc| pc.cached.clone())
+        self.pre_cached.as_ref().filter(|pc| pc.block == parent).map(|pc| pc.cached.clone())
     }
 }
 
@@ -214,19 +212,13 @@ where
             if let Some(info) = acc.info.clone() {
                 // we want pre cache existing accounts and their storage
                 // this only includes changed accounts and storage but is better than nothing
-                let storage = acc
-                    .storage
-                    .iter()
-                    .map(|(key, slot)| (*key, slot.present_value))
-                    .collect();
+                let storage =
+                    acc.storage.iter().map(|(key, slot)| (*key, slot.present_value)).collect();
                 cached.insert_account(addr, info, storage);
             }
         }
 
-        self.pre_cached = Some(PrecachedState {
-            block: committed.tip().hash(),
-            cached,
-        });
+        self.pre_cached = Some(PrecachedState { block: committed.tip().hash(), cached });
     }
 }
 
@@ -321,11 +313,7 @@ where
         self.build_complete = Some(rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking(Box::pin(async move {
-            let args = BuildArguments {
-                cached_reads,
-                config: payload_config,
-                cancel,
-            };
+            let args = BuildArguments { cached_reads, config: payload_config, cancel };
 
             let result = builder.try_build(args, cell).await;
             let _ = tx.send(result);
@@ -370,7 +358,7 @@ pub(super) struct ResolvePayload<T> {
 }
 
 impl<T> ResolvePayload<T> {
-    pub(super) fn new(future: WaitForValue<T>) -> Self {
+    pub(super) const fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
 }
@@ -394,10 +382,7 @@ pub(super) struct BlockCell<T> {
 
 impl<T: Clone> BlockCell<T> {
     pub(super) fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(None)),
-            notify: Arc::new(Notify::new()),
-        }
+        Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
     }
 
     pub(super) fn set(&self, value: T) {
@@ -427,13 +412,14 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(value) = self.cell.get() {
-            Poll::Ready(value)
-        } else {
-            // Instead of register, we use notified() to get a future
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
+        self.cell.get().map_or_else(
+            || {
+                // Instead of register, we use notified() to get a future
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            Poll::Ready,
+        )
     }
 }
 
@@ -444,10 +430,7 @@ impl<T: Clone> Default for BlockCell<T> {
 }
 
 fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
-    let unix_now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let unix_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
     // Safe subtraction that handles the case where timestamp is in the past
     let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
@@ -462,22 +445,23 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
     use rand::rng;
-    use reth_tasks::TokioTaskExecutor;
     use reth_chain_state::ExecutedBlock;
     use reth_node_api::NodePrimitives;
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
+    use reth_tasks::TokioTaskExecutor;
     use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
     use tokio::{
         task,
         time::{Duration, sleep},
     };
+
+    use super::*;
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {
@@ -554,10 +538,7 @@ mod tests {
 
     impl<N> MockBuilder<N> {
         fn new() -> Self {
-            Self {
-                events: Arc::new(Mutex::new(vec![])),
-                _marker: std::marker::PhantomData,
-            }
+            Self { events: Arc::new(Mutex::new(vec![])), _marker: std::marker::PhantomData }
         }
 
         fn new_event(&self, event: BlockEvent) {
@@ -665,10 +646,7 @@ mod tests {
         let blocks = random_block_range(
             &mut rng,
             start..=start + count - 1,
-            BlockRangeParams {
-                tx_count: 0..2,
-                ..Default::default()
-            },
+            BlockRangeParams { tx_count: 0..2, ..Default::default() },
         );
 
         client.extend_blocks(blocks.iter().cloned().map(|b| (b.hash(), b.unseal())));

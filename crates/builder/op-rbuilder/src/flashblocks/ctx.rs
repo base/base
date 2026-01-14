@@ -1,10 +1,5 @@
-use crate::{
-    flashblocks::{BuilderConfig, FlashblocksExtraCtx, OpPayloadBuilderCtx},
-    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
-    metrics::OpRBuilderMetrics,
-    traits::ClientBounds,
-    tx_data_store::TxDataStore,
-};
+use std::sync::Arc;
+
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::EvmEnv;
@@ -15,9 +10,17 @@ use reth_optimism_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
 };
 use reth_optimism_primitives::OpTransactionSigned;
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
+use crate::{
+    flashblocks::{BuilderConfig, FlashblocksExtraCtx, OpPayloadBuilderCtx},
+    gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
+    metrics::OpRBuilderMetrics,
+    traits::ClientBounds,
+    tx_data_store::TxDataStore,
+};
+
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(super) struct OpPayloadSyncerCtx {
     /// The type that knows how to perform system calls and configure the evm.
@@ -34,6 +37,7 @@ pub(super) struct OpPayloadSyncerCtx {
     tx_data_store: TxDataStore,
 }
 
+#[allow(dead_code)]
 impl OpPayloadSyncerCtx {
     pub(super) fn new<Client>(
         client: &Client,
@@ -55,11 +59,11 @@ impl OpPayloadSyncerCtx {
         })
     }
 
-    pub(super) fn evm_config(&self) -> &OpEvmConfig {
+    pub(super) const fn evm_config(&self) -> &OpEvmConfig {
         &self.evm_config
     }
 
-    pub(super) fn max_gas_per_txn(&self) -> Option<u64> {
+    pub(super) const fn max_gas_per_txn(&self) -> Option<u64> {
         self.max_gas_per_txn
     }
 
@@ -84,7 +88,7 @@ impl OpPayloadSyncerCtx {
             extra: FlashblocksExtraCtx::default(),
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
-            tx_data_store: self.tx_data_store.clone(),
+            tx_data_store: self.tx_data_store,
         }
     }
 }

@@ -32,6 +32,9 @@ pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 mod state_builder;
 pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
 
+mod receipt_builder;
+pub use receipt_builder::{ReceiptBuildError, UnifiedReceiptBuilder};
+
 mod validation;
 pub use validation::{
     CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -45,7 +48,7 @@ pub use rpc::{
 };
 
 mod extension;
-pub use extension::{FlashblocksCell, FlashblocksConfig, FlashblocksExtension};
+pub use extension::{FlashblocksConfig, FlashblocksExtension};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_harness;

@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.2.1"
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -59,7 +59,9 @@ base-cli-utils = { path = "crates/shared/cli-utils" }
 base-flashtypes = { path = "crates/shared/flashtypes" }
 base-primitives = { path = "crates/shared/primitives" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
+base-jwt = { path = "crates/shared/jwt" }
 # Client
+base-client-cli = { path = "crates/client/cli" }
 base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
@@ -105,6 +107,7 @@ reth-node-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
@@ -189,11 +192,16 @@ op-alloy-rpc-types = { version = "0.22.0", default-features = false }
 op-alloy-consensus = { version = "0.22.0", default-features = false }
 op-alloy-rpc-jsonrpsee = { version = "0.22.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.22.0", default-features = false }
+op-alloy-provider = { version = "0.22.0", default-features = false }
 alloy-op-evm = { version = "0.23.3", default-features = false }
 alloy-op-hardforks = "0.4.4"
 
 # op-revm
 op-revm = { version = "12.0.2", default-features = false }
+
+# kona
+kona-registry = "0.4.5"
+kona-engine = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 
 # tokio
 tokio = "1.48.0"
@@ -204,6 +212,7 @@ tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
 futures = "0.3.31"
 reqwest = "0.12.25"
 futures-util = "0.3.31"
+backon = "1.5"
 
 # rpc
 jsonrpsee = "0.26.0"
@@ -244,6 +253,7 @@ derive_more = "2.1.0"
 serde_json = "1.0.145"
 metrics-derive = "0.1.0"
 tracing-subscriber = "0.3.22"
+tracing-appender = "0.2"
 thiserror = "2.0"
 async-trait = "0.1.83"
 parking_lot = "0.12.3"

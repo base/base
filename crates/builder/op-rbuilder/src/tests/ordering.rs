@@ -1,8 +1,9 @@
-use alloy_network::TransactionResponse;
-use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 use alloy_consensus::Transaction;
+use alloy_network::TransactionResponse;
 use futures::{StreamExt, future::join_all, stream};
 use macros::rb_test;
+
+use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 
 /// This test ensures that the transactions are ordered by fee priority within each flashblock.
 /// We expect breaks in global ordering that align with flashblock boundaries.
@@ -30,7 +31,7 @@ async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
     .collect::<eyre::Result<Vec<_>>>()?
     .into_iter()
     .map(|tx| *tx.tx_hash())
-        .collect::<Vec<_>>();
+    .collect::<Vec<_>>();
 
     driver.build_new_block().await?;
 
@@ -68,10 +69,7 @@ async fn fee_priority_ordering(rbuilder: LocalInstance) -> eyre::Result<()> {
         })
         .collect::<Vec<_>>();
 
-    let breaks = tips_in_block_order
-        .windows(2)
-        .filter(|pair| pair[0] < pair[1])
-        .count();
+    let breaks = tips_in_block_order.windows(2).filter(|pair| pair[0] < pair[1]).count();
 
     assert!(
         (breaks as u64) <= flashblocks_per_block,

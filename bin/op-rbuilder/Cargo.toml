@@ -1,0 +1,30 @@
+[package]
+name = "op-rbuilder-bin"
+description = "OP-Rbuilder Binary"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# internal
+op-rbuilder = { path = "../../crates/builder/op-rbuilder" }
+
+# reth
+reth-cli-util.workspace = true
+reth-optimism-cli = { workspace = true, optional = true }
+
+# misc
+eyre.workspace = true
+tracing.workspace = true
+
+[features]
+default = [ "jemalloc" ]
+jemalloc = [ "op-rbuilder/jemalloc", "reth-cli-util/jemalloc" ]
+telemetry = [ "op-rbuilder/telemetry", "reth-optimism-cli" ]

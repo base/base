@@ -1,21 +1,3 @@
-use crate::{
-    args::OpRbuilderArgs,
-    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    revert_protection::{EthApiExtServer, RevertProtectionExt},
-    tests::{
-        EngineApi, Ipc, TEE_DEBUG_ADDRESS, TransactionPoolObserver, builder_signer, create_test_db,
-        framework::driver::ChainDriver, get_available_port,
-    },
-    tx::FBPooledTransaction,
-    tx_data_store::TxDataStore,
-    tx_signer::Signer,
-};
-use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
-use alloy_provider::{Identity, ProviderBuilder, RootProvider};
-use clap::Parser;
-use reth_node_core::{args::{DatadirArgs, NetworkArgs, RpcServerArgs}, exit::NodeExitFuture};
-use reth_tasks::TaskManager;
 use core::{
     any::Any,
     future::Future,
@@ -24,16 +6,28 @@ use core::{
     task::{Context, Poll},
     time::Duration,
 };
+use std::{
+    net::SocketAddr,
+    sync::{Arc, LazyLock},
+};
+
+use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
+use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use base_flashtypes::FlashblocksPayloadV1;
+use clap::Parser;
 use futures::{FutureExt, StreamExt};
 use http::{Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper::{body::Bytes as HyperBytes, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
-use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
 use parking_lot::Mutex;
 use reth_node_builder::{NodeBuilder, NodeConfig};
+use reth_node_core::{
+    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
+    exit::NodeExitFuture,
+};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
@@ -41,21 +35,30 @@ use reth_optimism_node::{
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
+use reth_optimism_txpool::OpPooledTransaction;
+use reth_tasks::TaskManager;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
-use base_flashtypes::FlashblocksPayloadV1;
-use std::{
-    net::SocketAddr,
-    sync::{Arc, LazyLock},
-};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
+
+use crate::{
+    args::OpRbuilderArgs,
+    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
+    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    tests::{
+        EngineApi, Ipc, TransactionPoolObserver, builder_signer, create_test_db,
+        framework::driver::ChainDriver, get_available_port,
+    },
+    tx_data_store::TxDataStore,
+    tx_signer::Signer,
+};
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
 /// This is necessary because clap reads env vars for args with `env = "..."` attributes,
 /// and external OTEL env vars (e.g., `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) may contain
 /// values that are incompatible with the CLI's expected values.
-fn clear_otel_env_vars() {
+pub fn clear_otel_env_vars() {
     for key in [
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_HEADERS",
@@ -72,6 +75,7 @@ fn clear_otel_env_vars() {
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
+#[derive(Debug)]
 pub struct LocalInstance {
     signer: Signer,
     config: NodeConfig<OpChainSpec>,
@@ -80,7 +84,6 @@ pub struct LocalInstance {
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
-    attestation_server: Option<AttestationServer>,
     tx_data_store: TxDataStore,
 }
 
@@ -99,29 +102,21 @@ impl LocalInstance {
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new_with_config(args: OpRbuilderArgs, config: NodeConfig<OpChainSpec>) -> eyre::Result<Self> {
+    pub async fn new_with_config(
+        args: OpRbuilderArgs,
+        config: NodeConfig<OpChainSpec>,
+    ) -> eyre::Result<Self> {
+        clear_otel_env_vars();
         let mut args = args;
         let task_manager = task_manager();
         let op_node = OpNode::new(args.rollup_args.clone());
-        let reverted_cache = Cache::builder().max_capacity(100).build();
-        let reverted_cache_clone = reverted_cache.clone();
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
-            oneshot::channel::<AllTransactionsEvents<FBPooledTransaction>>();
+            oneshot::channel::<AllTransactionsEvents<OpPooledTransaction>>();
 
         let signer = args.builder_signer.unwrap_or(builder_signer());
         args.builder_signer = Some(signer);
-        args.rollup_args.enable_tx_conditional = true;
-
-        let attestation_server = if args.flashtestations.flashtestations_enabled {
-            let server = spawn_attestation_provider().await?;
-            args.flashtestations.quote_provider = Some(server.url());
-            tracing::info!("Started attestation server at {}", server.url());
-            Some(server)
-        } else {
-            None
-        };
 
         let builder_config = BuilderConfig::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
@@ -136,7 +131,7 @@ impl LocalInstance {
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()
             .with_sequencer(args.rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
+            .with_enable_tx_conditional(false)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .build();
@@ -152,25 +147,6 @@ impl LocalInstance {
                     .payload(FlashblocksServiceBuilder(builder_config)),
             )
             .with_add_ons(addons)
-            .extend_rpc_modules(move |ctx| {
-                if args.enable_revert_protection {
-                    tracing::info!("Revert protection enabled");
-
-                    let pool = ctx.pool().clone();
-                    let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(
-                        pool,
-                        provider,
-                        ctx.registry.eth_api().clone(),
-                        reverted_cache,
-                    );
-
-                    ctx.modules
-                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
-                }
-
-                Ok(())
-            })
             .on_rpc_started(move |_, _| {
                 let _ = rpc_ready_tx.send(());
                 Ok(())
@@ -190,9 +166,7 @@ impl LocalInstance {
 
         // Wait for all required components to be ready
         rpc_ready_rx.await.expect("Failed to receive ready signal");
-        let pool_monitor = txpool_ready_rx
-            .await
-            .expect("Failed to receive txpool ready signal");
+        let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
 
         Ok(Self {
             args,
@@ -201,8 +175,7 @@ impl LocalInstance {
             exit_future,
             _node_handle: node_handle,
             task_manager: Some(task_manager),
-            pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
-            attestation_server,
+            pool_observer: TransactionPoolObserver::new(pool_monitor),
             tx_data_store,
         })
     }
@@ -212,9 +185,7 @@ impl LocalInstance {
     pub async fn flashblocks() -> eyre::Result<Self> {
         clear_otel_env_vars();
         let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref mut node_command) = args.command else {
-            unreachable!()
-        };
+        let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         Self::new(node_command.ext.clone()).await
     }
@@ -239,11 +210,7 @@ impl LocalInstance {
             .parse()
             .expect("Failed to parse flashblocks IP address");
 
-        let ipaddr = if ipaddr.is_unspecified() {
-            Ipv4Addr::LOCALHOST
-        } else {
-            ipaddr
-        };
+        let ipaddr = if ipaddr.is_unspecified() { Ipv4Addr::LOCALHOST } else { ipaddr };
 
         let port = self.args.flashblocks.flashblocks_port;
 
@@ -270,11 +237,7 @@ impl LocalInstance {
         &self.pool_observer
     }
 
-    pub const fn attestation_server(&self) -> &Option<AttestationServer> {
-        &self.attestation_server
-    }
-
-    pub fn tx_data_store(&self) -> &TxDataStore {
+    pub const fn tx_data_store(&self) -> &TxDataStore {
         &self.tx_data_store
     }
 
@@ -295,10 +258,7 @@ impl Drop for LocalInstance {
         if let Some(task_manager) = self.task_manager.take() {
             task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
             std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to remove temporary data directory {}: {e}",
-                    self.config().datadir()
-                )
+                panic!("Failed to remove temporary data directory {}: {e}", self.config().datadir())
             });
         }
     }
@@ -316,19 +276,13 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
-    let data_path = tempdir
-        .join(format!("rbuilder.{random_id}.datadir"))
-        .to_path_buf();
+    let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir"));
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
 
-    let rpc_ipc_path = tempdir
-        .join(format!("rbuilder.{random_id}.rpc-ipc"))
-        .to_path_buf();
+    let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc"));
 
-    let auth_ipc_path = tempdir
-        .join(format!("rbuilder.{random_id}.auth-ipc"))
-        .to_path_buf();
+    let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc"));
 
     let mut rpc = RpcServerArgs::default().with_auth_ipc();
     rpc.ws = false;
@@ -341,10 +295,7 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     network.discovery.disable_discovery = true;
 
     let datadir = DatadirArgs {
-        datadir: data_path
-            .to_string_lossy()
-            .parse()
-            .expect("Failed to parse data dir path"),
+        datadir: data_path.to_string_lossy().parse().expect("Failed to parse data dir path"),
         static_files_path: None,
     };
 
@@ -369,31 +320,18 @@ fn task_manager() -> TaskManager {
     TaskManager::new(tokio::runtime::Handle::current())
 }
 
-fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
+fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<OpPooledTransaction> {
     let rollup_args = &args.rollup_args;
-    OpPoolBuilder::<FBPooledTransaction>::default()
-        .with_enable_tx_conditional(
-            // Revert protection uses the same internal pool logic as conditional transactions
-            // to garbage collect transactions out of the bundle range.
-            rollup_args.enable_tx_conditional || args.enable_revert_protection,
-        )
-        .with_supervisor(
-            rollup_args.supervisor_http.clone(),
-            rollup_args.supervisor_safety_level,
-        )
-}
-
-async fn spawn_attestation_provider() -> eyre::Result<AttestationServer> {
-    let quote = include_bytes!("./artifacts/test-quote.bin");
-    let mut service = AttestationServer::new(TEE_DEBUG_ADDRESS, Bytes::new(), quote.into());
-    service.start().await?;
-    Ok(service)
+    OpPoolBuilder::<OpPooledTransaction>::default()
+        .with_enable_tx_conditional(false)
+        .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.
 ///
 /// This provides a reusable way to capture and inspect flashblocks that are produced
 /// during test execution, eliminating the need for duplicate WebSocket listening code.
+#[derive(Debug)]
 pub struct FlashblocksListener {
     pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
     pub cancellation_token: CancellationToken,
@@ -428,11 +366,7 @@ impl FlashblocksListener {
             }
         });
 
-        Self {
-            flashblocks,
-            cancellation_token,
-            handle,
-        }
+        Self { flashblocks, cancellation_token, handle }
     }
 
     /// Get a snapshot of all received flashblocks
@@ -442,11 +376,7 @@ impl FlashblocksListener {
 
     /// Find a flashblock by index
     pub fn find_flashblock(&self, index: u64) -> Option<FlashblocksPayloadV1> {
-        self.flashblocks
-            .lock()
-            .iter()
-            .find(|fb| fb.index == index)
-            .cloned()
+        self.flashblocks.lock().iter().find(|fb| fb.index == index).cloned()
     }
 
     /// Check if any flashblock contains the given transaction hash
@@ -484,6 +414,7 @@ impl FlashblocksListener {
 }
 
 /// A utility service to spawn a server that returns a mock quote for an attestation request
+#[derive(Debug)]
 pub struct AttestationServer {
     tee_address: Address,
     extra_registration_data: Bytes,
@@ -495,12 +426,12 @@ pub struct AttestationServer {
 }
 
 impl AttestationServer {
-    pub fn new(
+    pub const fn new(
         tee_address: Address,
         extra_registration_data: Bytes,
         mock_attestation: Bytes,
     ) -> Self {
-        AttestationServer {
+        Self {
             tee_address,
             extra_registration_data,
             mock_attestation,
@@ -511,7 +442,7 @@ impl AttestationServer {
         }
     }
 
-    pub fn set_error(&mut self, error: bool) {
+    pub const fn set_error(&mut self, error: bool) {
         self.error_on_request = error;
     }
 

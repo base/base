@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B256, U256, keccak256, private::alloy_rlp::Encodable};
@@ -8,7 +10,6 @@ use alloy_rpc_types_engine::{
 use futures::{StreamExt, TryStreamExt};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
-use std::path::{Path, PathBuf};
 use testcontainers::bollard::{
     Docker,
     container::{
@@ -36,6 +37,7 @@ const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";
 ///
 /// If the built payload fails to validate, then the driver block production function will
 /// return an error during `ChainDriver::build_new_block`.
+#[derive(Debug)]
 pub struct ExternalNode {
     engine_api: EngineApi<Ipc>,
     provider: RootProvider<Optimism>,
@@ -61,18 +63,13 @@ impl ExternalNode {
         std::fs::create_dir_all(&tempdir)
             .map_err(|_| eyre::eyre!("Failed to create temporary directory"))?;
 
-        std::fs::write(
-            tempdir.join("genesis.json"),
-            include_str!("./artifacts/genesis.json.tmpl"),
-        )
-        .map_err(|_| eyre::eyre!("Failed to write genesis file"))?;
+        std::fs::write(tempdir.join("genesis.json"), include_str!("./artifacts/genesis.json.tmpl"))
+            .map_err(|_| eyre::eyre!("Failed to write genesis file"))?;
 
         // Create Docker container with reth EL client
         let container = create_container(&tempdir, &docker, version_tag).await?;
 
-        docker
-            .start_container(&container.id, None::<StartContainerOptions<String>>)
-            .await?;
+        docker.start_container(&container.id, None::<StartContainerOptions<String>>).await?;
 
         // Wait for the container to be ready and IPCs to be created
         await_ipc_readiness(&docker, &container.id).await?;
@@ -101,13 +98,7 @@ impl ExternalNode {
             }
         });
 
-        Ok(Self {
-            engine_api,
-            provider,
-            docker,
-            tempdir,
-            container_id: container.id,
-        })
+        Ok(Self { engine_api, provider, docker, tempdir, container_id: container.id })
     }
 
     /// Creates a new instance of `ExternalNode` that runs the `op-reth` client in a Docker container
@@ -119,12 +110,12 @@ impl ExternalNode {
 
 impl ExternalNode {
     /// Access to the RPC API of the validation node.
-    pub fn provider(&self) -> &RootProvider<Optimism> {
+    pub const fn provider(&self) -> &RootProvider<Optimism> {
         &self.provider
     }
 
     /// Access to the Engine API of the validation node.
-    pub fn engine_api(&self) -> &EngineApi<Ipc> {
+    pub const fn engine_api(&self) -> &EngineApi<Ipc> {
         &self.engine_api
     }
 }
@@ -180,9 +171,7 @@ impl ExternalNode {
         let mut our_current_height = our_latest_number + 1;
 
         while our_current_height <= latest_number {
-            let payload = chain
-                .execution_payload_for_block(our_current_height)
-                .await?;
+            let payload = chain.execution_payload_for_block(our_current_height).await?;
 
             let (latest_hash, _) = self.provider().latest_block_hash_and_number().await?;
 
@@ -199,9 +188,7 @@ impl ExternalNode {
             }
 
             let new_chain_hash = status.latest_valid_hash.unwrap_or_default();
-            self.engine_api()
-                .update_forkchoice(latest_hash, new_chain_hash, None)
-                .await?;
+            self.engine_api().update_forkchoice(latest_hash, new_chain_hash, None).await?;
 
             our_current_height += 1;
         }
@@ -244,9 +231,7 @@ impl ExternalNode {
 
         let (latest_hash, _) = self.provider.latest_block_hash_and_number().await?;
 
-        self.engine_api
-            .update_forkchoice(latest_hash, new_block_hash, None)
-            .await?;
+        self.engine_api.update_forkchoice(latest_hash, new_block_hash, None).await?;
 
         Ok(())
     }
@@ -270,10 +255,7 @@ async fn create_container(
     version_tag: &str,
 ) -> eyre::Result<ContainerCreateResponse> {
     let host_config = HostConfig {
-        binds: Some(vec![format!(
-            "{}:/home/op-reth-shared:rw",
-            tempdir.display()
-        )]),
+        binds: Some(vec![format!("{}:/home/op-reth-shared:rw", tempdir.display())]),
         ..Default::default()
     };
 
@@ -289,10 +271,7 @@ async fn create_container(
     );
 
     while let Some(pull_result) = pull_stream.try_next().await? {
-        debug!(
-            "Pulling 'ghcr.io/paradigmxyz/op-reth:{version_tag}' locally: {:?}",
-            pull_result
-        );
+        debug!("Pulling 'ghcr.io/paradigmxyz/op-reth:{version_tag}' locally: {:?}", pull_result);
     }
 
     // Don't expose any ports, as we will only use IPC for communication.
@@ -321,10 +300,7 @@ async fn create_container(
     };
 
     Ok(docker
-        .create_container(
-            Some(CreateContainerOptions::<String>::default()),
-            container_config,
-        )
+        .create_container(Some(CreateContainerOptions::<String>::default()), container_config)
         .await?)
 }
 
@@ -406,9 +382,7 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
     }
 
     if !auth_ipc_started || !rpc_ipc_started {
-        return Err(eyre::eyre!(
-            "Failed to start op-reth container: IPCs not ready"
-        ));
+        return Err(eyre::eyre!("Failed to start op-reth container: IPCs not ready"));
     }
 
     Ok(())
@@ -417,30 +391,21 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
 async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
     // This is a no-op function that will be spawned to clean up the container on ctrl-c
     // or Drop.
-    debug!(
-        "Cleaning up external node resources at {} [{container_id}]...",
-        tempdir.display()
-    );
+    debug!("Cleaning up external node resources at {} [{container_id}]...", tempdir.display());
 
     if !tempdir.exists() {
         return; // If the tempdir does not exist, there's nothing to clean up.
     }
 
     // Block on cleaning up the container
-    if let Err(e) = docker
-        .stop_container(&container_id, None::<StopContainerOptions>)
-        .await
-    {
+    if let Err(e) = docker.stop_container(&container_id, None::<StopContainerOptions>).await {
         warn!("Failed to stop container {}: {}", container_id, e);
     }
 
     if let Err(e) = docker
         .remove_container(
             &container_id,
-            Some(RemoveContainerOptions {
-                force: true,
-                ..Default::default()
-            }),
+            Some(RemoveContainerOptions { force: true, ..Default::default() }),
         )
         .await
     {

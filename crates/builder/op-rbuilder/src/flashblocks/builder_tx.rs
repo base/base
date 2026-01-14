@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
@@ -7,7 +9,6 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
-use core::fmt::Debug;
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
@@ -52,12 +53,12 @@ pub struct BuilderTransactionCtx {
 }
 
 impl BuilderTransactionCtx {
-    pub fn set_top_of_block(mut self) -> Self {
+    pub const fn set_top_of_block(mut self) -> Self {
         self.is_top_of_block = true;
         self
     }
 
-    pub fn set_bottom_of_block(mut self) -> Self {
+    pub const fn set_bottom_of_block(mut self) -> Self {
         self.is_top_of_block = false;
         self
     }
@@ -102,36 +103,34 @@ pub enum BuilderTransactionError {
 
 impl From<secp256k1::Error> for BuilderTransactionError {
     fn from(error: secp256k1::Error) -> Self {
-        BuilderTransactionError::SigningError(error)
+        Self::SigningError(error)
     }
 }
 
 impl From<EVMError<ProviderError, OpTransactionError>> for BuilderTransactionError {
     fn from(error: EVMError<ProviderError, OpTransactionError>) -> Self {
-        BuilderTransactionError::EvmExecutionError(Box::new(error))
+        Self::EvmExecutionError(Box::new(error))
     }
 }
 
 impl From<EthTxEnvError> for BuilderTransactionError {
     fn from(error: EthTxEnvError) -> Self {
-        BuilderTransactionError::EvmExecutionError(Box::new(error))
+        Self::EvmExecutionError(Box::new(error))
     }
 }
 
 impl From<BuilderTransactionError> for PayloadBuilderError {
     fn from(error: BuilderTransactionError) -> Self {
         match error {
-            BuilderTransactionError::EvmExecutionError(e) => {
-                PayloadBuilderError::EvmExecutionError(e)
-            }
-            _ => PayloadBuilderError::other(error),
+            BuilderTransactionError::EvmExecutionError(e) => Self::EvmExecutionError(e),
+            _ => Self::other(error),
         }
     }
 }
 
 impl BuilderTransactionError {
     pub fn other(error: impl core::error::Error + Send + Sync + 'static) -> Self {
-        BuilderTransactionError::Other(Box::new(error))
+        Self::Other(Box::new(error))
     }
 
     pub fn msg(msg: impl core::fmt::Display) -> Self {
@@ -144,29 +143,18 @@ pub trait BuilderTransactions<Extra: Debug + Default = ()> {
     // changes to the db so call new_simulation_state to simulate on a new copy of the state
     fn simulate_builder_txs(
         &self,
-        state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
         db: &mut State<impl Database + DatabaseRef>,
-        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError>;
 
     fn simulate_builder_txs_with_state_copy(
         &self,
         state_provider: impl StateProvider + Clone,
-        info: &mut ExecutionInfo<Extra>,
         ctx: &OpPayloadBuilderCtx,
         db: &State<impl Database>,
-        top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         let mut simulation_state = self.new_simulation_state(state_provider.clone(), db);
-        self.simulate_builder_txs(
-            state_provider,
-            info,
-            ctx,
-            &mut simulation_state,
-            top_of_block,
-        )
+        self.simulate_builder_txs(ctx, &mut simulation_state)
     }
 
     fn add_builder_txs(
@@ -178,17 +166,11 @@ pub trait BuilderTransactions<Extra: Debug + Default = ()> {
         top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         {
-            let builder_txs = self.simulate_builder_txs_with_state_copy(
-                state_provider,
-                info,
-                builder_ctx,
-                db,
-                top_of_block,
-            )?;
+            let builder_txs =
+                self.simulate_builder_txs_with_state_copy(state_provider, builder_ctx, db)?;
 
-            let mut evm = builder_ctx
-                .evm_config
-                .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
+            let mut evm =
+                builder_ctx.evm_config.evm_with_env(&mut *db, builder_ctx.evm_env.clone());
 
             let mut invalid = HashSet::new();
 
@@ -249,8 +231,7 @@ pub trait BuilderTransactions<Extra: Debug + Default = ()> {
 
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signed_tx.signer());
-                info.executed_transactions
-                    .push(builder_tx.signed_tx.clone().into_inner());
+                info.executed_transactions.push(builder_tx.signed_tx.clone().into_inner());
             }
 
             // Release the db reference by dropping evm
@@ -328,9 +309,7 @@ pub trait BuilderTransactions<Extra: Debug + Default = ()> {
             Ok(res) => res,
             Err(err) => {
                 if err.is_invalid_tx_err() {
-                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(
-                        err,
-                    )));
+                    return Err(BuilderTransactionError::InvalidTransactionError(Box::new(err)));
                 } else {
                     return Err(BuilderTransactionError::EvmExecutionError(Box::new(err)));
                 }
@@ -338,20 +317,10 @@ pub trait BuilderTransactions<Extra: Debug + Default = ()> {
         };
 
         match result {
-            ExecutionResult::Success {
-                output,
-                gas_used,
-                logs,
-                ..
-            } => {
-                let topics: HashSet<B256> = logs
-                    .into_iter()
-                    .flat_map(|log| log.topics().to_vec())
-                    .collect();
-                if !expected_logs
-                    .iter()
-                    .all(|expected_topic| topics.contains(expected_topic))
-                {
+            ExecutionResult::Success { output, gas_used, logs, .. } => {
+                let topics: HashSet<B256> =
+                    logs.into_iter().flat_map(|log| log.topics().to_vec()).collect();
+                if !expected_logs.iter().all(|expected_topic| topics.contains(expected_topic)) {
                     return Err(BuilderTransactionError::InvalidContract(
                         to,
                         InvalidContractDataError::InvalidLogs(
@@ -394,7 +363,7 @@ pub struct BuilderTxBase {
 }
 
 impl BuilderTxBase {
-    pub(super) fn new(signer: Option<Signer>) -> Self {
+    pub(super) const fn new(signer: Option<Signer>) -> Self {
         Self { signer }
     }
 
@@ -425,11 +394,7 @@ impl BuilderTxBase {
     fn estimate_builder_tx_gas(&self, input: &[u8]) -> u64 {
         // Count zero and non-zero bytes
         let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
-            if byte == 0 {
-                (zeros + 1, nonzeros)
-            } else {
-                (zeros, nonzeros + 1)
-            }
+            if byte == 0 { (zeros + 1, nonzeros) } else { (zeros, nonzeros + 1) }
         });
 
         // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
@@ -466,9 +431,7 @@ impl BuilderTxBase {
             ..Default::default()
         });
         // Sign the transaction
-        let builder_tx = signer
-            .sign_tx(tx)
-            .map_err(BuilderTransactionError::SigningError)?;
+        let builder_tx = signer.sign_tx(tx).map_err(BuilderTransactionError::SigningError)?;
 
         Ok(builder_tx)
     }
