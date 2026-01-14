@@ -204,7 +204,8 @@ alloy-op-hardforks = "0.4.4"
 op-revm = { version = "12.0.2", default-features = false }
 
 # kona
-kona-registry = "0.4.5"
+kona-genesis = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-registry = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-engine = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 
 # tokio
