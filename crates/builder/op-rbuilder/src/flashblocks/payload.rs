@@ -13,12 +13,11 @@ use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
+use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
-use reth_chain_state::ExecutedBlock;
-use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
+use reth_node_api::{Block, BuiltPayloadExecutedBlock, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -244,7 +243,7 @@ where
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(&state_provider);
+        let db = StateProviderDatabase::new(state_provider);
         self.address_gas_limiter.refresh(ctx.block_number());
 
         // 1. execute the pre steps and seal an early block with that
@@ -871,11 +870,11 @@ where
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
     // create the executed block data
 
-    let executed = ExecutedBlock {
+    let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
         execution_output: Arc::new(execution_outcome),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
+        hashed_state: Either::Left(Arc::new(hashed_state)),
+        trie_updates: Either::Left(Arc::new(trie_output)),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
