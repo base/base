@@ -6,10 +6,19 @@
 #[macro_use]
 extern crate tracing;
 
+mod block_assembler;
+pub use block_assembler::{AssembledBlock, BlockAssembler};
+
+mod block_executor;
+pub use block_executor::BlockExecutor;
+
 mod error;
 pub use error::{
     BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
 };
+
+mod sender_recovery;
+pub use sender_recovery::SenderRecoveryService;
 
 mod metrics;
 pub use metrics::Metrics;

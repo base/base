@@ -2,20 +2,13 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
-use alloy_consensus::{
-    Header,
-    transaction::{Recovered, SignerRecoverable},
-};
+use alloy_consensus::{Header, transaction::Recovered};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256, BlockNumber, Bytes};
-use alloy_rpc_types::Withdrawal;
-use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_primitives::BlockNumber;
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
-use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
-use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
@@ -28,8 +21,8 @@ use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
-    ProtocolError, ProviderError, Result,
+    BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
+    PendingStateBuilder, ProviderError, Result, SenderRecoveryService,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -322,70 +315,22 @@ where
             });
 
         for (_block_number, flashblocks) in flashblocks_per_block {
-            let base = flashblocks
-                .first()
-                .ok_or(ProtocolError::EmptyFlashblocks)?
-                .base
-                .clone()
-                .ok_or(ProtocolError::MissingBase)?;
+            // Use BlockAssembler to reconstruct the block from flashblocks
+            let assembled = BlockAssembler::assemble(&flashblocks)?;
 
-            let latest_flashblock =
-                flashblocks.last().cloned().ok_or(ProtocolError::EmptyFlashblocks)?;
+            pending_blocks_builder.with_flashblocks(assembled.flashblocks.clone());
+            pending_blocks_builder.with_header(assembled.header.clone());
 
-            let transactions: Vec<Bytes> = flashblocks
-                .iter()
-                .flat_map(|flashblock| flashblock.diff.transactions.clone())
-                .collect();
-
-            let withdrawals: Vec<Withdrawal> = flashblocks
-                .iter()
-                .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
-                .collect();
-
-            pending_blocks_builder.with_flashblocks(
-                flashblocks.iter().map(|&x| x.clone()).collect::<Vec<Flashblock>>(),
-            );
-
-            let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
-                blob_gas_used: 0,
-                excess_blob_gas: 0,
-                payload_inner: ExecutionPayloadV2 {
-                    withdrawals,
-                    payload_inner: ExecutionPayloadV1 {
-                        parent_hash: base.parent_hash,
-                        fee_recipient: base.fee_recipient,
-                        state_root: latest_flashblock.diff.state_root,
-                        receipts_root: latest_flashblock.diff.receipts_root,
-                        logs_bloom: latest_flashblock.diff.logs_bloom,
-                        prev_randao: base.prev_randao,
-                        block_number: base.block_number,
-                        gas_limit: base.gas_limit,
-                        gas_used: latest_flashblock.diff.gas_used,
-                        timestamp: base.timestamp,
-                        extra_data: base.extra_data.clone(),
-                        base_fee_per_gas: base.base_fee_per_gas,
-                        block_hash: latest_flashblock.diff.block_hash,
-                        transactions,
-                    },
-                },
-            };
-
-            let block: OpBlock = execution_payload
-                .try_into_block()
-                .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
-            let l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)
+            let l1_block_info = reth_optimism_evm::extract_l1_info(&assembled.block.body)
                 .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()))?;
-            let block_header = block.header.clone(); // prevents us from needing to clone the entire block
-            let sealed_header = block_header.clone().seal(B256::ZERO); // zero block hash for flashblocks
-            pending_blocks_builder.with_header(sealed_header);
 
             let block_env_attributes = OpNextBlockEnvAttributes {
-                timestamp: base.timestamp,
-                suggested_fee_recipient: base.fee_recipient,
-                prev_randao: base.prev_randao,
-                gas_limit: base.gas_limit,
-                parent_beacon_block_root: Some(base.parent_beacon_block_root),
-                extra_data: base.extra_data.clone(),
+                timestamp: assembled.base.timestamp,
+                suggested_fee_recipient: assembled.base.fee_recipient,
+                prev_randao: assembled.base.prev_randao,
+                gas_limit: assembled.base.gas_limit,
+                parent_beacon_block_root: Some(assembled.base.parent_beacon_block_root),
+                extra_data: assembled.base.extra_data.clone(),
             };
 
             let evm_env = evm_config
@@ -393,31 +338,22 @@ where
                 .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
             let evm = evm_config.evm_with_env(db, evm_env);
 
-            // Parallel sender recovery - batch all ECDSA operations upfront
+            // Use SenderRecoveryService for parallel sender recovery with caching
             let recovery_start = Instant::now();
-            let txs_with_senders: Vec<(OpTxEnvelope, Address)> = block
-                .body
-                .transactions
-                .par_iter()
-                .cloned()
-                .map(|tx| -> Result<(OpTxEnvelope, Address)> {
-                    let tx_hash = tx.tx_hash();
-                    let sender = match prev_pending_blocks
+            let txs_with_senders = SenderRecoveryService::recover_all_with_lookup(
+                &assembled.block.body.transactions,
+                |tx_hash| {
+                    prev_pending_blocks
                         .as_ref()
-                        .and_then(|p| p.get_transaction_sender(&tx_hash))
-                    {
-                        Some(cached) => cached,
-                        None => tx.recover_signer()?,
-                    };
-                    Ok((tx, sender))
-                })
-                .collect::<Result<_>>()?;
+                        .and_then(|p| p.get_transaction_sender(tx_hash))
+                },
+            )?;
             self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
             let mut pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
-                block,
+                assembled.block.clone(),
                 prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
@@ -446,7 +382,7 @@ where
             }
 
             (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
-            last_block_header = block_header;
+            last_block_header = assembled.block.header;
         }
 
         // Extract the accumulated bundle state for state root calculation
