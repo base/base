@@ -13,9 +13,10 @@ workspace = true
 
 [features]
 test-utils = [
-	"base-client-node/test-utils",
+	"dep:base-client-node",
 	"dep:derive_more",
 	"dep:eyre",
+	"dep:reth-chain-state",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-evm/test-utils",
@@ -27,10 +28,10 @@ test-utils = [
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
-base-client-node.workspace = true
+base-client-node = { workspace = true, optional = true }
 
 # reth
-reth-chain-state.workspace = true
+reth-chain-state = { workspace = true, optional = true }
 reth-evm.workspace = true
 reth-primitives.workspace = true
 reth-rpc.workspace = true
@@ -92,6 +93,7 @@ derive_more = { workspace = true, features = ["deref"], optional = true }
 eyre = { workspace = true, optional = true }
 
 [dev-dependencies]
+base-client-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks = { path = ".", features = ["test-utils"] }
 rstest.workspace = true
 rand.workspace = true

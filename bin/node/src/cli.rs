@@ -1,6 +1,6 @@
 //! Contains the CLI arguments
 
-use base_flashblocks::FlashblocksConfig;
+use base_flashblocks_node::FlashblocksConfig;
 use base_txpool::TxpoolConfig;
 use reth_optimism_node::args::RollupArgs;
 

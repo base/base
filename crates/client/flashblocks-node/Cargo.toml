@@ -1,0 +1,24 @@
+[package]
+name = "base-flashblocks-node"
+description = "Flashblocks Node Extension"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-flashblocks.workspace = true
+base-client-node.workspace = true
+
+# reth
+reth-chain-state.workspace = true
+
+tokio-stream.workspace = true
+tracing.workspace = true
+tokio.workspace = true

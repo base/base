@@ -1,38 +1,14 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
-use std::sync::Arc;
-
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_flashblocks::{
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
+    FlashblocksSubscriber,
+};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
-use url::Url;
-
-use crate::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksState,
-    FlashblocksSubscriber,
-};
-
-/// Flashblocks-specific configuration knobs.
-#[derive(Debug, Clone)]
-pub struct FlashblocksConfig {
-    /// The websocket endpoint that streams flashblock updates.
-    pub websocket_url: Url,
-    /// Maximum number of pending flashblocks to retain in memory.
-    pub max_pending_blocks_depth: u64,
-    /// Shared Flashblocks state.
-    pub state: Arc<FlashblocksState>,
-}
-
-impl FlashblocksConfig {
-    /// Create a new Flashblocks configuration.
-    pub fn new(websocket_url: String, max_pending_blocks_depth: u64) -> Self {
-        let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
-        let ws_url = Url::parse(&websocket_url).expect("valid websocket URL");
-        Self { websocket_url: ws_url, max_pending_blocks_depth, state }
-    }
-}
 
 /// Helper struct that wires the Flashblocks feature (canonical subscription and RPC) into the node builder.
 #[derive(Debug)]

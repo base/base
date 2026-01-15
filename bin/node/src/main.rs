@@ -6,7 +6,7 @@
 pub mod cli;
 
 use base_client_node::BaseNodeRunner;
-use base_flashblocks::{FlashblocksConfig, FlashblocksExtension};
+use base_flashblocks_node::{FlashblocksConfig, FlashblocksExtension};
 use base_metering::{MeteringConfig, MeteringExtension};
 use base_txpool::TxPoolExtension;
 
