@@ -1,11 +1,9 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
+use base_builder_cli::{FlashblocksArgs, OpRbuilderArgs};
 
-use crate::{
-    args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{TransactionBuilderExt, setup_test_instance_with_args},
-};
+use crate::tests::{TransactionBuilderExt, setup_test_instance_with_args};
 
 #[tokio::test]
 async fn smoke_dynamic_base() -> eyre::Result<()> {

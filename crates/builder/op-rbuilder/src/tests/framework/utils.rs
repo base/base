@@ -188,7 +188,7 @@ pub trait OpRbuilderArgsTestExt {
     fn test_default() -> Self;
 }
 
-impl OpRbuilderArgsTestExt for crate::args::OpRbuilderArgs {
+impl OpRbuilderArgsTestExt for base_builder_cli::OpRbuilderArgs {
     fn test_default() -> Self {
         let mut default = Self::default();
         default.flashblocks.flashblocks_port = 0; // randomize port

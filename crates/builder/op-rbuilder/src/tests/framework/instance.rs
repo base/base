@@ -10,6 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use base_builder_cli::{Cli, OpRbuilderArgs};
 use base_flashtypes::FlashblocksPayloadV1;
 use clap::Parser;
 use futures::{FutureExt, StreamExt};
@@ -36,7 +37,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    args::OpRbuilderArgs,
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tests::{
@@ -169,7 +169,7 @@ impl LocalInstance {
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
         clear_otel_env_vars();
-        let mut args = crate::args::Cli::parse_from(["dummy", "node"]);
+        let mut args = Cli::parse_from(["dummy", "node"]);
         let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
         Self::new(node_command.ext.clone()).await

@@ -1,0 +1,37 @@
+[package]
+name = "base-builder-cli"
+description = "CLI argument definitions for the Base builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# CLI
+clap.workspace = true
+clap_builder.workspace = true
+
+# reth
+reth-cli.workspace = true
+reth-network-peers.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-optimism-cli.workspace = true
+reth-optimism-node.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+
+# misc
+anyhow.workspace = true
+eyre.workspace = true
+rand.workspace = true
+secp256k1.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+shellexpand.workspace = true
+url.workspace = true

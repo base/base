@@ -1,5 +1,8 @@
+//! Gas limiter CLI arguments.
+
 use clap::Args;
 
+/// CLI arguments for address-based gas rate limiting.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct GasLimiterArgs {
     /// Enable address-based gas rate limiting

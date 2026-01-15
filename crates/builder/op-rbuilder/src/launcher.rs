@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base_builder_cli::{Cli, CliExt, CliVersionInfo, OpRbuilderArgs};
 use eyre::Result;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -14,15 +15,26 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use reth_optimism_txpool::OpPooledTransaction;
 
 use crate::{
-    args::{Cli, CliExt, OpRbuilderArgs},
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    metrics::VERSION,
+    metrics::{LONG_VERSION, SHORT_VERSION, VERSION},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
 pub fn launch() -> Result<()> {
-    let cli = Cli::parsed();
+    let logs_dir =
+        dirs_next::cache_dir().map(|root| root.join("op-rbuilder/logs")).unwrap().into_os_string();
+
+    let version_info = CliVersionInfo {
+        short_version: SHORT_VERSION,
+        long_version: LONG_VERSION,
+        about: "Block builder designed for the Optimism stack",
+        author: "Flashbots",
+        name: "op-rbuilder",
+        logs_dir,
+    };
+
+    let cli = Cli::parsed(version_info);
 
     let telemetry_args = match &cli.command {
         reth_optimism_cli::commands::Commands::Node(node_command) => {

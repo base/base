@@ -3,7 +3,9 @@ use core::{
     time::Duration,
 };
 
-use crate::{args::OpRbuilderArgs, flashblocks::BuilderConfig};
+use base_builder_cli::OpRbuilderArgs;
+
+use crate::flashblocks::BuilderConfig;
 
 /// Configuration values that are specific to the flashblocks builder.
 #[allow(unnameable_types)]
