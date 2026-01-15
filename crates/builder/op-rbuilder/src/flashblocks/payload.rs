@@ -9,16 +9,16 @@ use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
+use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
-use reth_chain_state::ExecutedBlock;
-use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_node_api::{Block, PayloadBuilderError};
+use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -28,15 +28,14 @@ use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
-    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
-    StorageRootProvider,
+    BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome, HashedPostStateProvider,
+    ProviderError, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
-use revm::Database;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -238,7 +237,7 @@ where
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(&state_provider);
+        let db = StateProviderDatabase::new(state_provider);
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
@@ -449,7 +448,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn build_next_flashblock<
-        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
+        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P> + revm::Database,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
@@ -737,7 +736,7 @@ fn execute_pre_steps<DB>(
     ctx: &OpPayloadBuilderCtx,
 ) -> Result<ExecutionInfo<FlashblocksExecutionInfo>, PayloadBuilderError>
 where
-    DB: Database<Error = ProviderError> + std::fmt::Debug,
+    DB: Database<Error = ProviderError> + std::fmt::Debug + revm::Database,
 {
     // 1. apply pre-execution changes
     ctx.evm_config
@@ -758,7 +757,7 @@ pub(super) fn build_block<DB, P>(
     calculate_state_root: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
-    DB: Database<Error = ProviderError> + AsRef<P>,
+    DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
 {
     // We use it to preserve state, so we run merge_transitions on transition state at most once
@@ -878,11 +877,19 @@ where
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
     // create the executed block data
 
-    let executed = ExecutedBlock {
+    let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
-        execution_output: Arc::new(execution_outcome),
-        hashed_state: Arc::new(hashed_state),
-        trie_updates: Arc::new(trie_output),
+        execution_output: Arc::new(BlockExecutionOutput {
+            result: BlockExecutionResult {
+                receipts: info.receipts.clone(),
+                requests: vec![].into(),
+                gas_used: info.cumulative_gas_used,
+                blob_gas_used: 0,
+            },
+            state: state.take_bundle(),
+        }),
+        hashed_state: Either::Left(Arc::new(hashed_state)),
+        trie_updates: Either::Left(Arc::new(trie_output)),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 

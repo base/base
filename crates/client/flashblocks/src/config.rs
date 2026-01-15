@@ -17,9 +17,8 @@ pub struct FlashblocksConfig {
 
 impl FlashblocksConfig {
     /// Create a new Flashblocks configuration.
-    pub fn new(websocket_url: String, max_pending_blocks_depth: u64) -> Self {
+    pub fn new(websocket_url: Url, max_pending_blocks_depth: u64) -> Self {
         let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
-        let ws_url = Url::parse(&websocket_url).expect("valid websocket URL");
-        Self { websocket_url: ws_url, max_pending_blocks_depth, state }
+        Self { websocket_url, max_pending_blocks_depth, state }
     }
 }

@@ -11,10 +11,6 @@ pub struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    /// The websocket url used for flashblocks.
-    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
-    pub websocket_url: Option<String>,
-
     /// The max pending blocks depth.
     #[arg(
         long = "max-pending-blocks-depth",
@@ -43,12 +39,14 @@ impl Args {
     /// Returns if flashblocks is enabled.
     /// If the websocket url is specified through the CLI.
     pub const fn flashblocks_enabled(&self) -> bool {
-        self.websocket_url.is_some()
+        self.rollup_args.flashblocks_url.is_some()
     }
 }
 
 impl From<Args> for Option<FlashblocksConfig> {
     fn from(args: Args) -> Self {
-        args.websocket_url.map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
+        args.rollup_args
+            .flashblocks_url
+            .map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
     }
 }
