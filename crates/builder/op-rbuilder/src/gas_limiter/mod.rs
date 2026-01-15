@@ -104,7 +104,7 @@ impl AddressGasLimiterInner {
 
         // Only clean up stale buckets every `cleanup_interval` blocks
         if block_number.is_multiple_of(self.config.cleanup_interval) {
-            self.address_buckets.retain(|_, bucket| bucket.available <= bucket.capacity);
+            self.address_buckets.retain(|_, bucket| bucket.available < bucket.capacity);
         }
 
         active_addresses - self.address_buckets.len()
