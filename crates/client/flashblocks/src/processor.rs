@@ -317,6 +317,8 @@ where
                 pending_blocks.get_state_overrides().unwrap_or_default()
             });
 
+        let mut current_prev_pending_blocks = prev_pending_blocks;
+
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
                 .first()
@@ -398,7 +400,7 @@ where
                 .cloned()
                 .map(|tx| -> Result<(OpTxEnvelope, Address)> {
                     let tx_hash = tx.tx_hash();
-                    let sender = match prev_pending_blocks
+                    let sender = match current_prev_pending_blocks
                         .as_ref()
                         .and_then(|p| p.get_transaction_sender(&tx_hash))
                     {
@@ -414,7 +416,7 @@ where
                 self.client.chain_spec(),
                 evm,
                 block,
-                prev_pending_blocks.clone(),
+                current_prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
                 *evm_config.block_executor_factory().receipt_builder(),
@@ -444,6 +446,8 @@ where
 
             (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
             last_block_header = block_header;
+
+            current_prev_pending_blocks = Some(Arc::new(pending_blocks_builder.build()?));
         }
 
         pending_blocks_builder.with_state_overrides(state_overrides);
