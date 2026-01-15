@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     flashblocks::{BuilderConfig, OpPayloadBuilderCtx},
-    gas_limiter::{AddressGasLimiter},
+    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
     tx_data_store::TxDataStore,

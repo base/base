@@ -327,8 +327,7 @@ where
             flashblocks_interval = self.config.flashblocks.interval.as_millis(),
         );
         ctx.metrics.reduced_flashblocks_number.record(
-            self.config.flashblocks_per_block().saturating_sub(ctx.target_flashblock_count)
-                as f64,
+            self.config.flashblocks_per_block().saturating_sub(ctx.target_flashblock_count) as f64,
         );
         ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
@@ -556,12 +555,8 @@ where
         ctx.metrics.payload_transaction_simulation_gauge.set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
-        let build_result = build_block(
-            state,
-            ctx,
-            info,
-            !ctx.disable_state_root || ctx.attributes().no_tx_pool,
-        );
+        let build_result =
+            build_block(state, ctx, info, !ctx.disable_state_root || ctx.attributes().no_tx_pool);
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics.total_block_built_duration.record(total_block_built_duration);
         ctx.metrics.total_block_built_gauge.set(total_block_built_duration);
@@ -632,7 +627,11 @@ where
                     target_flashblocks = ctx.target_flashblock_count,
                 );
 
-                Ok(Some((next_target_gas_for_batch, target_da_for_batch, target_da_footprint_for_batch)))
+                Ok(Some((
+                    next_target_gas_for_batch,
+                    target_da_for_batch,
+                    target_da_footprint_for_batch,
+                )))
             }
         }
     }
