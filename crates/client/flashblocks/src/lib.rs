@@ -14,9 +14,6 @@ pub use error::{
     BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
 };
 
-mod sender_recovery;
-pub use sender_recovery::SenderRecoveryService;
-
 mod metrics;
 pub use metrics::Metrics;
 

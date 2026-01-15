@@ -2,13 +2,15 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
-use alloy_consensus::{Header, transaction::Recovered};
+use alloy_consensus::{Header, transaction::{Recovered, SignerRecoverable}};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::BlockNumber;
+use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
+use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
+use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
@@ -22,7 +24,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
-    PendingStateBuilder, ProviderError, Result, SenderRecoveryService,
+    PendingStateBuilder, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -338,16 +340,26 @@ where
                 .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
             let evm = evm_config.evm_with_env(db, evm_env);
 
-            // Use SenderRecoveryService for parallel sender recovery with caching
+            // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
-            let txs_with_senders = SenderRecoveryService::recover_all_with_lookup(
-                &assembled.block.body.transactions,
-                |tx_hash| {
-                    prev_pending_blocks
+            let txs_with_senders: Vec<(OpTxEnvelope, Address)> = assembled
+                .block
+                .body
+                .transactions
+                .par_iter()
+                .cloned()
+                .map(|tx| -> Result<(OpTxEnvelope, Address)> {
+                    let tx_hash = tx.tx_hash();
+                    let sender = match prev_pending_blocks
                         .as_ref()
-                        .and_then(|p| p.get_transaction_sender(tx_hash))
-                },
-            )?;
+                        .and_then(|p| p.get_transaction_sender(&tx_hash))
+                    {
+                        Some(cached) => cached,
+                        None => tx.recover_signer()?,
+                    };
+                    Ok((tx, sender))
+                })
+                .collect::<Result<_>>()?;
             self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
             // Clone header before moving block to avoid cloning the entire block
