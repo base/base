@@ -48,4 +48,7 @@ pub struct Metrics {
 
     #[metric(describe = "Total raw transactions forwarded to additional endpoint")]
     pub raw_tx_forwards_total: Counter,
+
+    #[metric(describe = "Number of bundles that exceeded the metering time")]
+    pub bundles_exceeded_metering_time: Counter,
 }

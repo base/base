@@ -86,6 +86,7 @@ pub struct IngressService<Q: MessageQueue, M: Mempool> {
     max_backrun_txs: usize,
     max_backrun_gas_limit: u64,
     bundle_cache: Cache<B256, ()>,
+    send_to_builder: bool,
 }
 
 impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
@@ -142,6 +143,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
             max_backrun_txs: config.max_backrun_txs,
             max_backrun_gas_limit: config.max_backrun_gas_limit,
             bundle_cache,
+            send_to_builder: config.send_to_builder,
         }
     }
 }
@@ -334,7 +336,9 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
 
             if let Some(meter_info) = meter_bundle_response.as_ref() {
                 self.metrics.successful_simulations.increment(1);
-                _ = self.builder_tx.send(meter_info.clone());
+                if self.send_to_builder {
+                    _ = self.builder_tx.send(meter_info.clone());
+                }
             } else {
                 self.metrics.failed_simulations.increment(1);
             }
@@ -531,6 +535,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
         // that we know will take longer than the block time to execute
         let total_execution_time = (res.total_execution_time_us / 1_000) as u64;
         if total_execution_time > self.block_time_milliseconds {
+            self.metrics.bundles_exceeded_metering_time.increment(1);
             return Err(
                 EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err(),
             );
@@ -646,6 +651,7 @@ mod tests {
             max_backrun_txs: 5,
             max_backrun_gas_limit: 5000000,
             bundle_cache_ttl: 20,
+            send_to_builder: false,
         }
     }
 

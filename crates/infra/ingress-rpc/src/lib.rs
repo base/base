@@ -208,6 +208,10 @@ pub struct Config {
     /// TTL for bundle cache in seconds
     #[arg(long, env = "TIPS_INGRESS_BUNDLE_CACHE_TTL", default_value = "20")]
     pub bundle_cache_ttl: u64,
+
+    /// Enable sending to builder
+    #[arg(long, env = "TIPS_INGRESS_SEND_TO_BUILDER", default_value = "false")]
+    pub send_to_builder: bool,
 }
 
 pub fn connect_ingress_to_builder(
