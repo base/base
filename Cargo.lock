@@ -2160,7 +2160,7 @@ dependencies = [
  "reth-provider",
  "reth-tracing",
  "reth-transaction-pool",
- "revm-database 9.0.6",
+ "revm-database",
  "serde",
  "serde_json",
  "tokio",
