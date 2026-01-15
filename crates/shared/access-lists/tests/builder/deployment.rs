@@ -205,6 +205,10 @@ fn test_create_and_immediate_call() {
 
     // Verify the storage slot is 0 and value is 42
     let storage_change = &deployed_changes.storage_changes[0];
-    assert_eq!(storage_change.slot, U256::ZERO, "Storage slot should be 0");
-    assert_eq!(storage_change.changes[0].new_value, U256::from(42), "Storage value should be 42");
+    assert_eq!(storage_change.slot, B256::ZERO, "Storage slot should be 0");
+    assert_eq!(
+        storage_change.changes[0].new_value,
+        B256::from(U256::from(42)),
+        "Storage value should be 42"
+    );
 }

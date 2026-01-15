@@ -252,8 +252,9 @@ where
         // state hasn't been cleared yet after canonical block commit
         if let Some(canonical_tx) = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
             .await?
-            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
-            .transpose()?
+            .map(|tx| tx.into_transaction(self.eth_api.converter()))
+            .transpose()
+            .map_err(Eth::Error::from)?
         {
             return Ok(Some(canonical_tx));
         }
