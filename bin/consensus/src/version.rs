@@ -74,7 +74,7 @@ impl VersionInfo {
         }
     }
 
-    /// Exposes kona-node's version information over prometheus.
+    /// Exposes version information over prometheus.
     pub fn register_version_metrics(&self) {
         // If no features are enabled, the string will be empty, and the metric will not be
         // reported. Report "none" if the string is empty.
@@ -89,7 +89,7 @@ impl VersionInfo {
             ("build_profile", self.build_profile),
         ];
 
-        let gauge = gauge!("kona_node_info", &labels);
+        let gauge = gauge!("base_node_info", &labels);
         gauge.set(1);
     }
 }

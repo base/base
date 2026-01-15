@@ -81,7 +81,7 @@ mod tests {
     #[case::disable_rpc(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
     #[case::disable_rpc(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
     fn test_parse_rpc_args(#[case] args: &[&str], #[case] mutate: impl Fn(&mut RpcArgs)) {
-        let args = [&["kona-node"], args].concat();
+        let args = [&["base-consensus"], args].concat();
         let cli = RpcArgs::parse_from(args);
         let mut expected = RpcArgs::default();
         mutate(&mut expected);
