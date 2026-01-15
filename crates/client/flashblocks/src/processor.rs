@@ -29,7 +29,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
-    ProtocolError, ProviderError, Result,
+    ProtocolError, ProviderError, Result, StateProcessorError,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -108,8 +108,22 @@ where
                             self.metrics.block_processing_duration.record(start_time.elapsed());
                         }
                         Err(e) => {
-                            error!(message = "could not process Flashblock", error = %e);
-                            self.metrics.block_processing_error.increment(1);
+                            // Handle missing canonical header separately - this is expected during
+                            // node startup, snapshot restore, or when still syncing
+                            if matches!(
+                                &e,
+                                StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
+                                    ..
+                                })
+                            ) {
+                                info!(
+                                    message = "skipping Flashblock processing - canonical chain not yet synced to required height",
+                                    error = %e
+                                );
+                            } else {
+                                error!(message = "could not process Flashblock", error = %e);
+                                self.metrics.block_processing_error.increment(1);
+                            }
                         }
                     }
                 }

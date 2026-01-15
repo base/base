@@ -24,9 +24,8 @@ pub enum ProtocolError {
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum ProviderError {
     /// Missing canonical header for a given block number.
-    #[error(
-        "missing canonical header for block {block_number}. This can be ignored if the node has recently restarted, restored from a snapshot or is still syncing."
-    )]
+    /// This typically occurs during node startup, snapshot restore, or while syncing.
+    #[error("missing canonical header for block {block_number}")]
     MissingCanonicalHeader {
         /// The block number for which the header is missing.
         block_number: u64,
@@ -169,7 +168,7 @@ mod tests {
     #[rstest]
     #[case::missing_canonical_header(
         ProviderError::MissingCanonicalHeader { block_number: 12345 },
-        "missing canonical header for block 12345. This can be ignored if the node has recently restarted, restored from a snapshot or is still syncing."
+        "missing canonical header for block 12345"
     )]
     #[case::state_provider(
         ProviderError::StateProvider("connection failed".to_string()),
