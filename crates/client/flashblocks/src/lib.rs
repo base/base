@@ -49,6 +49,3 @@ pub use rpc::{
     BaseSubscriptionKind, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
     ExtendedSubscriptionKind,
 };
-
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_harness;

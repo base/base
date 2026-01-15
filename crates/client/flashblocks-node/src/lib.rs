@@ -6,3 +6,6 @@
 mod extension;
 pub use base_flashblocks::FlashblocksConfig;
 pub use extension::FlashblocksExtension;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_harness;

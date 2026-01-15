@@ -18,6 +18,10 @@ use base_client_node::{
         LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing,
     },
 };
+use base_flashblocks::{
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
+    FlashblocksState,
+};
 use base_flashtypes::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
@@ -25,11 +29,6 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_optimism_chainspec::OpChainSpec;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-
-use crate::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
-    FlashblocksState,
-};
 
 /// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
