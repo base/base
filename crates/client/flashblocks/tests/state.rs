@@ -289,7 +289,7 @@ impl<'a> FlashblockBuilder<'a> {
                 transactions: self.transactions.clone(),
                 blob_gas_used: Default::default(),
             },
-            metadata: Metadata { block_number: canonical_block_num },
+            metadata: Metadata { block_number: canonical_block_num, ..Default::default() },
         }
     }
 }

@@ -222,7 +222,7 @@ fn base_flashblock(
             transactions: vec![BLOCK_INFO_TXN],
             blob_gas_used: Default::default(),
         },
-        metadata: Metadata { block_number },
+        metadata: Metadata { block_number, ..Default::default() },
     }
 }
 
@@ -254,7 +254,7 @@ fn transaction_flashblock(
             transactions: tx_bytes,
             blob_gas_used: Default::default(),
         },
-        metadata: Metadata { block_number },
+        metadata: Metadata { block_number, ..Default::default() },
     }
 }
 
