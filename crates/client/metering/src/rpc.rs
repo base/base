@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{Header, Sealed};
+use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
@@ -167,12 +167,23 @@ where
             None
         };
 
+        // Pending flashblock headers can omit parent_beacon_block_root; prefer the CL-provided
+        // value from the flashblock base payload when available, otherwise fall back to the header.
+        let parent_beacon_block_root = header.parent_beacon_block_root().or_else(|| {
+            pending_blocks.as_ref().and_then(|pb| {
+                pb.get_flashblocks()
+                    .first()
+                    .and_then(|fb| fb.base.as_ref().map(|base| base.parent_beacon_block_root))
+            })
+        });
+
         // Meter bundle using utility function
         let output = meter_bundle(
             state_provider,
             self.provider.chain_spec(),
             parsed_bundle,
             &header,
+            parent_beacon_block_root,
             pending_state,
         )
         .map_err(|e| {

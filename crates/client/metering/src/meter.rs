@@ -95,6 +95,7 @@ pub fn meter_bundle<SP>(
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
+    parent_beacon_block_root: Option<B256>,
     pending_state: Option<PendingState>,
 ) -> EyreResult<MeterBundleOutput>
 where
@@ -136,12 +137,15 @@ where
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
     let timestamp = bundle.min_timestamp.unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
+    // Pending flashblock headers may omit parent_beacon_block_root; prefer the explicit value
+    // provided by the caller (e.g., flashblock base payload) to keep EIP-4788 happy.
     let attributes = OpNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
         prev_randao: header.mix_hash().unwrap_or(B256::random()),
         gas_limit: header.gas_limit(),
-        parent_beacon_block_root: header.parent_beacon_block_root(),
+        parent_beacon_block_root: parent_beacon_block_root
+            .or_else(|| header.parent_beacon_block_root()),
         extra_data: header.extra_data().clone(),
     };
 
@@ -268,8 +272,14 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
-        let output =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+        )?;
 
         assert!(output.results.is_empty());
         assert_eq!(output.total_gas_used, 0);
@@ -312,8 +322,14 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let output =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+        )?;
 
         assert_eq!(output.results.len(), 1);
         let result = &output.results[0];
@@ -335,6 +351,58 @@ mod tests {
         assert_eq!(output.bundle_hash, keccak256(concatenated));
 
         assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_requires_parent_beacon_block_root() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let parsed_bundle = create_parsed_bundle(Vec::new())?;
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        // Mimic a pending flashblock header that lacks the parent beacon block root.
+        let mut header_without_root = header.clone_header();
+        header_without_root.parent_beacon_block_root = None;
+        let sealed_without_root = SealedHeader::new(header_without_root, header.hash());
+
+        let err = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle.clone(),
+            &sealed_without_root,
+            None,
+            None,
+        )
+        .expect_err("missing parent beacon block root should fail");
+        assert!(
+            err.to_string().to_lowercase().contains("parent beacon block root"),
+            "expected missing parent beacon block root error, got {err:?}"
+        );
+
+        let state_provider2 = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let output = meter_bundle(
+            state_provider2,
+            harness.chain_spec(),
+            parsed_bundle,
+            &sealed_without_root,
+            Some(header.parent_beacon_block_root().unwrap_or(B256::ZERO)),
+            None,
+        )?;
+
+        assert!(output.total_time_us > 0);
+        assert!(output.state_root_time_us > 0);
 
         Ok(())
     }
@@ -390,8 +458,14 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
 
-        let output =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+        )?;
 
         assert_eq!(output.results.len(), 2);
         assert!(output.total_time_us > 0);
@@ -463,8 +537,14 @@ mod tests {
 
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
 
-        let output =
-            meter_bundle(state_provider, harness.chain_spec(), parsed_bundle, &header, None)?;
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+        )?;
 
         // Verify invariant: total time must include state root time
         assert!(
@@ -519,6 +599,7 @@ mod tests {
             harness.chain_spec(),
             parsed_bundle.clone(),
             &header,
+            header.parent_beacon_block_root(),
             None, // No pending state
         );
 
@@ -563,6 +644,7 @@ mod tests {
             harness.chain_spec(),
             parsed_bundle,
             &header,
+            header.parent_beacon_block_root(),
             Some(pending_state),
         );
 
