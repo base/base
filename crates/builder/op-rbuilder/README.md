@@ -10,7 +10,6 @@ Optimism block builder for Base. Provides payload building infrastructure with s
 - **`FlashblocksBuilder`**: Progressive block builder that produces block chunks at short intervals, publishing them via WebSocket before merging into full blocks.
 - **`StandardBuilder`**: Traditional block builder that produces complete blocks at each chain block time.
 - **`BuilderMode`**: Configuration enum to select between `Standard` and `Flashblocks` modes.
-- **`GasLimiter`**: Dynamic gas limit management based on configurable policies.
 - **`RevertProtection`**: RPC extension for protecting transactions from reverts.
 - **`TxDataStore`**: Transaction data storage and retrieval service.
 - **`Signer`**: Transaction signing utilities for builder operations.

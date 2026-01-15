@@ -5,7 +5,6 @@
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
 pub mod flashblocks;
-pub mod gas_limiter;
 pub mod launcher;
 pub mod metrics;
 pub mod primitives;

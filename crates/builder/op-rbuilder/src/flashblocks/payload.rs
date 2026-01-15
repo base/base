@@ -51,7 +51,6 @@ use crate::{
         context::OpPayloadBuilderCtx,
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
-    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
@@ -95,14 +94,11 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
     pub config: BuilderConfig,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
-    /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     /// `OpPayloadBuilder` constructor.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn new(
+    pub(super) const fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
@@ -111,8 +107,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
     ) -> Self {
-        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
-        Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics, address_gas_limiter }
+        Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics }
     }
 }
 
@@ -199,7 +194,6 @@ where
             metrics: Default::default(),
             extra,
             max_gas_per_txn: self.config.max_gas_per_txn,
-            address_gas_limiter: self.address_gas_limiter.clone(),
             tx_data_store: self.config.tx_data_store.clone(),
         })
     }
@@ -245,7 +239,6 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
-        self.address_gas_limiter.refresh(ctx.block_number());
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();

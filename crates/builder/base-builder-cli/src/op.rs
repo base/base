@@ -4,7 +4,7 @@
 
 use reth_optimism_node::args::RollupArgs;
 
-use crate::{FlashblocksArgs, GasLimiterArgs, TelemetryArgs};
+use crate::{FlashblocksArgs, TelemetryArgs};
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -40,9 +40,6 @@ pub struct OpRbuilderArgs {
     /// Telemetry configuration
     #[command(flatten)]
     pub telemetry: TelemetryArgs,
-    /// Gas limiter configuration
-    #[command(flatten)]
-    pub gas_limiter: GasLimiterArgs,
 }
 
 impl Default for OpRbuilderArgs {
@@ -56,7 +53,6 @@ impl Default for OpRbuilderArgs {
             tx_data_store_buffer_size: 10000,
             flashblocks: FlashblocksArgs::default(),
             telemetry: TelemetryArgs::default(),
-            gas_limiter: GasLimiterArgs::default(),
         }
     }
 }
