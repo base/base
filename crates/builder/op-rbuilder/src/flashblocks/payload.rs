@@ -9,7 +9,7 @@ use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
-use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
+use alloy_primitives::{B256, U256};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -18,12 +18,12 @@ use reth_basic_payload_builder::BuildOutcome;
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
+use reth_node_api::{Block, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
-use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
@@ -720,8 +720,6 @@ where
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
-    receipts: HashMap<B256, <OpPrimitives as NodePrimitives>::Receipt>,
-    new_account_balances: HashMap<Address, U256>,
     block_number: u64,
 }
 
@@ -888,27 +886,11 @@ where
     let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
 
     let new_transactions_encoded =
-        new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
+        new_transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
-    let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
-    let receipts_with_hash = new_transactions
-        .iter()
-        .zip(new_receipts.iter())
-        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
-        .collect::<HashMap<B256, OpReceipt>>();
-    let new_account_balances = state
-        .bundle_state
-        .state
-        .iter()
-        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
-        .collect::<HashMap<Address, U256>>();
-
-    let metadata: FlashblocksMetadata = FlashblocksMetadata {
-        receipts: receipts_with_hash,
-        new_account_balances,
-        block_number: ctx.parent().number + 1,
-    };
+    let metadata: FlashblocksMetadata =
+        FlashblocksMetadata { block_number: ctx.parent().number + 1 };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);
 
