@@ -211,7 +211,7 @@ where
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self.build_pending_state(None, &vec![flashblock]);
+                    return self.build_pending_state(None, &[flashblock]);
                 } else {
                     info!(message = "waiting for first Flashblock");
                     return Ok(None);
@@ -271,15 +271,15 @@ where
     fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblocks: &Vec<Flashblock>,
+        flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
         // BTreeMap guarantees ascending order of keys while iterating
-        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<&Flashblock>>::new();
+        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
             flashblocks_per_block
                 .entry(flashblock.metadata.block_number)
                 .or_default()
-                .push(flashblock);
+                .push(flashblock.clone());
         }
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
@@ -321,8 +321,8 @@ where
             pending_blocks_builder.with_flashblocks(assembled.flashblocks.clone());
             pending_blocks_builder.with_header(assembled.header.clone());
 
-            let l1_block_info = reth_optimism_evm::extract_l1_info(&assembled.block.body)
-                .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()))?;
+            // Extract L1 block info using the AssembledBlock method
+            let l1_block_info = assembled.l1_block_info()?;
 
             let block_env_attributes = OpNextBlockEnvAttributes {
                 timestamp: assembled.base.timestamp,
@@ -350,10 +350,13 @@ where
             )?;
             self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
+            // Clone header before moving block to avoid cloning the entire block
+            let block_header = assembled.block.header.clone();
+
             let mut pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
-                assembled.block.clone(),
+                assembled.block,
                 prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
@@ -382,7 +385,7 @@ where
             }
 
             (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
-            last_block_header = assembled.block.header;
+            last_block_header = block_header;
         }
 
         // Extract the accumulated bundle state for state root calculation

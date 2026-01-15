@@ -16,7 +16,7 @@ use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
 
-use crate::{BlockExecutor, ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
+use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
 
 /// Represents the result of executing or fetching a cached pending transaction.
 #[derive(Debug, Clone)]
@@ -263,19 +263,3 @@ where
     }
 }
 
-impl<E, ChainSpec, DB> BlockExecutor for PendingStateBuilder<E, ChainSpec>
-where
-    E: Evm<DB = DB>,
-    DB: Database + DatabaseCommit,
-    E::Tx: FromRecoveredTx<OpTxEnvelope>,
-    ChainSpec: OpHardforks,
-{
-    fn execute_transaction(
-        &mut self,
-        index: usize,
-        transaction: Recovered<OpTxEnvelope>,
-    ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
-        // Delegate to the inherent method
-        PendingStateBuilder::execute_transaction(self, index, transaction)
-    }
-}

@@ -7,6 +7,7 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use base_flashtypes::{ExecutionPayloadBaseV1, Flashblock};
+use reth_evm::op_revm::L1BlockInfo;
 use reth_optimism_primitives::OpBlock;
 
 use crate::{ExecutionError, ProtocolError, Result};
@@ -22,6 +23,17 @@ pub struct AssembledBlock {
     pub flashblocks: Vec<Flashblock>,
     /// The sealed header for this block.
     pub header: Sealed<Header>,
+}
+
+impl AssembledBlock {
+    /// Extracts L1 block info from the assembled block's body.
+    ///
+    /// This extracts the L1 attributes deposited transaction data from the
+    /// block body, which contains information about the L1 origin.
+    pub fn l1_block_info(&self) -> Result<L1BlockInfo> {
+        reth_optimism_evm::extract_l1_info(&self.block.body)
+            .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()).into())
+    }
 }
 
 /// Assembles blocks from flashblocks.
@@ -41,7 +53,7 @@ impl BlockAssembler {
     /// Assembles a complete block from a slice of flashblocks.
     ///
     /// # Arguments
-    /// * `flashblocks` - A slice of flashblock references for a single block number.
+    /// * `flashblocks` - A slice of flashblocks for a single block number.
     ///
     /// # Returns
     /// An [`AssembledBlock`] containing the reconstructed block and metadata.
@@ -51,15 +63,10 @@ impl BlockAssembler {
     /// - The flashblocks slice is empty
     /// - The first flashblock is missing its base payload
     /// - Block conversion fails
-    pub fn assemble(flashblocks: &[&Flashblock]) -> Result<AssembledBlock> {
-        let base = flashblocks
-            .first()
-            .ok_or(ProtocolError::EmptyFlashblocks)?
-            .base
-            .clone()
-            .ok_or(ProtocolError::MissingBase)?;
-
-        let latest_flashblock = flashblocks.last().cloned().ok_or(ProtocolError::EmptyFlashblocks)?;
+    pub fn assemble(flashblocks: &[Flashblock]) -> Result<AssembledBlock> {
+        let first = flashblocks.first().ok_or(ProtocolError::EmptyFlashblocks)?;
+        let base = first.base.clone().ok_or(ProtocolError::MissingBase)?;
+        let latest_flashblock = flashblocks.last().ok_or(ProtocolError::EmptyFlashblocks)?;
 
         let transactions: Vec<Bytes> = flashblocks
             .iter()
@@ -103,10 +110,12 @@ impl BlockAssembler {
         // Zero block hash for flashblocks since the final hash isn't known yet
         let sealed_header = block_header.seal(B256::ZERO);
 
-        let flashblocks_owned: Vec<Flashblock> =
-            flashblocks.iter().map(|&fb| fb.clone()).collect();
-
-        Ok(AssembledBlock { block, base, flashblocks: flashblocks_owned, header: sealed_header })
+        Ok(AssembledBlock {
+            block,
+            base,
+            flashblocks: flashblocks.to_vec(),
+            header: sealed_header,
+        })
     }
 }
 
@@ -115,6 +124,8 @@ mod tests {
     use alloy_primitives::{Address, Bloom, U256};
     use alloy_rpc_types_engine::PayloadId;
     use base_flashtypes::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata};
+
+    use crate::ProtocolError;
 
     use super::*;
 
@@ -154,8 +165,7 @@ mod tests {
 
     #[test]
     fn test_assemble_single_flashblock() {
-        let fb = create_test_flashblock(0, true);
-        let flashblocks = vec![&fb];
+        let flashblocks = vec![create_test_flashblock(0, true)];
 
         let result = BlockAssembler::assemble(&flashblocks);
         assert!(result.is_ok());
@@ -167,10 +177,11 @@ mod tests {
 
     #[test]
     fn test_assemble_multiple_flashblocks() {
-        let fb0 = create_test_flashblock(0, true);
-        let fb1 = create_test_flashblock(1, false);
-        let fb2 = create_test_flashblock(2, false);
-        let flashblocks = vec![&fb0, &fb1, &fb2];
+        let flashblocks = vec![
+            create_test_flashblock(0, true),
+            create_test_flashblock(1, false),
+            create_test_flashblock(2, false),
+        ];
 
         let result = BlockAssembler::assemble(&flashblocks);
         assert!(result.is_ok());
@@ -181,17 +192,22 @@ mod tests {
 
     #[test]
     fn test_assemble_empty_flashblocks_fails() {
-        let flashblocks: Vec<&Flashblock> = vec![];
+        let flashblocks: Vec<Flashblock> = vec![];
         let result = BlockAssembler::assemble(&flashblocks);
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::StateProcessorError::Protocol(ProtocolError::EmptyFlashblocks))
+        ));
     }
 
     #[test]
     fn test_assemble_missing_base_fails() {
-        let fb = create_test_flashblock(0, false); // No base
-        let flashblocks = vec![&fb];
+        let flashblocks = vec![create_test_flashblock(0, false)]; // No base
 
         let result = BlockAssembler::assemble(&flashblocks);
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(crate::StateProcessorError::Protocol(ProtocolError::MissingBase))
+        ));
     }
 }
