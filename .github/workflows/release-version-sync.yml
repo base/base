@@ -6,6 +6,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   sync-version:
@@ -31,3 +32,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/release/version-sync.sh "${{ github.ref_name }}"
+
+      - name: Create release tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/release/create-issue.sh "${{ github.ref_name }}"
