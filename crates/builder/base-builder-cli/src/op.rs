@@ -2,9 +2,6 @@
 //!
 //! Copied from OptimismNode to allow easy extension.
 
-use std::path::PathBuf;
-
-use anyhow::{Result, anyhow};
 use reth_optimism_node::args::RollupArgs;
 
 use crate::{FlashblocksArgs, GasLimiterArgs, TelemetryArgs};
@@ -37,15 +34,6 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
 
-    /// Path to builder playgorund to automatically start up the node connected to it
-    #[arg(
-        long = "builder.playground",
-        num_args = 0..=1,
-        default_missing_value = "$HOME/.playground/devnet/",
-        value_parser = expand_path,
-        env = "PLAYGROUND_DIR",
-    )]
-    pub playground: Option<PathBuf>,
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
@@ -57,14 +45,6 @@ pub struct OpRbuilderArgs {
     pub gas_limiter: GasLimiterArgs,
 }
 
-fn expand_path(s: &str) -> Result<PathBuf> {
-    shellexpand::full(s)
-        .map_err(|e| anyhow!("expansion error for `{s}`: {e}"))?
-        .into_owned()
-        .parse()
-        .map_err(|e| anyhow!("invalid path after expansion: {e}"))
-}
-
 impl Default for OpRbuilderArgs {
     fn default() -> Self {
         Self {
@@ -74,7 +54,6 @@ impl Default for OpRbuilderArgs {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             tx_data_store_buffer_size: 10000,
-            playground: None,
             flashblocks: FlashblocksArgs::default(),
             telemetry: TelemetryArgs::default(),
             gas_limiter: GasLimiterArgs::default(),
