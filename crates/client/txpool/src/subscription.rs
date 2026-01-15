@@ -19,7 +19,7 @@ use crate::tracker::Tracker;
 /// to canonical state notifications, flashblock updates, and mempool events.
 pub async fn tracex_subscription<N, Pool, FB>(
     canonical_stream: BroadcastStream<CanonStateNotification<N>>,
-    flashblocks_api: Option<Arc<FB>>,
+    flashblocks_api: Arc<FB>,
     pool: Pool,
     enable_logs: bool,
 ) where
@@ -34,9 +34,9 @@ pub async fn tracex_subscription<N, Pool, FB>(
     let mut all_events_stream = pool.all_transactions_event_listener();
     let mut canonical_stream = canonical_stream;
 
-    // Subscribe to flashblocks if available
-    let mut flashblock_stream: Option<Receiver<Arc<PendingBlocks>>> =
-        flashblocks_api.map(|api| api.subscribe_to_flashblocks());
+    // Subscribe to flashblocks.
+    let mut flashblock_stream: Receiver<Arc<PendingBlocks>> =
+        flashblocks_api.subscribe_to_flashblocks();
 
     loop {
         tokio::select! {
@@ -49,12 +49,7 @@ pub async fn tracex_subscription<N, Pool, FB>(
             }
 
             // Track flashblock inclusion timing.
-            Ok(pending_blocks) = async {
-                match &mut flashblock_stream {
-                    Some(stream) => stream.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => {
+            Ok(pending_blocks) = flashblock_stream.recv() => {
                 tracker.handle_flashblock_notification(pending_blocks);
             }
         }

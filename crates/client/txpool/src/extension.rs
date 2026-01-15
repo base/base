@@ -61,16 +61,11 @@ impl BaseNodeExtension for TxPoolExtension {
                     BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
                 let pool = ctx.pool().clone();
 
-                // Get flashblocks state from config if available
-                let flashblocks_state: Option<Arc<FlashblocksState>> =
-                    flashblocks_config.as_ref().map(|cfg| cfg.state.clone());
+                // Get flashblocks state from config, or create a default one if not configured
+                let fb_state: Arc<FlashblocksState> =
+                    flashblocks_config.as_ref().map(|cfg| cfg.state.clone()).unwrap_or_default();
 
-                tokio::spawn(tracex_subscription(
-                    canonical_stream,
-                    flashblocks_state,
-                    pool,
-                    logs_enabled,
-                ));
+                tokio::spawn(tracex_subscription(canonical_stream, fb_state, pool, logs_enabled));
             }
 
             Ok(())

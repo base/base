@@ -184,7 +184,8 @@ impl Tracker {
         }
     }
 
-    /// Track a transaction being included in a flashblock.
+    /// Track a transaction being included in a flashblock. This will not remove
+    /// the tx from the cache.
     pub fn transaction_fb_included(&mut self, tx_hash: TxHash) {
         // Only track if we have seen this transaction before
         if let Some(event_log) = self.txs.peek(&tx_hash) {
