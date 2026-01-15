@@ -2,6 +2,7 @@
 
 use std::{fmt::Debug, sync::Arc};
 
+use base_flashblocks::FlashblocksState;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{ConsensusError, FullConsensus};
 use reth_engine_primitives::{ConfigureEngineEvm, InvalidBlockHook, PayloadValidator};
@@ -26,6 +27,7 @@ use reth_provider::{
     StageCheckpointReader, StateProviderFactory, StateReader, TrieReader,
 };
 use tracing::instrument;
+
 /// Basic implementation of [`EngineValidatorBuilder`].
 ///
 /// This builder creates a [`BasicEngineValidator`] using the provided payload validator builder.
@@ -33,12 +35,21 @@ use tracing::instrument;
 pub struct BaseEngineValidatorBuilder<EV> {
     /// The payload validator builder used to create the engine validator.
     payload_validator_builder: EV,
+
+    /// The flashblocks state used to create the engine validator.
+    flashblocks_state: Option<Arc<FlashblocksState>>,
 }
 
 impl<EV> BaseEngineValidatorBuilder<EV> {
     /// Creates a new instance with the given payload validator builder.
     pub const fn new(payload_validator_builder: EV) -> Self {
-        Self { payload_validator_builder }
+        Self { payload_validator_builder, flashblocks_state: None }
+    }
+
+    /// Sets the flashblocks state used to create the engine validator.
+    pub fn with_flashblocks_state(mut self, flashblocks_state: Arc<FlashblocksState>) -> Self {
+        self.flashblocks_state = Some(flashblocks_state);
+        self
     }
 }
 

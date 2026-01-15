@@ -112,6 +112,15 @@ impl BaseBuilder {
     {
         launcher(self.build())
     }
+
+    /// Maps the add-ons with the given closure.
+    pub fn map_add_ons<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(OpAddOns) -> OpAddOns,
+    {
+        self.builder = self.builder.map_add_ons(f);
+        self
+    }
 }
 
 impl fmt::Debug for BaseBuilder {
