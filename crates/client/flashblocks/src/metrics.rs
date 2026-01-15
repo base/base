@@ -39,6 +39,12 @@ pub struct Metrics {
     #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
     pub block_processing_error: Counter,
 
+    /// Count of times Flashblock processing was paused waiting for canonical chain sync.
+    #[metric(
+        describe = "Count of times Flashblock processing was paused waiting for canonical chain sync"
+    )]
+    pub canonical_sync_wait: Counter,
+
     /// Count of times pending snapshot was cleared because canonical caught up.
     #[metric(
         describe = "Number of times pending snapshot was cleared because canonical caught up"

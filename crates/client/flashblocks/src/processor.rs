@@ -110,16 +110,20 @@ where
                         Err(e) => {
                             // Handle missing canonical header separately - this is expected during
                             // node startup, snapshot restore, or when still syncing
-                            if matches!(
-                                &e,
-                                StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
-                                    ..
-                                })
-                            ) {
-                                info!(
-                                    message = "skipping Flashblock processing - canonical chain not yet synced to required height",
-                                    error = %e
+                            if let StateProcessorError::Provider(
+                                ProviderError::MissingCanonicalHeader { block_number },
+                            ) = &e
+                            {
+                                // Use WARN level so operators can see this, but it won't trigger error alerts
+                                // Include detailed context so operators understand exactly what's happening
+                                warn!(
+                                    message = "Flashblock processing paused - waiting for canonical chain sync",
+                                    required_block = block_number,
+                                    flashblock_block = flashblock.metadata.block_number,
+                                    flashblock_index = flashblock.index,
+                                    hint = "node will resume Flashblock processing once canonical chain syncs to required height"
                                 );
+                                self.metrics.canonical_sync_wait.increment(1);
                             } else {
                                 error!(message = "could not process Flashblock", error = %e);
                                 self.metrics.block_processing_error.increment(1);
