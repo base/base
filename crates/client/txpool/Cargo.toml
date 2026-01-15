@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-client-node.workspace = true
+base-client-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks.workspace = true
 
 # reth
@@ -55,3 +55,5 @@ op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
 reth-optimism-primitives.workspace = true
 revm-database.workspace = true
+base-flashtypes.workspace = true
+alloy-rpc-types-engine.workspace = true

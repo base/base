@@ -256,31 +256,22 @@ impl Tracker {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::ops::Deref;
 
-    use alloy_primitives::{map::HashMap, Address};
-    use base_client_node::test_utils::TestHarness;
-    use reth_optimism_primitives::OpTransactionSigned;
-    use reth_transaction_pool::test_utils::TransactionBuilder;
+    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_primitives::Address;
+    use base_client_node::test_utils::{SignerSync, L1_BLOCK_INFO_DEPOSIT_TX};
+    use alloy_eips::eip2718::Encodable2718;
+    use base_flashblocks::FlashblocksAPI;
+    use base_client_node::test_utils::Account;
+    use base_flashblocks_node::test_harness::FlashblocksHarness;
+    use base_flashtypes::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+    };
+    use alloy_primitives::{Bytes, B256, U256};
+    use tokio::time;
 
     use super::*;
-
-    // Test helper to create a transaction
-    fn create_test_transaction() -> OpTransactionSigned {
-        TransactionBuilder::default()
-            .nonce(0)
-            .gas_limit(21_000)
-            .max_fee_per_gas(1_000_000_000)
-            .max_priority_fee_per_gas(1_000_000_000)
-            .to(Address::random())
-            .value(1000)
-            .chain_id(901)
-            .into_eip1559()
-            .as_eip1559()
-            .unwrap()
-            .clone()
-            .into()
-    }
 
     #[test]
     fn test_transaction_inserted_pending() {
@@ -585,5 +576,104 @@ mod tests {
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
+    }
+
+    fn build_eip1559_tx(
+        chain_id: u64,
+        nonce: u64,
+        to: Address,
+        value: U256,
+        input: Bytes,
+        account: Account,
+    ) -> Bytes {
+        let tx = TxEip1559 {
+            chain_id,
+            nonce,
+            gas_limit: 200_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            to: alloy_primitives::TxKind::Call(to),
+            value,
+            access_list: Default::default(),
+            input,
+        };
+    
+        let signature = account.signer().sign_hash_sync(&tx.signature_hash()).expect("signing works");
+        let signed = tx.into_signed(signature);
+    
+        signed.encoded_2718().into()
+    }    
+
+    #[tokio::test]
+    async fn test_receive_fb() -> eyre::Result<()> {
+        // Setup
+        let harness = FlashblocksHarness::new().await?;
+        let mut tracker = Tracker::new(false);
+
+        // Build transaction
+        let tx = build_eip1559_tx(
+            harness.chain_id(),
+            0,
+            Account::Alice.address(),
+            U256::ZERO,
+            Bytes::new(),
+            Account::Alice,
+        );
+        let tx_hash = alloy_primitives::keccak256(&tx);
+        let fb = Flashblock {
+            payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::default(),
+                parent_hash: B256::default(),
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::default(),
+                block_number: 1,
+                gas_limit: 30_000_000,
+                timestamp: 0,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::ZERO,
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                blob_gas_used: Some(0),
+                transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX, tx],
+                ..Default::default()
+            },
+            metadata: Metadata { block_number: 1 },
+        };
+
+        // Mimic sending a tx to the mpool/builder
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+
+        // Wait a bit to simulate builder picking and building the tx into the pending block
+        time::sleep(Duration::from_millis(10)).await;
+        harness.send_flashblock(fb).await?;
+    
+        let state = harness.flashblocks_state().get_pending_blocks();
+        // Verify we have some pending transactions
+        let ptxs = state
+            .as_ref()
+            .map(|pb| pb.get_pending_transaction_hashes())
+            .unwrap_or_default();
+        assert_eq!(ptxs.len(), 2); // L1Info + tx
+        assert_eq!(ptxs[1], tx_hash);
+
+        let pb = state
+            .as_ref()
+            .unwrap()
+            .deref();
+        tracker.track_flashblock_transactions(pb);
+
+        // It should still be in the tracker
+        assert!(tracker.txs.get(&tx_hash).is_some());
+
+        // Wait until its included in canonical block
+        time::sleep(Duration::from_millis(1500)).await;
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+
+        // It should be removed from the tracker
+        assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
     }
 }
