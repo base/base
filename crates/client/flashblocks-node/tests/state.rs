@@ -9,9 +9,8 @@ use alloy_rpc_types_engine::PayloadId;
 use base_client_node::test_utils::{
     Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNodeProvider,
 };
-use base_flashblocks::{
-    FlashblocksAPI, FlashblocksState, PendingBlocksAPI, test_harness::FlashblocksHarness,
-};
+use base_flashblocks::{FlashblocksAPI, FlashblocksState, PendingBlocksAPI};
+use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };

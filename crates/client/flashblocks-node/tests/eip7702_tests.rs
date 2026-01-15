@@ -11,7 +11,7 @@ use alloy_sol_types::SolCall;
 use base_client_node::test_utils::{
     Account, L1_BLOCK_INFO_DEPOSIT_TX, Minimal7702Account, SignerSync,
 };
-use base_flashblocks::test_harness::FlashblocksHarness;
+use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };

@@ -11,27 +11,11 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-test-utils = [
-	"dep:base-client-node",
-	"dep:derive_more",
-	"dep:eyre",
-	"dep:reth-chain-state",
-	"reth-chain-state/test-utils",
-	"reth-chainspec/test-utils",
-	"reth-evm/test-utils",
-	"reth-primitives/test-utils",
-	"reth-provider/test-utils",
-	"reth-revm/test-utils",
-]
-
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
-base-client-node = { workspace = true, optional = true }
 
 # reth
-reth-chain-state = { workspace = true, optional = true }
 reth-evm.workspace = true
 reth-primitives.workspace = true
 reth-rpc.workspace = true
@@ -88,42 +72,5 @@ arc-swap.workspace = true
 metrics-derive.workspace = true
 rayon.workspace = true
 
-# Optional test-utils dependencies
-derive_more = { workspace = true, features = ["deref"], optional = true }
-eyre = { workspace = true, optional = true }
-
 [dev-dependencies]
-base-client-node = { workspace = true, features = ["test-utils"] }
-base-flashblocks = { path = ".", features = ["test-utils"] }
 rstest.workspace = true
-rand.workspace = true
-eyre.workspace = true
-revm = { workspace = true, features = ["std"] }
-reth-db.workspace = true
-once_cell.workspace = true
-reth-provider.workspace = true
-reth-db-common.workspace = true
-reth-primitives-traits.workspace = true
-alloy-rpc-client.workspace = true
-alloy-genesis.workspace = true
-alloy-sol-macro = { workspace = true, features = ["json"] }
-alloy-sol-types.workspace = true
-alloy-contract.workspace = true
-op-alloy-consensus.workspace = true
-reth-tracing.workspace = true
-reth-optimism-node.workspace = true
-reth-testing-utils.workspace = true
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-tokio-tungstenite.workspace = true
-tracing-subscriber.workspace = true
-serde_json.workspace = true
-futures-util.workspace = true
-criterion = { version = "0.5", features = ["async_tokio"] }
-
-[[bench]]
-name = "pending_state"
-harness = false
-
-[[bench]]
-name = "sender_recovery"
-harness = false
