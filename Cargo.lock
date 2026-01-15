@@ -2146,6 +2146,7 @@ dependencies = [
  "base-flashblocks",
  "base-flashblocks-node",
  "base-flashtypes",
+ "base-primitives",
  "chrono",
  "derive_more",
  "eyre",

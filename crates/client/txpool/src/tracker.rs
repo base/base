@@ -258,16 +258,15 @@ impl Tracker {
 mod tests {
     use std::ops::Deref;
 
-    use alloy_consensus::{SignableTransaction, TxEip1559};
     use alloy_primitives::Address;
-    use base_client_node::test_utils::{SignerSync, L1_BLOCK_INFO_DEPOSIT_TX};
-    use alloy_eips::eip2718::Encodable2718;
+    use base_client_node::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
     use base_flashblocks::FlashblocksAPI;
     use base_client_node::test_utils::Account;
     use base_flashblocks_node::test_harness::FlashblocksHarness;
     use base_flashtypes::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
+    use base_primitives::build_eip1559_tx;
     use alloy_primitives::{Bytes, B256, U256};
     use tokio::time;
 
@@ -577,32 +576,6 @@ mod tests {
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
     }
-
-    fn build_eip1559_tx(
-        chain_id: u64,
-        nonce: u64,
-        to: Address,
-        value: U256,
-        input: Bytes,
-        account: Account,
-    ) -> Bytes {
-        let tx = TxEip1559 {
-            chain_id,
-            nonce,
-            gas_limit: 200_000,
-            max_fee_per_gas: 1_000_000_000,
-            max_priority_fee_per_gas: 1_000_000_000,
-            to: alloy_primitives::TxKind::Call(to),
-            value,
-            access_list: Default::default(),
-            input,
-        };
-    
-        let signature = account.signer().sign_hash_sync(&tx.signature_hash()).expect("signing works");
-        let signed = tx.into_signed(signature);
-    
-        signed.encoded_2718().into()
-    }    
 
     #[tokio::test]
     async fn test_receive_fb() -> eyre::Result<()> {
