@@ -258,16 +258,14 @@ impl Tracker {
 mod tests {
     use std::ops::Deref;
 
-    use alloy_primitives::Address;
-    use base_client_node::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use base_client_node::test_utils::{Account, L1_BLOCK_INFO_DEPOSIT_TX};
     use base_flashblocks::FlashblocksAPI;
-    use base_client_node::test_utils::Account;
     use base_flashblocks_node::test_harness::FlashblocksHarness;
     use base_flashtypes::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_primitives::build_eip1559_tx;
-    use alloy_primitives::{Bytes, B256, U256};
     use tokio::time;
 
     use super::*;
@@ -621,20 +619,14 @@ mod tests {
         // Wait a bit to simulate builder picking and building the tx into the pending block
         time::sleep(Duration::from_millis(10)).await;
         harness.send_flashblock(fb).await?;
-    
+
         let state = harness.flashblocks_state().get_pending_blocks();
         // Verify we have some pending transactions
-        let ptxs = state
-            .as_ref()
-            .map(|pb| pb.get_pending_transaction_hashes())
-            .unwrap_or_default();
+        let ptxs = state.as_ref().map(|pb| pb.get_pending_transaction_hashes()).unwrap_or_default();
         assert_eq!(ptxs.len(), 2); // L1Info + tx
         assert_eq!(ptxs[1], tx_hash);
 
-        let pb = state
-            .as_ref()
-            .unwrap()
-            .deref();
+        let pb = state.as_ref().unwrap().deref();
         tracker.track_flashblock_transactions(pb);
 
         // It should still be in the tracker

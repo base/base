@@ -21,7 +21,7 @@ pub struct TxpoolConfig {
     /// Sequencer RPC endpoint for transaction status proxying.
     pub sequencer_rpc: Option<String>,
     /// Optional Flashblocks configuration (includes state).
-    pub flashblocks_config: Option<FlashblocksConfig>, 
+    pub flashblocks_config: Option<FlashblocksConfig>,
 }
 
 /// Helper struct that wires the transaction pool features into the node builder.
