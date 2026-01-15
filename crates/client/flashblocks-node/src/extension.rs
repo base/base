@@ -1,12 +1,14 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
+use base_client_engine::BaseEngineValidatorBuilder;
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
     FlashblocksSubscriber,
 };
 use reth_chain_state::CanonStateSubscriptions;
+use reth_optimism_node::OpEngineValidatorBuilder;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
 
@@ -26,7 +28,7 @@ impl FlashblocksExtension {
 
 impl BaseNodeExtension for FlashblocksExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, mut builder: BaseBuilder) -> BaseBuilder {
         let Some(cfg) = self.config else {
             info!(message = "flashblocks integration is disabled");
             return builder;
@@ -34,6 +36,15 @@ impl BaseNodeExtension for FlashblocksExtension {
 
         let state = cfg.state;
         let mut subscriber = FlashblocksSubscriber::new(state.clone(), cfg.websocket_url);
+
+        let engine_validator_state = state.clone();
+
+        builder = builder.map_add_ons(move |add_ons| {
+            add_ons.with_engine_validator(
+                BaseEngineValidatorBuilder::<OpEngineValidatorBuilder>::default()
+                    .with_flashblocks_state(engine_validator_state),
+            )
+        });
 
         let state_for_canonical = state.clone();
         let state_for_rpc = state.clone();

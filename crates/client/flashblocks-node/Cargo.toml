@@ -29,9 +29,11 @@ workspace = true
 # workspace
 base-flashblocks.workspace = true
 base-client-node.workspace = true
+base-client-engine.workspace = true
 
 # reth
 reth-chain-state.workspace = true
+reth-optimism-node.workspace = true
 
 tokio-stream.workspace = true
 tracing.workspace = true
