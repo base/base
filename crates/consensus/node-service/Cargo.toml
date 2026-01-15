@@ -1,0 +1,39 @@
+[package]
+name = "base-node-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Unified rollup node service using kona actors with in-process engine"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-engine-driver = { workspace = true }
+base-engine-actor = { path = "../engine-actor" }
+base-engine-bridge = { workspace = true }
+
+# kona
+kona-genesis.workspace = true
+kona-protocol.workspace = true
+kona-node-service.workspace = true
+kona-engine.workspace = true
+kona-derive.workspace = true
+
+# op-alloy
+op-alloy-rpc-types-engine.workspace = true
+
+# reth - for engine types needed to construct InProcessEngineDriver
+reth-optimism-node.workspace = true
+
+# async
+tokio = { workspace = true, features = ["sync", "rt", "signal", "macros"] }
+tokio-util = { workspace = true }
+
+# misc
+thiserror.workspace = true
+tracing.workspace = true

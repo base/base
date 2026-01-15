@@ -1,0 +1,57 @@
+[package]
+name = "base-unified"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Unified CL+EL binary for Base"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "base-unified"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace crates
+base-node-service.workspace = true
+base-client-node.workspace = true
+base-cli-utils.workspace = true
+base-engine-bridge.workspace = true
+
+# reth
+reth-optimism-cli.workspace = true
+reth-optimism-node.workspace = true
+reth-cli-util.workspace = true
+
+# alloy - for L1/L2 providers
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+url.workspace = true
+
+# kona - for actors and providers
+kona-genesis = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-node-service = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-protocol = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-rpc = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+
+# op-alloy
+op-alloy-network.workspace = true
+
+# tokio utilities
+tokio-util.workspace = true
+futures.workspace = true
+
+# CLI and runtime
+eyre.workspace = true
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+
+# Serialization
+serde_json.workspace = true

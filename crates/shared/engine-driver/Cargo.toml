@@ -1,0 +1,30 @@
+[package]
+name = "base-engine-driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Transport-agnostic engine driver trait for direct EL communication"
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-eips.workspace = true
+
+# op-alloy
+op-alloy-rpc-types-engine.workspace = true
+
+# kona - for L2BlockInfo and RollupConfig types
+kona-protocol = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+
+# async
+async-trait.workspace = true
+
+# misc
+thiserror.workspace = true

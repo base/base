@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*"]
+members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*", "crates/consensus/*"]
 default-members = ["bin/node", "bin/consensus"]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -60,6 +60,7 @@ base-primitives = { path = "crates/shared/primitives" }
 base-access-lists = { path = "crates/shared/access-lists" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-jwt = { path = "crates/shared/jwt" }
+base-engine-driver = { path = "crates/shared/engine-driver" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # Client
@@ -69,6 +70,11 @@ base-client-node = { path = "crates/client/node" }
 base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 base-flashblocks = { path = "crates/client/flashblocks" }
+base-engine-bridge = { path = "crates/client/engine-bridge" }
+
+# Consensus
+base-engine-actor = { path = "crates/consensus/engine-actor" }
+base-node-service = { path = "crates/consensus/node-service" }
 
 # Builder
 base-builder-cli = { path = "crates/builder/base-builder-cli" }
@@ -81,6 +87,7 @@ kona-engine = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8
 kona-derive = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-gossip = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-genesis = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-protocol = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-registry = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-node-service = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
 kona-providers-alloy = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
@@ -122,7 +129,10 @@ reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+    "serde",
+    "reth-codec",
+] }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
     "op",
 ] }

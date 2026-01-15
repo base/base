@@ -1856,6 +1856,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "base-client-engine",
+ "base-engine-bridge",
  "base-primitives",
  "chrono",
  "derive_more",
@@ -1916,6 +1917,57 @@ dependencies = [
  "tracing-subscriber 0.3.22",
  "vergen",
  "vergen-git2",
+]
+
+[[package]]
+name = "base-engine-actor"
+version = "0.0.0"
+dependencies = [
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "base-engine-driver",
+ "kona-engine",
+ "kona-genesis",
+ "kona-node-service",
+ "kona-protocol",
+ "op-alloy-rpc-types-engine",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "base-engine-bridge"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "base-engine-driver",
+ "kona-protocol",
+ "op-alloy-rpc-types-engine",
+ "reth-engine-primitives",
+ "reth-optimism-node",
+ "reth-payload-builder",
+ "reth-payload-primitives",
+ "reth-provider",
+ "reth-storage-api",
+ "tracing",
+]
+
+[[package]]
+name = "base-engine-driver"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "kona-protocol",
+ "op-alloy-rpc-types-engine",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -2093,6 +2145,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-node-service"
+version = "0.0.0"
+dependencies = [
+ "base-engine-actor",
+ "base-engine-bridge",
+ "base-engine-driver",
+ "kona-derive",
+ "kona-engine",
+ "kona-genesis",
+ "kona-node-service",
+ "kona-protocol",
+ "op-alloy-rpc-types-engine",
+ "reth-optimism-node",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-primitives"
 version = "0.0.0"
 dependencies = [
@@ -2159,6 +2231,36 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "base-unified"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "base-cli-utils",
+ "base-client-node",
+ "base-engine-bridge",
+ "base-node-service",
+ "clap",
+ "eyre",
+ "futures",
+ "kona-genesis",
+ "kona-node-service",
+ "kona-protocol",
+ "kona-providers-alloy",
+ "kona-rpc",
+ "op-alloy-network",
+ "reth-cli-util",
+ "reth-optimism-cli",
+ "reth-optimism-node",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -13681,6 +13783,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "slab",
  "tokio",

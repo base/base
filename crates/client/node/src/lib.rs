@@ -26,3 +26,6 @@ pub use node::BaseNode;
 
 mod add_ons;
 pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
+
+mod unified;
+pub use unified::{EngineComponents, UnifiedConfig, UnifiedExtension};
