@@ -9,9 +9,6 @@ use reth_optimism_cli::chainspec::OpChainSpecParser;
 mod flashblocks;
 pub use flashblocks::FlashblocksArgs;
 
-mod gas_limiter;
-pub use gas_limiter::GasLimiterArgs;
-
 mod op;
 pub use op::OpRbuilderArgs;
 

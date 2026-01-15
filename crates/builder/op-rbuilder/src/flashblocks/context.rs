@@ -42,7 +42,6 @@ use tracing::{debug, info, trace};
 
 use crate::{
     flashblocks::payload::FlashblocksExecutionInfo,
-    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -113,8 +112,6 @@ pub struct OpPayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
-    /// Rate limiting based on gas. This is an optional feature.
-    pub address_gas_limiter: AddressGasLimiter,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -545,16 +542,7 @@ impl OpPayloadBuilderCtx {
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
 
-            // Run the per-address gas limiting before checking if the tx has
-            // reverted or not, as this is a check against maliciously searchers
-            // sending txs that are expensive to compute but always revert.
             let gas_used = result.gas_used();
-            if self.address_gas_limiter.consume_gas(tx.signer(), gas_used).is_err() {
-                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                continue;
-            }
-
             let is_success = result.is_success();
             if is_success {
                 log_txn(TxnExecutionResult::Success);

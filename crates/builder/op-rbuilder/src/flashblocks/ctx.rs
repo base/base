@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use base_builder_cli::GasLimiterArgs;
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::EvmEnv;
@@ -15,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     flashblocks::{BuilderConfig, FlashblocksExtraCtx, OpPayloadBuilderCtx},
-    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     traits::ClientBounds,
     tx_data_store::TxDataStore,
@@ -87,7 +85,6 @@ impl OpPayloadSyncerCtx {
             metrics: self.metrics,
             extra: FlashblocksExtraCtx::default(),
             max_gas_per_txn: self.max_gas_per_txn,
-            address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             tx_data_store: self.tx_data_store,
         }
     }

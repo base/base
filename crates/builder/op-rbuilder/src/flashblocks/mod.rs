@@ -1,6 +1,6 @@
 use core::{convert::TryFrom, time::Duration};
 
-use base_builder_cli::{GasLimiterArgs, OpRbuilderArgs};
+use base_builder_cli::OpRbuilderArgs;
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::tx_data_store::TxDataStore;
@@ -47,9 +47,6 @@ pub struct BuilderConfig {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
-    /// Address gas limiter config.
-    pub gas_limiter_config: GasLimiterArgs,
-
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -64,7 +61,6 @@ impl core::fmt::Debug for BuilderConfig {
             .field("sampling_ratio", &self.sampling_ratio)
             .field("flashblocks", &self.flashblocks)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
-            .field("gas_limiter_config", &self.gas_limiter_config)
             .field("tx_data_store", &self.tx_data_store)
             .finish()
     }
@@ -80,7 +76,6 @@ impl Default for BuilderConfig {
             flashblocks: FlashblocksConfig::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
-            gas_limiter_config: GasLimiterArgs::default(),
             tx_data_store: TxDataStore::default(),
         }
     }
@@ -98,7 +93,6 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
-            gas_limiter_config: args.gas_limiter.clone(),
             tx_data_store: TxDataStore::new(
                 args.enable_resource_metering,
                 args.tx_data_store_buffer_size,

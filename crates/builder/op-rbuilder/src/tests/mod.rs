@@ -12,9 +12,6 @@ mod data_availability;
 mod miner_gas_limit;
 
 #[cfg(test)]
-mod gas_limiter;
-
-#[cfg(test)]
 mod backrun;
 
 #[cfg(test)]
