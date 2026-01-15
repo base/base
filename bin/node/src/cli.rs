@@ -60,7 +60,7 @@ impl From<Args> for TxpoolConfig {
             tracing_enabled: args.enable_transaction_tracing,
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
             sequencer_rpc: args.rollup_args.sequencer,
-            flashblocks_config: args.flashblocks_config,
+            flashblocks_config: args.websocket_url.map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth)),
         }
     }
 }

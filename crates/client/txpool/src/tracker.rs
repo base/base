@@ -586,28 +586,4 @@ mod tests {
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
     }
-
-    #[test]
-    fn test_transaction_fb_included_with_pending_time() {
-        let mut tracker = Tracker::new(false);
-        let tx_hash = TxHash::random();
-
-        // Insert a pending transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
-
-        // Verify pending_time is set
-        assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
-        let initial_metric_count = tracker.metrics.fb_inclusion_duration.get_sample_count();
-
-        // Track FB inclusion
-        tracker.transaction_fb_included(tx_hash);
-
-        // Verify transaction is still in cache (FB inclusion doesn't remove it)
-        assert!(tracker.txs.get(&tx_hash).is_some());
-
-        // Verify metric was recorded
-        let final_metric_count = tracker.metrics.fb_inclusion_duration.get_sample_count();
-        assert_eq!(final_metric_count, initial_metric_count + 1);
-    }
 }

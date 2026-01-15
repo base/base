@@ -2143,6 +2143,7 @@ dependencies = [
  "alloy-primitives",
  "base-client-node",
  "base-flashblocks",
+ "base-flashblocks-node",
  "chrono",
  "derive_more",
  "eyre",
