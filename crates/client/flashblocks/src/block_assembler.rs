@@ -73,10 +73,8 @@ impl BlockAssembler {
             .flat_map(|flashblock| flashblock.diff.transactions.clone())
             .collect();
 
-        let withdrawals: Vec<Withdrawal> = flashblocks
-            .iter()
-            .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
-            .collect();
+        let withdrawals: Vec<Withdrawal> =
+            flashblocks.iter().flat_map(|flashblock| flashblock.diff.withdrawals.clone()).collect();
 
         let execution_payload = ExecutionPayloadV3 {
             blob_gas_used: 0,
@@ -110,12 +108,7 @@ impl BlockAssembler {
         // Zero block hash for flashblocks since the final hash isn't known yet
         let sealed_header = block_header.seal(B256::ZERO);
 
-        Ok(AssembledBlock {
-            block,
-            base,
-            flashblocks: flashblocks.to_vec(),
-            header: sealed_header,
-        })
+        Ok(AssembledBlock { block, base, flashblocks: flashblocks.to_vec(), header: sealed_header })
     }
 }
 
@@ -125,9 +118,8 @@ mod tests {
     use alloy_rpc_types_engine::PayloadId;
     use base_flashtypes::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata};
 
-    use crate::ProtocolError;
-
     use super::*;
+    use crate::ProtocolError;
 
     fn create_test_flashblock(index: u64, with_base: bool) -> Flashblock {
         Flashblock {

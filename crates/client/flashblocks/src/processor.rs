@@ -2,7 +2,10 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
-use alloy_consensus::{Header, transaction::{Recovered, SignerRecoverable}};
+use alloy_consensus::{
+    Header,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
