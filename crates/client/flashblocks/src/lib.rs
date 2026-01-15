@@ -41,14 +41,14 @@ pub use validation::{
     ReorgDetectionResult, ReorgDetector, SequenceValidationResult,
 };
 
+mod config;
+pub use config::FlashblocksConfig;
+
 mod rpc;
 pub use rpc::{
     BaseSubscriptionKind, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
     ExtendedSubscriptionKind,
 };
-
-mod extension;
-pub use extension::{FlashblocksConfig, FlashblocksExtension};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_harness;

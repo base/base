@@ -1977,6 +1977,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-flashblocks-node"
+version = "0.0.0"
+dependencies = [
+ "base-client-node",
+ "base-flashblocks",
+ "reth-chain-state",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+]
+
+[[package]]
 name = "base-flashtypes"
 version = "0.0.0"
 dependencies = [
@@ -2072,7 +2084,7 @@ version = "0.0.0"
 dependencies = [
  "base-cli-utils",
  "base-client-node",
- "base-flashblocks",
+ "base-flashblocks-node",
  "base-metering",
  "base-txpool",
  "clap",
