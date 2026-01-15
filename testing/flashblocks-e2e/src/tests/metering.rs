@@ -6,7 +6,7 @@
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, U256};
-use eyre::{Result, ensure};
+use eyre::{Result, ensure, eyre};
 use op_alloy_rpc_types::OpTransactionRequest;
 
 use crate::{
@@ -172,11 +172,45 @@ async fn test_meter_bundle_state_block(client: &TestClient) -> Result<()> {
     // state_block_number should be a valid block number
     tracing::debug!(state_block = response.state_block_number, "State block from metering");
 
-    // Verify the state block exists
+    // Verify the state block is within the latest..=pending window. If metering used pending
+    // state, the block number may point to the pending block (latest + 1) which isn't retrievable
+    // by number.
+    let pending_block = client
+        .get_block_by_number(BlockNumberOrTag::Pending)
+        .await?
+        .ok_or_else(|| eyre!("Pending block unavailable to validate state block"))?;
+
+    let latest_block = client
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await?
+        .ok_or_else(|| eyre!("Latest block unavailable to validate state block"))?;
+
+    ensure!(
+        response.state_block_number <= pending_block.header.number,
+        "State block should not be ahead of pending: metering returned {}, pending is {}",
+        response.state_block_number,
+        pending_block.header.number
+    );
+
+    ensure!(
+        response.state_block_number >= latest_block.header.number,
+        "State block should not be older than latest: metering returned {}, latest is {}",
+        response.state_block_number,
+        latest_block.header.number
+    );
+
+    // Best-effort existence check: if the block cannot be fetched by number but is within the
+    // latest..=pending window, accept it as pending-state.
     let block =
         client.get_block_by_number(BlockNumberOrTag::Number(response.state_block_number)).await?;
-
-    ensure!(block.is_some(), "State block should exist");
+    if block.is_none() && response.state_block_number < pending_block.header.number {
+        return Err(eyre!(
+            "State block {} not retrievable even though it should be canonical (latest={}, pending={})",
+            response.state_block_number,
+            latest_block.header.number,
+            pending_block.header.number
+        ));
+    }
 
     Ok(())
 }

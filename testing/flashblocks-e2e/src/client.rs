@@ -295,7 +295,15 @@ impl TestClient {
 
         // Get nonce - use tracked nonce if not explicitly provided
         let nonce = match nonce {
-            Some(n) => n,
+            Some(n) => {
+                // Ensure the local nonce tracker is at least the next value after the provided
+                // nonce so subsequent calls stay monotonic even when explicit nonces are used.
+                let mut guard = self.next_nonce.lock().await;
+                if guard.map_or(true, |current| current < n + 1) {
+                    *guard = Some(n + 1);
+                }
+                n
+            }
             None => self.get_next_nonce().await?,
         };
 
