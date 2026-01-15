@@ -6,6 +6,9 @@
 #[macro_use]
 extern crate tracing;
 
+mod block_assembler;
+pub use block_assembler::{AssembledBlock, BlockAssembler};
+
 mod error;
 pub use error::{
     BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
