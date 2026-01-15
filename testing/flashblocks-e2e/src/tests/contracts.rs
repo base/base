@@ -121,7 +121,7 @@ async fn deploy_counter(client: &TestClient) -> Result<Address> {
         .map_err(|e| eyre::eyre!("Failed to decode bytecode: {}", e))?;
 
     // Get nonce
-    let nonce = client.get_transaction_count(owner, BlockNumberOrTag::Pending).await?;
+    let nonce = client.get_next_nonce().await?;
 
     // Build deployment transaction using with_deploy_code for contract creation
     let mut tx_request = OpTransactionRequest::default()
@@ -172,7 +172,7 @@ async fn create_increment_tx(client: &TestClient, contract: Address) -> Result<(
     let call_data = incrementCall {}.abi_encode();
 
     // Get nonce
-    let nonce = client.get_transaction_count(owner, BlockNumberOrTag::Pending).await?;
+    let nonce = client.get_next_nonce().await?;
 
     let mut tx_request = OpTransactionRequest::default()
         .from(owner)

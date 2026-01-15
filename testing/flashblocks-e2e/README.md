@@ -47,16 +47,19 @@ cargo run --bin flashblocks-e2e -- \
 
 ### Simulator Contract
 
-For more meaningful state root timing results, deploy the Simulator contract
+For high-load metering tests (state root timing, execution timing), deploy the
+Simulator contract from [base-benchmark](https://github.com/base/base-benchmark)
 and run with the `--simulator` flag:
 
 ```bash
 # Deploy Simulator (from base-benchmark repo)
+# The contract sends 1 wei per account created.
+# 100,000 wei is enough for 100k account creations.
 forge create contracts/src/Simulator.sol:Simulator \
   --rpc-url $RPC_URL \
   --private-key $PRIVATE_KEY \
   --constructor-args 0 \
-  --value 1ether
+  --value 100000wei
 
 # Run with --simulator flag
 PRIVATE_KEY=0x... cargo run --bin flashblocks-e2e -- \

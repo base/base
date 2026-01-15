@@ -1,5 +1,7 @@
 //! Test client for connecting to a live node-reth instance.
 
+use std::sync::Arc;
+
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::TransactionBuilder;
@@ -12,6 +14,7 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, OpTransactionRequest};
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 
@@ -39,6 +42,8 @@ pub struct TestClient {
     simulator: Option<Address>,
     /// Chain ID for signing transactions.
     chain_id: u64,
+    /// Tracked nonce for the signer address (to avoid race conditions with remote sequencers).
+    next_nonce: Arc<Mutex<Option<u64>>>,
 }
 
 impl TestClient {
@@ -94,6 +99,7 @@ impl TestClient {
             recipient,
             simulator,
             chain_id,
+            next_nonce: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -120,6 +126,50 @@ impl TestClient {
     /// Get the chain ID.
     pub const fn chain_id(&self) -> u64 {
         self.chain_id
+    }
+
+    /// Get the next nonce for the signer, tracking it locally to avoid race conditions.
+    ///
+    /// On first call, fetches from pending state. Subsequent calls increment locally.
+    /// This prevents "nonce too low" errors when testing against remote sequencers
+    /// where the pending state may not immediately reflect forwarded transactions.
+    ///
+    /// Call `reset_nonce()` if a transaction fails and you need to re-fetch.
+    pub async fn get_next_nonce(&self) -> Result<u64> {
+        let mut guard = self.next_nonce.lock().await;
+        let nonce = match *guard {
+            Some(n) => n,
+            None => {
+                let from =
+                    self.signer_address().ok_or_else(|| eyre::eyre!("No signer configured"))?;
+                self.get_transaction_count(from, BlockNumberOrTag::Pending).await?
+            }
+        };
+        *guard = Some(nonce + 1);
+        Ok(nonce)
+    }
+
+    /// Peek at the current nonce without incrementing.
+    ///
+    /// Use this for transactions that will only be simulated (e.g., metering) and not
+    /// actually sent to the network. For transactions that will be sent, use
+    /// `get_next_nonce()` instead.
+    pub async fn peek_nonce(&self) -> Result<u64> {
+        let guard = self.next_nonce.lock().await;
+        match *guard {
+            Some(n) => Ok(n),
+            None => {
+                let from =
+                    self.signer_address().ok_or_else(|| eyre::eyre!("No signer configured"))?;
+                self.get_transaction_count(from, BlockNumberOrTag::Pending).await
+            }
+        }
+    }
+
+    /// Reset the tracked nonce (e.g., after a failed transaction).
+    pub async fn reset_nonce(&self) {
+        let mut guard = self.next_nonce.lock().await;
+        *guard = None;
     }
 
     /// Get the underlying provider.
@@ -227,6 +277,9 @@ impl TestClient {
     }
 
     /// Create and sign a simple ETH transfer transaction.
+    ///
+    /// If `nonce` is `None`, uses the tracked nonce from `get_next_nonce()` to avoid
+    /// race conditions when testing against remote sequencers.
     pub async fn create_transfer(
         &self,
         to: Address,
@@ -240,10 +293,10 @@ impl TestClient {
 
         let from = signer.address();
 
-        // Get nonce if not provided
+        // Get nonce - use tracked nonce if not explicitly provided
         let nonce = match nonce {
             Some(n) => n,
-            None => self.get_transaction_count(from, BlockNumberOrTag::Pending).await?,
+            None => self.get_next_nonce().await?,
         };
 
         let mut tx_request = OpTransactionRequest::default()

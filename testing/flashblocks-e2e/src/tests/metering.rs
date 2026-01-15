@@ -194,7 +194,7 @@ async fn test_meter_bundle_with_transaction(client: &TestClient) -> Result<()> {
     let block_number = latest_block.header.number + 1;
 
     // Create a transaction
-    let nonce = client.get_transaction_count(from, BlockNumberOrTag::Pending).await?;
+    let nonce = client.peek_nonce().await?;
 
     let mut tx_request = OpTransactionRequest::default()
         .from(from)
@@ -269,7 +269,7 @@ async fn test_meter_bundle_state_root_timing(client: &TestClient) -> Result<()> 
         .ok_or_else(|| eyre::eyre!("No latest block"))?;
     let block_number = latest_block.header.number + 1;
 
-    let nonce = client.get_transaction_count(from, BlockNumberOrTag::Pending).await?;
+    let nonce = client.peek_nonce().await?;
 
     let mut tx_request = OpTransactionRequest::default()
         .from(from)
@@ -312,7 +312,7 @@ async fn test_meter_bundle_state_root_timing_simulator(client: &TestClient) -> R
         .ok_or_else(|| eyre::eyre!("No latest block"))?;
     let block_number = latest_block.header.number + 1;
 
-    let nonce = client.get_transaction_count(from, BlockNumberOrTag::Pending).await?;
+    let nonce = client.peek_nonce().await?;
 
     // Use Simulator contract to create accounts (increases state root time)
     let config = SimulatorConfigBuilder::new()
@@ -362,7 +362,7 @@ async fn test_meter_bundle_high_state_root_time(client: &TestClient) -> Result<(
         .ok_or_else(|| eyre::eyre!("No latest block"))?;
     let block_number = latest_block.header.number + 1;
 
-    let nonce = client.get_transaction_count(from, BlockNumberOrTag::Pending).await?;
+    let nonce = client.peek_nonce().await?;
 
     // 650 accounts × 25,000 gas = 16.25 Mgas (under 16.78M EIP-7825 limit)
     let config = SimulatorConfigBuilder::new().create_accounts(650).build();
@@ -409,7 +409,7 @@ async fn test_meter_bundle_high_execution_time(client: &TestClient) -> Result<()
         .ok_or_else(|| eyre::eyre!("No latest block"))?;
     let block_number = latest_block.header.number + 1;
 
-    let nonce = client.get_transaction_count(from, BlockNumberOrTag::Pending).await?;
+    let nonce = client.peek_nonce().await?;
 
     // bn256Add precompile at address 0x06, 500 gas per call
     // 30,000 calls × 500 gas = 15 Mgas
