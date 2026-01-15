@@ -1171,3 +1171,38 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_get_block_transaction_count_by_number_pending() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let url = setup.harness.rpc_url();
+    let client = RpcClient::new_http(url.parse()?);
+
+    // Query pending block transaction count when no flashblocks exist
+    // Should fall back to latest block (block 0 with 0 transactions)
+    let count: Option<U256> =
+        client.request("eth_getBlockTransactionCountByNumber", ("pending",)).await?;
+    assert_eq!(count, Some(U256::from(0)));
+
+    // Send first flashblock with 1 transaction (L1Info deposit)
+    setup.send_flashblock(setup.create_first_payload()).await?;
+
+    let count: Option<U256> =
+        client.request("eth_getBlockTransactionCountByNumber", ("pending",)).await?;
+    assert_eq!(count, Some(U256::from(1)));
+
+    // Send second flashblock with 9 more transactions
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    let count: Option<U256> =
+        client.request("eth_getBlockTransactionCountByNumber", ("pending",)).await?;
+    // Total: 1 (L1Info) + 9 (second payload) = 10 transactions
+    assert_eq!(count, Some(U256::from(10)));
+
+    // Query non-pending block (latest = block 0)
+    let count: Option<U256> =
+        client.request("eth_getBlockTransactionCountByNumber", ("latest",)).await?;
+    assert_eq!(count, Some(U256::from(0)));
+
+    Ok(())
+}
