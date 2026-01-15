@@ -4,7 +4,6 @@
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::info;
 
 use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_subscription};
 

@@ -10,7 +10,6 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::TransactionPool;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]

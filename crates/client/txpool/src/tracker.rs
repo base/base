@@ -11,7 +11,6 @@ use lru::LruCache;
 use reth_node_api::{BlockBody, NodePrimitives};
 use reth_primitives_traits::transaction::TxHashRef;
 use reth_provider::{CanonStateNotification, Chain};
-use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 
 use crate::{EventLog, Metrics, Pool, TxEvent};

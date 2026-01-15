@@ -2,8 +2,6 @@
 //!
 //! [reth-build-script]: https://github.com/paradigmxyz/reth/blob/805fb1012cd1601c3b4fe9e8ca2d97c96f61355b/crates/node/core/build.rs
 
-#![allow(missing_docs)]
-
 use std::{env, error::Error};
 
 use vergen::{BuildBuilder, CargoBuilder, Emitter};

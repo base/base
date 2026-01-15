@@ -16,7 +16,6 @@ workspace = true
 base-client-node.workspace = true
 
 # reth
-reth-tracing.workspace = true
 reth-transaction-pool.workspace = true
 reth-node-api.workspace = true
 reth-primitives-traits.workspace = true
