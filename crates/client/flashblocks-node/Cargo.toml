@@ -47,6 +47,7 @@ reth-optimism-chainspec = { workspace = true, optional = true }
 
 
 [dev-dependencies]
+base-primitives.workspace = true
 base-client-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
 rand.workspace = true
