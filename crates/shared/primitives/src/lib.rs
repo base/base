@@ -6,5 +6,10 @@
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+// These dependencies are only used in test-utils feature
+#[cfg(any(test, feature = "test-utils"))]
+use alloy_contract as _;
+#[cfg(any(test, feature = "test-utils"))]
+use alloy_sol_types as _;
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_utils::*;
