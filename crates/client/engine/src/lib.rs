@@ -2,4 +2,4 @@
 //! after flashblock validation.
 
 pub mod validator;
-pub use validator::{BaseEngineValidator, BaseEngineValidatorBuilder};
+pub use validator::BaseEngineValidatorBuilder;

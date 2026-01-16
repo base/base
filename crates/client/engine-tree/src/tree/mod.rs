@@ -72,6 +72,10 @@ use crate::tree::error::AdvancePersistenceError;
 pub mod state;
 
 mod cached_execution;
+pub use cached_execution::CachedExecutionProvider;
+
+mod base;
+pub use base::BaseEngineValidator;
 
 /// The largest gap for which the tree will be used to sync individual blocks by downloading them.
 ///

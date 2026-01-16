@@ -1872,7 +1872,7 @@ dependencies = [
  "reth-chainspec 1.10.0",
  "reth-consensus 1.10.0",
  "reth-engine-primitives 1.10.0",
- "reth-engine-tree 1.10.0",
+ "reth-engine-tree",
  "reth-errors 1.10.0",
  "reth-evm 1.10.0",
  "reth-node-api",
@@ -9856,7 +9856,7 @@ dependencies = [
  "reth-chainspec 1.10.0",
  "reth-consensus 1.10.0",
  "reth-engine-primitives 1.10.0",
- "reth-engine-tree 1.10.0",
+ "reth-engine-tree",
  "reth-ethereum-primitives 1.10.0",
  "reth-evm 1.10.0",
  "reth-network-p2p",
@@ -9870,7 +9870,7 @@ dependencies = [
 
 [[package]]
 name = "reth-engine-tree"
-version = "0.0.0"
+version = "1.10.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -9943,63 +9943,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-engine-tree"
-version = "1.10.0"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.0#b25f32a977b489f9b84254c7811a2a5a25a81369"
-dependencies = [
- "alloy-consensus",
- "alloy-eip7928",
- "alloy-eips",
- "alloy-evm 0.25.2",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "crossbeam-channel",
- "dashmap 6.1.0",
- "derive_more",
- "futures",
- "metrics",
- "mini-moka",
- "moka",
- "parking_lot",
- "rayon",
- "reth-chain-state 1.10.0",
- "reth-chainspec 1.10.0",
- "reth-consensus 1.10.0",
- "reth-db",
- "reth-engine-primitives 1.10.0",
- "reth-errors 1.10.0",
- "reth-ethereum-primitives 1.10.0",
- "reth-evm 1.10.0",
- "reth-execution-types 1.10.0",
- "reth-metrics 1.10.0",
- "reth-network-p2p",
- "reth-payload-builder 1.10.0",
- "reth-payload-primitives 1.10.0",
- "reth-primitives-traits 1.10.0",
- "reth-provider",
- "reth-prune",
- "reth-prune-types 1.10.0",
- "reth-revm 1.10.0",
- "reth-stages",
- "reth-stages-api",
- "reth-static-file",
- "reth-tasks 1.10.0",
- "reth-tracing",
- "reth-trie 1.10.0",
- "reth-trie-parallel",
- "reth-trie-sparse 1.10.0",
- "reth-trie-sparse-parallel",
- "revm 33.1.0",
- "revm-primitives",
- "schnellru",
- "smallvec",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "reth-engine-util"
 version = "1.10.0"
 source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.0#b25f32a977b489f9b84254c7811a2a5a25a81369"
@@ -10012,7 +9955,7 @@ dependencies = [
  "pin-project",
  "reth-chainspec 1.10.0",
  "reth-engine-primitives 1.10.0",
- "reth-engine-tree 1.10.0",
+ "reth-engine-tree",
  "reth-errors 1.10.0",
  "reth-evm 1.10.0",
  "reth-fs-util 1.10.0",
@@ -10860,7 +10803,7 @@ dependencies = [
  "reth-engine-local",
  "reth-engine-primitives 1.10.0",
  "reth-engine-service",
- "reth-engine-tree 1.10.0",
+ "reth-engine-tree",
  "reth-engine-util",
  "reth-evm 1.10.0",
  "reth-exex",

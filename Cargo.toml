@@ -350,3 +350,6 @@ criterion = { package = "codspeed-criterion-compat", version = "2.7" }
 metrics-util = { default-features = false, version = "0.20.0" }
 proptest = "1.7"
 rand_08 = { package = "rand", version = "0.8" }
+
+[patch.'https://github.com/paradigmxyz/reth']
+reth-engine-tree = { path = "crates/client/engine-tree" }

@@ -1,6 +1,6 @@
 [package]
 name = "reth-engine-tree"
-version.workspace = true
+version = "1.10.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -108,39 +108,30 @@ proptest.workspace = true
 rand.workspace = true
 rand_08.workspace = true
 
-[[bench]]
-name = "channel_perf"
-harness = false
-
-[[bench]]
-name = "state_root_task"
-harness = false
-
 [features]
 test-utils = [
     "reth-chain-state/test-utils",
     "reth-chainspec/test-utils",
     "reth-consensus/test-utils",
     "reth-db/test-utils",
+    "reth-ethereum-primitives/test-utils",
+    "reth-evm-ethereum/test-utils",
     "reth-evm/test-utils",
     "reth-network-p2p/test-utils",
+    "reth-node-ethereum/test-utils",
     "reth-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "reth-provider/test-utils",
-    "reth-prune-types",
     "reth-prune-types?/test-utils",
+    "reth-prune-types",
     "reth-revm/test-utils",
     "reth-stages-api/test-utils",
     "reth-stages/test-utils",
     "reth-static-file",
     "reth-tracing",
-    "reth-trie/test-utils",
-    "reth-trie-sparse/test-utils",
-    "reth-prune-types?/test-utils",
     "reth-trie-parallel/test-utils",
-    "reth-ethereum-primitives/test-utils",
-    "reth-node-ethereum/test-utils",
-    "reth-evm-ethereum/test-utils",
+    "reth-trie-sparse/test-utils",
+    "reth-trie/test-utils",
 ]
 
 [[test]]
