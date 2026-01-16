@@ -1,20 +1,18 @@
 //! Types and traits for validating blocks and payloads.
 
-use crate::tree::{
-    cached_state::CachedStateProvider,
-    error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
-    instrumented_state::InstrumentedStateProvider,
-    payload_processor::{executor::WorkloadExecutor, PayloadProcessor},
-    precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
-    sparse_trie::StateRootComputeOutcome,
-    EngineApiMetrics, EngineApiTreeState, ExecutionEnv, PayloadHandle, StateProviderBuilder,
-    StateProviderDatabase, TreeConfig,
+use std::{
+    collections::HashMap,
+    panic::{self, AssertUnwindSafe},
+    sync::Arc,
+    time::Instant,
 };
-use alloy_consensus::transaction::Either;
+
+use alloy_consensus::transaction::{Either, TxHashRef};
 use alloy_eip7928::BlockAccessList;
-use alloy_eips::{eip1898::BlockWithParent, NumHash};
+use alloy_eips::{Decodable2718, NumHash, eip1898::BlockWithParent};
 use alloy_evm::Evm;
 use alloy_primitives::B256;
+use op_alloy_rpc_types_engine::OpExecutionData;
 use rayon::prelude::*;
 use reth_chain_state::{CanonicalInMemoryState, DeferredTrieData, ExecutedBlock};
 use reth_consensus::{ConsensusError, FullConsensus};
@@ -23,8 +21,9 @@ use reth_engine_primitives::{
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
-    block::BlockExecutor, execute::ExecutableTxFor, ConfigureEvm, EvmEnvFor, ExecutionCtxFor,
-    SpecFor,
+    ConfigureEvm, EvmEnvFor, EvmFactory, ExecutionCtxFor, SpecFor,
+    block::{BlockExecutor, BlockExecutorFactory, ExecutableTx},
+    execute::ExecutableTxFor,
 };
 use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
@@ -34,22 +33,28 @@ use reth_primitives_traits::{
     SealedHeader, SignerRecoverable,
 };
 use reth_provider::{
-    providers::OverlayStateProviderFactory, BlockExecutionOutput, BlockNumReader, BlockReader,
-    ChangeSetReader, DatabaseProviderFactory, DatabaseProviderROFactory, ExecutionOutcome,
-    HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
-    StateProvider, StateProviderFactory, StateReader, TrieReader,
+    BlockExecutionOutput, BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory,
+    DatabaseProviderROFactory, ExecutionOutcome, HashedPostStateProvider, ProviderError,
+    PruneCheckpointReader, StageCheckpointReader, StateProvider, StateProviderFactory, StateReader,
+    TrieReader, providers::OverlayStateProviderFactory,
 };
 use reth_revm::db::State;
-use reth_trie::{updates::TrieUpdates, HashedPostState, StateRoot, TrieInputSorted};
+use reth_trie::{HashedPostState, StateRoot, TrieInputSorted, updates::TrieUpdates};
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
 use revm_primitives::Address;
-use std::{
-    collections::HashMap,
-    panic::{self, AssertUnwindSafe},
-    sync::Arc,
-    time::Instant,
-};
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
+
+use crate::tree::{
+    EngineApiMetrics, EngineApiTreeState, ExecutionEnv, PayloadHandle, StateProviderBuilder,
+    StateProviderDatabase, TreeConfig,
+    cached_execution::{CachedExecutionProvider, CachedExecutor, NoopCachedExecutionProvider},
+    cached_state::CachedStateProvider,
+    error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
+    instrumented_state::InstrumentedStateProvider,
+    payload_processor::{PayloadProcessor, executor::WorkloadExecutor},
+    precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
+    sparse_trie::StateRootComputeOutcome,
+};
 
 /// Context providing access to tree state during validation.
 ///
@@ -104,7 +109,7 @@ impl<'a, N: NodePrimitives> TreeCtx<'a, N> {
 /// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
 /// used as a standalone component, but rather as a building block for concrete implementations.
 #[derive(derive_more::Debug)]
-pub struct BasicEngineValidator<P, Evm, V>
+pub struct BasicEngineValidator<P, Evm, V, C = NoopCachedExecutionProvider>
 where
     Evm: ConfigureEvm,
 {
@@ -129,9 +134,11 @@ where
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: V,
+    /// Cached execution provider.
+    cached_execution_provider: C,
 }
 
-impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
+impl<N, P, Evm, V, C> BasicEngineValidator<P, Evm, V, C>
 where
     N: NodePrimitives,
     P: DatabaseProviderFactory<
@@ -150,6 +157,7 @@ where
         + Clone
         + 'static,
     Evm: ConfigureEvm<Primitives = N> + 'static,
+    C: CachedExecutionProvider<N::Receipt> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -160,6 +168,7 @@ where
         validator: V,
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook<N>>,
+        cached_execution_provider: C,
     ) -> Self {
         let precompile_cache_map = PrecompileCacheMap::default();
         let payload_processor = PayloadProcessor::new(
@@ -179,12 +188,15 @@ where
             invalid_block_hook,
             metrics: EngineApiMetrics::default(),
             validator,
+            cached_execution_provider,
         }
     }
 
     /// Converts a [`BlockOrPayload`] to a recovered block.
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    pub fn convert_to_block<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    pub fn convert_to_block<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &self,
         input: BlockOrPayload<T>,
     ) -> Result<SealedBlock<N::Block>, NewPayloadError>
@@ -198,13 +210,15 @@ where
     }
 
     /// Returns EVM environment for the given payload or block.
-    pub fn evm_env_for<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    pub fn evm_env_for<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &self,
         input: &BlockOrPayload<T>,
     ) -> Result<EvmEnvFor<Evm>, Evm::Error>
     where
         V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
@@ -213,13 +227,16 @@ where
     }
 
     /// Returns [`ExecutableTxIterator`] for the given payload or block.
-    pub fn tx_iterator_for<'a, T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    pub fn tx_iterator_for<
+        'a,
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &'a self,
         input: &'a BlockOrPayload<T>,
     ) -> Result<impl ExecutableTxIterator<Evm>, NewPayloadError>
     where
         V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
     {
         match input {
             BlockOrPayload::Payload(payload) => {
@@ -253,13 +270,16 @@ where
     }
 
     /// Returns a [`ExecutionCtxFor`] for the given payload or block.
-    pub fn execution_ctx_for<'a, T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    pub fn execution_ctx_for<
+        'a,
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &self,
         input: &'a BlockOrPayload<T>,
     ) -> Result<ExecutionCtxFor<'a, Evm>, Evm::Error>
     where
         V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
     {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
@@ -271,7 +291,9 @@ where
     ///
     /// When an execution error occurs, this function checks if there are any header validation
     /// errors that should be reported instead, as header validation errors have higher priority.
-    fn handle_execution_error<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    fn handle_execution_error<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &self,
         input: BlockOrPayload<T>,
         execution_err: InsertBlockErrorKind,
@@ -294,7 +316,7 @@ where
         // Validate block consensus rules which includes header validation
         if let Err(consensus_err) = self.validate_block_inner(&block) {
             // Header validation error takes precedence over execution error
-            return Err(InsertBlockError::new(block, consensus_err.into()).into())
+            return Err(InsertBlockError::new(block, consensus_err.into()).into());
         }
 
         // Also validate against the parent
@@ -302,7 +324,7 @@ where
             self.consensus.validate_header_against_parent(block.sealed_header(), parent_block)
         {
             // Parent validation error takes precedence over execution error
-            return Err(InsertBlockError::new(block, consensus_err.into()).into())
+            return Err(InsertBlockError::new(block, consensus_err.into()).into());
         }
 
         // No header validation errors, return the original execution error
@@ -325,14 +347,16 @@ where
             type_name = ?input.type_name(),
         )
     )]
-    pub fn validate_block_with_state<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    pub fn validate_block_with_state<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &mut self,
         input: BlockOrPayload<T>,
         mut ctx: TreeCtx<'_, N>,
     ) -> ValidationOutcome<N, InsertPayloadError<N::Block>>
     where
         V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
     {
         /// A helper macro that returns the block in case there was an error
         /// This macro is used for early returns before block conversion
@@ -342,7 +366,7 @@ where
                     Ok(val) => val,
                     Err(e) => {
                         let block = self.convert_to_block(input)?;
-                        return Err(InsertBlockError::new(block, e.into()).into())
+                        return Err(InsertBlockError::new(block, e.into()).into());
                     }
                 }
             };
@@ -376,7 +400,7 @@ where
                 self.convert_to_block(input)?,
                 ProviderError::HeaderNotFound(parent_hash.into()).into(),
             )
-            .into())
+            .into());
         };
         let mut state_provider = ensure_ok!(provider_builder.build());
         drop(_enter);
@@ -389,7 +413,7 @@ where
                 self.convert_to_block(input)?,
                 ProviderError::HeaderNotFound(parent_hash.into()).into(),
             )
-            .into())
+            .into());
         };
 
         let evm_env = debug_span!(target: "engine::tree::payload_validator", "evm env")
@@ -411,11 +435,13 @@ where
         let txs = self.tx_iterator_for(&input)?;
 
         // Extract the BAL, if valid and available
-        let block_access_list = ensure_ok!(input
-            .block_access_list()
-            .transpose()
-            // Eventually gets converted to a `InsertBlockErrorKind::Other`
-            .map_err(Box::<dyn std::error::Error + Send + Sync>::from))
+        let block_access_list = ensure_ok!(
+            input
+                .block_access_list()
+                .transpose()
+                // Eventually gets converted to a `InsertBlockErrorKind::Other`
+                .map_err(Box::<dyn std::error::Error + Send + Sync>::from)
+        )
         .map(Arc::new);
 
         // Spawn the appropriate processor based on strategy
@@ -552,7 +578,7 @@ where
                 )
                 .into(),
             )
-            .into())
+            .into());
         }
 
         // Create ExecutionOutcome and wrap in Arc for sharing with both the caching task
@@ -574,11 +600,7 @@ where
         // check memory first
         let header = state.tree_state.sealed_header_by_hash(&hash);
 
-        if header.is_some() {
-            Ok(header)
-        } else {
-            self.provider.sealed_header_by_hash(hash)
-        }
+        if header.is_some() { Ok(header) } else { self.provider.sealed_header_by_hash(hash) }
     }
 
     /// Validate if block is correct and satisfies all the consensus rules that concern the header
@@ -587,12 +609,12 @@ where
     fn validate_block_inner(&self, block: &SealedBlock<N::Block>) -> Result<(), ConsensusError> {
         if let Err(e) = self.consensus.validate_header(block.sealed_header()) {
             error!(target: "engine::tree::payload_validator", ?block, "Failed to validate header {}: {e}", block.hash());
-            return Err(e)
+            return Err(e);
         }
 
         if let Err(e) = self.consensus.validate_block_pre_execution(block) {
             error!(target: "engine::tree::payload_validator", ?block, "Failed to validate block {}: {e}", block.hash());
-            return Err(e)
+            return Err(e);
         }
 
         Ok(())
@@ -600,19 +622,23 @@ where
 
     /// Executes a block with the given state provider
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    fn execute_block<S, Err, T>(
+    fn execute_block<S, Err, T, Tx>(
         &mut self,
         state_provider: S,
         env: ExecutionEnv<Evm>,
         input: &BlockOrPayload<T>,
-        handle: &mut PayloadHandle<impl ExecutableTxFor<Evm>, Err, N::Receipt>,
+        handle: &mut PayloadHandle<Tx, Err, N::Receipt>,
     ) -> Result<(BlockExecutionOutput<N::Receipt>, Vec<Address>), InsertBlockErrorKind>
     where
         S: StateProvider + Send,
         Err: core::error::Error + Send + Sync + 'static,
         V: PayloadValidator<T, Block = N::Block>,
-        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
+        T: PayloadTypes<
+                BuiltPayload: BuiltPayload<Primitives = N>,
+                ExecutionData = OpExecutionData,
+            >,
+        Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N>,
+        Tx: ExecutableTxFor<Evm>,
     {
         debug!(target: "engine::tree::payload_validator", "Executing block");
 
@@ -644,6 +670,26 @@ where
                 )
             });
         }
+
+        let tx_iter = handle.iter_transactions().collect::<Vec<_>>();
+
+        let txs = match &input {
+            BlockOrPayload::Payload(payload) => payload
+                .payload
+                .transactions()
+                .into_iter()
+                .cloned()
+                .map(|tx| <N::SignedTx>::decode_2718(&mut &tx[..]).map(|tx| tx.tx_hash().clone()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| InsertBlockErrorKind::Other(Box::new(err)))?,
+            BlockOrPayload::Block(block) => block
+                .body()
+                .transactions()
+                .iter()
+                .map(|tx| tx.tx_hash().clone())
+                .collect::<Vec<_>>(),
+        };
+        let executor = CachedExecutor::new(executor, self.cached_execution_provider.clone(), txs);
 
         let execution_start = Instant::now();
         let state_hook = Box::new(handle.state_hook());
@@ -730,7 +776,9 @@ where
     /// - post-execution consensus validation
     /// - state-root based post-execution validation
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
-    fn validate_post_execution<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
+    fn validate_post_execution<
+        T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    >(
         &self,
         block: &RecoveredBlock<N::Block>,
         parent_block: &SealedHeader<N::BlockHeader>,
@@ -745,7 +793,7 @@ where
         trace!(target: "engine::tree::payload_validator", block=?block.num_hash(), "Validating block consensus");
         // validate block consensus rules
         if let Err(e) = self.validate_block_inner(block) {
-            return Err(e.into())
+            return Err(e.into());
         }
 
         // now validate against the parent
@@ -754,7 +802,7 @@ where
             self.consensus.validate_header_against_parent(block.sealed_header(), parent_block)
         {
             warn!(target: "engine::tree::payload_validator", ?block, "Failed to validate header {} against parent: {e}", block.hash());
-            return Err(e.into())
+            return Err(e.into());
         }
         drop(_enter);
 
@@ -765,7 +813,7 @@ where
         if let Err(err) = self.consensus.validate_block_post_execution(block, output) {
             // call post-block hook
             self.on_invalid_block(parent_block, block, output, None, ctx.state_mut());
-            return Err(err.into())
+            return Err(err.into());
         }
         drop(_enter);
 
@@ -780,7 +828,7 @@ where
         {
             // call post-block hook
             self.on_invalid_block(parent_block, block, output, None, ctx.state_mut());
-            return Err(err.into())
+            return Err(err.into());
         }
 
         // record post-execution validation duration
@@ -820,8 +868,8 @@ where
         block_access_list: Option<Arc<BlockAccessList>>,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor<Evm> + use<N, P, Evm, V, T>,
-            impl core::error::Error + Send + Sync + 'static + use<N, P, Evm, V, T>,
+            impl ExecutableTxFor<Evm> + use<N, P, Evm, V, T, C>,
+            impl core::error::Error + Send + Sync + 'static + use<N, P, Evm, V, T, C>,
             N::Receipt,
         >,
         InsertBlockErrorKind,
@@ -902,7 +950,7 @@ where
                 self.provider.clone(),
                 historical,
                 Some(blocks),
-            )))
+            )));
         }
 
         // Check if the block is persisted
@@ -910,7 +958,7 @@ where
             debug!(target: "engine::tree::payload_validator", %hash, number = %header.number(), "found canonical state for block in database, creating provider builder");
             // For persisted blocks, we create a builder that will fetch state directly from the
             // database
-            return Ok(Some(StateProviderBuilder::new(self.provider.clone(), hash, None)))
+            return Ok(Some(StateProviderBuilder::new(self.provider.clone(), hash, None)));
         }
 
         debug!(target: "engine::tree::payload_validator", %hash, "no canonical state found for block");
@@ -942,7 +990,7 @@ where
     ) {
         if state.invalid_headers.get(&block.hash()).is_some() {
             // we already marked this block as invalid
-            return
+            return;
         }
         self.invalid_block_hook.on_invalid_block(parent_header, block, output, trie_updates);
     }
@@ -984,8 +1032,8 @@ where
         if let Some(tip_block) = blocks.first() {
             let data = tip_block.trie_data();
             if let (Some(anchor_hash), Some(trie_input)) =
-                (data.anchor_hash(), data.trie_input().cloned()) &&
-                anchor_hash == block_hash
+                (data.anchor_hash(), data.trie_input().cloned())
+                && anchor_hash == block_hash
             {
                 trace!(target: "engine::tree::payload_validator", %block_hash,"Reusing trie input with matching anchor hash");
                 self.metrics
@@ -1205,7 +1253,7 @@ pub trait EngineValidator<
     fn on_inserted_executed_block(&self, block: ExecutedBlock<N>);
 }
 
-impl<N, Types, P, Evm, V> EngineValidator<Types> for BasicEngineValidator<P, Evm, V>
+impl<N, Types, P, Evm, V, C> EngineValidator<Types> for BasicEngineValidator<P, Evm, V, C>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1224,8 +1272,10 @@ where
         + 'static,
     N: NodePrimitives,
     V: PayloadValidator<Types, Block = N::Block>,
-    Evm: ConfigureEngineEvm<Types::ExecutionData, Primitives = N> + 'static,
-    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
+    Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N> + 'static,
+    Types:
+        PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
+    C: Send + Sync + 'static + CachedExecutionProvider<N::Receipt> + Clone,
 {
     fn validate_payload_attributes_against_header(
         &self,

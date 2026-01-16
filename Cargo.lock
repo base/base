@@ -9890,6 +9890,7 @@ dependencies = [
  "metrics-util 0.20.1",
  "mini-moka",
  "moka",
+ "op-alloy-rpc-types-engine 0.23.1",
  "parking_lot",
  "proptest",
  "rand 0.8.5",
