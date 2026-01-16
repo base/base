@@ -6,6 +6,7 @@
 //! - [`FlashblocksTestExtension`] - Node extension for wiring up flashblocks in tests
 //! - [`FlashblocksLocalNode`] - Local node wrapper with flashblocks helpers
 //! - [`FlashblockBuilder`] - Test helper for building flashblocks
+//! - [`FlashblocksBuilderTestHarness`] - Test harness builder for building flashblocks
 
 use std::{
     fmt,

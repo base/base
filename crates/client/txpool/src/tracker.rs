@@ -259,42 +259,12 @@ impl Tracker {
 mod tests {
     use std::ops::Deref;
 
-    use alloy_primitives::{Address, B256, Bytes, U256};
-    use base_client_node::test_utils::{Account, L1_BLOCK_INFO_DEPOSIT_TX};
+    use base_client_node::test_utils::Account;
     use base_flashblocks::FlashblocksAPI;
-    use base_flashblocks_node::test_harness::FlashblocksHarness;
-    use base_flashtypes::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
-    };
-    use base_primitives::build_eip1559_tx;
+    use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
     use tokio::time;
 
     use super::*;
-
-    /// Helper to build a test flashblock with transactions
-    fn build_test_flashblock(block_number: u64, transactions: Vec<Bytes>) -> Flashblock {
-        Flashblock {
-            payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::default(),
-                parent_hash: B256::default(),
-                fee_recipient: Address::ZERO,
-                prev_randao: B256::default(),
-                block_number,
-                gas_limit: 30_000_000,
-                timestamp: 0,
-                extra_data: Bytes::new(),
-                base_fee_per_gas: U256::ZERO,
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                blob_gas_used: Some(0),
-                transactions: [vec![L1_BLOCK_INFO_DEPOSIT_TX], transactions].concat(),
-                ..Default::default()
-            },
-            metadata: Metadata { block_number },
-        }
-    }
 
     #[test]
     fn test_transaction_inserted_pending() {
@@ -604,29 +574,28 @@ mod tests {
     #[tokio::test]
     async fn test_fb_inclusion() -> eyre::Result<()> {
         // Setup
-        let harness = FlashblocksHarness::new().await?;
+        let harness = FlashblocksBuilderTestHarness::new().await;
         let mut tracker = Tracker::new(false);
+        harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
 
-        // Build transaction
-        let tx = build_eip1559_tx(
-            harness.chain_id(),
-            0,
-            Account::Alice.address(),
-            U256::ZERO,
-            Bytes::new(),
+        // Build transaction & flashblock
+        let tx = harness.build_transaction_to_send_eth_with_nonce(
             Account::Alice,
+            Account::Bob,
+            1000000000000000000,
+            0,
         );
-        let tx_hash = alloy_primitives::keccak256(&tx);
-        let fb = build_test_flashblock(1, vec![tx]);
+        let tx_hash = *tx.hash();
+        let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
 
         // Mimic sending a tx to the mpool/builder
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
 
         // Wait a bit to simulate builder picking and building the tx into the pending block
         time::sleep(Duration::from_millis(10)).await;
-        harness.send_flashblock(fb).await?;
+        harness.node.send_flashblock(fb).await?;
 
-        let state = harness.flashblocks_state().get_pending_blocks();
+        let state = harness.flashblocks.get_pending_blocks();
         // Verify we have some pending transactions
         let ptxs = state.as_ref().map(|pb| pb.get_pending_transaction_hashes()).unwrap_or_default();
         assert_eq!(ptxs.len(), 2); // L1Info + tx
@@ -651,11 +620,12 @@ mod tests {
     #[tokio::test]
     async fn test_can_receive_fb() -> eyre::Result<()> {
         // Setup
-        let harness = FlashblocksHarness::new().await?;
+        let harness = FlashblocksBuilderTestHarness::new().await;
         let mut tracker = Tracker::new(false);
+        harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
 
         // Subscribe to flashblocks
-        let mut stream = harness.flashblocks_state().subscribe_to_flashblocks();
+        let mut stream = harness.flashblocks.subscribe_to_flashblocks();
         let mut t = tracker.clone();
 
         // Use a oneshot channel to signal when we receive a flashblock
@@ -672,21 +642,19 @@ mod tests {
             }
         });
 
-        // Create a tx and send
-        let tx = build_eip1559_tx(
-            harness.chain_id(),
-            0,
-            Account::Alice.address(),
-            U256::ZERO,
-            Bytes::new(),
+        // Create a tx and flashblock
+        let tx = harness.build_transaction_to_send_eth_with_nonce(
             Account::Alice,
+            Account::Bob,
+            1000000000000000000,
+            0,
         );
-        let tx_hash = alloy_primitives::keccak256(&tx);
-        let fb = build_test_flashblock(1, vec![tx]);
+        let tx_hash = *tx.hash();
+        let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
 
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         // Send the flashblock
-        harness.send_flashblock(fb).await?;
+        harness.send_flashblock(fb).await;
 
         // Verify we received the flashblock by waiting for the signal
         tokio::time::timeout(std::time::Duration::from_secs(1), rx_signal)
