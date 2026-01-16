@@ -75,18 +75,18 @@ base-builder-cli = { path = "crates/builder/base-builder-cli" }
 op-rbuilder = { path = "crates/builder/op-rbuilder" }
 
 # Kona
-kona-rpc = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-disc = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-engine = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-derive = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-gossip = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-genesis = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-registry = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-node-service = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-cli = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d", default-features = false, features = ["secrets"] }
-kona-peers = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
-kona-sources = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e", default-features = false, features = ["secrets"] }
+kona-rpc = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-disc = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-peers = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-engine = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-derive = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-gossip = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-sources = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-registry = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-node-service = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-providers-alloy = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
 
 # reth
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
