@@ -41,7 +41,7 @@ Base Reth Node is a Reth-based Ethereum node implementation, specifically tailor
 
 > [!IMPORTANT]
 > This repository is for development of the client. For docker images and configurations, see the [node repository](https://github.com/base/node) and the
-> [base image](https://github.com/base/node/pkgs/container/base). This image bundles vanilla Reth and Base Reth and can be toggled with
+> [base image](https://github.com/base/node/pkgs/container/node-reth). This image bundles vanilla Reth and Base Reth and can be toggled with
 > `NODE_TYPE=base` or `NODE_TYPE=vanilla`
 
 ## Prerequisites
