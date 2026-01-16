@@ -15,11 +15,19 @@ test-utils = [
 	"dep:derive_more",
 	"dep:eyre",
 	"dep:reth-optimism-chainspec",
+	"dep:alloy-eips",
+	"dep:reth-primitives-traits",
+	"dep:alloy-primitives",
+	"dep:reth-optimism-primitives",
+	"dep:op-alloy-consensus",
+	"dep:alloy-consensus",
+	"dep:alloy-rpc-types-engine",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-evm/test-utils",
 	"reth-provider/test-utils",
 	"reth-revm/test-utils",
+	"reth-transaction-pool/test-utils",
 ]
 
 
@@ -45,6 +53,16 @@ derive_more = { workspace = true, features = ["deref"], optional = true }
 eyre = { workspace = true, optional = true }
 base-flashtypes = { workspace = true, optional = true }
 reth-optimism-chainspec = { workspace = true, optional = true }
+alloy-eips = { workspace = true, optional = true }
+reth-provider = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+reth-optimism-primitives = { workspace = true, optional = true }
+op-alloy-consensus = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
+reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
 
 
 [dev-dependencies]
@@ -56,37 +74,27 @@ eyre.workspace = true
 revm = { workspace = true, features = ["std"] }
 reth-db.workspace = true
 once_cell.workspace = true
-reth-provider.workspace = true
 reth-db-common.workspace = true
-reth-primitives-traits.workspace = true
 alloy-rpc-client.workspace = true
 alloy-genesis.workspace = true
 alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
 alloy-contract.workspace = true
-op-alloy-consensus.workspace = true
 reth-tracing.workspace = true
 reth-optimism-node.workspace = true
 reth-testing-utils.workspace = true
-reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio-tungstenite.workspace = true
 tracing-subscriber.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
 criterion = { version = "0.5", features = ["async_tokio"] }
-alloy-consensus.workspace = true
-alloy-eips.workspace = true
-alloy-primitives.workspace = true
 alloy-provider.workspace = true
 op-alloy-network.workspace = true
-alloy-rpc-types-engine.workspace = true
 rayon.workspace = true
-reth-optimism-primitives.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 op-alloy-rpc-types.workspace = true
 reth-rpc-eth-api.workspace = true
-reth-chainspec = { workspace = true }
 
 reth-evm.workspace = true
 reth-primitives.workspace = true

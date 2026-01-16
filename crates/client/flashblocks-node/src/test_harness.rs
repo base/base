@@ -5,6 +5,7 @@
 //! - [`FlashblocksParts`] - Components for interacting with flashblocks worker tasks
 //! - [`FlashblocksTestExtension`] - Node extension for wiring up flashblocks in tests
 //! - [`FlashblocksLocalNode`] - Local node wrapper with flashblocks helpers
+//! - [`FlashblockBuilder`] - Test helper for building flashblocks
 
 use std::{
     fmt,
@@ -15,20 +16,37 @@ use std::{
 use base_client_node::{
     BaseBuilder, BaseNodeExtension,
     test_utils::{
-        LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing,
+        Account, LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing, LocalNodeProvider,
+        L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH
     },
 };
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
-    FlashblocksState,
+    FlashblocksState, FlashblocksAPI, PendingBlocksAPI
 };
-use base_flashtypes::Flashblock;
+use base_flashtypes::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
+use alloy_rpc_types_engine::PayloadId;
 use derive_more::Deref;
 use eyre::Result;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_optimism_chainspec::OpChainSpec;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{sync::{mpsc, oneshot}, time::sleep};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use alloy_eips::{BlockHashOrNumber, Encodable2718};
+use reth_provider::{AccountReader,BlockReader, ChainSpecProvider, BlockNumReader};
+use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
+use alloy_consensus::{Receipt, Transaction};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
+use reth_chainspec::EthChainSpec;
+use reth_transaction_pool::test_utils::TransactionBuilder;
+use op_alloy_consensus::OpDepositReceipt;
+
+// The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
+// so it can be processed by the state processor
+const SLEEP_TIME: u64 = 10;
 
 /// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
@@ -293,5 +311,281 @@ impl FlashblocksHarness {
         let inner = TestHarness::from_parts(node, engine);
 
         Ok(Self { inner, parts })
+    }
+}
+
+/// Test harness builder for building flashblocks.
+#[derive(Debug)]
+pub struct FlashblocksBuilderTestHarness {
+    /// The flashblocks harness.
+    node: FlashblocksHarness,
+    /// The blockchain provider.
+    pub provider: LocalNodeProvider,
+    /// The flashblocks state.
+    pub flashblocks: Arc<FlashblocksState>,
+}
+
+impl FlashblocksBuilderTestHarness {
+    pub async fn new() -> Self {
+        // These tests simulate pathological timing (missing receipts, reorgs, etc.), so we disable
+        // the automatic canonical listener and only apply blocks when the test explicitly requests it.
+        let node = FlashblocksHarness::manual_canonical()
+            .await
+            .expect("able to launch flashblocks harness");
+        let provider = node.blockchain_provider();
+        let flashblocks = node.flashblocks_state();
+
+        let genesis_block = provider
+            .block(BlockHashOrNumber::Number(0))
+            .expect("able to load block")
+            .expect("block exists")
+            .try_into_recovered()
+            .expect("able to recover block");
+        flashblocks.on_canonical_block_received(genesis_block);
+
+        Self { node, provider, flashblocks }
+    }
+
+    pub fn decode_private_key(account: Account) -> B256 {
+        B256::from_hex(account.private_key()).expect("valid hex-encoded key")
+    }
+
+    pub fn canonical_account(&self, account: Account) -> RethAccount {
+        self.provider
+            .basic_account(&account.address())
+            .expect("can lookup account state")
+            .expect("should be existing account state")
+    }
+
+    pub fn canonical_balance(&self, account: Account) -> U256 {
+        self.canonical_account(account).balance
+    }
+
+    pub fn expected_pending_balance(&self, account: Account, delta: u128) -> U256 {
+        self.canonical_balance(account) + U256::from(delta)
+    }
+
+    pub fn account_state(&self, account: Account) -> RethAccount {
+        let basic_account = self.canonical_account(account);
+
+        let nonce = self
+            .flashblocks
+            .get_pending_blocks()
+            .get_transaction_count(account.address())
+            .to::<u64>();
+        let balance = self
+            .flashblocks
+            .get_pending_blocks()
+            .get_balance(account.address())
+            .unwrap_or(basic_account.balance);
+
+        RethAccount {
+            nonce: nonce + basic_account.nonce,
+            balance,
+            bytecode_hash: basic_account.bytecode_hash,
+        }
+    }
+
+    pub fn build_transaction_to_send_eth(
+        &self,
+        from: Account,
+        to: Account,
+        amount: u128,
+    ) -> OpTransactionSigned {
+        let txn = TransactionBuilder::default()
+            .signer(Self::decode_private_key(from))
+            .chain_id(self.provider.chain_spec().chain_id())
+            .to(to.address())
+            .nonce(self.account_state(from).nonce)
+            .value(amount)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559()
+            .as_eip1559()
+            .unwrap()
+            .clone();
+
+        OpTransactionSigned::Eip1559(txn)
+    }
+
+    pub fn build_transaction_to_send_eth_with_nonce(
+        &self,
+        from: Account,
+        to: Account,
+        amount: u128,
+        nonce: u64,
+    ) -> OpTransactionSigned {
+        let txn = TransactionBuilder::default()
+            .signer(Self::decode_private_key(from))
+            .chain_id(self.provider.chain_spec().chain_id())
+            .to(to.address())
+            .nonce(nonce)
+            .value(amount)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559()
+            .as_eip1559()
+            .unwrap()
+            .clone();
+
+        OpTransactionSigned::Eip1559(txn)
+    }
+
+    pub async fn send_flashblock(&self, flashblock: Flashblock) {
+        self.node
+            .send_flashblock(flashblock)
+            .await
+            .expect("flashblocks channel should accept payload");
+        sleep(Duration::from_millis(SLEEP_TIME)).await;
+    }
+
+    pub async fn new_canonical_block_without_processing(
+        &mut self,
+        user_transactions: Vec<OpTransactionSigned>,
+    ) -> RecoveredBlock<OpBlock> {
+        let previous_tip =
+            self.provider.best_block_number().expect("able to read best block number");
+        let txs: Vec<Bytes> =
+            user_transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect();
+        self.node.build_block_from_transactions(txs).await.expect("able to build block");
+        let target_block_number = previous_tip + 1;
+
+        let block = self
+            .provider
+            .block(BlockHashOrNumber::Number(target_block_number))
+            .expect("able to load block")
+            .expect("new canonical block should be available after building payload");
+
+        block.try_into_recovered().expect("able to recover newly built block")
+    }
+
+    pub async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
+        let block = self.new_canonical_block_without_processing(user_transactions).await;
+        self.flashblocks.on_canonical_block_received(block);
+        sleep(Duration::from_millis(SLEEP_TIME)).await;
+    }
+}
+
+#[derive(Debug)]
+pub struct FlashblockBuilder<'a> {
+    /// The transactions to include in the flashblock.
+    transactions: Vec<Bytes>,
+    /// The receipts to include in the flashblock.
+    receipts: Option<HashMap<B256, OpReceipt>>,
+    /// The harness to use for building the flashblock.
+    harness: &'a FlashblocksBuilderTestHarness,
+    /// The canonical block number to use for the flashblock.
+    canonical_block_number: Option<BlockNumber>,
+    /// The index of the flashblock.
+    index: u64,
+}
+
+impl<'a> FlashblockBuilder<'a> {
+    pub fn new_base(harness: &'a FlashblocksBuilderTestHarness) -> Self {
+        Self {
+            canonical_block_number: None,
+            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
+            receipts: Some({
+                let mut receipts = alloy_primitives::map::HashMap::default();
+                receipts.insert(
+                    L1_BLOCK_INFO_DEPOSIT_TX_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 10000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012991u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts
+            }),
+            index: 0,
+            harness,
+        }
+    }
+    pub fn new(harness: &'a FlashblocksBuilderTestHarness, index: u64) -> Self {
+        Self {
+            canonical_block_number: None,
+            transactions: Vec::new(),
+            receipts: Some(HashMap::default()),
+            harness,
+            index,
+        }
+    }
+
+    pub fn with_receipts(&mut self, receipts: Option<HashMap<B256, OpReceipt>>) -> &mut Self {
+        self.receipts = receipts;
+        self
+    }
+
+    pub fn with_transactions(&mut self, transactions: Vec<OpTransactionSigned>) -> &mut Self {
+        assert_ne!(self.index, 0, "Cannot set txns for initial flashblock");
+        self.transactions.clear();
+
+        let mut cumulative_gas_used = 0;
+        for txn in transactions.iter() {
+            cumulative_gas_used += txn.gas_limit();
+            self.transactions.push(txn.encoded_2718().into());
+            if let Some(ref mut receipts) = self.receipts {
+                receipts.insert(
+                    *txn.hash(),
+                    OpReceipt::Eip1559(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used,
+                        logs: vec![],
+                    }),
+                );
+            }
+        }
+        self
+    }
+
+    pub const fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
+        self.canonical_block_number = Some(num);
+        self
+    }
+
+    pub fn build(&self) -> Flashblock {
+        let current_block = self.harness.node.latest_block();
+        let canonical_block_num =
+            self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
+
+        let base = if self.index == 0 {
+            Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: current_block.hash(),
+                parent_hash: current_block.hash(),
+                fee_recipient: Address::random(),
+                prev_randao: B256::random(),
+                block_number: canonical_block_num,
+                gas_limit: current_block.gas_limit,
+                timestamp: current_block.timestamp + 2,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::from(100),
+            })
+        } else {
+            None
+        };
+
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index: self.index,
+            base,
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::default(),
+                receipts_root: B256::default(),
+                block_hash: B256::default(),
+                gas_used: 0,
+                withdrawals: Vec::new(),
+                logs_bloom: Default::default(),
+                withdrawals_root: Default::default(),
+                transactions: self.transactions.clone(),
+                blob_gas_used: Default::default(),
+            },
+            metadata: Metadata { block_number: canonical_block_num },
+        }
     }
 }
