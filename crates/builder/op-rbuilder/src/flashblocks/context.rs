@@ -259,7 +259,7 @@ impl OpPayloadBuilderCtx {
         self.chain_spec.is_isthmus_active_at_timestamp(self.attributes().timestamp())
     }
 
-    /// Returns true if isthmus is active for the payload.
+    /// Returns true if jovian is active for the payload.
     pub fn is_jovian_active(&self) -> bool {
         self.chain_spec.is_jovian_active_at_timestamp(self.attributes().timestamp())
     }
