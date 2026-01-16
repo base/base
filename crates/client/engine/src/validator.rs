@@ -2,6 +2,7 @@
 
 use std::{fmt::Debug, sync::Arc};
 
+use alloy_evm::EvmFactory;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use op_alloy_consensus::OpReceipt;
 use op_alloy_rpc_types_engine::OpExecutionData;
@@ -14,7 +15,7 @@ use reth_engine_tree::tree::{
     error::InsertPayloadError,
     payload_validator::{BlockOrPayload, TreeCtx, ValidationOutcome},
 };
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, block::BlockExecutorFactory};
 use reth_node_api::{
     AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, InvalidPayloadAttributesError,
     NodeTypes, PayloadTypes, TreeConfig,
@@ -104,7 +105,14 @@ where
 
 impl<Node, EV> EngineValidatorBuilder<Node> for BaseEngineValidatorBuilder<EV>
 where
-    Node: FullNodeComponents<Evm: ConfigureEngineEvm<OpExecutionData>>,
+    Node: FullNodeComponents<
+        Evm: ConfigureEngineEvm<OpExecutionData>
+                 + ConfigureEvm<
+            BlockExecutorFactory: BlockExecutorFactory<
+                EvmFactory: EvmFactory<HaltReason = OpHaltReason>,
+            >,
+        >,
+    >,
     <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
         PayloadTypes<ExecutionData = OpExecutionData>,
     EV: PayloadValidatorBuilder<Node>,
@@ -112,6 +120,7 @@ where
             <Node::Types as NodeTypes>::Payload,
             Block = BlockTy<Node::Types>,
         >,
+    // <<<<Node as FullNodeComponents>::Evm as ConfigureEvm>::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason = OpHaltReason
 {
     type EngineValidator = BaseEngineValidator<
         Node::Provider,
