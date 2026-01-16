@@ -1,37 +1,39 @@
-use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
-use crate::{
-    api::WriteCounts,
-    db::{
-        cursor::Dup,
-        models::{
-            kv::IntoKV, AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
-            HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory,
-            StorageTrieKey, StorageValue, VersionedValue,
-        },
-        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
-    },
-    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
-};
-use alloy_eips::{eip1898::BlockWithParent, NumHash};
-use alloy_primitives::{map::HashMap, B256, U256};
+use std::{cmp::max, ops::RangeBounds, path::Path};
+
+use alloy_eips::{NumHash, eip1898::BlockWithParent};
+use alloy_primitives::{B256, U256, map::HashMap};
 #[cfg(feature = "metrics")]
-use metrics::{gauge, Label};
+use metrics::{Label, gauge};
 use reth_db::{
+    Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    mdbx::{init_db_for, DatabaseArguments},
+    mdbx::{DatabaseArguments, init_db_for},
     table::{DupSort, Table},
     transaction::{DbTx, DbTxMut},
-    Database, DatabaseEnv, DatabaseError,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
+    BranchNodeCompact, HashedPostState, Nibbles,
     hashed_cursor::HashedCursor,
     trie_cursor::TrieCursor,
     updates::{StorageTrieUpdates, TrieUpdates},
-    BranchNodeCompact, HashedPostState, Nibbles,
 };
-use std::{cmp::max, ops::RangeBounds, path::Path};
 use tracing::info;
+
+use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
+use crate::{
+    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
+    api::WriteCounts,
+    db::{
+        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+        cursor::Dup,
+        models::{
+            AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
+            HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory,
+            StorageTrieKey, StorageValue, VersionedValue, kv::IntoKV,
+        },
+    },
+};
 
 /// MDBX implementation of [`OpProofsStore`].
 #[derive(Debug)]
@@ -331,7 +333,10 @@ impl MdbxProofsStorage {
             let keys = self.persist_history_batch(
                 tx,
                 block_number,
-                nodes.storage_nodes_ref().into_iter().map(|(path, node)| (*hashed_address, *path, node.clone())),
+                nodes
+                    .storage_nodes_ref()
+                    .into_iter()
+                    .map(|(path, node)| (*hashed_address, *path, node.clone())),
                 append_mode,
             )?;
             storage_trie_keys.extend(keys);
@@ -599,7 +604,7 @@ impl OpProofsStore for MdbxProofsStorage {
                             return Err(OpProofsStorageError::MissingAccountTrieHistory(
                                 key.0,
                                 block_number,
-                            ))
+                            ));
                         }
                     };
 
@@ -619,7 +624,7 @@ impl OpProofsStore for MdbxProofsStorage {
                                 key.hashed_address,
                                 key.path.0,
                                 block_number,
-                            ))
+                            ));
                         }
                     };
 
@@ -646,7 +651,7 @@ impl OpProofsStore for MdbxProofsStorage {
                         return Err(OpProofsStorageError::MissingHashedAccountHistory(
                             key,
                             block_number,
-                        ))
+                        ));
                     }
                 };
 
@@ -662,7 +667,7 @@ impl OpProofsStore for MdbxProofsStorage {
                                 hashed_address: key.hashed_address,
                                 hashed_storage_key: key.hashed_storage_key,
                                 block_number,
-                            })
+                            });
                         }
                     };
 
@@ -900,23 +905,24 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::db::{
-        models::{AccountTrieHistory, StorageTrieHistory},
-        StorageTrieKey,
-    };
     use alloy_eips::NumHash;
     use alloy_primitives::B256;
     use reth_db::{
+        DatabaseError,
         cursor::DbDupCursorRO,
         transaction::{DbTx, DbTxMut},
-        DatabaseError,
     };
     use reth_trie::{
-        updates::{StorageTrieUpdates, TrieUpdatesSorted},
         BranchNodeCompact, HashedPostStateSorted, HashedStorage, Nibbles, StoredNibbles,
+        updates::{StorageTrieUpdates, TrieUpdatesSorted},
     };
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::db::{
+        StorageTrieKey,
+        models::{AccountTrieHistory, StorageTrieHistory},
+    };
 
     const B0: u64 = 0;
 
@@ -3250,21 +3256,30 @@ mod tests {
 
         // Verify storage history
         let mut storage_cur = tx.new_cursor::<HashedStorageHistory>().expect("cursor");
-        assert!(storage_cur
-            .seek_by_key_subkey(HashedStorageKey::new(addr1, slot1), 1)
-            .unwrap()
-            .is_some());
-        assert!(storage_cur
-            .seek_by_key_subkey(HashedStorageKey::new(addr2, slot2), 2)
-            .unwrap()
-            .is_none());
+        assert!(
+            storage_cur
+                .seek_by_key_subkey(HashedStorageKey::new(addr1, slot1), 1)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            storage_cur
+                .seek_by_key_subkey(HashedStorageKey::new(addr2, slot2), 2)
+                .unwrap()
+                .is_none()
+        );
 
         // Verify storage trie history
         let mut storage_trie_cur = tx.cursor_dup_read::<StorageTrieHistory>().expect("cursor");
-        assert!(storage_trie_cur
-            .seek_by_key_subkey(StorageTrieKey::new(addr1, StoredNibbles::from(storage_path1)), 1)
-            .unwrap()
-            .is_some());
+        assert!(
+            storage_trie_cur
+                .seek_by_key_subkey(
+                    StorageTrieKey::new(addr1, StoredNibbles::from(storage_path1)),
+                    1
+                )
+                .unwrap()
+                .is_some()
+        );
 
         // Verify ProofWindow LatestBlock is updated
         let mut proof_window_cur = tx.cursor_read::<ProofWindow>().expect("cursor");
