@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_op_receipt_legacy_variant() {
-        let receipt =
+        let receipt: Receipt<Log> =
             Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
         let op_receipt = OpReceipt::Legacy(receipt);
         assert!(matches!(op_receipt, OpReceipt::Legacy(_)));
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_op_receipt_deposit_variant() {
-        let receipt =
+        let receipt: Receipt<Log> =
             Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
         let op_receipt = OpReceipt::Deposit(OpDepositReceipt {
             inner: receipt,
