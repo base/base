@@ -271,6 +271,31 @@ mod tests {
 
     use super::*;
 
+    /// Helper to build a test flashblock with transactions
+    fn build_test_flashblock(block_number: u64, transactions: Vec<Bytes>) -> Flashblock {
+        Flashblock {
+            payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::default(),
+                parent_hash: B256::default(),
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::default(),
+                block_number,
+                gas_limit: 30_000_000,
+                timestamp: 0,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::ZERO,
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                blob_gas_used: Some(0),
+                transactions: [vec![L1_BLOCK_INFO_DEPOSIT_TX], transactions].concat(),
+                ..Default::default()
+            },
+            metadata: Metadata { block_number },
+        }
+    }
+
     #[test]
     fn test_transaction_inserted_pending() {
         let mut tracker = Tracker::new(false);
@@ -592,27 +617,7 @@ mod tests {
             Account::Alice,
         );
         let tx_hash = alloy_primitives::keccak256(&tx);
-        let fb = Flashblock {
-            payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::default(),
-                parent_hash: B256::default(),
-                fee_recipient: Address::ZERO,
-                prev_randao: B256::default(),
-                block_number: 1,
-                gas_limit: 30_000_000,
-                timestamp: 0,
-                extra_data: Bytes::new(),
-                base_fee_per_gas: U256::ZERO,
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                blob_gas_used: Some(0),
-                transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX, tx],
-                ..Default::default()
-            },
-            metadata: Metadata { block_number: 1 },
-        };
+        let fb = build_test_flashblock(1, vec![tx]);
 
         // Mimic sending a tx to the mpool/builder
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
@@ -677,27 +682,7 @@ mod tests {
             Account::Alice,
         );
         let tx_hash = alloy_primitives::keccak256(&tx);
-        let fb = Flashblock {
-            payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
-            index: 0,
-            base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::default(),
-                parent_hash: B256::default(),
-                fee_recipient: Address::ZERO,
-                prev_randao: B256::default(),
-                block_number: 1,
-                gas_limit: 30_000_000,
-                timestamp: 0,
-                extra_data: Bytes::new(),
-                base_fee_per_gas: U256::ZERO,
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                blob_gas_used: Some(0),
-                transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX, tx],
-                ..Default::default()
-            },
-            metadata: Metadata { block_number: 1 },
-        };
+        let fb = build_test_flashblock(1, vec![tx]);
 
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
         // Send the flashblock
