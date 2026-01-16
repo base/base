@@ -13,36 +13,40 @@ use std::{
     time::Duration,
 };
 
+use alloy_consensus::{Receipt, Transaction};
+use alloy_eips::{BlockHashOrNumber, Encodable2718};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
+use alloy_rpc_types_engine::PayloadId;
 use base_client_node::{
     BaseBuilder, BaseNodeExtension,
     test_utils::{
-        Account, LocalNode, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis, init_silenced_tracing, LocalNodeProvider,
-        L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH
+        Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode,
+        LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
+        init_silenced_tracing,
     },
 };
 use base_flashblocks::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksReceiver,
-    FlashblocksState, FlashblocksAPI, PendingBlocksAPI
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
+    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
 };
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use alloy_rpc_types_engine::PayloadId;
 use derive_more::Deref;
 use eyre::Result;
+use op_alloy_consensus::OpDepositReceipt;
 use reth_chain_state::CanonStateSubscriptions;
+use reth_chainspec::EthChainSpec;
 use reth_optimism_chainspec::OpChainSpec;
-use tokio::{sync::{mpsc, oneshot}, time::sleep};
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use reth_provider::{AccountReader,BlockReader, ChainSpecProvider, BlockNumReader};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
-use alloy_consensus::{Receipt, Transaction};
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
-use reth_chainspec::EthChainSpec;
+use reth_provider::{AccountReader, BlockNumReader, BlockReader, ChainSpecProvider};
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use op_alloy_consensus::OpDepositReceipt;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::sleep,
+};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
 // so it can be processed by the state processor
@@ -318,7 +322,7 @@ impl FlashblocksHarness {
 #[derive(Debug)]
 pub struct FlashblocksBuilderTestHarness {
     /// The flashblocks harness.
-    node: FlashblocksHarness,
+    pub node: FlashblocksHarness,
     /// The blockchain provider.
     pub provider: LocalNodeProvider,
     /// The flashblocks state.
@@ -326,6 +330,7 @@ pub struct FlashblocksBuilderTestHarness {
 }
 
 impl FlashblocksBuilderTestHarness {
+    /// Launch a new flashblocks builder test harness.
     pub async fn new() -> Self {
         // These tests simulate pathological timing (missing receipts, reorgs, etc.), so we disable
         // the automatic canonical listener and only apply blocks when the test explicitly requests it.
@@ -346,10 +351,12 @@ impl FlashblocksBuilderTestHarness {
         Self { node, provider, flashblocks }
     }
 
+    /// Decode a private key from an account.
     pub fn decode_private_key(account: Account) -> B256 {
         B256::from_hex(account.private_key()).expect("valid hex-encoded key")
     }
 
+    /// Get the canonical account state.
     pub fn canonical_account(&self, account: Account) -> RethAccount {
         self.provider
             .basic_account(&account.address())
@@ -357,14 +364,17 @@ impl FlashblocksBuilderTestHarness {
             .expect("should be existing account state")
     }
 
+    /// Get the canonical account balance.
     pub fn canonical_balance(&self, account: Account) -> U256 {
         self.canonical_account(account).balance
     }
 
+    /// Get the expected pending balance.
     pub fn expected_pending_balance(&self, account: Account, delta: u128) -> U256 {
         self.canonical_balance(account) + U256::from(delta)
     }
 
+    /// Get the account state.
     pub fn account_state(&self, account: Account) -> RethAccount {
         let basic_account = self.canonical_account(account);
 
@@ -386,6 +396,7 @@ impl FlashblocksBuilderTestHarness {
         }
     }
 
+    /// Build a transaction to send ETH from one account to another.
     pub fn build_transaction_to_send_eth(
         &self,
         from: Account,
@@ -409,6 +420,7 @@ impl FlashblocksBuilderTestHarness {
         OpTransactionSigned::Eip1559(txn)
     }
 
+    /// Build a transaction to send ETH from one account to another with a specific nonce.
     pub fn build_transaction_to_send_eth_with_nonce(
         &self,
         from: Account,
@@ -433,6 +445,7 @@ impl FlashblocksBuilderTestHarness {
         OpTransactionSigned::Eip1559(txn)
     }
 
+    /// Send a flashblock through the harness.
     pub async fn send_flashblock(&self, flashblock: Flashblock) {
         self.node
             .send_flashblock(flashblock)
@@ -441,6 +454,7 @@ impl FlashblocksBuilderTestHarness {
         sleep(Duration::from_millis(SLEEP_TIME)).await;
     }
 
+    /// Build a new canonical block without processing.
     pub async fn new_canonical_block_without_processing(
         &mut self,
         user_transactions: Vec<OpTransactionSigned>,
@@ -461,6 +475,7 @@ impl FlashblocksBuilderTestHarness {
         block.try_into_recovered().expect("able to recover newly built block")
     }
 
+    /// Build a new canonical block with processing.
     pub async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
         let block = self.new_canonical_block_without_processing(user_transactions).await;
         self.flashblocks.on_canonical_block_received(block);
@@ -468,6 +483,7 @@ impl FlashblocksBuilderTestHarness {
     }
 }
 
+/// Test helper for building flashblocks.
 #[derive(Debug)]
 pub struct FlashblockBuilder<'a> {
     /// The transactions to include in the flashblock.
@@ -483,6 +499,7 @@ pub struct FlashblockBuilder<'a> {
 }
 
 impl<'a> FlashblockBuilder<'a> {
+    /// Create a new base flashblock builder.
     pub fn new_base(harness: &'a FlashblocksBuilderTestHarness) -> Self {
         Self {
             canonical_block_number: None,
@@ -507,6 +524,8 @@ impl<'a> FlashblockBuilder<'a> {
             harness,
         }
     }
+
+    /// Create a new flashblock builder.
     pub fn new(harness: &'a FlashblocksBuilderTestHarness, index: u64) -> Self {
         Self {
             canonical_block_number: None,
@@ -517,11 +536,13 @@ impl<'a> FlashblockBuilder<'a> {
         }
     }
 
+    /// Set the receipts for the flashblock.
     pub fn with_receipts(&mut self, receipts: Option<HashMap<B256, OpReceipt>>) -> &mut Self {
         self.receipts = receipts;
         self
     }
 
+    /// Set the transactions for the flashblock.
     pub fn with_transactions(&mut self, transactions: Vec<OpTransactionSigned>) -> &mut Self {
         assert_ne!(self.index, 0, "Cannot set txns for initial flashblock");
         self.transactions.clear();
@@ -544,11 +565,13 @@ impl<'a> FlashblockBuilder<'a> {
         self
     }
 
+    /// Set the canonical block number for the flashblock.
     pub const fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
         self.canonical_block_number = Some(num);
         self
     }
 
+    /// Build the flashblock.
     pub fn build(&self) -> Flashblock {
         let current_block = self.harness.node.latest_block();
         let canonical_block_num =

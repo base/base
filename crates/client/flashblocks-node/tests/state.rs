@@ -1,18 +1,11 @@
 //! Integration tests that stress Flashblocks state handling.
 
-use alloy_consensus::Transaction;
-use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
-use alloy_rpc_types_engine::PayloadId;
-use base_client_node::test_utils::{
-    Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNodeProvider,
-};
-use base_flashblocks::{FlashblocksAPI, FlashblocksState, PendingBlocksAPI};
-use base_flashblocks_node::test_harness::FlashblocksHarness;
-use base_flashtypes::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
-};
+use alloy_primitives::U256;
+use base_client_node::test_utils::Account;
+use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
+use op_alloy_network::BlockResponse;
+use reth_provider::{AccountReader, StateProviderFactory};
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_flashblocks() {
@@ -92,7 +85,7 @@ async fn test_state_overrides_persisted_across_flashblocks() {
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_blocks() {
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     let initial_base = FlashblockBuilder::new_base(&test).build();
     let initial_block_number = initial_base.metadata.block_number;
@@ -215,7 +208,7 @@ async fn test_state_overrides_persisted_across_blocks() {
 
 #[tokio::test]
 async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
-    let mut test = TestHarness::new().await;
+    let mut test = FlashblocksBuilderTestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
     assert_eq!(
@@ -339,7 +332,7 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     // causing it to return an n+1 nonce instead of n
     // because underlying reth node `latest` block is already updated, but
     // relevant pending state has not been cleared yet
-    let mut test = TestHarness::new().await;
+    let mut test = FlashblocksBuilderTestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
     test.send_flashblock(
@@ -401,7 +394,7 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
 async fn test_metadata_receipts_are_optional() {
     // Test to ensure that receipts are optional in the metadata
     // and deposit receipts return None for nonce until the canonical block is processed
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     // Send a flashblock with no receipts (only deposit transaction)
     test.send_flashblock(FlashblockBuilder::new_base(&test).with_receipts(None).build()).await;
@@ -422,7 +415,7 @@ async fn test_metadata_receipts_are_optional() {
 
 #[tokio::test]
 async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non_zero_index() {
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -441,7 +434,7 @@ async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non
 
 #[tokio::test]
 async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -463,7 +456,7 @@ async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
 
 #[tokio::test]
 async fn test_non_sequential_payload_clears_pending_state() {
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
@@ -496,7 +489,7 @@ async fn test_non_sequential_payload_clears_pending_state() {
 
 #[tokio::test]
 async fn test_duplicate_flashblock_ignored() {
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -530,7 +523,7 @@ async fn test_eth_call_sees_flashblock_state_changes() {
     use alloy_rpc_types_eth::TransactionInput;
     use op_alloy_rpc_types::OpTransactionRequest;
 
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
     let provider = test.node.provider();
 
     let bob_address = Account::Bob.address();
@@ -595,7 +588,7 @@ async fn test_eth_call_sees_flashblock_state_changes() {
 /// flashblock 1's transaction (which used nonce=0).
 #[tokio::test]
 async fn test_sequential_nonces_across_flashblocks() {
-    let test = TestHarness::new().await;
+    let test = FlashblocksBuilderTestHarness::new().await;
 
     // Send base flashblock
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -649,7 +642,7 @@ async fn test_sequential_nonces_across_flashblocks() {
 
 #[tokio::test]
 async fn test_progress_canonical_blocks_without_flashblocks() {
-    let mut test = TestHarness::new().await;
+    let mut test = FlashblocksBuilderTestHarness::new().await;
 
     let genesis_block = test.node.latest_block();
     assert_eq!(genesis_block.number, 0);
