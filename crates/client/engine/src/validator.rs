@@ -2,7 +2,7 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use base_flashblocks::FlashblocksState;
+use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use op_alloy_consensus::OpReceipt;
 use op_alloy_rpc_types_engine::OpExecutionData;
 use op_revm::OpHaltReason;
@@ -29,7 +29,7 @@ use reth_provider::{
     BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory, HashedPostStateProvider,
     PruneCheckpointReader, StageCheckpointReader, StateProviderFactory, StateReader, TrieReader,
 };
-use revm::context::result::{HaltReason, ResultAndState};
+use revm::context::result::{ExecutionResult, HaltReason, ResultAndState, SuccessReason};
 use revm_primitives::B256;
 use tracing::instrument;
 
@@ -44,7 +44,7 @@ impl FlashblocksCachedExecutionProvider {
     }
 }
 
-impl<Receipt, HaltReason> CachedExecutionProvider<Receipt, HaltReason>
+impl<Receipt> CachedExecutionProvider<Receipt, OpHaltReason>
     for FlashblocksCachedExecutionProvider
 {
     fn get_cached_execution_for_tx(
@@ -52,8 +52,20 @@ impl<Receipt, HaltReason> CachedExecutionProvider<Receipt, HaltReason>
         start_state_root: &B256,
         prev_tx_hashes: &[B256],
         tx_hash: &B256,
-    ) -> Option<ResultAndState<HaltReason>> {
-        None
+    ) -> Option<ResultAndState<OpHaltReason>> {
+        let Some(flashblocks_state) = self.flashblocks_state.as_ref() else {
+            return None;
+        };
+        let Some(pending_blocks) = flashblocks_state.get_pending_blocks().clone() else {
+            return None;
+        };
+
+        let receipt_and_state = pending_blocks
+            .get_transaction_result(*tx_hash)
+            .zip(pending_blocks.get_transaction_state(tx_hash));
+        let (result, state) = receipt_and_state?;
+
+        Some(ResultAndState::new(result, state))
     }
 }
 /// Basic implementation of [`EngineValidatorBuilder`].
