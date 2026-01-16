@@ -1,7 +1,7 @@
 # `base-jwt`
 
-<a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
-<a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
+<a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
+<a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
 JWT secret handling and validation for Base node components.
 
@@ -19,7 +19,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-jwt = { git = "https://github.com/base/node-reth" }
+base-jwt = { git = "https://github.com/base/base" }
 ```
 
 Load a JWT secret:
@@ -43,7 +43,7 @@ With engine validation (requires `engine-validation` feature):
 
 ```toml
 [dependencies]
-base-jwt = { git = "https://github.com/base/node-reth", features = ["engine-validation"] }
+base-jwt = { git = "https://github.com/base/base", features = ["engine-validation"] }
 ```
 
 ```rust,ignore
@@ -58,4 +58,4 @@ let validated_secret = validator
 
 ## License
 
-[MIT License](https://github.com/base/node-reth/blob/main/LICENSE)
+[MIT License](https://github.com/base/base/blob/main/LICENSE)

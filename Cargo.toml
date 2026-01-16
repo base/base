@@ -3,8 +3,8 @@ version = "0.0.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-homepage = "https://github.com/base/node-reth"
-repository = "https://github.com/base/node-reth"
+homepage = "https://github.com/base/base"
+repository = "https://github.com/base/base"
 exclude = [".github/"]
 
 [workspace]
