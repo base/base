@@ -21,7 +21,7 @@ use reth_engine_primitives::{
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
-    ConfigureEvm, EvmEnvFor, EvmFactory, ExecutionCtxFor, SpecFor,
+    ConfigureEvm, Evm as EvmTr, EvmEnvFor, EvmFactory, EvmFor, ExecutionCtxFor, SpecFor,
     block::{BlockExecutor, BlockExecutorFactory, ExecutableTx},
     execute::ExecutableTxFor,
 };
@@ -157,7 +157,7 @@ where
         + Clone
         + 'static,
     Evm: ConfigureEvm<Primitives = N> + 'static,
-    C: CachedExecutionProvider<N::Receipt> + Clone,
+    C: CachedExecutionProvider<N::Receipt, <EvmFor<Evm, P::DB> as EvmTr>::HaltReason> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -689,7 +689,12 @@ where
                 .map(|tx| tx.tx_hash().clone())
                 .collect::<Vec<_>>(),
         };
-        let executor = CachedExecutor::new(executor, self.cached_execution_provider.clone(), txs);
+        let executor = CachedExecutor::new(
+            executor,
+            self.cached_execution_provider.clone(),
+            txs,
+            input.parent_hash(),
+        );
 
         let execution_start = Instant::now();
         let state_hook = Box::new(handle.state_hook());
@@ -1275,7 +1280,11 @@ where
     Evm: ConfigureEngineEvm<OpExecutionData, Primitives = N> + 'static,
     Types:
         PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>, ExecutionData = OpExecutionData>,
-    C: Send + Sync + 'static + CachedExecutionProvider<N::Receipt> + Clone,
+    C: Send
+        + Sync
+        + 'static
+        + CachedExecutionProvider<N::Receipt, <EvmFor<Evm, P::DB> as EvmTr>::HaltReason>
+        + Clone,
 {
     fn validate_payload_attributes_against_header(
         &self,
