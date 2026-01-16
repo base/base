@@ -120,7 +120,6 @@ where
             <Node::Types as NodeTypes>::Payload,
             Block = BlockTy<Node::Types>,
         >,
-    // <<<<Node as FullNodeComponents>::Evm as ConfigureEvm>::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason = OpHaltReason
 {
     type EngineValidator = BaseEngineValidator<
         Node::Provider,
