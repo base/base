@@ -682,6 +682,7 @@ impl OpPayloadBuilderCtx {
                     }
 
                     self.metrics.backrun_bundles_landed_total.increment(1);
+                    break 'bundle_loop;
                 }
 
                 self.metrics.backrun_bundle_execution_duration.record(backrun_start_time.elapsed());
