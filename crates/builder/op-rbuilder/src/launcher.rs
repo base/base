@@ -88,7 +88,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
         let op_node = OpNode::new(rollup_args.clone());
         let tx_data_store = builder_config.tx_data_store.clone();
 
-        let mut addons: OpAddOns<
+        let addons: OpAddOns<
             _,
             OpEthApiBuilder,
             OpEngineValidatorBuilder,
@@ -99,11 +99,6 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .build();
-        if cfg!(feature = "custom-engine-api") {
-            let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =
-                OpEngineApiBuilder::default();
-            addons = addons.with_engine_api(engine_builder);
-        }
         let handle = builder
             .with_types::<OpNode>()
             .with_components(

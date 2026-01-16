@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAttributes};
+use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
@@ -25,11 +25,7 @@ use reth_optimism_payload_builder::{
     error::OpPayloadBuilderError,
 };
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_optimism_txpool::{
-    conditional::MaybeConditionalTransaction,
-    estimated_da_size::DataAvailabilitySized,
-    interop::{MaybeInteropTransaction, is_valid_interop},
-};
+use reth_optimism_txpool::estimated_da_size::DataAvailabilitySized;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives::SealedHeader;
@@ -434,15 +430,7 @@ impl OpPayloadBuilderCtx {
             block_gas_limit = ?block_gas_limit,
         );
 
-        let block_attr = BlockConditionalAttributes {
-            number: self.block_number(),
-            timestamp: self.attributes().timestamp(),
-        };
-
         while let Some(tx) = best_txs.next(()) {
-            let interop = tx.interop_deadline();
-            let conditional = tx.conditional().cloned();
-
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
@@ -461,27 +449,6 @@ impl OpPayloadBuilderCtx {
 
             let TxData { metering: _resource_usage, backrun_bundles } =
                 self.tx_data_store.get(&tx_hash);
-
-            // TODO: ideally we should get this from the txpool stream
-            if let Some(conditional) = conditional
-                && !conditional.matches_block_attributes(&block_attr)
-            {
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                continue;
-            }
-
-            // TODO: remove this condition and feature once we are comfortable enabling interop for everything
-            if cfg!(feature = "interop") {
-                // We skip invalid cross chain txs, they would be removed on the next block update in
-                // the maintenance job
-                if let Some(interop) = interop
-                    && !is_valid_interop(interop, self.config.attributes.timestamp())
-                {
-                    log_txn(TxnExecutionResult::InteropFailed);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
-            }
 
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(

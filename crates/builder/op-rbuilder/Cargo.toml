@@ -152,7 +152,7 @@ vergen-git2.workspace = true
 
 [dev-dependencies]
 alloy-provider = { workspace = true, default-features = true, features = [
-	"txpool-api",
+  "txpool-api",
 ] }
 tempfile.workspace = true
 nanoid.workspace = true
@@ -194,6 +194,3 @@ testing = [
 	"reth-node-builder/test-utils",
 	"rlimit",
 ]
-
-interop = []
-custom-engine-api = []
