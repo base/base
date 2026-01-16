@@ -8,7 +8,6 @@ use crate::tx_data_store::TxDataStore;
 pub(crate) mod best_txs;
 pub(crate) mod config;
 pub(crate) mod context;
-pub(crate) mod ctx;
 pub(crate) mod generator;
 pub(crate) mod payload;
 pub(crate) mod payload_handler;
