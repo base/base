@@ -3,3 +3,8 @@
 
 pub mod validator;
 pub use validator::{BaseEngineValidator, BaseEngineValidatorBuilder};
+
+mod block;
+mod evm;
+
+pub use evm::BaseEvmConfig;

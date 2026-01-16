@@ -170,6 +170,7 @@ reth-trie-sparse-parallel = { git = "https://github.com/paradigmxyz/reth", tag =
 reth-ethereum-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-ethereum-engine-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 reth-exex-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
+reth-storage-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.0" }
 
 # revm
 revm = { version = "33.1.0", features = [

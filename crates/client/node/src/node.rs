@@ -1,15 +1,16 @@
 //! Base Node types config.
 
-use base_client_engine::BaseEngineValidatorBuilder;
+use base_client_engine::{BaseEngineValidatorBuilder, BaseEvmConfig};
 use reth_node_builder::{
-    Node, NodeAdapter, NodeComponentsBuilder,
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder},
+    BuilderContext, Node, NodeAdapter, NodeComponentsBuilder,
+    components::{BasicPayloadServiceBuilder, ComponentsBuilder, ExecutorBuilder},
     node::{FullNodeTypes, NodeTypes},
 };
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{
     OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
-    OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
+    OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes, OpRethReceiptBuilder,
     args::RollupArgs,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };
@@ -41,6 +42,16 @@ pub struct BaseNode {
     pub gas_limit_config: OpGasLimitConfig,
 }
 
+/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Optimism specific builders.
+pub type BaseNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
+    Node,
+    OpPoolBuilder,
+    BasicPayloadServiceBuilder<Payload>,
+    OpNetworkBuilder,
+    BaseExecutorBuilder,
+    OpConsensusBuilder,
+>;
+
 impl BaseNode {
     /// Creates a new instance of the Optimism node type.
     pub fn new(args: RollupArgs) -> Self {
@@ -64,7 +75,7 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<Node>(&self) -> OpNodeComponentBuilder<Node>
+    pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
         Node: FullNodeTypes<Types: OpNodeTypes>,
     {
@@ -76,7 +87,7 @@ impl BaseNode {
                 self.args.supervisor_http.clone(),
                 self.args.supervisor_safety_level,
             ))
-            .executor(OpExecutorBuilder::default())
+            .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
@@ -140,7 +151,7 @@ where
         OpPoolBuilder,
         BasicPayloadServiceBuilder<OpPayloadBuilder>,
         OpNetworkBuilder,
-        OpExecutorBuilder,
+        BaseExecutorBuilder,
         OpConsensusBuilder,
     >;
 
@@ -166,4 +177,25 @@ impl NodeTypes for BaseNode {
     type ChainSpec = OpChainSpec;
     type Storage = OpStorage;
     type Payload = OpEngineTypes;
+}
+
+/// A regular optimism evm and executor builder.
+#[derive(Debug, Copy, Clone, Default)]
+#[non_exhaustive]
+pub struct BaseExecutorBuilder;
+
+impl<Node> ExecutorBuilder<Node> for BaseExecutorBuilder
+where
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks, Primitives = OpPrimitives>>,
+{
+    type EVM = BaseEvmConfig<
+        <Node::Types as NodeTypes>::ChainSpec,
+        <Node::Types as NodeTypes>::Primitives,
+    >;
+
+    async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), OpRethReceiptBuilder::default());
+
+        Ok(evm_config)
+    }
 }
