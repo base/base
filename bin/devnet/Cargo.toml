@@ -1,0 +1,57 @@
+[package]
+name = "base-devnet"
+description = "Base Devnet - Local testing network for base-builder and base-client"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace - shared utilities
+base-cli-utils.workspace = true
+base-primitives = { workspace = true, features = ["test-utils"] }
+base-client-node = { workspace = true, features = ["test-utils"] }
+
+# async - note: tokio features used via std::process, not tokio-process
+
+# cli
+clap = { workspace = true, features = ["derive", "env"] }
+
+# misc
+eyre.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tempfile.workspace = true
+serde_json.workspace = true
+ctrlc = "3.4"
+
+# Block driver (async runtime for Engine API)
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-eips.workspace = true
+op-alloy-network.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+url.workspace = true
+
+# TUI (optional)
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
+chrono = { version = "0.4", optional = true }
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
+vergen-git2.workspace = true
+
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:chrono", "dep:libc"]
