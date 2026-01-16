@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-client-node.workspace = true
 base-flashblocks.workspace = true
 
 # reth
@@ -44,6 +44,7 @@ serde.workspace = true
 metrics-derive.workspace = true
 
 [dev-dependencies]
+base-client-node = { workspace = true, features = ["test-utils"] }
 eyre.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
