@@ -1,7 +1,7 @@
 # `op-rbuilder`
 
-<a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
-<a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
+<a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
+<a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
 Optimism block builder for Base. Provides payload building infrastructure with support for standard block production and flashblocks, which progressively builds block chunks at sub-second intervals.
 
@@ -33,7 +33,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-op-rbuilder = { git = "https://github.com/base/node-reth" }
+op-rbuilder = { git = "https://github.com/base/base" }
 ```
 
 Run the builder:
@@ -48,4 +48,4 @@ op-rbuilder node --builder.mode flashblocks
 
 ## License
 
-Licensed under the [MIT License](https://github.com/base/node-reth/blob/main/LICENSE).
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
