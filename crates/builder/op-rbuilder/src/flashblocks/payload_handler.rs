@@ -4,47 +4,27 @@ use reth_optimism_payload_builder::OpBuiltPayload;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::{flashblocks::ctx::OpPayloadSyncerCtx, traits::ClientBounds};
-
 /// Handles newly built flashblock payloads.
 ///
 /// In the case of a payload built by this node, it is broadcast to peers and an event is sent to the payload builder.
 /// In the case of a payload received from a peer, it is executed and if successful, an event is sent to the payload builder.
-pub(super) struct PayloadHandler<Client> {
+pub(super) struct PayloadHandler {
     // receives new payloads built by this builder.
     built_rx: mpsc::Receiver<OpBuiltPayload>,
     // sends a `Events::BuiltPayload` to the reth payload builder when a new payload is received.
     payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
-    // context required for execution of blocks during syncing
-    ctx: OpPayloadSyncerCtx,
-    // chain client
-    client: Client,
-    cancel: tokio_util::sync::CancellationToken,
 }
 
-impl<Client> PayloadHandler<Client>
-where
-    Client: ClientBounds + 'static,
-{
-    #[allow(clippy::too_many_arguments)]
+impl PayloadHandler {
     pub(super) const fn new(
         built_rx: mpsc::Receiver<OpBuiltPayload>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
-        ctx: OpPayloadSyncerCtx,
-        client: Client,
-        cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
-        Self { built_rx, payload_events_handle, ctx, client, cancel }
+        Self { built_rx, payload_events_handle }
     }
 
     pub(crate) async fn run(self) {
-        let Self {
-            mut built_rx,
-            payload_events_handle,
-            ctx: _ctx,
-            client: _client,
-            cancel: _cancel,
-        } = self;
+        let Self { mut built_rx, payload_events_handle } = self;
 
         tracing::debug!("flashblocks payload handler started");
 

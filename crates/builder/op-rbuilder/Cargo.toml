@@ -196,9 +196,4 @@ testing = [
 ]
 
 interop = []
-
 custom-engine-api = []
-
-[[bin]]
-name = "tester"
-required-features = ["testing"]

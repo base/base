@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use derive_more::Debug;
-use eyre::WrapErr as _;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
@@ -31,17 +30,11 @@ impl FlashblocksServiceBuilder {
         Node: NodeBounds,
         Pool: PoolBounds,
     {
-        // TODO: is there a different global token?
-        // this is effectively unused right now due to the usage of reth's `task_executor`.
-        let cancel = tokio_util::sync::CancellationToken::new();
-
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.0.flashblocks.ws_addr, metrics.clone())
-                .wrap_err("failed to create ws publisher")?
-                .into();
+            WebSocketPublisher::new(self.0.flashblocks.ws_addr, metrics.clone())?.into();
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
@@ -49,7 +42,7 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             built_payload_tx,
             ws_pub,
-            metrics.clone(),
+            metrics,
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -65,21 +58,8 @@ impl FlashblocksServiceBuilder {
         let (payload_service, payload_builder_handle) =
             PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
 
-        let syncer_ctx = super::ctx::OpPayloadSyncerCtx::new(
-            &ctx.provider().clone(),
-            self.0,
-            OpEvmConfig::optimism(ctx.chain_spec()),
-            metrics,
-        )
-        .wrap_err("failed to create flashblocks payload builder context")?;
-
-        let payload_handler = PayloadHandler::new(
-            built_payload_rx,
-            payload_service.payload_events_handle(),
-            syncer_ctx,
-            ctx.provider().clone(),
-            cancel,
-        );
+        let payload_handler =
+            PayloadHandler::new(built_payload_rx, payload_service.payload_events_handle());
 
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
