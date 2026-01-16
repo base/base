@@ -59,13 +59,19 @@ where
         tx_hash: &B256,
     ) -> Option<ResultAndState<OpHaltReason>> {
         let Some(flashblocks_state) = self.flashblocks_state.as_ref() else {
+            info!("Not using cached results - missing flashblocks state");
             return None;
         };
         let Some(pending_blocks) = flashblocks_state.get_pending_blocks().clone() else {
+            info!("Not using cached results - missing pending blocks");
             return None;
         };
 
         let Ok(Some(parent_block_number)) = self.provider.block_number(*parent_block_hash) else {
+            info!(
+                "Not using cached results - missing parent block number for hash: {}",
+                parent_block_hash
+            );
             return None;
         };
 
@@ -77,17 +83,23 @@ where
 
         // ensure tracked_txn_hashes starts with prev_tx_hashes
         if tracked_txn_hashes
-            .into_iter()
+            .iter()
             .take(prev_tx_hashes.len())
             .zip(prev_tx_hashes.into_iter().copied())
-            .all(|(a, b)| a == b)
+            .all(|(a, b)| *a == b)
         {
+            info!(
+                "Not using cached results - tracked txn hashes do not match prev tx hashes, tracked: {:?}, prev: {:?}",
+                tracked_txn_hashes, prev_tx_hashes
+            );
             return None;
         }
 
         let receipt_and_state = pending_blocks
             .get_transaction_result(*tx_hash)
             .zip(pending_blocks.get_transaction_state(tx_hash));
+
+        info!("Using cached results - receipt and state found for tx: {:?}", tx_hash);
         let (result, state) = receipt_and_state?;
 
         Some(ResultAndState::new(result, state))
