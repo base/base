@@ -3,7 +3,7 @@
 //! These tests verify that EIP-7702 authorization and delegation
 //! transactions work correctly in the pending/flashblocks state.
 
-use alloy_consensus::{SignableTransaction, TxEip7702};
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702};
 use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
@@ -15,7 +15,6 @@ use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_primitives::build_eip1559_tx;
 use eyre::Result;
 use op_alloy_network::ReceiptResponse;
 
@@ -85,6 +84,33 @@ fn build_eip7702_tx(
         value,
         access_list: Default::default(),
         authorization_list,
+        input,
+    };
+
+    let signature = account.signer().sign_hash_sync(&tx.signature_hash()).expect("signing works");
+    let signed = tx.into_signed(signature);
+
+    signed.encoded_2718().into()
+}
+
+/// Build and sign an EIP-1559 transaction
+fn build_eip1559_tx(
+    chain_id: u64,
+    nonce: u64,
+    to: Address,
+    value: U256,
+    input: Bytes,
+    account: Account,
+) -> Bytes {
+    let tx = TxEip1559 {
+        chain_id,
+        nonce,
+        gas_limit: 200_000,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: alloy_primitives::TxKind::Call(to),
+        value,
+        access_list: Default::default(),
         input,
     };
 

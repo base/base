@@ -57,4 +57,3 @@ reth-optimism-primitives.workspace = true
 revm-database.workspace = true
 base-flashtypes.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-primitives.workspace = true

@@ -11,6 +11,3 @@ pub use contracts::{
     AccessListContract, ContractFactory, DoubleCounter, Logic, Logic2, Minimal7702Account,
     MockERC20, Proxy, SimpleStorage, TransparentUpgradeableProxy,
 };
-
-mod transactions;
-pub use transactions::build_eip1559_tx;
