@@ -2,6 +2,7 @@
 
 use base_flashblocks::FlashblocksConfig;
 use base_txpool::TxpoolConfig;
+use reth_optimism_exex::ProofsHistoryConfig;
 use reth_optimism_node::args::RollupArgs;
 
 /// CLI Arguments
@@ -11,6 +12,10 @@ pub struct Args {
     /// Rollup arguments
     #[command(flatten)]
     pub rollup_args: RollupArgs,
+
+    /// Proofs history arguments
+    #[command(flatten)]
+    pub proofs_history_args: ProofsHistoryConfig,
 
     /// The websocket url used for flashblocks.
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
