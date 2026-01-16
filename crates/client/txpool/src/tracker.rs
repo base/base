@@ -2,10 +2,12 @@
 
 use std::{
     num::NonZeroUsize,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::TxHash;
+use base_flashblocks::PendingBlocks;
 use chrono::Local;
 use lru::LruCache;
 use reth_node_api::{BlockBody, NodePrimitives};
@@ -17,7 +19,7 @@ use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 use crate::{EventLog, Metrics, Pool, TxEvent};
 
 /// Tracks transactions as they move through the mempool and into blocks.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool.
     txs: LruCache<TxHash, EventLog>,
@@ -75,11 +77,23 @@ impl Tracker {
         self.track_committed_chain(&notification.committed());
     }
 
+    /// Parse flashblock updates and track transaction inclusion in flashblocks.
+    pub fn handle_flashblock_notification(&mut self, pending_blocks: Arc<PendingBlocks>) {
+        self.track_flashblock_transactions(&pending_blocks);
+    }
+
     fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
                 self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
             }
+        }
+    }
+
+    fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks) {
+        // Get all transaction hashes from pending blocks
+        for tx_hash in pending_blocks.get_pending_transaction_hashes() {
+            self.transaction_fb_included(tx_hash);
         }
     }
 
@@ -170,6 +184,28 @@ impl Tracker {
         }
     }
 
+    /// Track a transaction being included in a flashblock. This will not remove
+    /// the tx from the cache.
+    pub fn transaction_fb_included(&mut self, tx_hash: TxHash) {
+        // Only track if we have seen this transaction before
+        if let Some(event_log) = self.txs.peek(&tx_hash) {
+            // Record `fb_inclusion_duration` metric if transaction was pending
+            if let Some(pending_time) = event_log.pending_time {
+                let time_pending_to_fb_inclusion = Instant::now().duration_since(pending_time);
+                self.metrics
+                    .fb_inclusion_duration
+                    .record(time_pending_to_fb_inclusion.as_millis() as f64);
+
+                debug!(
+                    target: "tracex",
+                    tx_hash = ?tx_hash,
+                    duration_ms = time_pending_to_fb_inclusion.as_millis(),
+                    "Transaction included in flashblock"
+                );
+            }
+        }
+    }
+
     /// Track a transaction being replaced by removing it from the cache and adding the new tx.
     pub fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
@@ -221,6 +257,13 @@ impl Tracker {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Deref;
+
+    use base_client_node::test_utils::Account;
+    use base_flashblocks::FlashblocksAPI;
+    use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
+    use tokio::time;
+
     use super::*;
 
     #[test]
@@ -526,5 +569,99 @@ mod tests {
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_fb_inclusion() -> eyre::Result<()> {
+        // Setup
+        let harness = FlashblocksBuilderTestHarness::new().await;
+        let mut tracker = Tracker::new(false);
+        harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
+
+        // Build transaction & flashblock
+        let tx = harness.build_transaction_to_send_eth_with_nonce(
+            Account::Alice,
+            Account::Bob,
+            1000000000000000000,
+            0,
+        );
+        let tx_hash = *tx.hash();
+        let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
+
+        // Mimic sending a tx to the mpool/builder
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+
+        // Wait a bit to simulate builder picking and building the tx into the pending block
+        time::sleep(Duration::from_millis(10)).await;
+        harness.node.send_flashblock(fb).await?;
+
+        let state = harness.flashblocks.get_pending_blocks();
+        // Verify we have some pending transactions
+        let ptxs = state.as_ref().map(|pb| pb.get_pending_transaction_hashes()).unwrap_or_default();
+        assert_eq!(ptxs.len(), 2); // L1Info + tx
+        assert_eq!(ptxs[1], tx_hash);
+
+        let pb = state.as_ref().unwrap().deref();
+        tracker.track_flashblock_transactions(pb);
+
+        // It should still be in the tracker
+        assert!(tracker.txs.get(&tx_hash).is_some());
+
+        // Wait until its included in canonical block
+        time::sleep(Duration::from_millis(1500)).await;
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+
+        // It should be removed from the tracker
+        assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_can_receive_fb() -> eyre::Result<()> {
+        // Setup
+        let harness = FlashblocksBuilderTestHarness::new().await;
+        let mut tracker = Tracker::new(false);
+        harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
+
+        // Subscribe to flashblocks
+        let mut stream = harness.flashblocks.subscribe_to_flashblocks();
+        let mut t = tracker.clone();
+
+        // Use a oneshot channel to signal when we receive a flashblock
+        let (tx_signal, rx_signal) = tokio::sync::oneshot::channel();
+        let mut tx_signal = Some(tx_signal);
+
+        tokio::spawn(async move {
+            while let Ok(pending_blocks) = stream.recv().await {
+                t.handle_flashblock_notification(pending_blocks);
+                // Signal that we received a flashblock
+                if let Some(signal) = tx_signal.take() {
+                    let _ = signal.send(());
+                }
+            }
+        });
+
+        // Create a tx and flashblock
+        let tx = harness.build_transaction_to_send_eth_with_nonce(
+            Account::Alice,
+            Account::Bob,
+            1000000000000000000,
+            0,
+        );
+        let tx_hash = *tx.hash();
+        let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
+
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        // Send the flashblock
+        harness.send_flashblock(fb).await;
+
+        // Verify we received the flashblock by waiting for the signal
+        tokio::time::timeout(std::time::Duration::from_secs(1), rx_signal)
+            .await
+            .expect("timeout waiting for flashblock")
+            .expect("channel closed before receiving flashblock");
+
+        Ok(())
     }
 }

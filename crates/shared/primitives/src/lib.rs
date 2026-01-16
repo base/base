@@ -6,5 +6,6 @@
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+// These dependencies are only used in test-utils feature
 #[cfg(any(test, feature = "test-utils"))]
 pub use test_utils::*;

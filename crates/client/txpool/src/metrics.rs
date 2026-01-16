@@ -14,4 +14,9 @@ pub struct Metrics {
         describe = "Time taken for a transaction to be included in a block from when it's marked as pending"
     )]
     pub inclusion_duration: Histogram,
+    /// Time taken for a transaction to be included in a flashblock from when it's marked as pending.
+    #[metric(
+        describe = "Time taken for a transaction to be included in a flashblock from when it's marked as pending"
+    )]
+    pub fb_inclusion_duration: Histogram,
 }

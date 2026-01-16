@@ -8,7 +8,7 @@ pub mod cli;
 use base_client_node::BaseNodeRunner;
 use base_flashblocks_node::{FlashblocksConfig, FlashblocksExtension};
 use base_metering::{MeteringConfig, MeteringExtension};
-use base_txpool::TxPoolExtension;
+use base_txpool::{TxPoolExtension, TxpoolConfig};
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -30,7 +30,12 @@ fn main() {
         let flashblocks_config: Option<FlashblocksConfig> = args.clone().into();
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
-        runner.install_ext::<TxPoolExtension>(args.clone().into());
+        runner.install_ext::<TxPoolExtension>(TxpoolConfig {
+            tracing_enabled: args.enable_transaction_tracing,
+            tracing_logs_enabled: args.enable_transaction_tracing_logs,
+            sequencer_rpc: args.rollup_args.sequencer,
+            flashblocks_config: flashblocks_config.clone(),
+        });
         runner.install_ext::<MeteringExtension>(MeteringConfig {
             enabled: args.enable_metering,
             flashblocks_config: flashblocks_config.clone(),

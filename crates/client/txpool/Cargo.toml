@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 # workspace
 base-client-node.workspace = true
+base-flashblocks.workspace = true
 
 # reth
 reth-tracing.workspace = true
@@ -43,7 +44,17 @@ serde.workspace = true
 metrics-derive.workspace = true
 
 [dev-dependencies]
+base-client-node = { workspace = true, features = ["test-utils"] }
 eyre.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+base-flashblocks-node = { workspace = true, features = ["test-utils"] }
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types.workspace = true
+reth-optimism-primitives.workspace = true
+revm-database.workspace = true
+base-flashtypes.workspace = true
+alloy-rpc-types-engine.workspace = true
