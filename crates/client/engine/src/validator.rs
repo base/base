@@ -35,22 +35,26 @@ use revm_primitives::B256;
 use tracing::instrument;
 
 #[derive(Debug, Clone)]
-pub struct FlashblocksCachedExecutionProvider {
+pub struct FlashblocksCachedExecutionProvider<P> {
     flashblocks_state: Option<Arc<FlashblocksState>>,
+
+    provider: P,
 }
 
-impl FlashblocksCachedExecutionProvider {
-    pub fn new(flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
-        Self { flashblocks_state }
+impl<P> FlashblocksCachedExecutionProvider<P> {
+    pub fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
+        Self { provider, flashblocks_state }
     }
 }
 
-impl<Receipt> CachedExecutionProvider<Receipt, OpHaltReason>
-    for FlashblocksCachedExecutionProvider
+impl<P, Receipt> CachedExecutionProvider<Receipt, OpHaltReason>
+    for FlashblocksCachedExecutionProvider<P>
+where
+    P: BlockNumReader,
 {
     fn get_cached_execution_for_tx(
         &self,
-        start_state_root: &B256,
+        parent_block_hash: &B256,
         prev_tx_hashes: &[B256],
         tx_hash: &B256,
     ) -> Option<ResultAndState<OpHaltReason>> {
@@ -60,6 +64,26 @@ impl<Receipt> CachedExecutionProvider<Receipt, OpHaltReason>
         let Some(pending_blocks) = flashblocks_state.get_pending_blocks().clone() else {
             return None;
         };
+
+        let Ok(Some(parent_block_number)) = self.provider.block_number(*parent_block_hash) else {
+            return None;
+        };
+
+        let this_block_number = parent_block_number.saturating_add(1);
+
+        let tracked_txns = pending_blocks.get_transactions_for_block(this_block_number);
+        let tracked_txn_hashes: Vec<_> =
+            tracked_txns.iter().map(|tx| tx.inner.inner.tx_hash()).collect();
+
+        // ensure tracked_txn_hashes starts with prev_tx_hashes
+        if tracked_txn_hashes
+            .into_iter()
+            .take(prev_tx_hashes.len())
+            .zip(prev_tx_hashes.into_iter().copied())
+            .all(|(a, b)| a == b)
+        {
+            return None;
+        }
 
         let receipt_and_state = pending_blocks
             .get_transaction_result(*tx_hash)
@@ -125,7 +149,7 @@ where
         Node::Provider,
         Node::Evm,
         EV::Validator,
-        FlashblocksCachedExecutionProvider,
+        FlashblocksCachedExecutionProvider<Node::Provider>,
     >;
 
     async fn build_tree_validator(
@@ -143,7 +167,10 @@ where
             validator,
             tree_config,
             invalid_block_hook,
-            FlashblocksCachedExecutionProvider::new(self.flashblocks_state.clone()),
+            FlashblocksCachedExecutionProvider::new(
+                ctx.node.provider().clone(),
+                self.flashblocks_state.clone(),
+            ),
         ))
     }
 }
