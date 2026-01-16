@@ -49,6 +49,7 @@ test-utils = [
 [dependencies]
 # Project
 base-client-engine.workspace = true
+base-engine-bridge.workspace = true
 base-primitives = { workspace = true, optional = true }
 
 # reth

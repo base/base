@@ -1,0 +1,39 @@
+[package]
+name = "base-engine-actor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Custom engine actor for direct in-process EL communication"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-engine-driver = { workspace = true }
+
+# kona - for actor types and traits
+kona-genesis.workspace = true
+kona-node-service.workspace = true
+kona-protocol.workspace = true
+
+# alloy
+alloy-rpc-types-engine.workspace = true
+
+# op-alloy
+op-alloy-rpc-types-engine.workspace = true
+
+# kona-engine for task error types
+kona-engine = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+
+# async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+tokio-util = { workspace = true, features = ["rt"] }
+
+# misc
+thiserror.workspace = true
+tracing.workspace = true

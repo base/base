@@ -10,6 +10,7 @@ repository.workspace = true
 
 [features]
 test-utils = [
+	"base-client-node/test-utils",
 	"dep:base-flashtypes",
 	"dep:derive_more",
 	"dep:eyre",
@@ -17,6 +18,7 @@ test-utils = [
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-evm/test-utils",
+	"reth-optimism-node/test-utils",
 	"reth-provider/test-utils",
 	"reth-revm/test-utils",
 ]

@@ -13,7 +13,7 @@ This crate provides the Flashblocks extension for the Base node, which enables r
 
 To integrate the Flashblocks extension into your node, use the `install_ext` method on your `BaseNodeRunner`:
 
-```rust
+```rust,ignore
 use base_client_node::BaseNodeRunner;
 use base_flashblocks_node::{FlashblocksConfig, FlashblocksExtension};
 

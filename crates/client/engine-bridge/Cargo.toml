@@ -1,0 +1,41 @@
+[package]
+name = "base-engine-bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "In-process engine driver for direct reth communication"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-engine-driver = { workspace = true }
+
+# alloy
+alloy-primitives.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-eips.workspace = true
+
+# op-alloy
+op-alloy-rpc-types-engine.workspace = true
+
+# reth - for engine API and payload building
+reth-engine-primitives.workspace = true
+reth-optimism-node.workspace = true
+reth-payload-builder.workspace = true
+reth-payload-primitives.workspace = true
+reth-provider.workspace = true
+reth-storage-api.workspace = true
+
+# kona - for L2BlockInfo
+kona-protocol = { git = "https://github.com/op-rs/kona", rev = "24e7e2658e09ac00c8e6cbb48bebe6d10f8fb69d" }
+
+# async
+async-trait.workspace = true
+
+# misc
+tracing.workspace = true
