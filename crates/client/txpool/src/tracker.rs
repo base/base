@@ -19,7 +19,7 @@ use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 use crate::{EventLog, Metrics, Pool, TxEvent};
 
 /// Tracks transactions as they move through the mempool and into blocks.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool.
     txs: LruCache<TxHash, EventLog>,
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_receive_fb() -> eyre::Result<()> {
+    async fn test_fb_inclusion() -> eyre::Result<()> {
         // Setup
         let harness = FlashblocksHarness::new().await?;
         let mut tracker = Tracker::new(false);
@@ -639,6 +639,75 @@ mod tests {
 
         // It should be removed from the tracker
         assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_can_receive_fb() -> eyre::Result<()> {
+        // Setup
+        let harness = FlashblocksHarness::new().await?;
+        let mut tracker = Tracker::new(false);
+
+        // Subscribe to flashblocks
+        let mut stream = harness.flashblocks_state().subscribe_to_flashblocks();
+        let mut t = tracker.clone();
+
+        // Use a oneshot channel to signal when we receive a flashblock
+        let (tx_signal, rx_signal) = tokio::sync::oneshot::channel();
+        let mut tx_signal = Some(tx_signal);
+
+        tokio::spawn(async move {
+            while let Ok(pending_blocks) = stream.recv().await {
+                t.handle_flashblock_notification(pending_blocks);
+                // Signal that we received a flashblock
+                if let Some(signal) = tx_signal.take() {
+                    let _ = signal.send(());
+                }
+            }
+        });
+
+        // Create a tx and send
+        let tx = build_eip1559_tx(
+            harness.chain_id(),
+            0,
+            Account::Alice.address(),
+            U256::ZERO,
+            Bytes::new(),
+            Account::Alice,
+        );
+        let tx_hash = alloy_primitives::keccak256(&tx);
+        let fb = Flashblock {
+            payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::default(),
+                parent_hash: B256::default(),
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::default(),
+                block_number: 1,
+                gas_limit: 30_000_000,
+                timestamp: 0,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::ZERO,
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                blob_gas_used: Some(0),
+                transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX, tx],
+                ..Default::default()
+            },
+            metadata: Metadata { block_number: 1 },
+        };
+
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        // Send the flashblock
+        harness.send_flashblock(fb).await?;
+
+        // Verify we received the flashblock by waiting for the signal
+        tokio::time::timeout(std::time::Duration::from_secs(1), rx_signal)
+            .await
+            .expect("timeout waiting for flashblock")
+            .expect("channel closed before receiving flashblock");
 
         Ok(())
     }
