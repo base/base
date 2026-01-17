@@ -111,7 +111,7 @@ where
         + Clone
         + 'static,
     Evm: ConfigureEvm<Primitives = N> + 'static,
-    C: CachedExecutionProvider<N::Receipt, <EvmFor<Evm, P::DB> as EvmTr>::HaltReason> + Clone,
+    C: CachedExecutionProvider<N::Receipt, <<Evm::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -1166,7 +1166,7 @@ where
     C: Send
         + Sync
         + 'static
-        + CachedExecutionProvider<N::Receipt, <EvmFor<Evm, P::DB> as EvmTr>::HaltReason>
+        + CachedExecutionProvider<N::Receipt, <<Evm::BlockExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason>
         + Clone,
 {
     fn validate_payload_attributes_against_header(
