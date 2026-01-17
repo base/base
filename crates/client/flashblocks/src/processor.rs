@@ -7,30 +7,27 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256, BlockNumber, Bytes};
-use alloy_rpc_types::Withdrawal;
-use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;
-use reth::{
-    chainspec::{ChainSpecProvider, EthChainSpec},
-    providers::{BlockReaderIdExt, StateProviderFactory},
-    revm::{State, database::StateProviderDatabase, db::CacheDB},
-};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
+use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_revm::{State, database::StateProviderDatabase};
+use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder, PendingStateBuilder,
-    ProtocolError, ProviderError, Result,
+    BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
+    PendingStateBuilder, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -219,7 +216,7 @@ where
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self.build_pending_state(None, &vec![flashblock]);
+                    return self.build_pending_state(None, &[flashblock]);
                 } else {
                     info!(message = "waiting for first Flashblock");
                     return Ok(None);
@@ -279,15 +276,15 @@ where
     fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblocks: &Vec<Flashblock>,
+        flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
         // BTreeMap guarantees ascending order of keys while iterating
-        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<&Flashblock>>::new();
+        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
             flashblocks_per_block
                 .entry(flashblock.metadata.block_number)
                 .or_default()
-                .push(flashblock);
+                .push(flashblock.clone());
         }
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
@@ -304,12 +301,17 @@ where
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
-        let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
+        // Track state changes across flashblocks, accumulating bundle state
+        // from previous pending blocks if available.
         let mut db = match &prev_pending_blocks {
-            Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
-            None => CacheDB::new(state),
+            Some(pending_blocks) => State::builder()
+                .with_database(state_provider_db)
+                .with_bundle_update()
+                .with_bundle_prestate(pending_blocks.get_bundle_state())
+                .build(),
+            None => State::builder().with_database(state_provider_db).with_bundle_update().build(),
         };
 
         let mut state_overrides =
@@ -320,70 +322,22 @@ where
         let mut current_prev_pending_blocks = prev_pending_blocks;
 
         for (_block_number, flashblocks) in flashblocks_per_block {
-            let base = flashblocks
-                .first()
-                .ok_or(ProtocolError::EmptyFlashblocks)?
-                .base
-                .clone()
-                .ok_or(ProtocolError::MissingBase)?;
+            // Use BlockAssembler to reconstruct the block from flashblocks
+            let assembled = BlockAssembler::assemble(&flashblocks)?;
 
-            let latest_flashblock =
-                flashblocks.last().cloned().ok_or(ProtocolError::EmptyFlashblocks)?;
+            pending_blocks_builder.with_flashblocks(assembled.flashblocks.clone());
+            pending_blocks_builder.with_header(assembled.header.clone());
 
-            let transactions: Vec<Bytes> = flashblocks
-                .iter()
-                .flat_map(|flashblock| flashblock.diff.transactions.clone())
-                .collect();
-
-            let withdrawals: Vec<Withdrawal> = flashblocks
-                .iter()
-                .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
-                .collect();
-
-            pending_blocks_builder.with_flashblocks(
-                flashblocks.iter().map(|&x| x.clone()).collect::<Vec<Flashblock>>(),
-            );
-
-            let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
-                blob_gas_used: 0,
-                excess_blob_gas: 0,
-                payload_inner: ExecutionPayloadV2 {
-                    withdrawals,
-                    payload_inner: ExecutionPayloadV1 {
-                        parent_hash: base.parent_hash,
-                        fee_recipient: base.fee_recipient,
-                        state_root: latest_flashblock.diff.state_root,
-                        receipts_root: latest_flashblock.diff.receipts_root,
-                        logs_bloom: latest_flashblock.diff.logs_bloom,
-                        prev_randao: base.prev_randao,
-                        block_number: base.block_number,
-                        gas_limit: base.gas_limit,
-                        gas_used: latest_flashblock.diff.gas_used,
-                        timestamp: base.timestamp,
-                        extra_data: base.extra_data.clone(),
-                        base_fee_per_gas: base.base_fee_per_gas,
-                        block_hash: latest_flashblock.diff.block_hash,
-                        transactions,
-                    },
-                },
-            };
-
-            let block: OpBlock = execution_payload
-                .try_into_block()
-                .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
-            let l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)
-                .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()))?;
-            let block_header = block.header.clone(); // prevents us from needing to clone the entire block
-            let sealed_header = block_header.clone().seal(B256::ZERO); // zero block hash for flashblocks
-            pending_blocks_builder.with_header(sealed_header);
+            // Extract L1 block info using the AssembledBlock method
+            let l1_block_info = assembled.l1_block_info()?;
 
             let block_env_attributes = OpNextBlockEnvAttributes {
-                timestamp: base.timestamp,
-                suggested_fee_recipient: base.fee_recipient,
-                prev_randao: base.prev_randao,
-                gas_limit: base.gas_limit,
-                parent_beacon_block_root: Some(base.parent_beacon_block_root),
-                extra_data: base.extra_data.clone(),
+                timestamp: assembled.base.timestamp,
+                suggested_fee_recipient: assembled.base.fee_recipient,
+                prev_randao: assembled.base.prev_randao,
+                gas_limit: assembled.base.gas_limit,
+                parent_beacon_block_root: Some(assembled.base.parent_beacon_block_root),
+                extra_data: assembled.base.extra_data.clone(),
             };
 
             let evm_env = evm_config
@@ -393,7 +347,8 @@ where
 
             // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
-            let txs_with_senders: Vec<(OpTxEnvelope, Address)> = block
+            let txs_with_senders: Vec<(OpTxEnvelope, Address)> = assembled
+                .block
                 .body
                 .transactions
                 .par_iter()
@@ -412,14 +367,16 @@ where
                 .collect::<Result<_>>()?;
             self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
 
+            // Clone header before moving block to avoid cloning the entire block
+            let block_header = assembled.block.header.clone();
+
             let mut pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
-                block,
+                assembled.block,
                 current_prev_pending_blocks.clone(),
                 l1_block_info,
                 state_overrides,
-                *evm_config.block_executor_factory().receipt_builder(),
             );
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
@@ -450,8 +407,10 @@ where
             current_prev_pending_blocks = Some(Arc::new(pending_blocks_builder.build()?));
         }
 
+        // Extract the accumulated bundle state for state root calculation
+        db.merge_transitions(BundleRetention::Reverts);
+        pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
-        pending_blocks_builder.with_db_cache(db.cache);
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
