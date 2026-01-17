@@ -2113,6 +2113,8 @@ dependencies = [
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-macro",
@@ -2120,7 +2122,9 @@ dependencies = [
  "eyre",
  "op-alloy-network",
  "op-alloy-rpc-types",
+ "serde",
  "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -7372,6 +7376,7 @@ dependencies = [
  "base-builder-cli",
  "base-bundles",
  "base-flashtypes",
+ "base-primitives",
  "chrono",
  "clap",
  "clap_builder",

@@ -12,6 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true }
+alloy-serde = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
 eyre = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 alloy-eips = { workspace = true, optional = true }
@@ -21,7 +26,6 @@ alloy-contract = { workspace = true, optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 alloy-sol-types = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["std"], optional = true }
-alloy-primitives = { workspace = true, features = ["serde"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
 alloy-signer-local = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
@@ -33,7 +37,6 @@ test-utils = [
 	"dep:alloy-contract",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
-	"dep:alloy-primitives",
 	"dep:alloy-signer",
 	"dep:alloy-signer-local",
 	"dep:alloy-sol-macro",

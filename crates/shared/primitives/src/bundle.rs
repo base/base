@@ -1,6 +1,5 @@
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
-use reth_rpc_eth_types::EthApiError;
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of blocks allowed in the block range for bundle execution.
@@ -23,11 +22,11 @@ pub const MAX_BLOCK_RANGE_BLOCKS: u64 = 10;
 ///
 /// The following validations are performed before adding the transaction to the
 /// mempool:
-/// - Block number ranges are valid (min ≤ max)
+/// - Block number ranges are valid (min <= max)
 /// - Maximum block numbers are not in the past
 /// - Block ranges don't exceed `MAX_BLOCK_RANGE_BLOCKS` (currently 10)
 /// - There's only one transaction in the bundle
-/// - Flashblock number ranges are valid (min ≤ max)
+/// - Flashblock number ranges are valid (min <= max)
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Bundle {
     /// List of raw transaction data to be included in the bundle.
@@ -114,12 +113,6 @@ pub struct Bundle {
     /// behavior.
     #[serde(default, rename = "maxTimestamp", skip_serializing_if = "Option::is_none")]
     pub max_timestamp: Option<u64>,
-}
-
-impl From<BundleConditionalError> for EthApiError {
-    fn from(err: BundleConditionalError) -> Self {
-        Self::InvalidParams(err.to_string())
-    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -7,6 +7,7 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use dashmap::DashMap;
 use futures::StreamExt;
+use base_primitives::bundle::{Bundle, BundleResult};
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
 use reth_optimism_txpool::OpPooledTransaction;
@@ -15,11 +16,7 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use crate::{
-    primitives::bundle::{Bundle, BundleResult},
-    tests::funded_signer,
-    tx_signer::Signer,
-};
+use crate::{tests::funded_signer, tx_signer::Signer};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BundleOpts {
