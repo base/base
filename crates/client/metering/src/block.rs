@@ -115,8 +115,7 @@ where
 
     // Calculate state root and measure time
     let state_root_start = Instant::now();
-    let bundle_state = db.bundle_state.clone();
-    let hashed_state = state_provider.hashed_post_state(&bundle_state);
+    let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
     let _state_root = state_provider
         .state_root(hashed_state)
         .map_err(|e| eyre!("Failed to calculate state root: {}", e))?;
