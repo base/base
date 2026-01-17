@@ -5,6 +5,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
+use base_primitives::bundle::{Bundle, BundleResult};
 use dashmap::DashMap;
 use futures::StreamExt;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
@@ -15,11 +16,7 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use crate::{
-    primitives::bundle::{Bundle, BundleResult},
-    tests::funded_signer,
-    tx_signer::Signer,
-};
+use crate::{tests::funded_signer, tx_signer::Signer};
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct BundleOpts {

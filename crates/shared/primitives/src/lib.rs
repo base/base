@@ -6,6 +6,9 @@
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
+/// Bundle types for MEV transaction execution.
+pub mod bundle;
+
 // These dependencies are only used in test-utils feature
 #[cfg(feature = "test-utils")]
 pub use test_utils::*;

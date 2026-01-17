@@ -1,6 +1,5 @@
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
-use reth_rpc_eth_types::EthApiError;
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of blocks allowed in the block range for bundle execution.
@@ -23,11 +22,11 @@ pub const MAX_BLOCK_RANGE_BLOCKS: u64 = 10;
 ///
 /// The following validations are performed before adding the transaction to the
 /// mempool:
-/// - Block number ranges are valid (min ≤ max)
+/// - Block number ranges are valid (min <= max)
 /// - Maximum block numbers are not in the past
 /// - Block ranges don't exceed `MAX_BLOCK_RANGE_BLOCKS` (currently 10)
 /// - There's only one transaction in the bundle
-/// - Flashblock number ranges are valid (min ≤ max)
+/// - Flashblock number ranges are valid (min <= max)
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Bundle {
     /// List of raw transaction data to be included in the bundle.
@@ -116,44 +115,83 @@ pub struct Bundle {
     pub max_timestamp: Option<u64>,
 }
 
-impl From<BundleConditionalError> for EthApiError {
-    fn from(err: BundleConditionalError) -> Self {
-        Self::InvalidParams(err.to_string())
-    }
-}
-
+/// Errors that can occur when validating bundle conditions.
 #[derive(Debug, thiserror::Error)]
 pub enum BundleConditionalError {
+    /// The minimum block number exceeds the maximum.
     #[error("block_number_min ({min}) is greater than block_number_max ({max})")]
-    MinGreaterThanMax { min: u64, max: u64 },
+    MinGreaterThanMax {
+        /// Minimum block number requested.
+        min: u64,
+        /// Maximum block number requested.
+        max: u64,
+    },
+    /// The maximum block number is not in the future.
     #[error("block_number_max ({max}) is a past block (current: {current})")]
-    MaxBlockInPast { max: u64, current: u64 },
+    MaxBlockInPast {
+        /// Maximum block number requested.
+        max: u64,
+        /// Current block number.
+        current: u64,
+    },
     /// To prevent resource exhaustion and ensure timely execution, bundles
     /// cannot be scheduled more than `MAX_BLOCK_RANGE_BLOCKS` blocks into the
     /// future.
     #[error(
         "block_number_max ({max}) is too high (current: {current}, max allowed: {max_allowed})"
     )]
-    MaxBlockTooHigh { max: u64, current: u64, max_allowed: u64 },
+    MaxBlockTooHigh {
+        /// Maximum block number requested.
+        max: u64,
+        /// Current block number.
+        current: u64,
+        /// Maximum allowed block number based on the range limit.
+        max_allowed: u64,
+    },
     /// When no explicit maximum block number is provided, the system uses
     /// `current_block + MAX_BLOCK_RANGE_BLOCKS` as the default maximum. This
     /// error occurs when the specified minimum exceeds this default maximum.
     #[error(
         "block_number_min ({min}) is too high with default max range (max allowed: {max_allowed})"
     )]
-    MinTooHighForDefaultRange { min: u64, max_allowed: u64 },
+    MinTooHighForDefaultRange {
+        /// Minimum block number requested.
+        min: u64,
+        /// Maximum allowed block number based on the default range.
+        max_allowed: u64,
+    },
+    /// The minimum flashblock number exceeds the maximum.
     #[error("flashblock_number_min ({min}) is greater than flashblock_number_max ({max})")]
-    FlashblockMinGreaterThanMax { min: u64, max: u64 },
+    FlashblockMinGreaterThanMax {
+        /// Minimum flashblock number requested.
+        min: u64,
+        /// Maximum flashblock number requested.
+        max: u64,
+    },
 }
 
+/// Derived conditional constraints for a bundle.
 #[derive(Debug)]
 pub struct BundleConditional {
+    /// Transaction conditions derived from the bundle constraints.
     pub transaction_conditional: TransactionConditional,
+    /// Minimum flashblock number allowed for bundle inclusion.
     pub flashblock_number_min: Option<u64>,
+    /// Maximum flashblock number allowed for bundle inclusion.
     pub flashblock_number_max: Option<u64>,
 }
 
 impl Bundle {
+    /// Derives conditional constraints for the bundle based on the last block number.
+    ///
+    /// # Arguments
+    ///
+    /// * `last_block_number` - Latest known block number used to validate ranges.
+    ///
+    /// # Errors
+    ///
+    /// Returns `BundleConditionalError` if block or flashblock ranges are invalid,
+    /// exceed limits, or refer to past blocks.
     pub fn conditional(
         &self,
         last_block_number: u64,
