@@ -91,15 +91,17 @@ impl LogState {
     /// Check if processes are still alive and update running status.
     pub(crate) fn update_process_status(&mut self) {
         if let Some(pid) = self.client_pid
-            && !is_process_alive(pid) {
-                self.client_running = false;
-                self.client_pid = None; // Clear so we don't keep checking
-            }
+            && !is_process_alive(pid)
+        {
+            self.client_running = false;
+            self.client_pid = None; // Clear so we don't keep checking
+        }
         if let Some(pid) = self.builder_pid
-            && !is_process_alive(pid) {
-                self.builder_running = false;
-                self.builder_pid = None;
-            }
+            && !is_process_alive(pid)
+        {
+            self.builder_running = false;
+            self.builder_pid = None;
+        }
     }
 }
 
@@ -387,9 +389,10 @@ impl App {
     /// Clear expired status messages.
     fn clear_expired_status(&mut self) {
         if let Some((_, time)) = &self.status_message
-            && time.elapsed() > Duration::from_secs(5) {
-                self.status_message = None;
-            }
+            && time.elapsed() > Duration::from_secs(5)
+        {
+            self.status_message = None;
+        }
     }
 
     /// Auto-scroll to bottom if enabled.
@@ -419,7 +422,9 @@ pub(crate) fn init_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> 
 }
 
 /// Restore the terminal to normal mode.
-pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
+pub(crate) fn restore_terminal(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
@@ -659,50 +664,49 @@ fn styled_log_line(line: &str, has_user_tx: bool) -> Line<'static> {
             && first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
             && first.contains('T');
 
-        if is_timestamp
-            && let Some(level_str) = parts.next() {
-                let level_upper = level_str.to_uppercase();
+        if is_timestamp && let Some(level_str) = parts.next() {
+            let level_upper = level_str.to_uppercase();
 
-                // Determine level color
-                let level_color = if level_upper.contains("ERR") {
-                    Color::LightRed
-                } else if level_upper.contains("WARN") {
-                    Color::Yellow
-                } else if level_upper.contains("INFO") {
-                    Color::Cyan
-                } else if level_upper.contains("DEBUG") {
-                    Color::Blue
-                } else if level_upper.contains("TRACE") {
-                    Color::Magenta
-                } else {
-                    Color::White
-                };
+            // Determine level color
+            let level_color = if level_upper.contains("ERR") {
+                Color::LightRed
+            } else if level_upper.contains("WARN") {
+                Color::Yellow
+            } else if level_upper.contains("INFO") {
+                Color::Cyan
+            } else if level_upper.contains("DEBUG") {
+                Color::Blue
+            } else if level_upper.contains("TRACE") {
+                Color::Magenta
+            } else {
+                Color::White
+            };
 
-                // Collect remaining parts as message
-                let message: String = parts.collect::<Vec<&str>>().join(" ");
+            // Collect remaining parts as message
+            let message: String = parts.collect::<Vec<&str>>().join(" ");
 
-                // Highlight blocks with user transactions
-                let msg_style = if has_user_tx {
-                    Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
+            // Highlight blocks with user transactions
+            let msg_style = if has_user_tx {
+                Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
 
-                let mut spans = vec![
-                    Span::styled(format!("{} ", first), Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!("{} ", level_str), Style::default().fg(level_color)),
-                ];
+            let mut spans = vec![
+                Span::styled(format!("{} ", first), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{} ", level_str), Style::default().fg(level_color)),
+            ];
 
-                if !message.is_empty() {
-                    if has_user_tx {
-                        // Add a tx indicator
-                        spans.push(Span::styled("◆ ", Style::default().fg(Color::LightGreen)));
-                    }
-                    spans.push(Span::styled(message, msg_style));
+            if !message.is_empty() {
+                if has_user_tx {
+                    // Add a tx indicator
+                    spans.push(Span::styled("◆ ", Style::default().fg(Color::LightGreen)));
                 }
-
-                return Line::from(spans);
+                spans.push(Span::styled(message, msg_style));
             }
+
+            return Line::from(spans);
+        }
     }
 
     // Fallback: plain white
@@ -747,9 +751,10 @@ pub(crate) fn run_tui(
         // Poll for events with a short timeout to allow log updates
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press {
-                    app.handle_key(key.code);
-                }
+            && key.kind == KeyEventKind::Press
+        {
+            app.handle_key(key.code);
+        }
 
         if app.should_quit {
             return Ok(TuiResult::Quit);

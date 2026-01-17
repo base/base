@@ -9,6 +9,8 @@ mod cli;
 #[cfg(feature = "tui")]
 mod tui;
 
+#[cfg(feature = "tui")]
+use std::sync::Mutex;
 use std::{
     fs,
     io::{BufRead, BufReader},
@@ -22,15 +24,11 @@ use std::{
     time::Duration,
 };
 
-#[cfg(feature = "tui")]
-use std::sync::Mutex;
-
 use base_primitives::{DEVNET_CHAIN_ID, build_test_genesis};
 use clap::Parser;
 use cli::DevnetArgs;
 use eyre::{Result, eyre};
 use tracing::{error, info, warn};
-
 #[cfg(feature = "tui")]
 use tui::{App, LogState, TuiResult, init_terminal, restore_terminal, run_tui};
 
