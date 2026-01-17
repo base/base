@@ -81,10 +81,10 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     pre_cached: Option<PrecachedState>,
 }
 
-// === impl EmptyBlockPayloadJobGenerator ===
+// === impl BlockPayloadJobGenerator ===
 
 impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
-    /// Creates a new [EmptyBlockPayloadJobGenerator] with the given config and custom
+    /// Creates a new [BlockPayloadJobGenerator] with the given config and custom
     /// [PayloadBuilder]
     pub(super) fn with_builder(
         client: Client,
