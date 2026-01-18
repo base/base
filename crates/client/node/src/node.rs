@@ -51,13 +51,13 @@ impl BaseNode {
         }
     }
 
-    /// Configure the data availability configuration for the OP builder.
+    /// Set the data availability configuration for the OP builder.
     pub fn with_da_config(mut self, da_config: OpDAConfig) -> Self {
         self.da_config = da_config;
         self
     }
 
-    /// Configure the gas limit configuration for the OP builder.
+    /// Set the gas limit configuration for the OP builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: OpGasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self
@@ -98,7 +98,7 @@ impl BaseNode {
 
     /// Instantiates the [`ProviderFactoryBuilder`] for an opstack node.
     ///
-    /// # Open a Providerfactory in read-only mode from a datadir
+    /// # Open a ProviderFactory in read-only mode from a datadir
     ///
     /// See also: [`ProviderFactoryBuilder`] and
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
@@ -111,7 +111,7 @@ impl BaseNode {
     ///     OpNode::provider_factory_builder().open_read_only(BASE_MAINNET.clone(), "datadir").unwrap();
     /// ```
     ///
-    /// # Open a Providerfactory manually with all required components
+    /// # Open a ProviderFactory manually with all required components
     ///
     /// ```no_run
     /// use reth_db::open_db_read_only;
