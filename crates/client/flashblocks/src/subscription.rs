@@ -73,7 +73,7 @@ where
                                     match msg {
                                         Ok(Message::Binary(bytes)) => match Flashblock::try_decode_message(bytes) {
                                             Ok(payload) => {
-                                                let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
+                                                let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
                                                     error!(message = "Failed to publish message to channel", error = %e);
                                                 });
                                             }
