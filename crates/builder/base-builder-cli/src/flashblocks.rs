@@ -22,7 +22,7 @@ pub struct FlashblocksArgs {
     #[arg(long = "flashblocks.block-time", default_value = "250", env = "FLASHBLOCK_BLOCK_TIME")]
     pub flashblocks_block_time: u64,
 
-    /// Builder would always thry to produce fixed number of flashblocks without regard to time of
+    /// Builder would always try to produce fixed number of flashblocks without regard to time of
     /// FCU arrival.
     /// In cases of late FCU it could lead to partially filled blocks.
     #[arg(long = "flashblocks.fixed", default_value = "false", env = "FLASHBLOCK_FIXED")]
@@ -30,7 +30,7 @@ pub struct FlashblocksArgs {
 
     /// Time by which blocks would be completed earlier in milliseconds.
     ///
-    /// This time used to account for latencies, this time would be deducted from total block
+    /// This time is used to account for latencies, this time would be deducted from total block
     /// building time before calculating number of fbs.
     #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
     pub flashblocks_leeway_time: u64,
