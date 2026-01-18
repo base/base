@@ -19,20 +19,20 @@ pub struct FlashblocksArgs {
     pub flashblocks_addr: String,
 
     /// flashblock block time in milliseconds
-    #[arg(long = "flashblocks.block-time", default_value = "250", env = "FLASHBLOCK_BLOCK_TIME")]
+    #[arg(long = "flashblocks.block-time", default_value = "250", env = "FLASHBLOCKS_BLOCK_TIME")]
     pub flashblocks_block_time: u64,
 
     /// Builder would always try to produce fixed number of flashblocks without regard to time of
     /// FCU arrival.
     /// In cases of late FCU it could lead to partially filled blocks.
-    #[arg(long = "flashblocks.fixed", default_value = "false", env = "FLASHBLOCK_FIXED")]
+    #[arg(long = "flashblocks.fixed", default_value = "false", env = "FLASHBLOCKS_FIXED")]
     pub flashblocks_fixed: bool,
 
     /// Time by which blocks would be completed earlier in milliseconds.
     ///
     /// This time is used to account for latencies and would be deducted from total block
     /// building time before calculating number of fbs.
-    #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
+    #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCKS_LEEWAY_TIME")]
     pub flashblocks_leeway_time: u64,
 
     /// Whether to disable state root calculation for each flashblock
