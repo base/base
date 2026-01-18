@@ -10,7 +10,7 @@ where
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     inner: reth_payload_util::BestPayloadTransactions<T, I>,
-    // Transactions that were already commited to the state. Using them again would cause NonceTooLow
+    // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
     commited_transactions: HashSet<TxHash>,
 }
@@ -33,7 +33,7 @@ where
         self.inner = inner;
     }
 
-    /// Remove transaction from next iteration and it already in the state
+    /// Remove transaction from next iteration and it is already in the state
     pub(super) fn mark_commited(&mut self, txs: Vec<TxHash>) {
         self.commited_transactions.extend(txs);
     }
@@ -104,7 +104,7 @@ mod tests {
         let tx3 = iterator.next(()).unwrap();
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
-        // Mark transaction as commited
+        // Mark transaction as committed
         iterator.mark_commited(vec![*tx1.hash(), *tx3.hash()]);
 
         // ### Second flashblock
@@ -113,7 +113,7 @@ mod tests {
         let tx2 = iterator.next(()).unwrap();
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
-        // Mark transaction as commited
+        // Mark transaction as committed
         iterator.mark_commited(vec![*tx2.hash()]);
 
         // ### Third flashblock
