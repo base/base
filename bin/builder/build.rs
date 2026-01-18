@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 // Taken from reth [https://github.com/paradigmxyz/reth/blob/main/crates/node/core/build.rs]
 // The MIT License (MIT)
 //
@@ -5,7 +6,7 @@
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
+// with and without restriction, including without limitation the rights
 // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 // copies of the Software, and to permit persons to whom the Software is
 // furnished to do so, subject to the following conditions:
@@ -20,8 +21,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-
-//! Build script for the op-rbuilder binary that generates version information.
 
 use std::{env, error::Error};
 
@@ -52,10 +51,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     emitter.emit_and_set()?;
     let sha = env::var("VERGEN_GIT_SHA")?;
-    let sha_short = &sha[0..7];
+    // Use 8 chars for the short SHA consistently (first 8 hex chars)
+    let sha_short = &sha[..8];
 
     // Set short SHA
-    println!("cargo:rustc-env=VERGEN_GIT_SHA_SHORT={}", &sha[..8]);
+    println!("cargo:rustc-env=VERGEN_GIT_SHA_SHORT={sha_short}");
 
     let author_name = env::var("VERGEN_GIT_COMMIT_AUTHOR_NAME")?;
     let author_email = env::var("VERGEN_GIT_COMMIT_AUTHOR_EMAIL")?;
@@ -73,8 +73,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rustc-env=OP_RBUILDER_VERSION_SUFFIX={version_suffix}");
 
     // Set the build profile
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let profile = out_dir.rsplit(std::path::MAIN_SEPARATOR).nth(3).unwrap();
+    let out_dir = env::var("OUT_DIR")?;
+    let profile = out_dir
+        .rsplit(std::path::MAIN_SEPARATOR)
+        .nth(3)
+        .ok_or("Failed to determine build profile from OUT_DIR")?;
     println!("cargo:rustc-env=OP_RBUILDER_BUILD_PROFILE={profile}");
 
     // Set formatted version strings

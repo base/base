@@ -1,7 +1,6 @@
 //! Derived from [`reth-node-core`][reth-build-script]
 //!
 //! [reth-build-script]: https://github.com/paradigmxyz/reth/blob/805fb1012cd1601c3b4fe9e8ca2d97c96f61355b/crates/node/core/build.rs
-
 #![allow(missing_docs)]
 
 use std::{env, error::Error};
@@ -30,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     emitter.emit_and_set()?;
     let sha = env::var("VERGEN_GIT_SHA")?;
-    let sha_short = &sha[0..8];
+    let sha_short = &sha[..8];
 
     let is_dirty = env::var("VERGEN_GIT_DIRTY")? == "true";
     // > git describe --always --tags
@@ -44,8 +43,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rustc-env=VERGEN_GIT_SHA_SHORT={sha_short}");
 
     // Set the build profile
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let profile = out_dir.rsplit(std::path::MAIN_SEPARATOR).nth(3).unwrap();
+    let out_dir = env::var("OUT_DIR")?;
+    let profile = out_dir
+        .rsplit(std::path::MAIN_SEPARATOR)
+        .nth(3)
+        .ok_or("Failed to determine build profile from OUT_DIR")?;
     println!("cargo:rustc-env=BASE_CONSENSUS_BUILD_PROFILE={profile}");
 
     // Set formatted version strings
