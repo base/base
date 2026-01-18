@@ -30,7 +30,7 @@ pub struct FlashblocksArgs {
 
     /// Time by which blocks would be completed earlier in milliseconds.
     ///
-    /// This time is used to account for latencies, this time would be deducted from total block
+    /// This time is used to account for latencies and would be deducted from total block
     /// building time before calculating number of fbs.
     #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
     pub flashblocks_leeway_time: u64,
