@@ -36,7 +36,7 @@ pub struct BaseNode {
     /// By default no throttling is applied.
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
-    /// Used to control the gas limit of the blocks produced by the OP builder.(configured by the
+    /// Used to control the gas limit of the blocks produced by the OP builder. (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: OpGasLimitConfig,
 }
