@@ -22,7 +22,7 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
-    /// How much time extra to wait for the block building job to complete and not get garbage collected
+    /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
