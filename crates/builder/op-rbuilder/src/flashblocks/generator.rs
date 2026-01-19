@@ -58,7 +58,7 @@ pub(super) trait PayloadBuilder: Send + Sync + Clone {
     ) -> Result<(), PayloadBuilderError>;
 }
 
-/// The generator type that creates new jobs that builds empty blocks.
+/// The generator type that creates new jobs that build empty blocks.
 #[derive(Debug)]
 pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// The client that can interact with the chain.
@@ -246,7 +246,7 @@ where
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
-    /// Caches all disk reads for the state the new payloads builds on
+    /// Caches all disk reads for the state the new payloads build on
     ///
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
