@@ -46,6 +46,12 @@ pub struct BuilderConfig {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
+    /// Maximum execution time per transaction in microseconds.
+    pub max_execution_time_per_tx_us: Option<u128>,
+
+    /// Block-level execution time budget in microseconds.
+    pub block_execution_time_budget_us: Option<u128>,
+
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -60,6 +66,8 @@ impl core::fmt::Debug for BuilderConfig {
             .field("sampling_ratio", &self.sampling_ratio)
             .field("flashblocks", &self.flashblocks)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
+            .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
+            .field("block_execution_time_budget_us", &self.block_execution_time_budget_us)
             .field("tx_data_store", &self.tx_data_store)
             .finish()
     }
@@ -75,6 +83,8 @@ impl Default for BuilderConfig {
             flashblocks: FlashblocksConfig::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
+            max_execution_time_per_tx_us: None,
+            block_execution_time_budget_us: None,
             tx_data_store: TxDataStore::default(),
         }
     }
@@ -92,6 +102,8 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
+            max_execution_time_per_tx_us: args.max_execution_time_per_tx_us,
+            block_execution_time_budget_us: args.block_execution_time_budget_us,
             tx_data_store: TxDataStore::new(
                 args.enable_resource_metering,
                 args.tx_data_store_buffer_size,

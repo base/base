@@ -6,6 +6,43 @@ use derive_more::Display;
 use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 
+/// Resource limits configuration for transaction and block constraints.
+///
+/// This struct encapsulates all the resource limit parameters used to determine
+/// whether a transaction can be included in a block without exceeding various
+/// resource budgets (gas, DA, execution time).
+#[derive(Debug, Clone, Default)]
+pub struct ResourceLimits {
+    /// The block gas limit.
+    pub block_gas_limit: u64,
+    /// Maximum DA bytes per transaction (optional).
+    pub tx_data_limit: Option<u64>,
+    /// Maximum DA bytes per block (optional).
+    pub block_data_limit: Option<u64>,
+    /// DA footprint scalar for Jovian (optional).
+    pub da_footprint_gas_scalar: Option<u16>,
+    /// Maximum DA footprint for the block (optional).
+    pub block_da_footprint_limit: Option<u64>,
+    /// Maximum execution time per transaction in microseconds (optional).
+    pub tx_execution_time_limit_us: Option<u128>,
+    /// Maximum cumulative execution time per block in microseconds (optional).
+    pub block_execution_time_limit_us: Option<u128>,
+}
+
+/// Resource usage for a single transaction.
+///
+/// This struct contains the resource consumption values for a transaction,
+/// both predicted (from metering data) and declared (from tx fields).
+#[derive(Debug, Clone, Default)]
+pub struct TxResources {
+    /// Estimated DA size for the transaction.
+    pub da_size: u64,
+    /// Declared gas limit from the transaction.
+    pub gas_limit: u64,
+    /// Predicted execution time in microseconds (from metering data, if available).
+    pub execution_time_us: Option<u128>,
+}
+
 #[derive(Debug, Display)]
 pub enum TxnExecutionResult {
     TransactionDALimitExceeded,
@@ -13,6 +50,10 @@ pub enum TxnExecutionResult {
     BlockDALimitExceeded(u64, u64, u64),
     #[display("TransactionGasLimitExceeded: total_gas_used={_0} tx_gas_limit={_1}")]
     TransactionGasLimitExceeded(u64, u64, u64),
+    #[display("TransactionExecutionTimeExceeded: tx_time_us={_0} limit_us={_1}")]
+    TransactionExecutionTimeExceeded(u128, u128),
+    #[display("BlockExecutionTimeExceeded: cumulative_us={_0} tx_time_us={_1} block_limit_us={_2}")]
+    BlockExecutionTimeExceeded(u128, u128, u128),
     SequencerTransaction,
     NonceTooLow,
     InteropFailed,
@@ -37,6 +78,8 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Cumulative execution time in microseconds (from metering predictions or actual measurements)
+    pub cumulative_execution_time_us: u128,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Extra execution information that can be attached by individual builders.
@@ -54,6 +97,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             receipts: Vec::with_capacity(capacity),
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            cumulative_execution_time_us: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
@@ -66,49 +110,74 @@ impl<T: Debug + Default> ExecutionInfo<T> {
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
-    #[allow(clippy::too_many_arguments)]
+    /// - execution time limits: if configured with metering data, ensures the transaction's
+    ///   predicted execution time does not exceed per-tx or per-block limits.
     pub fn is_tx_over_limits(
         &self,
-        tx_da_size: u64,
-        block_gas_limit: u64,
-        tx_data_limit: Option<u64>,
-        block_data_limit: Option<u64>,
-        tx_gas_limit: u64,
-        da_footprint_gas_scalar: Option<u16>,
-        block_da_footprint_limit: Option<u64>,
+        tx: &TxResources,
+        limits: &ResourceLimits,
     ) -> Result<(), TxnExecutionResult> {
-        if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
+        // Check per-transaction DA limit
+        if limits.tx_data_limit.is_some_and(|da_limit| tx.da_size > da_limit) {
             return Err(TxnExecutionResult::TransactionDALimitExceeded);
         }
-        let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
-        if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
+
+        // Check block DA limit
+        let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx.da_size);
+        if limits.block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
             return Err(TxnExecutionResult::BlockDALimitExceeded(
                 self.cumulative_da_bytes_used,
-                tx_da_size,
-                block_data_limit.unwrap_or_default(),
+                tx.da_size,
+                limits.block_data_limit.unwrap_or_default(),
             ));
         }
 
         // Post Jovian: the tx DA footprint must be less than the block gas limit
-        if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
+        if let Some(da_footprint_gas_scalar) = limits.da_footprint_gas_scalar {
             let tx_da_footprint =
                 total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
-            if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
+            if tx_da_footprint > limits.block_da_footprint_limit.unwrap_or(limits.block_gas_limit) {
                 return Err(TxnExecutionResult::BlockDALimitExceeded(
                     total_da_bytes_used,
-                    tx_da_size,
+                    tx.da_size,
                     tx_da_footprint,
                 ));
             }
         }
 
-        if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
+        // Check gas limit
+        if self.cumulative_gas_used + tx.gas_limit > limits.block_gas_limit {
             return Err(TxnExecutionResult::TransactionGasLimitExceeded(
                 self.cumulative_gas_used,
-                tx_gas_limit,
-                block_gas_limit,
+                tx.gas_limit,
+                limits.block_gas_limit,
             ));
         }
+
+        // Check execution time limits (if metering data is available)
+        if let Some(tx_time) = tx.execution_time_us {
+            // Check per-transaction execution time limit
+            if let Some(tx_limit) = limits.tx_execution_time_limit_us {
+                if tx_time > tx_limit {
+                    return Err(TxnExecutionResult::TransactionExecutionTimeExceeded(
+                        tx_time, tx_limit,
+                    ));
+                }
+            }
+
+            // Check block execution time limit
+            if let Some(block_limit) = limits.block_execution_time_limit_us {
+                let total_time = self.cumulative_execution_time_us.saturating_add(tx_time);
+                if total_time > block_limit {
+                    return Err(TxnExecutionResult::BlockExecutionTimeExceeded(
+                        self.cumulative_execution_time_us,
+                        tx_time,
+                        block_limit,
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 }

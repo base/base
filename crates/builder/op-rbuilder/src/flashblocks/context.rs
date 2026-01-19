@@ -39,7 +39,7 @@ use tracing::{debug, info, trace};
 use crate::{
     flashblocks::payload::FlashblocksExecutionInfo,
     metrics::OpRBuilderMetrics,
-    primitives::reth::{ExecutionInfo, TxnExecutionResult},
+    primitives::reth::{ExecutionInfo, ResourceLimits, TxResources, TxnExecutionResult},
     traits::PayloadTxsBounds,
     tx_data_store::{TxData, TxDataStore},
 };
@@ -56,12 +56,16 @@ pub struct FlashblocksExtraCtx {
     pub target_da_for_batch: Option<u64>,
     /// Total DA footprint left for the current flashblock
     pub target_da_footprint_for_batch: Option<u64>,
+    /// Target execution time for the current flashblock in microseconds
+    pub target_execution_time_for_batch_us: Option<u128>,
     /// Gas limit per flashblock
     pub gas_per_batch: u64,
     /// DA bytes limit per flashblock
     pub da_per_batch: Option<u64>,
     /// DA footprint limit per flashblock
     pub da_footprint_per_batch: Option<u64>,
+    /// Execution time limit per flashblock in microseconds
+    pub execution_time_per_batch_us: Option<u128>,
     /// Whether to disable state root calculation for each flashblock
     pub disable_state_root: bool,
 }
@@ -72,12 +76,14 @@ impl FlashblocksExtraCtx {
         target_gas_for_batch: u64,
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
+        target_execution_time_for_batch_us: Option<u128>,
     ) -> Self {
         Self {
             flashblock_index: self.flashblock_index + 1,
             target_gas_for_batch,
             target_da_for_batch,
             target_da_footprint_for_batch,
+            target_execution_time_for_batch_us,
             ..self
         }
     }
@@ -108,6 +114,10 @@ pub struct OpPayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
+    /// Max execution time per transaction in microseconds.
+    pub max_execution_time_per_tx_us: Option<u128>,
+    /// Block-level execution time budget in microseconds.
+    pub block_execution_time_budget_us: Option<u128>,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -410,6 +420,7 @@ impl OpPayloadBuilderCtx {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
+        block_execution_time_limit_us: Option<u128>,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -422,12 +433,24 @@ impl OpPayloadBuilderCtx {
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
+        // Build resource limits struct for limit checking
+        let limits = ResourceLimits {
+            block_gas_limit,
+            tx_data_limit: tx_da_limit,
+            block_data_limit: block_da_limit,
+            da_footprint_gas_scalar: info.da_footprint_scalar,
+            block_da_footprint_limit,
+            tx_execution_time_limit_us: self.max_execution_time_per_tx_us,
+            block_execution_time_limit_us,
+        };
+
         debug!(
             target: "payload_builder",
             message = "Executing best transactions",
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
+            block_execution_time_limit_us = ?block_execution_time_limit_us,
         );
 
         while let Some(tx) = best_txs.next(()) {
@@ -447,19 +470,22 @@ impl OpPayloadBuilderCtx {
 
             num_txs_considered += 1;
 
-            let TxData { metering: _resource_usage, backrun_bundles } =
+            let TxData { metering: resource_usage, backrun_bundles } =
                 self.tx_data_store.get(&tx_hash);
 
+            // Extract predicted execution time from metering data
+            let predicted_execution_time_us =
+                resource_usage.as_ref().map(|m| m.total_execution_time_us);
+
+            // Build tx resources struct
+            let tx_resources = TxResources {
+                da_size: tx_da_size,
+                gas_limit: tx.gas_limit(),
+                execution_time_us: predicted_execution_time_us,
+            };
+
             // ensure we still have capacity for this transaction
-            if let Err(result) = info.is_tx_over_limits(
-                tx_da_size,
-                block_gas_limit,
-                tx_da_limit,
-                block_da_limit,
-                tx.gas_limit(),
-                info.da_footprint_scalar,
-                block_da_footprint_limit,
-            ) {
+            if let Err(result) = info.is_tx_over_limits(&tx_resources, &limits) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
@@ -535,6 +561,10 @@ impl OpPayloadBuilderCtx {
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
+            // record execution time (use actual measured time if metering data not available)
+            let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
+            info.cumulative_execution_time_us +=
+                predicted_execution_time_us.unwrap_or(actual_execution_time_us);
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
@@ -595,15 +625,14 @@ impl OpPayloadBuilderCtx {
                     let total_backrun_da_size: u64 =
                         stored_bundle.backrun_txs.iter().map(|tx| tx.estimated_da_size()).sum();
 
-                    if let Err(result) = info.is_tx_over_limits(
-                        total_backrun_da_size,
-                        block_gas_limit,
-                        tx_da_limit,
-                        block_da_limit,
-                        total_backrun_gas,
-                        info.da_footprint_scalar,
-                        block_da_footprint_limit,
-                    ) {
+                    // Backrun bundles don't have metering data, so we don't predict execution time
+                    let backrun_resources = TxResources {
+                        da_size: total_backrun_da_size,
+                        gas_limit: total_backrun_gas,
+                        execution_time_us: None,
+                    };
+
+                    if let Err(result) = info.is_tx_over_limits(&backrun_resources, &limits) {
                         self.metrics.backrun_bundles_rejected_over_limits_total.increment(1);
                         info!(
                             target: "payload_builder",

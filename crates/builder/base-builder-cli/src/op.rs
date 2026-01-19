@@ -22,6 +22,14 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
+    /// Maximum execution time per transaction in microseconds (requires resource metering)
+    #[arg(long = "builder.max-execution-time-per-tx-us")]
+    pub max_execution_time_per_tx_us: Option<u128>,
+
+    /// Block-level execution time budget in microseconds (requires resource metering)
+    #[arg(long = "builder.block-execution-time-budget-us")]
+    pub block_execution_time_budget_us: Option<u128>,
+
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
@@ -48,6 +56,8 @@ impl Default for OpRbuilderArgs {
             rollup_args: RollupArgs::default(),
             chain_block_time: 1000,
             max_gas_per_txn: None,
+            max_execution_time_per_tx_us: None,
+            block_execution_time_budget_us: None,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             tx_data_store_buffer_size: 10000,
