@@ -83,7 +83,7 @@ impl FlashblocksExtraCtx {
     }
 }
 
-/// Container type that holds all necessities to build a new payload.
+/// Container type that holds all the necessities to build a new payload.
 #[derive(Debug)]
 pub struct OpPayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
@@ -129,7 +129,7 @@ impl OpPayloadBuilderCtx {
         self.extra.target_flashblock_count
     }
 
-    /// Returns the parent block the payload will be build on.
+    /// Returns the parent block the payload will be built on.
     pub fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
     }
@@ -180,7 +180,7 @@ impl OpPayloadBuilderCtx {
 
     /// Returns the blob fields for the header.
     ///
-    /// This will return the culmative DA bytes * scalar after Jovian
+    /// This will return the cumulative DA bytes * scalar after Jovian
     /// after Ecotone, this will always return Some(0) as blobs aren't supported
     /// pre Ecotone, these fields aren't used.
     pub fn blob_fields<Extra: Debug + Default>(
