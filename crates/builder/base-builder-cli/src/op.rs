@@ -26,9 +26,17 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
-    /// Block-level execution time budget in microseconds (requires resource metering)
-    #[arg(long = "builder.block-execution-time-budget-us")]
-    pub block_execution_time_budget_us: Option<u128>,
+    /// Maximum state root calculation time per transaction in microseconds (requires resource metering)
+    #[arg(long = "builder.max-state-root-time-per-tx-us")]
+    pub max_state_root_time_per_tx_us: Option<u128>,
+
+    /// Flashblock-level execution time budget in microseconds (use it or lose it per flashblock)
+    #[arg(long = "builder.flashblock-execution-time-budget-us")]
+    pub flashblock_execution_time_budget_us: Option<u128>,
+
+    /// Block-level state root calculation time budget in microseconds (cumulative across block)
+    #[arg(long = "builder.block-state-root-time-budget-us")]
+    pub block_state_root_time_budget_us: Option<u128>,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
@@ -57,7 +65,9 @@ impl Default for OpRbuilderArgs {
             chain_block_time: 1000,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,
-            block_execution_time_budget_us: None,
+            max_state_root_time_per_tx_us: None,
+            flashblock_execution_time_budget_us: None,
+            block_state_root_time_budget_us: None,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             tx_data_store_buffer_size: 10000,

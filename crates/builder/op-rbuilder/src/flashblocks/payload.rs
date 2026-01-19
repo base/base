@@ -195,7 +195,9 @@ where
             extra,
             max_gas_per_txn: self.config.max_gas_per_txn,
             max_execution_time_per_tx_us: self.config.max_execution_time_per_tx_us,
-            block_execution_time_budget_us: self.config.block_execution_time_budget_us,
+            max_state_root_time_per_tx_us: self.config.max_state_root_time_per_tx_us,
+            flashblock_execution_time_budget_us: self.config.flashblock_execution_time_budget_us,
+            block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
             tx_data_store: self.config.tx_data_store.clone(),
         })
     }
@@ -310,8 +312,12 @@ where
             ctx.da_config.max_da_block_size().map(|da_limit| da_limit / flashblocks_per_block);
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
-        let execution_time_per_batch_us =
-            ctx.block_execution_time_budget_us.map(|budget| budget / flashblocks_per_block as u128);
+        // Execution time is per-flashblock (use it or lose it)
+        let execution_time_per_batch_us = ctx.flashblock_execution_time_budget_us;
+        // State root time is cumulative across the block, so we divide the block budget
+        let state_root_time_per_batch_us = ctx
+            .block_state_root_time_budget_us
+            .map(|budget| budget / flashblocks_per_block as u128);
 
         let extra = FlashblocksExtraCtx {
             flashblock_index: 1,
@@ -319,11 +325,12 @@ where
             target_gas_for_batch: gas_per_batch,
             target_da_for_batch: da_per_batch,
             target_da_footprint_for_batch: da_footprint_per_batch,
-            target_execution_time_for_batch_us: execution_time_per_batch_us,
             gas_per_batch,
             da_per_batch,
             da_footprint_per_batch,
             execution_time_per_batch_us,
+            state_root_time_per_batch_us,
+            target_state_root_time_for_batch_us: state_root_time_per_batch_us,
             disable_state_root,
         };
 
@@ -470,7 +477,11 @@ where
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
-        let mut target_execution_time_for_batch_us = ctx.extra.target_execution_time_for_batch_us;
+        let mut target_state_root_time_for_batch_us = ctx.extra.target_state_root_time_for_batch_us;
+        // Execution time is "use it or lose it" per flashblock
+        let flashblock_execution_time_limit_us = ctx.extra.execution_time_per_batch_us;
+        // State root time is cumulative, so we use the current target
+        let block_state_root_time_limit_us = target_state_root_time_for_batch_us;
 
         info!(
             target: "payload_builder",
@@ -482,10 +493,15 @@ where
             da_used = info.cumulative_da_bytes_used,
             block_gas_used = ctx.block_gas_limit(),
             target_da_footprint = target_da_footprint_for_batch,
-            target_execution_time_us = target_execution_time_for_batch_us,
+            flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
+            target_state_root_time_for_batch_us = ?target_state_root_time_for_batch_us,
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
+
+        // Reset flashblock-scoped execution time (use it or lose it)
+        // Note: state root time is NOT reset since it's cumulative across the block
+        info.reset_flashblock_execution_time();
 
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(BestPayloadTransactions::new(
@@ -503,7 +519,8 @@ where
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
             target_da_footprint_for_batch,
-            target_execution_time_for_batch_us,
+            flashblock_execution_time_limit_us,
+            block_state_root_time_limit_us,
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
@@ -601,18 +618,20 @@ where
                     *footprint += da_footprint_limit;
                 }
 
-                if let (Some(time_limit), Some(time_per_batch)) = (
-                    target_execution_time_for_batch_us.as_mut(),
-                    ctx.extra.execution_time_per_batch_us,
+                // Note: execution time is NOT cumulative (use it or lose it per flashblock).
+                // State root time IS cumulative since state root is calculated once at the end.
+                if let (Some(time), Some(time_per_batch)) = (
+                    target_state_root_time_for_batch_us.as_mut(),
+                    ctx.extra.state_root_time_per_batch_us,
                 ) {
-                    *time_limit += time_per_batch;
+                    *time += time_per_batch;
                 }
 
                 let next_extra = ctx.extra.clone().next(
                     target_gas_for_batch,
                     target_da_for_batch,
                     target_da_footprint_for_batch,
-                    target_execution_time_for_batch_us,
+                    target_state_root_time_for_batch_us,
                 );
 
                 info!(

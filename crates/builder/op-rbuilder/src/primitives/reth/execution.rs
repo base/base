@@ -25,8 +25,15 @@ pub struct ResourceLimits {
     pub block_da_footprint_limit: Option<u64>,
     /// Maximum execution time per transaction in microseconds (optional).
     pub tx_execution_time_limit_us: Option<u128>,
-    /// Maximum cumulative execution time per block in microseconds (optional).
-    pub block_execution_time_limit_us: Option<u128>,
+    /// Maximum execution time budget for the current flashblock in microseconds (optional).
+    /// This is a "use it or lose it" budget - unused time does not carry over.
+    pub flashblock_execution_time_limit_us: Option<u128>,
+    /// Maximum state root calculation time per transaction in microseconds (optional).
+    pub tx_state_root_time_limit_us: Option<u128>,
+    /// Maximum cumulative state root calculation time for the block in microseconds (optional).
+    /// Unlike execution time, state root time is cumulative across the block since state root
+    /// is calculated once at the end.
+    pub block_state_root_time_limit_us: Option<u128>,
 }
 
 /// Resource usage for a single transaction.
@@ -41,6 +48,8 @@ pub struct TxResources {
     pub gas_limit: u64,
     /// Predicted execution time in microseconds (from metering data, if available).
     pub execution_time_us: Option<u128>,
+    /// Predicted state root calculation time in microseconds (from metering data, if available).
+    pub state_root_time_us: Option<u128>,
 }
 
 #[derive(Debug, Display)]
@@ -52,8 +61,14 @@ pub enum TxnExecutionResult {
     TransactionGasLimitExceeded(u64, u64, u64),
     #[display("TransactionExecutionTimeExceeded: tx_time_us={_0} limit_us={_1}")]
     TransactionExecutionTimeExceeded(u128, u128),
-    #[display("BlockExecutionTimeExceeded: cumulative_us={_0} tx_time_us={_1} block_limit_us={_2}")]
-    BlockExecutionTimeExceeded(u128, u128, u128),
+    #[display(
+        "FlashblockExecutionTimeExceeded: flashblock_used_us={_0} tx_time_us={_1} limit_us={_2}"
+    )]
+    FlashblockExecutionTimeExceeded(u128, u128, u128),
+    #[display("TransactionStateRootTimeExceeded: tx_time_us={_0} limit_us={_1}")]
+    TransactionStateRootTimeExceeded(u128, u128),
+    #[display("BlockStateRootTimeExceeded: cumulative_us={_0} tx_time_us={_1} block_limit_us={_2}")]
+    BlockStateRootTimeExceeded(u128, u128, u128),
     SequencerTransaction,
     NonceTooLow,
     InteropFailed,
@@ -78,8 +93,13 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
-    /// Cumulative execution time in microseconds (from metering predictions or actual measurements)
-    pub cumulative_execution_time_us: u128,
+    /// Execution time used in the current flashblock in microseconds.
+    /// This is a "use it or lose it" resource - reset at the start of each flashblock.
+    pub flashblock_execution_time_us: u128,
+    /// Cumulative state root calculation time in microseconds.
+    /// Unlike execution time, this is cumulative across the block since state root
+    /// is calculated once at the end.
+    pub cumulative_state_root_time_us: u128,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Extra execution information that can be attached by individual builders.
@@ -97,11 +117,19 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             receipts: Vec::with_capacity(capacity),
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
-            cumulative_execution_time_us: 0,
+            flashblock_execution_time_us: 0,
+            cumulative_state_root_time_us: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
         }
+    }
+
+    /// Reset the flashblock-scoped execution time budget for a new flashblock.
+    /// Called at the start of each flashblock to reset the "use it or lose it" resource.
+    /// Note: State root time is NOT reset here since it's cumulative across the block.
+    pub const fn reset_flashblock_execution_time(&mut self) {
+        self.flashblock_execution_time_us = 0;
     }
 
     /// Returns true if the transaction would exceed the block limits:
@@ -111,7 +139,9 @@ impl<T: Debug + Default> ExecutionInfo<T> {
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
     /// - execution time limits: if configured with metering data, ensures the transaction's
-    ///   predicted execution time does not exceed per-tx or per-block limits.
+    ///   predicted execution time does not exceed per-tx or per-flashblock limits.
+    /// - state root time limits: if configured with metering data, ensures the transaction's
+    ///   predicted state root time does not exceed per-tx or per-flashblock limits.
     pub fn is_tx_over_limits(
         &self,
         tx: &TxResources,
@@ -155,22 +185,48 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         }
 
         // Check execution time limits (if metering data is available)
+        // Execution time is a "use it or lose it" resource per flashblock
         if let Some(tx_time) = tx.execution_time_us {
             // Check per-transaction execution time limit
-            if let Some(tx_limit) = limits.tx_execution_time_limit_us {
-                if tx_time > tx_limit {
-                    return Err(TxnExecutionResult::TransactionExecutionTimeExceeded(
-                        tx_time, tx_limit,
+            if let Some(tx_limit) = limits.tx_execution_time_limit_us
+                && tx_time > tx_limit
+            {
+                return Err(TxnExecutionResult::TransactionExecutionTimeExceeded(
+                    tx_time, tx_limit,
+                ));
+            }
+
+            // Check flashblock execution time limit
+            if let Some(flashblock_limit) = limits.flashblock_execution_time_limit_us {
+                let total_time = self.flashblock_execution_time_us.saturating_add(tx_time);
+                if total_time > flashblock_limit {
+                    return Err(TxnExecutionResult::FlashblockExecutionTimeExceeded(
+                        self.flashblock_execution_time_us,
+                        tx_time,
+                        flashblock_limit,
                     ));
                 }
             }
+        }
 
-            // Check block execution time limit
-            if let Some(block_limit) = limits.block_execution_time_limit_us {
-                let total_time = self.cumulative_execution_time_us.saturating_add(tx_time);
+        // Check state root time limits (if metering data is available)
+        // State root time is a "use it or lose it" resource per flashblock
+        if let Some(tx_time) = tx.state_root_time_us {
+            // Check per-transaction state root time limit
+            if let Some(tx_limit) = limits.tx_state_root_time_limit_us
+                && tx_time > tx_limit
+            {
+                return Err(TxnExecutionResult::TransactionStateRootTimeExceeded(
+                    tx_time, tx_limit,
+                ));
+            }
+
+            // Check block state root time limit (cumulative across the block)
+            if let Some(block_limit) = limits.block_state_root_time_limit_us {
+                let total_time = self.cumulative_state_root_time_us.saturating_add(tx_time);
                 if total_time > block_limit {
-                    return Err(TxnExecutionResult::BlockExecutionTimeExceeded(
-                        self.cumulative_execution_time_us,
+                    return Err(TxnExecutionResult::BlockStateRootTimeExceeded(
+                        self.cumulative_state_root_time_us,
                         tx_time,
                         block_limit,
                     ));

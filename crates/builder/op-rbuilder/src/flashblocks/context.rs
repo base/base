@@ -50,22 +50,24 @@ pub struct FlashblocksExtraCtx {
     pub flashblock_index: u64,
     /// Target flashblock count per block
     pub target_flashblock_count: u64,
-    /// Total gas left for the current flashblock
+    /// Total gas left for the current flashblock (cumulative target)
     pub target_gas_for_batch: u64,
-    /// Total DA bytes left for the current flashblock
+    /// Total DA bytes left for the current flashblock (cumulative target)
     pub target_da_for_batch: Option<u64>,
-    /// Total DA footprint left for the current flashblock
+    /// Total DA footprint left for the current flashblock (cumulative target)
     pub target_da_footprint_for_batch: Option<u64>,
-    /// Target execution time for the current flashblock in microseconds
-    pub target_execution_time_for_batch_us: Option<u128>,
     /// Gas limit per flashblock
     pub gas_per_batch: u64,
     /// DA bytes limit per flashblock
     pub da_per_batch: Option<u64>,
     /// DA footprint limit per flashblock
     pub da_footprint_per_batch: Option<u64>,
-    /// Execution time limit per flashblock in microseconds
+    /// Execution time budget per flashblock in microseconds (use it or lose it)
     pub execution_time_per_batch_us: Option<u128>,
+    /// State root time limit per flashblock for cumulative tracking
+    pub state_root_time_per_batch_us: Option<u128>,
+    /// Cumulative state root time target for the current flashblock
+    pub target_state_root_time_for_batch_us: Option<u128>,
     /// Whether to disable state root calculation for each flashblock
     pub disable_state_root: bool,
 }
@@ -76,14 +78,14 @@ impl FlashblocksExtraCtx {
         target_gas_for_batch: u64,
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
-        target_execution_time_for_batch_us: Option<u128>,
+        target_state_root_time_for_batch_us: Option<u128>,
     ) -> Self {
         Self {
             flashblock_index: self.flashblock_index + 1,
             target_gas_for_batch,
             target_da_for_batch,
             target_da_footprint_for_batch,
-            target_execution_time_for_batch_us,
+            target_state_root_time_for_batch_us,
             ..self
         }
     }
@@ -116,8 +118,12 @@ pub struct OpPayloadBuilderCtx {
     pub max_gas_per_txn: Option<u64>,
     /// Max execution time per transaction in microseconds.
     pub max_execution_time_per_tx_us: Option<u128>,
-    /// Block-level execution time budget in microseconds.
-    pub block_execution_time_budget_us: Option<u128>,
+    /// Max state root calculation time per transaction in microseconds.
+    pub max_state_root_time_per_tx_us: Option<u128>,
+    /// Flashblock-level execution time budget in microseconds.
+    pub flashblock_execution_time_budget_us: Option<u128>,
+    /// Block-level state root calculation time budget in microseconds.
+    pub block_state_root_time_budget_us: Option<u128>,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -412,6 +418,7 @@ impl OpPayloadBuilderCtx {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
@@ -420,7 +427,8 @@ impl OpPayloadBuilderCtx {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
-        block_execution_time_limit_us: Option<u128>,
+        flashblock_execution_time_limit_us: Option<u128>,
+        block_state_root_time_limit_us: Option<u128>,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -434,6 +442,7 @@ impl OpPayloadBuilderCtx {
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         // Build resource limits struct for limit checking
+        // Note: execution and state root times are "use it or lose it" per flashblock
         let limits = ResourceLimits {
             block_gas_limit,
             tx_data_limit: tx_da_limit,
@@ -441,7 +450,9 @@ impl OpPayloadBuilderCtx {
             da_footprint_gas_scalar: info.da_footprint_scalar,
             block_da_footprint_limit,
             tx_execution_time_limit_us: self.max_execution_time_per_tx_us,
-            block_execution_time_limit_us,
+            flashblock_execution_time_limit_us,
+            tx_state_root_time_limit_us: self.max_state_root_time_per_tx_us,
+            block_state_root_time_limit_us,
         };
 
         debug!(
@@ -450,7 +461,8 @@ impl OpPayloadBuilderCtx {
             block_da_limit = ?block_da_limit,
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
-            block_execution_time_limit_us = ?block_execution_time_limit_us,
+            flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
+            block_state_root_time_limit_us = ?block_state_root_time_limit_us,
         );
 
         while let Some(tx) = best_txs.next(()) {
@@ -473,15 +485,18 @@ impl OpPayloadBuilderCtx {
             let TxData { metering: resource_usage, backrun_bundles } =
                 self.tx_data_store.get(&tx_hash);
 
-            // Extract predicted execution time from metering data
+            // Extract predicted times from metering data
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
+            let predicted_state_root_time_us =
+                resource_usage.as_ref().map(|m| m.state_root_time_us);
 
             // Build tx resources struct
             let tx_resources = TxResources {
                 da_size: tx_da_size,
                 gas_limit: tx.gas_limit(),
                 execution_time_us: predicted_execution_time_us,
+                state_root_time_us: predicted_state_root_time_us,
             };
 
             // ensure we still have capacity for this transaction
@@ -563,8 +578,12 @@ impl OpPayloadBuilderCtx {
             info.cumulative_da_bytes_used += tx_da_size;
             // record execution time (use actual measured time if metering data not available)
             let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
-            info.cumulative_execution_time_us +=
+            info.flashblock_execution_time_us +=
                 predicted_execution_time_us.unwrap_or(actual_execution_time_us);
+            // record state root time if available from metering data (cumulative across block)
+            if let Some(state_root_time) = predicted_state_root_time_us {
+                info.cumulative_state_root_time_us += state_root_time;
+            }
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
@@ -625,11 +644,12 @@ impl OpPayloadBuilderCtx {
                     let total_backrun_da_size: u64 =
                         stored_bundle.backrun_txs.iter().map(|tx| tx.estimated_da_size()).sum();
 
-                    // Backrun bundles don't have metering data, so we don't predict execution time
+                    // Backrun bundles don't have metering data, so we don't predict execution/state root time
                     let backrun_resources = TxResources {
                         da_size: total_backrun_da_size,
                         gas_limit: total_backrun_gas,
                         execution_time_us: None,
+                        state_root_time_us: None,
                     };
 
                     if let Err(result) = info.is_tx_over_limits(&backrun_resources, &limits) {
