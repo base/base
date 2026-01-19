@@ -1,6 +1,6 @@
 use core::{convert::TryFrom, time::Duration};
 
-use base_builder_cli::OpRbuilderArgs;
+use base_builder_cli::{OpRbuilderArgs, ResourceMeteringMode};
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::tx_data_store::TxDataStore;
@@ -61,6 +61,9 @@ pub struct BuilderConfig {
     /// is calculated once at the end.
     pub block_state_root_time_budget_us: Option<u128>,
 
+    /// Resource metering mode: off, observe, or enforce.
+    pub resource_metering_mode: ResourceMeteringMode,
+
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -79,6 +82,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_state_root_time_per_tx_us", &self.max_state_root_time_per_tx_us)
             .field("flashblock_execution_time_budget_us", &self.flashblock_execution_time_budget_us)
             .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
+            .field("resource_metering_mode", &self.resource_metering_mode)
             .field("tx_data_store", &self.tx_data_store)
             .finish()
     }
@@ -98,6 +102,7 @@ impl Default for BuilderConfig {
             max_state_root_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
             block_state_root_time_budget_us: None,
+            resource_metering_mode: ResourceMeteringMode::Off,
             tx_data_store: TxDataStore::default(),
         }
     }
@@ -119,8 +124,9 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             max_state_root_time_per_tx_us: args.max_state_root_time_per_tx_us,
             flashblock_execution_time_budget_us: args.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: args.block_state_root_time_budget_us,
+            resource_metering_mode: args.resource_metering_mode,
             tx_data_store: TxDataStore::new(
-                args.enable_resource_metering,
+                args.resource_metering_mode.is_enabled(),
                 args.tx_data_store_buffer_size,
             ),
             flashblocks,

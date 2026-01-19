@@ -7,6 +7,7 @@ use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
+use base_builder_cli::ResourceMeteringMode;
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
@@ -34,7 +35,7 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     flashblocks::payload::FlashblocksExecutionInfo,
@@ -124,6 +125,8 @@ pub struct OpPayloadBuilderCtx {
     pub flashblock_execution_time_budget_us: Option<u128>,
     /// Block-level state root calculation time budget in microseconds.
     pub block_state_root_time_budget_us: Option<u128>,
+    /// Resource metering mode: off, observe, or enforce.
+    pub resource_metering_mode: ResourceMeteringMode,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
 }
@@ -499,14 +502,75 @@ impl OpPayloadBuilderCtx {
                 state_root_time_us: predicted_state_root_time_us,
             };
 
+            // Record predicted times for metered transactions (observation metrics)
+            if let Some(predicted_exec) = predicted_execution_time_us {
+                self.metrics.tx_predicted_execution_time_us.record(predicted_exec as f64);
+            }
+            if let Some(predicted_sr) = predicted_state_root_time_us {
+                self.metrics.tx_predicted_state_root_time_us.record(predicted_sr as f64);
+
+                // Record state_root_time / gas ratio for anomaly detection
+                // High values on low-gas txs may indicate prediction issues
+                let gas_limit = tx.gas_limit();
+                if gas_limit > 0 {
+                    let ratio = predicted_sr as f64 / gas_limit as f64;
+                    self.metrics.state_root_time_per_gas_ratio.record(ratio);
+                }
+            }
+
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(&tx_resources, &limits) {
-                // we can't fit this transaction into the block, so we need to mark it as
-                // invalid which also removes all dependent transaction from
-                // the iterator before we can continue
-                log_txn(result);
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                continue;
+                // Check if this is a time-based limit violation
+                let is_time_limit = matches!(
+                    &result,
+                    TxnExecutionResult::TransactionExecutionTimeExceeded(_, _)
+                        | TxnExecutionResult::FlashblockExecutionTimeExceeded(_, _, _)
+                        | TxnExecutionResult::TransactionStateRootTimeExceeded(_, _)
+                        | TxnExecutionResult::BlockStateRootTimeExceeded(_, _, _)
+                );
+
+                if is_time_limit {
+                    // Record which specific limit was exceeded
+                    self.metrics.resource_limit_would_reject_total.increment(1);
+                    match &result {
+                        TxnExecutionResult::TransactionExecutionTimeExceeded(_, _) => {
+                            self.metrics.tx_execution_time_exceeded_total.increment(1);
+                        }
+                        TxnExecutionResult::FlashblockExecutionTimeExceeded(_, _, _) => {
+                            self.metrics.flashblock_execution_time_exceeded_total.increment(1);
+                        }
+                        TxnExecutionResult::TransactionStateRootTimeExceeded(_, _) => {
+                            self.metrics.tx_state_root_time_exceeded_total.increment(1);
+                        }
+                        TxnExecutionResult::BlockStateRootTimeExceeded(_, _, _) => {
+                            self.metrics.block_state_root_time_exceeded_total.increment(1);
+                        }
+                        _ => {}
+                    }
+
+                    if self.resource_metering_mode.is_observe_only() {
+                        // In observe-only mode, log but don't reject
+                        warn!(
+                            target: "payload_builder",
+                            message = "Transaction would exceed time limits (observe-only)",
+                            tx_hash = ?tx_hash,
+                            result = %result,
+                            predicted_exec_us = ?predicted_execution_time_us,
+                            predicted_sr_us = ?predicted_state_root_time_us,
+                        );
+                        // Continue to execute - don't reject
+                    } else {
+                        // In enforcement mode, reject the transaction
+                        log_txn(result);
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                } else {
+                    // Non-time limits (gas, DA) always enforce
+                    log_txn(result);
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
@@ -546,9 +610,18 @@ impl OpPayloadBuilderCtx {
                 }
             };
 
+            let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
             self.metrics.tx_simulation_duration.record(tx_simulation_start_time.elapsed());
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
+
+            // Record actual execution time and calculate prediction error
+            self.metrics.tx_actual_execution_time_us.record(actual_execution_time_us as f64);
+            if let Some(predicted) = predicted_execution_time_us {
+                // Positive error = over-prediction, Negative = under-prediction
+                let error = predicted as i128 - actual_execution_time_us as i128;
+                self.metrics.execution_time_prediction_error_us.record(error as f64);
+            }
 
             let gas_used = result.gas_used();
             let is_success = result.is_success();
@@ -577,7 +650,6 @@ impl OpPayloadBuilderCtx {
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
             // record execution time (use actual measured time if metering data not available)
-            let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
             info.flashblock_execution_time_us +=
                 predicted_execution_time_us.unwrap_or(actual_execution_time_us);
             // record state root time if available from metering data (cumulative across block)

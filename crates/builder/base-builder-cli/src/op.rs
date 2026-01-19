@@ -2,9 +2,38 @@
 //!
 //! Copied from OptimismNode to allow easy extension.
 
+use clap::ValueEnum;
 use reth_optimism_node::args::RollupArgs;
 
 use crate::{FlashblocksArgs, TelemetryArgs};
+
+/// Resource metering mode for transaction time limits.
+///
+/// Controls how the builder handles time-based resource limits
+/// (execution time and state root calculation time).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ResourceMeteringMode {
+    /// Resource metering is disabled. No time limit checks are performed.
+    #[default]
+    Off,
+    /// Observe mode: collect metrics about transactions that would exceed time limits,
+    /// but don't actually reject them. Useful for gathering data before enforcement.
+    Observe,
+    /// Enforce mode: reject transactions that exceed time limits.
+    Enforce,
+}
+
+impl ResourceMeteringMode {
+    /// Returns true if metering data should be collected (observe or enforce mode).
+    pub const fn is_enabled(&self) -> bool {
+        matches!(self, Self::Observe | Self::Enforce)
+    }
+
+    /// Returns true if limits should only be observed, not enforced.
+    pub const fn is_observe_only(&self) -> bool {
+        matches!(self, Self::Observe)
+    }
+}
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -42,9 +71,10 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Whether to enable TIPS Resource Metering
-    #[arg(long = "builder.enable-resource-metering", default_value = "false")]
-    pub enable_resource_metering: bool,
+    /// Resource metering mode: off (disabled), observe (collect metrics without enforcing),
+    /// or enforce (reject transactions exceeding time limits)
+    #[arg(long = "builder.resource-metering-mode", default_value = "off", value_enum)]
+    pub resource_metering_mode: ResourceMeteringMode,
 
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
@@ -69,7 +99,7 @@ impl Default for OpRbuilderArgs {
             flashblock_execution_time_budget_us: None,
             block_state_root_time_budget_us: None,
             extra_block_deadline_secs: 20,
-            enable_resource_metering: false,
+            resource_metering_mode: ResourceMeteringMode::Off,
             tx_data_store_buffer_size: 10000,
             flashblocks: FlashblocksArgs::default(),
             telemetry: TelemetryArgs::default(),

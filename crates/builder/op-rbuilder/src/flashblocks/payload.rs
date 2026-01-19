@@ -198,6 +198,7 @@ where
             max_state_root_time_per_tx_us: self.config.max_state_root_time_per_tx_us,
             flashblock_execution_time_budget_us: self.config.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
+            resource_metering_mode: self.config.resource_metering_mode,
             tx_data_store: self.config.tx_data_store.clone(),
         })
     }
@@ -664,6 +665,13 @@ where
             .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
         ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
         ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
+
+        // Record cumulative predicted state root time for the block (observation metric)
+        if info.cumulative_state_root_time_us > 0 {
+            ctx.metrics
+                .block_predicted_state_root_time_us
+                .record(info.cumulative_state_root_time_us as f64);
+        }
 
         debug!(
             target: "payload_builder",
