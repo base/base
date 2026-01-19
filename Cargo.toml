@@ -61,6 +61,8 @@ base-access-lists = { path = "crates/shared/access-lists" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-jwt = { path = "crates/shared/jwt" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
+yamux = "0.13.8"
+webpki-roots = "1.0.5"
 
 # Client
 base-client-cli = { path = "crates/client/cli" }
