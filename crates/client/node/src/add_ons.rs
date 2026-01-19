@@ -49,7 +49,6 @@ pub struct BaseAddOns<
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
     pub gas_limit_config: OpGasLimitConfig,
-    min_suggested_priority_fee: u64,
 }
 
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
@@ -63,9 +62,8 @@ where
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: OpDAConfig,
         gas_limit_config: OpGasLimitConfig,
-        min_suggested_priority_fee: u64,
     ) -> Self {
-        Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee }
+        Self { rpc_add_ons, da_config, gas_limit_config }
     }
 }
 
@@ -107,13 +105,11 @@ where
         self,
         engine_api_builder: T,
     ) -> BaseAddOns<N, EthB, PVB, T, EVB, RpcMiddleware> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
-            self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_engine_api(engine_api_builder),
             da_config,
             gas_limit_config,
-            min_suggested_priority_fee,
         )
     }
 
@@ -122,13 +118,11 @@ where
         self,
         payload_validator_builder: T,
     ) -> BaseAddOns<N, EthB, T, EB, EVB, RpcMiddleware> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
-            self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_payload_validator(payload_validator_builder),
             da_config,
             gas_limit_config,
-            min_suggested_priority_fee,
         )
     }
 
@@ -137,13 +131,11 @@ where
         self,
         engine_validator_builder: T,
     ) -> BaseAddOns<N, EthB, PVB, EB, T, RpcMiddleware> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
-            self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_engine_validator(engine_validator_builder),
             da_config,
             gas_limit_config,
-            min_suggested_priority_fee,
         )
     }
 
@@ -155,13 +147,11 @@ where
     ///
     /// See also [`RpcAddOns::with_rpc_middleware`].
     pub fn with_rpc_middleware<T>(self, rpc_middleware: T) -> BaseAddOns<N, EthB, PVB, EB, EVB, T> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, min_suggested_priority_fee, .. } =
-            self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
         BaseAddOns::new(
             rpc_add_ons.with_rpc_middleware(rpc_middleware),
             da_config,
             gas_limit_config,
-            min_suggested_priority_fee,
         )
     }
 
@@ -452,7 +442,6 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),
             gas_limit_config.unwrap_or_default(),
-            min_suggested_priority_fee,
         )
     }
 }
