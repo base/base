@@ -26,6 +26,9 @@ kona-gossip = { workspace = true, features = ["metrics"] }
 kona-node-service = { workspace = true, features = ["metrics"] }
 kona-providers-alloy = { workspace = true, features = ["metrics"] }
 
+# Reth (feature unification)
+reth-optimism-primitives.workspace = true
+
 # CLI
 clap.workspace = true
 eyre.workspace = true
