@@ -350,14 +350,11 @@ where
             block_overrides = ?block_overrides,
         );
 
-        let mut block_id = block_number.unwrap_or_default();
-        let mut pending_overrides = EvmOverrides::default();
+        let (block_id, pending_overrides, is_pending) =
+            self.resolve_pending_block_ctx(block_number);
         // If the call is to pending block use cached override (if it exists)
-        if block_id.is_pending() {
+        if is_pending {
             self.metrics.rpc_call.increment(1);
-            let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
         }
 
         // Apply user's overrides on top
@@ -391,14 +388,11 @@ where
             overrides = ?overrides,
         );
 
-        let mut block_id = block_number.unwrap_or_default();
-        let mut pending_overrides = EvmOverrides::default();
+        let (block_id, pending_overrides, is_pending) =
+            self.resolve_pending_block_ctx(block_number);
         // If the call is to pending block use cached override (if it exists)
-        if block_id.is_pending() {
+        if is_pending {
             self.metrics.rpc_estimate_gas.increment(1);
-            let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
         }
 
         let mut state_overrides_builder =
@@ -421,15 +415,11 @@ where
             block_number = ?block_number,
         );
 
-        let mut block_id = block_number.unwrap_or_default();
-        let mut pending_overrides = EvmOverrides::default();
-
+        let (block_id, pending_overrides, is_pending) =
+            self.resolve_pending_block_ctx(block_number);
         // If the call is to pending block use cached override (if it exists)
-        if block_id.is_pending() {
+        if is_pending {
             self.metrics.rpc_simulate_v1.increment(1);
-            let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            block_id = pending_blocks.get_canonical_block_number().into();
-            pending_overrides.state = pending_blocks.get_state_overrides();
         }
 
         // Prepend flashblocks pending overrides to the block state calls
@@ -547,6 +537,27 @@ where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
+    /// Resolves the effective block id and EVM overrides for a request.
+    ///
+    /// If the request targets `pending`, this returns the canonical block id (for the underlying
+    /// eth API call) plus flashblocks-derived state overrides, and indicates `is_pending = true`.
+    fn resolve_pending_block_ctx(
+        &self,
+        block_number: Option<BlockId>,
+    ) -> (BlockId, EvmOverrides, bool) {
+        let mut block_id = block_number.unwrap_or_default();
+        let mut pending_overrides = EvmOverrides::default();
+
+        let is_pending = block_id.is_pending();
+        if is_pending {
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            block_id = pending_blocks.get_canonical_block_number().into();
+            pending_overrides.state = pending_blocks.get_state_overrides();
+        }
+
+        (block_id, pending_overrides, is_pending)
+    }
+
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
 
