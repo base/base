@@ -2,10 +2,8 @@
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadId, PayloadStatusEnum};
-use base_engine_ext::InProcessEngineClient;
+use base_engine_ext::DirectEngineApi;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
 use tracing::{debug, warn};
 
 use crate::{EngineSyncState, ProcessorError};
@@ -18,14 +16,14 @@ impl BuildHandler {
     /// Handles a build request by calling `fork_choice_updated_v3` with attributes.
     ///
     /// This initiates payload building in the execution layer.
-    pub async fn handle<P>(
-        client: &InProcessEngineClient<P>,
+    pub async fn handle<E>(
+        client: &E,
         sync_state: &EngineSyncState,
         parent_hash: B256,
         attributes: OpPayloadAttributes,
     ) -> Result<PayloadId, ProcessorError>
     where
-        P: BlockNumReader + BlockHashReader + HeaderProvider,
+        E: DirectEngineApi,
     {
         debug!(?parent_hash, "Handling build request");
 
@@ -42,7 +40,7 @@ impl BuildHandler {
         let response = client
             .fork_choice_updated_v3(state, Some(attributes))
             .await
-            .map_err(ProcessorError::Engine)?;
+            .map_err(ProcessorError::engine)?;
 
         // Validate payload status.
         match response.payload_status.status {

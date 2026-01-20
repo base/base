@@ -1,10 +1,8 @@
 //! Reset request handler.
 
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
-use base_engine_ext::InProcessEngineClient;
+use base_engine_ext::DirectEngineApi;
 use kona_protocol::L2BlockInfo;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
 use tracing::{debug, warn};
 
 use crate::{EngineSyncState, ProcessorError};
@@ -18,17 +16,21 @@ impl ResetHandler {
     ///
     /// This is used when the derivation pipeline needs to be reset,
     /// typically after detecting a reorg or invalid state.
-    pub async fn handle<P>(
-        client: &InProcessEngineClient<P>,
+    pub async fn handle<E>(
+        client: &E,
         sync_state: &EngineSyncState,
     ) -> Result<L2BlockInfo, ProcessorError>
     where
-        P: BlockNumReader + BlockHashReader + HeaderProvider,
+        E: DirectEngineApi,
     {
         debug!("Handling reset request");
 
         // Get the finalized head from the engine client.
-        let finalized = client.l2_finalized_head().map_err(ProcessorError::Engine)?;
+        let finalized = client
+            .l2_finalized_head()
+            .await
+            .map_err(ProcessorError::engine)?
+            .ok_or_else(|| ProcessorError::BlockNotFound("finalized head".to_string()))?;
 
         // Update fork choice to the finalized head.
         let state = ForkchoiceState {
@@ -38,7 +40,7 @@ impl ResetHandler {
         };
 
         let response =
-            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::Engine)?;
+            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::engine)?;
 
         // Validate response.
         match response.payload_status.status {

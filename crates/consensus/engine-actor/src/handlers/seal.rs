@@ -1,10 +1,8 @@
 //! Seal request handler.
 
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadId, PayloadStatusEnum};
-use base_engine_ext::InProcessEngineClient;
+use base_engine_ext::DirectEngineApi;
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelopeV3;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
 use tracing::{debug, warn};
 
 use crate::{EngineSyncState, ProcessorError};
@@ -18,18 +16,18 @@ impl SealHandler {
     ///
     /// This retrieves the built payload, inserts it into the execution layer,
     /// and updates the fork choice to make it canonical.
-    pub async fn handle<P>(
-        client: &InProcessEngineClient<P>,
+    pub async fn handle<E>(
+        client: &E,
         sync_state: &EngineSyncState,
         payload_id: PayloadId,
     ) -> Result<OpExecutionPayloadEnvelopeV3, ProcessorError>
     where
-        P: BlockNumReader + BlockHashReader + HeaderProvider,
+        E: DirectEngineApi,
     {
         debug!(%payload_id, "Handling seal request");
 
         // Get the payload from the store.
-        let envelope = client.get_payload_v3(payload_id).await.map_err(ProcessorError::Engine)?;
+        let envelope = client.get_payload_v3(payload_id).await.map_err(ProcessorError::engine)?;
 
         let block_hash = envelope.execution_payload.payload_inner.payload_inner.block_hash;
 
@@ -41,7 +39,7 @@ impl SealHandler {
                 envelope.parent_beacon_block_root,
             )
             .await
-            .map_err(ProcessorError::Engine)?;
+            .map_err(ProcessorError::engine)?;
 
         // Validate payload status.
         match status.status {
@@ -65,7 +63,7 @@ impl SealHandler {
         };
 
         let fcu_response =
-            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::Engine)?;
+            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::engine)?;
 
         // Validate FCU response.
         match fcu_response.payload_status.status {
@@ -79,7 +77,7 @@ impl SealHandler {
         }
 
         // Update the sync state with the new unsafe head.
-        if let Ok(block_info) = client.l2_block_info_by_hash(block_hash) {
+        if let Ok(Some(block_info)) = client.l2_block_info_by_hash(block_hash).await {
             sync_state.set_unsafe_head(block_info);
         }
 

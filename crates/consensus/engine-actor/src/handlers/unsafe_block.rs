@@ -1,10 +1,8 @@
 //! Unsafe block processing handler.
 
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
-use base_engine_ext::InProcessEngineClient;
+use base_engine_ext::DirectEngineApi;
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelopeV3;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
 use tracing::{debug, warn};
 
 use crate::{EngineSyncState, ProcessorError};
@@ -17,13 +15,13 @@ impl UnsafeBlockHandler {
     /// Handles an unsafe L2 block by inserting it via `new_payload`.
     ///
     /// This is used for blocks received from gossip that haven't been derived yet.
-    pub async fn handle<P>(
-        client: &InProcessEngineClient<P>,
+    pub async fn handle<E>(
+        client: &E,
         sync_state: &EngineSyncState,
         envelope: OpExecutionPayloadEnvelopeV3,
     ) -> Result<(), ProcessorError>
     where
-        P: BlockNumReader + BlockHashReader + HeaderProvider,
+        E: DirectEngineApi,
     {
         let block_hash = envelope.execution_payload.payload_inner.payload_inner.block_hash;
         let block_number = envelope.execution_payload.payload_inner.payload_inner.block_number;
@@ -38,7 +36,7 @@ impl UnsafeBlockHandler {
                 envelope.parent_beacon_block_root,
             )
             .await
-            .map_err(ProcessorError::Engine)?;
+            .map_err(ProcessorError::engine)?;
 
         // Validate payload status.
         match status.status {
@@ -63,7 +61,7 @@ impl UnsafeBlockHandler {
         };
 
         let response =
-            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::Engine)?;
+            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::engine)?;
 
         // Validate FCU response.
         match response.payload_status.status {
@@ -77,7 +75,7 @@ impl UnsafeBlockHandler {
         }
 
         // Update the sync state with the new unsafe head.
-        if let Ok(block_info) = client.l2_block_info_by_hash(block_hash) {
+        if let Ok(Some(block_info)) = client.l2_block_info_by_hash(block_hash).await {
             sync_state.set_unsafe_head(block_info);
         }
 

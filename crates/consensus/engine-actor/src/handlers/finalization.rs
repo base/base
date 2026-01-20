@@ -1,9 +1,7 @@
 //! Finalization request handler.
 
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
-use base_engine_ext::InProcessEngineClient;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
+use base_engine_ext::DirectEngineApi;
 use tracing::{debug, warn};
 
 use crate::{EngineSyncState, ProcessorError};
@@ -14,19 +12,24 @@ pub struct FinalizationHandler;
 
 impl FinalizationHandler {
     /// Handles a finalized L2 block number by updating the finalized head.
-    pub async fn handle<P>(
-        client: &InProcessEngineClient<P>,
+    pub async fn handle<E>(
+        client: &E,
         sync_state: &EngineSyncState,
         finalized_number: u64,
     ) -> Result<(), ProcessorError>
     where
-        P: BlockNumReader + BlockHashReader + HeaderProvider,
+        E: DirectEngineApi,
     {
         debug!(finalized_number, "Handling finalization request");
 
         // Get the block info for the finalized number.
-        let finalized_info =
-            client.l2_block_info_by_number(finalized_number).map_err(ProcessorError::Engine)?;
+        let finalized_info = client
+            .l2_block_info_by_number(finalized_number)
+            .await
+            .map_err(ProcessorError::engine)?
+            .ok_or_else(|| {
+                ProcessorError::BlockNotFound(format!("block number {finalized_number}"))
+            })?;
 
         // Get current heads.
         let unsafe_hash = sync_state.unsafe_head_hash().unwrap_or(finalized_info.block_info.hash);
@@ -40,7 +43,7 @@ impl FinalizationHandler {
         };
 
         let response =
-            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::Engine)?;
+            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::engine)?;
 
         // Validate response.
         match response.payload_status.status {

@@ -1,10 +1,8 @@
 //! Consolidation (safe L2 signal) request handler.
 
 use alloy_rpc_types_engine::{ForkchoiceState, PayloadStatusEnum};
-use base_engine_ext::InProcessEngineClient;
+use base_engine_ext::DirectEngineApi;
 use kona_protocol::L2BlockInfo;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
 use tracing::{debug, warn};
 
 use crate::{EngineSyncState, ProcessorError};
@@ -15,13 +13,13 @@ pub struct ConsolidationHandler;
 
 impl ConsolidationHandler {
     /// Handles a safe L2 signal by updating the safe head in the fork choice state.
-    pub async fn handle<P>(
-        client: &InProcessEngineClient<P>,
+    pub async fn handle<E>(
+        client: &E,
         sync_state: &EngineSyncState,
         safe_head: L2BlockInfo,
     ) -> Result<(), ProcessorError>
     where
-        P: BlockNumReader + BlockHashReader + HeaderProvider,
+        E: DirectEngineApi,
     {
         debug!(
             safe_hash = ?safe_head.block_info.hash,
@@ -41,7 +39,7 @@ impl ConsolidationHandler {
         };
 
         let response =
-            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::Engine)?;
+            client.fork_choice_updated_v3(state, None).await.map_err(ProcessorError::engine)?;
 
         // Validate response.
         match response.payload_status.status {

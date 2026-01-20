@@ -14,8 +14,11 @@ impl<P> InProcessEngineClient<P>
 where
     P: BlockNumReader + BlockHashReader + HeaderProvider,
 {
-    /// Returns the L2 block info for a given block number.
-    pub fn l2_block_info_by_number(&self, number: u64) -> Result<L2BlockInfo, EngineError> {
+    /// Returns the L2 block info for a given block number (synchronous).
+    ///
+    /// This is the underlying synchronous implementation. For async usage via
+    /// [`DirectEngineApi`][crate::DirectEngineApi], use the trait method instead.
+    pub fn l2_block_info_by_number_sync(&self, number: u64) -> Result<L2BlockInfo, EngineError> {
         trace!(number, "Querying L2 block info by number");
 
         let header = self
@@ -53,15 +56,21 @@ where
         })
     }
 
-    /// Returns the L2 block info for the latest block.
-    pub fn l2_block_info_latest(&self) -> Result<L2BlockInfo, EngineError> {
+    /// Returns the L2 block info for the latest block (synchronous).
+    ///
+    /// This is the underlying synchronous implementation. For async usage via
+    /// [`DirectEngineApi`][crate::DirectEngineApi], use the trait method instead.
+    pub fn l2_block_info_latest_sync(&self) -> Result<L2BlockInfo, EngineError> {
         let number =
             self.provider.last_block_number().map_err(|e| EngineError::Provider(e.to_string()))?;
-        self.l2_block_info_by_number(number)
+        self.l2_block_info_by_number_sync(number)
     }
 
-    /// Returns the L2 block info for a given block hash.
-    pub fn l2_block_info_by_hash(&self, hash: B256) -> Result<L2BlockInfo, EngineError> {
+    /// Returns the L2 block info for a given block hash (synchronous).
+    ///
+    /// This is the underlying synchronous implementation. For async usage via
+    /// [`DirectEngineApi`][crate::DirectEngineApi], use the trait method instead.
+    pub fn l2_block_info_by_hash_sync(&self, hash: B256) -> Result<L2BlockInfo, EngineError> {
         trace!(?hash, "Querying L2 block info by hash");
 
         let number = self
@@ -70,32 +79,38 @@ where
             .map_err(|e| EngineError::Provider(e.to_string()))?
             .ok_or_else(|| EngineError::BlockNotFound(format!("block hash {hash}")))?;
 
-        self.l2_block_info_by_number(number)
+        self.l2_block_info_by_number_sync(number)
     }
 
-    /// Returns the L2 safe head block info.
+    /// Returns the L2 safe head block info (synchronous).
     ///
     /// This relies on the forkchoice tracker being updated with FCU responses.
-    pub fn l2_safe_head(&self) -> Result<L2BlockInfo, EngineError> {
+    /// This is the underlying synchronous implementation. For async usage via
+    /// [`DirectEngineApi`][crate::DirectEngineApi], use the trait method instead.
+    pub fn l2_safe_head_sync(&self) -> Result<L2BlockInfo, EngineError> {
         let safe_hash = self.forkchoice.safe_head().ok_or(EngineError::ForkchoiceNotInitialized)?;
-        self.l2_block_info_by_hash(safe_hash)
+        self.l2_block_info_by_hash_sync(safe_hash)
     }
 
-    /// Returns the L2 finalized head block info.
+    /// Returns the L2 finalized head block info (synchronous).
     ///
     /// This relies on the forkchoice tracker being updated with FCU responses.
-    pub fn l2_finalized_head(&self) -> Result<L2BlockInfo, EngineError> {
+    /// This is the underlying synchronous implementation. For async usage via
+    /// [`DirectEngineApi`][crate::DirectEngineApi], use the trait method instead.
+    pub fn l2_finalized_head_sync(&self) -> Result<L2BlockInfo, EngineError> {
         let finalized_hash =
             self.forkchoice.finalized_head().ok_or(EngineError::ForkchoiceNotInitialized)?;
-        self.l2_block_info_by_hash(finalized_hash)
+        self.l2_block_info_by_hash_sync(finalized_hash)
     }
 
-    /// Returns the L2 unsafe head block info.
+    /// Returns the L2 unsafe head block info (synchronous).
     ///
     /// This relies on the forkchoice tracker being updated with FCU responses.
-    pub fn l2_unsafe_head(&self) -> Result<L2BlockInfo, EngineError> {
+    /// This is the underlying synchronous implementation. For async usage via
+    /// [`DirectEngineApi`][crate::DirectEngineApi], use the trait method instead.
+    pub fn l2_unsafe_head_sync(&self) -> Result<L2BlockInfo, EngineError> {
         let unsafe_hash =
             self.forkchoice.unsafe_head().ok_or(EngineError::ForkchoiceNotInitialized)?;
-        self.l2_block_info_by_hash(unsafe_hash)
+        self.l2_block_info_by_hash_sync(unsafe_hash)
     }
 }
