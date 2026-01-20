@@ -1,5 +1,8 @@
 # `base-fbal`
 
+<a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
+<a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
+
 A library to build and process Flashblock-level Access Lists (FBALs).
 
 See the [spec](../../../docs/specs/access-lists.md) for more details.

@@ -1,4 +1,7 @@
-# base-reth-metering
+# `base-reth-metering`
+
+<a href="https://github.com/base/node-reth/actions/workflows/ci.yml"><img src="https://github.com/base/node-reth/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
+<a href="https://github.com/base/node-reth/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
 Metering RPC for Base node. Provides RPC methods for measuring transaction and block execution timing.
 
