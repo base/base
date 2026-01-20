@@ -186,12 +186,16 @@ where
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
+        // Create shared mutex for synchronizing cancellation with payload publishing
+        let publish_guard = Arc::new(Mutex::new(()));
+
         let mut job = BlockPayloadJob {
             executor: self.executor.clone(),
             builder: self.builder.clone(),
             config,
             cell: BlockCell::new(),
             cancel: cancel_token,
+            publish_guard,
             deadline,
             build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
@@ -244,6 +248,8 @@ where
     pub(crate) cell: BlockCell<Builder::BuiltPayload>,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
+    /// Mutex to synchronize cancellation with payload publishing.
+    pub(crate) publish_guard: Arc<Mutex<()>>,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
     /// Caches all disk reads for the state the new payloads build on
@@ -278,8 +284,11 @@ where
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
         tracing::info!("Resolve kind {:?}", kind);
 
-        // check if self.cell has a payload
-        self.cancel.cancel();
+        // Acquire mutex before cancelling to synchronize with payload publishing.
+        {
+            let _guard = self.publish_guard.lock().unwrap();
+            self.cancel.cancel();
+        }
 
         let resolve_future = ResolvePayload::new(self.cell.wait_for_value());
         (resolve_future, KeepPayloadJobAlive::No)
@@ -293,6 +302,8 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancellationToken,
+    /// Mutex to synchronize cancellation with payload publishing.
+    pub publish_guard: Arc<Mutex<()>>,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -308,12 +319,14 @@ where
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
+        let publish_guard = self.publish_guard.clone();
 
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking(Box::pin(async move {
-            let args = BuildArguments { cached_reads, config: payload_config, cancel };
+            let args =
+                BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
 
             let result = builder.try_build(args, cell).await;
             let _ = tx.send(result);
