@@ -1943,8 +1943,6 @@ dependencies = [
  "kona-protocol",
  "op-alloy-rpc-types-engine",
  "parking_lot",
- "reth-provider",
- "reth-storage-api",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -1958,6 +1956,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-engine",
+ "async-trait",
  "kona-protocol",
  "op-alloy-rpc-types-engine",
  "parking_lot",
@@ -2143,6 +2142,24 @@ dependencies = [
  "revm-database",
  "serde",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-node-service"
+version = "0.0.0"
+dependencies = [
+ "base-engine-actor",
+ "base-engine-ext",
+ "kona-derive",
+ "kona-engine",
+ "kona-genesis",
+ "kona-node-service",
+ "op-alloy-rpc-types-engine",
+ "reth-optimism-node",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 

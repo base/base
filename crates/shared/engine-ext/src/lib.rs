@@ -10,8 +10,11 @@ mod error;
 pub use error::EngineError;
 
 mod forkchoice;
+mod impl_trait;
 mod payload;
 mod query;
+mod traits;
+pub use traits::DirectEngineApi;
 
 mod state;
 // Re-export types needed to construct the client

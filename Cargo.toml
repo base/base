@@ -62,6 +62,7 @@ base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-jwt = { path = "crates/shared/jwt" }
 base-engine-ext = { path = "crates/shared/engine-ext" }
 base-engine-actor = { path = "crates/consensus/engine-actor" }
+base-node-service = { path = "crates/consensus/node-service" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # Client

@@ -1,10 +1,8 @@
 //! Request processor for the engine actor.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
-use base_engine_ext::InProcessEngineClient;
-use reth_provider::BlockNumReader;
-use reth_storage_api::{BlockHashReader, HeaderProvider};
+use base_engine_ext::DirectEngineApi;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
@@ -21,9 +19,13 @@ use crate::{
 ///
 /// This struct runs the main request processing loop, dispatching
 /// requests to the appropriate handlers.
-pub struct DirectEngineProcessor<P> {
-    /// The in-process engine client.
-    client: InProcessEngineClient<P>,
+///
+/// # Type Parameters
+///
+/// * `E` - The engine API implementation, must implement [`DirectEngineApi`]
+pub struct DirectEngineProcessor<E: DirectEngineApi> {
+    /// The engine client implementing DirectEngineApi.
+    client: Arc<E>,
     /// The request receiver.
     rx: mpsc::Receiver<EngineActorRequest>,
     /// Cancellation token for graceful shutdown.
@@ -32,19 +34,16 @@ pub struct DirectEngineProcessor<P> {
     sync_state: EngineSyncState,
 }
 
-impl<P> fmt::Debug for DirectEngineProcessor<P> {
+impl<E: DirectEngineApi> fmt::Debug for DirectEngineProcessor<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DirectEngineProcessor").field("sync_state", &self.sync_state).finish()
     }
 }
 
-impl<P> DirectEngineProcessor<P>
-where
-    P: BlockNumReader + BlockHashReader + HeaderProvider + Send + Sync + 'static,
-{
+impl<E: DirectEngineApi> DirectEngineProcessor<E> {
     /// Creates a new processor.
     pub fn new(
-        client: InProcessEngineClient<P>,
+        client: Arc<E>,
         rx: mpsc::Receiver<EngineActorRequest>,
         cancel: CancellationToken,
     ) -> Self {
@@ -53,7 +52,7 @@ where
 
     /// Creates a new processor with an existing sync state.
     pub const fn with_sync_state(
-        client: InProcessEngineClient<P>,
+        client: Arc<E>,
         rx: mpsc::Receiver<EngineActorRequest>,
         cancel: CancellationToken,
         sync_state: EngineSyncState,
@@ -96,7 +95,7 @@ where
         match request {
             EngineActorRequest::Build(req) => {
                 let result = BuildHandler::handle(
-                    &self.client,
+                    self.client.as_ref(),
                     &self.sync_state,
                     req.parent_hash,
                     req.attributes,
@@ -109,16 +108,20 @@ where
             }
             EngineActorRequest::Seal(req) => {
                 let result =
-                    SealHandler::handle(&self.client, &self.sync_state, req.payload_id).await;
+                    SealHandler::handle(self.client.as_ref(), &self.sync_state, req.payload_id)
+                        .await;
                 if let Err(e) = &result {
                     warn!("Seal request failed: {e}");
                 }
                 let _ = req.response.send(result);
             }
             EngineActorRequest::ProcessSafeL2Signal(req) => {
-                let result =
-                    ConsolidationHandler::handle(&self.client, &self.sync_state, req.safe_head)
-                        .await;
+                let result = ConsolidationHandler::handle(
+                    self.client.as_ref(),
+                    &self.sync_state,
+                    req.safe_head,
+                )
+                .await;
                 if let Err(e) = &result {
                     warn!("Consolidation request failed: {e}");
                 }
@@ -126,7 +129,7 @@ where
             }
             EngineActorRequest::ProcessFinalizedL2BlockNumber(req) => {
                 let result = FinalizationHandler::handle(
-                    &self.client,
+                    self.client.as_ref(),
                     &self.sync_state,
                     req.finalized_number,
                 )
@@ -137,15 +140,19 @@ where
                 let _ = req.response.send(result);
             }
             EngineActorRequest::ProcessUnsafeL2Block(req) => {
-                let result =
-                    UnsafeBlockHandler::handle(&self.client, &self.sync_state, req.envelope).await;
+                let result = UnsafeBlockHandler::handle(
+                    self.client.as_ref(),
+                    &self.sync_state,
+                    req.envelope,
+                )
+                .await;
                 if let Err(e) = &result {
                     warn!("Unsafe block request failed: {e}");
                 }
                 let _ = req.response.send(result);
             }
             EngineActorRequest::Reset(req) => {
-                let result = ResetHandler::handle(&self.client, &self.sync_state).await;
+                let result = ResetHandler::handle(self.client.as_ref(), &self.sync_state).await;
                 if let Err(e) = &result {
                     error!("Reset request failed: {e}");
                 }

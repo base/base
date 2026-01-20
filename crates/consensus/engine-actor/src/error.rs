@@ -1,6 +1,5 @@
 //! Error types for the engine actor.
 
-use base_engine_ext::EngineError;
 use thiserror::Error;
 
 /// Errors that can occur in the engine actor.
@@ -48,7 +47,7 @@ pub enum ProcessorError {
 
     /// Engine error.
     #[error("engine error: {0}")]
-    Engine(#[from] EngineError),
+    Engine(String),
 
     /// Missing payload ID after FCU.
     #[error("missing payload ID after fork choice update")]
@@ -57,4 +56,15 @@ pub enum ProcessorError {
     /// Invalid payload status.
     #[error("invalid payload status: {0}")]
     InvalidPayloadStatus(String),
+
+    /// Block not found.
+    #[error("block not found: {0}")]
+    BlockNotFound(String),
+}
+
+impl ProcessorError {
+    /// Creates an engine error from any error type.
+    pub fn engine<E: std::error::Error>(e: E) -> Self {
+        Self::Engine(e.to_string())
+    }
 }

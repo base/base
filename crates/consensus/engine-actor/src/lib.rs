@@ -22,3 +22,6 @@ pub use request::{
 
 mod state;
 pub use state::EngineSyncState;
+
+// Re-export core trait from engine-ext
+pub use base_engine_ext::DirectEngineApi;

@@ -1,12 +1,12 @@
 [package]
-name = "base-engine-actor"
-description = "Engine actor for direct reth communication via in-process channels"
+name = "base-node-service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Unified rollup node service using kona actors with in-process engine"
 
 [lints]
 workspace = true
@@ -14,25 +14,24 @@ workspace = true
 [dependencies]
 # Workspace
 base-engine-ext.workspace = true
+base-engine-actor = { path = "../engine-actor" }
 
-# Kona
+# kona
 kona-genesis.workspace = true
 kona-node-service.workspace = true
-kona-protocol.workspace = true
-
-# alloy
-alloy-primitives.workspace = true
-alloy-rpc-types-engine.workspace = true
+kona-engine.workspace = true
+kona-derive.workspace = true
 
 # op-alloy
 op-alloy-rpc-types-engine.workspace = true
 
+# reth
+reth-optimism-node.workspace = true
+
 # async
-async-trait.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "signal", "macros"] }
 tokio-util.workspace = true
 
 # misc
-parking_lot.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
