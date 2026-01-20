@@ -1931,6 +1931,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-engine-ext"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "op-alloy-rpc-types-engine",
+ "reth-engine-primitives",
+ "reth-optimism-node",
+ "reth-payload-builder",
+ "reth-payload-primitives",
+ "thiserror 2.0.17",
+ "tracing",
+]
+
+[[package]]
 name = "base-flashblocks"
 version = "0.0.0"
 dependencies = [
