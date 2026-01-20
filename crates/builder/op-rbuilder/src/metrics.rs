@@ -145,14 +145,6 @@ pub struct OpRBuilderMetrics {
     pub flashblocks_time_drift: Histogram,
     /// Time offset we used for first flashblock
     pub first_flashblock_time_offset: Histogram,
-    /// Number of requests sent to the eth_sendBundle endpoint
-    pub bundle_requests: Counter,
-    /// Number of valid bundles received at the eth_sendBundle endpoint
-    pub valid_bundles: Counter,
-    /// Number of bundles that failed to execute
-    pub failed_bundles: Counter,
-    /// Histogram of eth_sendBundle request duration
-    pub bundle_receive_duration: Histogram,
     /// Count of the number of times transactions had metering information
     pub metering_known_transaction: Counter,
     /// Count of the number of times transactions did not have any metering information
