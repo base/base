@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*"]
+members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*", "crates/consensus/*"]
 default-members = ["bin/node", "bin/consensus"]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -61,6 +61,7 @@ base-access-lists = { path = "crates/shared/access-lists" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-jwt = { path = "crates/shared/jwt" }
 base-engine-ext = { path = "crates/shared/engine-ext" }
+base-engine-actor = { path = "crates/consensus/engine-actor" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # Client
@@ -87,6 +88,7 @@ kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", rev = "1
 kona-sources = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
 kona-registry = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
 kona-node-service = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
+kona-protocol = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
 kona-providers-alloy = { git = "https://github.com/ethereum-optimism/optimism", rev = "1a8048a34f2650ec43fd5e2c947d03b2dd0cda3e" }
 
 # reth
