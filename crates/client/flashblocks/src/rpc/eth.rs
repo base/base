@@ -48,7 +48,7 @@ pub trait EthApiOverride {
         full: bool,
     ) -> RpcResult<Option<RpcBlock<Optimism>>>;
 
-    /// Returns transaction receipt, checking flashblocks first.
+    /// Returns transaction receipt, checking canonical chain first, then flashblocks.
     #[method(name = "getTransactionReceipt")]
     async fn get_transaction_receipt(
         &self,
@@ -68,7 +68,7 @@ pub trait EthApiOverride {
         block_number: Option<BlockId>,
     ) -> RpcResult<U256>;
 
-    /// Returns transaction by hash, checking flashblocks first.
+    /// Returns transaction by hash, checking canonical chain first, then flashblocks.
     #[method(name = "getTransactionByHash")]
     async fn transaction_by_hash(
         &self,
