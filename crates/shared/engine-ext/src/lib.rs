@@ -11,8 +11,11 @@ pub use error::EngineError;
 
 mod forkchoice;
 mod payload;
+mod query;
 
+mod state;
 // Re-export types needed to construct the client
 pub use reth_engine_primitives::ConsensusEngineHandle;
 pub use reth_optimism_node::OpEngineTypes;
 pub use reth_payload_builder::PayloadStore;
+pub use state::ForkchoiceTracker;

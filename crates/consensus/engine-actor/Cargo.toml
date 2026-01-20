@@ -1,6 +1,6 @@
 [package]
-name = "base-engine-ext"
-description = "In-process engine client for direct reth communication"
+name = "base-engine-actor"
+description = "Engine actor for direct reth communication via in-process channels"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,25 +12,29 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# kona
+# Workspace
+base-engine-ext.workspace = true
+
+# Kona
+kona-genesis.workspace = true
+kona-node-service.workspace = true
 kona-protocol.workspace = true
 
 # reth
-reth-engine-primitives.workspace = true
-reth-optimism-node.workspace = true
-reth-payload-builder.workspace = true
-reth-payload-primitives.workspace = true
-reth-primitives-traits.workspace = true
 reth-provider.workspace = true
 reth-storage-api.workspace = true
 
 # alloy
-alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 
 # op-alloy
 op-alloy-rpc-types-engine.workspace = true
+
+# async
+async-trait.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 
 # misc
 parking_lot.workspace = true

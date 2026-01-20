@@ -1931,17 +1931,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-engine-actor"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "base-engine-ext",
+ "kona-genesis",
+ "kona-node-service",
+ "kona-protocol",
+ "op-alloy-rpc-types-engine",
+ "parking_lot",
+ "reth-provider",
+ "reth-storage-api",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-engine-ext"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-engine",
+ "kona-protocol",
  "op-alloy-rpc-types-engine",
+ "parking_lot",
  "reth-engine-primitives",
  "reth-optimism-node",
  "reth-payload-builder",
  "reth-payload-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-storage-api",
  "thiserror 2.0.17",
  "tracing",
 ]
