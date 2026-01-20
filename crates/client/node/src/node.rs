@@ -86,7 +86,7 @@ impl BaseNode {
             .consensus(OpConsensusBuilder::default())
     }
 
-    /// Returns [`OpAddOnsBuilder`] with configured arguments.
+    /// Returns [`BaseAddOnsBuilder`] with configured arguments.
     pub fn add_ons_builder<NetworkT: RpcTypes>(&self) -> BaseAddOnsBuilder<NetworkT> {
         BaseAddOnsBuilder::default()
             .with_sequencer(self.args.sequencer.clone())
