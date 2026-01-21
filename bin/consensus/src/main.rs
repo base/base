@@ -3,10 +3,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-// Feature unification - enables `serde` and `reth-codec` features on
-// `reth-optimism-primitives` for transitive dependencies.
-use reth_optimism_primitives as _;
-
 pub mod cli;
 pub mod metrics;
 pub mod version;
