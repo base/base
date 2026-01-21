@@ -37,7 +37,7 @@ struct MyExtension {
 }
 
 impl BaseNodeExtension for MyExtension {
-    fn apply(self: Box<Self>, builder: OpBuilder) -> OpBuilder {
+    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
         // Apply custom wiring to the builder
         builder
     }

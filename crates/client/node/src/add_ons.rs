@@ -91,7 +91,7 @@ where
     N: FullNodeComponents<Types: OpNodeTypes>,
     OpEthApiBuilder<NetworkT>: EthApiBuilder<N>,
 {
-    /// Build a [`OpAddOns`] using [`OpAddOnsBuilder`].
+    /// Build a [`OpAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder<NetworkT> {
         BaseAddOnsBuilder::default()
     }
