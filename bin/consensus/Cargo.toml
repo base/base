@@ -43,7 +43,6 @@ strum.workspace = true
 
 # Tracing
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 
 # Metrics
 metrics.workspace = true

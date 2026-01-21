@@ -1926,7 +1926,6 @@ dependencies = [
  "rollup-boost",
  "strum 0.27.2",
  "tracing",
- "tracing-subscriber 0.3.22",
  "url",
  "vergen",
  "vergen-git2",
