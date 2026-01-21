@@ -1,0 +1,31 @@
+[package]
+name = "base-engine-ext"
+description = "In-process engine client for direct reth communication"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth-engine-primitives.workspace = true
+reth-optimism-node.workspace = true
+reth-payload-builder.workspace = true
+reth-payload-primitives.workspace = true
+
+# alloy
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-engine.workspace = true
+
+# op-alloy
+op-alloy-rpc-types-engine.workspace = true
+
+# misc
+thiserror.workspace = true
+tracing.workspace = true

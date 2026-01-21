@@ -60,6 +60,7 @@ base-primitives = { path = "crates/shared/primitives" }
 base-access-lists = { path = "crates/shared/access-lists" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-jwt = { path = "crates/shared/jwt" }
+base-engine-ext = { path = "crates/shared/engine-ext" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # Client
