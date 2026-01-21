@@ -173,13 +173,14 @@ impl JwtValidator {
 
 #[cfg(all(test, feature = "engine-validation"))]
 mod tests {
-    use super::*;
     use url::Url;
+
+    use super::*;
 
     #[test]
     fn normalize_http_url_unchanged() {
         let url = Url::parse("http://localhost:8551").unwrap();
-        let result = JwtValidator::normalize_engine_url(url.clone()).unwrap();
+        let result = JwtValidator::normalize_engine_url(url).unwrap();
         assert_eq!(result.scheme(), "http");
         assert_eq!(result.host_str(), Some("localhost"));
         assert_eq!(result.port(), Some(8551));

@@ -87,7 +87,7 @@ impl From<LogArgs> for LogConfig {
 
 /// Global arguments shared across all CLI commands.
 ///
-/// Chain ID defaults to Base Mainnet (8453). Can be set via `--network` or `BASE_NETWORK` env.
+/// Chain ID defaults to Base Mainnet (8453). Can be set via `--network` or `BASE_NODE_NETWORK` env.
 #[derive(Debug, Clone, Parser)]
 pub struct GlobalArgs {
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
@@ -97,7 +97,7 @@ pub struct GlobalArgs {
         short = 'n',
         global = true,
         default_value = "8453",
-        env = "BASE_NETWORK"
+        env = "BASE_NODE_NETWORK"
     )]
     pub l2_chain_id: alloy_chains::Chain,
 
