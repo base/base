@@ -1792,7 +1792,6 @@ dependencies = [
  "kona-cli",
  "kona-derive",
  "kona-disc",
- "kona-engine",
  "kona-genesis",
  "kona-gossip",
  "kona-node-service",
@@ -1803,7 +1802,6 @@ dependencies = [
  "kona-sources",
  "libp2p",
  "reqwest",
- "rollup-boost",
  "rstest",
  "serde_json",
  "thiserror 2.0.17",
@@ -1911,6 +1909,7 @@ dependencies = [
 name = "base-consensus"
 version = "0.0.0"
 dependencies = [
+ "alloy-rpc-types-engine",
  "base-cli-utils",
  "base-client-cli",
  "clap",
@@ -1924,9 +1923,10 @@ dependencies = [
  "kona-providers-alloy",
  "metrics",
  "reth-optimism-primitives",
+ "rollup-boost",
  "strum 0.27.2",
  "tracing",
- "tracing-subscriber 0.3.22",
+ "url",
  "vergen",
  "vergen-git2",
 ]

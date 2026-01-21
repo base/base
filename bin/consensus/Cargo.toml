@@ -25,6 +25,13 @@ kona-genesis.workspace = true
 kona-gossip = { workspace = true, features = ["metrics"] }
 kona-node-service = { workspace = true, features = ["metrics"] }
 kona-providers-alloy = { workspace = true, features = ["metrics"] }
+rollup-boost-kona.workspace = true
+
+# Alloy
+alloy-rpc-types-engine.workspace = true
+
+# Misc
+url.workspace = true
 
 # Reth (feature unification)
 reth-optimism-primitives.workspace = true
@@ -36,7 +43,6 @@ strum.workspace = true
 
 # Tracing
 tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
 
 # Metrics
 metrics.workspace = true
