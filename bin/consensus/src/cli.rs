@@ -2,18 +2,18 @@
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
-use alloy_rpc_types_engine::JwtSecret;
 use clap::Parser;
 use kona_engine::RollupBoostServerArgs;
 use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
 use rollup_boost_kona::ExecutionMode;
-use url::Url;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
+use url::Url;
 
 use crate::{metrics::init_rollup_config_metrics, version};
 

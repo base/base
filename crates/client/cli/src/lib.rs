@@ -16,9 +16,8 @@ mod rpc;
 pub use rpc::RpcArgs;
 
 mod sequencer;
-pub use sequencer::SequencerArgs;
-
 pub use base_jwt::{JwtError, JwtSecret, default_jwt_secret};
+pub use sequencer::SequencerArgs;
 
 pub mod signer;
 pub use signer::{SignerArgs, SignerArgsParseError};
