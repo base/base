@@ -33,9 +33,6 @@ alloy-rpc-types-engine.workspace = true
 # Misc
 url.workspace = true
 
-# Reth (feature unification)
-reth-optimism-primitives.workspace = true
-
 # CLI
 clap.workspace = true
 eyre.workspace = true
