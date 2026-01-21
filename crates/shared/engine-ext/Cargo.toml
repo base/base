@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# base
+base-primitives = { path = "../primitives", features = ["engine"] }
+
 # kona
 kona-protocol.workspace = true
 

@@ -7,8 +7,8 @@
 pub mod engine;
 #[cfg(feature = "engine")]
 pub use engine::{
-    BlockProvider, DirectEngineApi, EIP1186AccountProofResponse, LegacyPayloadSupport,
-    ProofProvider, RollupConfigProvider, StorageKey,
+    BlockProvider, DirectEngineApi, EIP1186AccountProofResponse, EngineApiClient, EngineApiError,
+    EngineApiResult, LegacyPayloadSupport, ProofProvider, RollupConfigProvider, StorageKey,
 };
 
 #[cfg(feature = "test-utils")]

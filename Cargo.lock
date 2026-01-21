@@ -1958,6 +1958,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-engine",
+ "base-primitives",
  "kona-protocol",
  "op-alloy-rpc-types-engine",
  "parking_lot",
@@ -2162,14 +2163,11 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-macro",
  "alloy-sol-types",
- "alloy-transport",
- "alloy-transport-http",
  "eyre",
- "kona-engine",
  "kona-genesis",
  "op-alloy-network",
- "op-alloy-provider",
  "op-alloy-rpc-types",
+ "op-alloy-rpc-types-engine",
  "serde_json",
 ]
 
