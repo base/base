@@ -131,10 +131,11 @@ where
         // 1. If the precompile has an accelerated version, use that.
         // 2. If the precompile is not accelerated, use the default version.
         // 3. If the precompile is not found, return None.
-        let output = if let Some(precompile) = self.inner.precompiles.get(&inputs.target_address) {
+        let output = if let Some(precompile) = self.inner.precompiles.get(&inputs.bytecode_address)
+        {
             // Track cycles for accelerated precompiles
             #[cfg(target_os = "zkvm")]
-            let tracker_name = get_precompile_tracker_name(&inputs.target_address);
+            let tracker_name = get_precompile_tracker_name(&inputs.bytecode_address);
 
             #[cfg(target_os = "zkvm")]
             if let Some(name) = tracker_name {
@@ -181,5 +182,119 @@ where
     #[inline]
     fn contains(&self, address: &Address) -> bool {
         self.inner.contains(address)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use alloy_primitives::U256;
+    use op_revm::{DefaultOp as _, OpContext};
+    use revm::{
+        database::EmptyDB,
+        handler::PrecompileProvider,
+        interpreter::{CallInput, CallScheme, CallValue},
+        Context,
+    };
+
+    type TestContext = OpContext<EmptyDB>;
+
+    /// Creates a [`CallInputs`] with `bytecode_address` set to the given address
+    /// and `target_address` set to zero, simulating a DELEGATECALL scenario.
+    fn create_call_inputs(address: Address, input: Bytes, gas_limit: u64) -> CallInputs {
+        CallInputs {
+            input: CallInput::Bytes(input),
+            gas_limit,
+            bytecode_address: address,
+            target_address: Address::ZERO, // Simulates DELEGATECALL context
+            caller: Address::ZERO,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+            return_memory_offset: 0..0,
+            known_bytecode: None,
+        }
+    }
+
+    fn create_test_context() -> TestContext {
+        Context::op().with_db(EmptyDB::new())
+    }
+
+    /// Test that precompiles are looked up by `bytecode_address`, not `target_address`.
+    /// This is critical for DELEGATECALL scenarios where these addresses differ.
+    #[test]
+    fn test_precompile_lookup_uses_bytecode_address() {
+        let mut ctx = create_test_context();
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+
+        // SHA256 precompile at address 0x02
+        let sha256_addr = revm::precompile::u64_to_address(2);
+
+        // Create inputs where bytecode_address != target_address (DELEGATECALL scenario)
+        let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), u64::MAX);
+
+        // Verify target_address is different from bytecode_address
+        assert_ne!(call_inputs.bytecode_address, call_inputs.target_address);
+
+        // Should find the precompile via bytecode_address
+        let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
+        assert!(result.is_some(), "Precompile should be found via bytecode_address");
+
+        let interpreter_result = result.unwrap();
+        assert_eq!(interpreter_result.result, InstructionResult::Return);
+        assert!(!interpreter_result.output.is_empty());
+    }
+
+    /// Test that a non-existent precompile returns None.
+    #[test]
+    fn test_run_nonexistent_precompile() {
+        let mut ctx = create_test_context();
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+
+        let fake_addr = Address::from_slice(&[0xFFu8; 20]);
+        let call_inputs = create_call_inputs(fake_addr, Bytes::new(), u64::MAX);
+
+        let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
+        assert!(result.is_none());
+    }
+
+    /// Test out-of-gas handling for precompiles.
+    #[test]
+    fn test_run_out_of_gas() {
+        let mut ctx = create_test_context();
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+
+        let sha256_addr = revm::precompile::u64_to_address(2);
+        let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), 0);
+
+        let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
+        assert!(result.is_some());
+
+        let interpreter_result = result.unwrap();
+        assert_eq!(interpreter_result.result, InstructionResult::PrecompileOOG);
+    }
+
+    /// Test SharedBuffer input handling.
+    #[test]
+    fn test_run_with_shared_buffer_empty() {
+        let mut ctx = create_test_context();
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+
+        let sha256_addr = revm::precompile::u64_to_address(2);
+        let call_inputs = CallInputs {
+            input: CallInput::SharedBuffer(0..0),
+            gas_limit: u64::MAX,
+            bytecode_address: sha256_addr,
+            target_address: Address::ZERO,
+            caller: Address::ZERO,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::Call,
+            is_static: false,
+            return_memory_offset: 0..0,
+            known_bytecode: None,
+        };
+
+        let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
+        assert!(result.is_some());
     }
 }
