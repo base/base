@@ -73,10 +73,15 @@ impl LogConfig {
     /// Initialize the tracing subscriber with the configured options.
     ///
     /// This sets the global default subscriber. Should only be called once.
+    ///
+    /// Includes default noise suppression for overly verbose crates (e.g., `discv5=error`).
     pub fn init_tracing_subscriber(&self) -> eyre::Result<()> {
         // Build base filter from config, allowing env override
-        let filter =
-            EnvFilter::builder().with_default_directive(self.global_level.into()).from_env_lossy();
+        let filter = EnvFilter::builder()
+            .with_default_directive(self.global_level.into())
+            .from_env_lossy()
+            // Suppress noisy discovery logs by default
+            .add_directive("discv5=error".parse().expect("valid directive"));
 
         self.init_tracing_subscriber_with_filter(filter)
     }

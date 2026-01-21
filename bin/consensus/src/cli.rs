@@ -75,8 +75,8 @@ pub struct Cli {
 impl Cli {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
-        // Initialize telemetry - allow subcommands to customize the filter.
-        Self::init_logs(&self.global)?;
+        // Initialize logging from global arguments.
+        LogConfig::from(self.global.logging.clone()).init_tracing_subscriber()?;
 
         // Initialize unified metrics
         self.global.metrics.init_with(|| {
@@ -175,15 +175,5 @@ impl Cli {
         })?;
 
         Ok(())
-    }
-
-    /// Initializes the logging system based on global arguments.
-    pub fn init_logs(args: &GlobalArgs) -> eyre::Result<()> {
-        // Filter out discovery warnings since they're very very noisy.
-        let filter = tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive("discv5=error".parse()?);
-
-        let config: LogConfig = args.logging.clone().into();
-        config.init_tracing_subscriber_with_filter(filter)
     }
 }
