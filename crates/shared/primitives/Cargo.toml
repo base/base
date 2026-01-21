@@ -26,8 +26,31 @@ op-alloy-network = { workspace = true, optional = true }
 alloy-signer-local = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
+# Engine API dependencies
+alloy-provider = { workspace = true, optional = true }
+alloy-transport = { workspace = true, optional = true }
+alloy-transport-http = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, optional = true }
+op-alloy-provider = { workspace = true, optional = true }
+kona-genesis = { workspace = true, optional = true }
+kona-engine = { workspace = true, optional = true }
+
 [features]
 default = []
+engine = [
+	"dep:alloy-eips",
+	"dep:alloy-primitives",
+	"dep:alloy-provider",
+	"dep:alloy-rpc-types-engine",
+	"dep:alloy-rpc-types-eth",
+	"dep:alloy-transport",
+	"dep:alloy-transport-http",
+	"dep:kona-engine",
+	"dep:kona-genesis",
+	"dep:op-alloy-network",
+	"dep:op-alloy-provider",
+]
 test-utils = [
 	"dep:alloy-consensus",
 	"dep:alloy-contract",
@@ -42,4 +65,5 @@ test-utils = [
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types",
 	"dep:serde_json",
+	"kona-engine?/test-utils",
 ]

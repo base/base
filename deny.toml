@@ -58,14 +58,6 @@ multiple-versions = "deny"
 # Skip crates with multiple versions from upstream dependencies that we cannot control
 # These are primarily from reth, alloy, and kona dependencies
 skip = [
-    # Alloy version mismatch between workspace and kona dependencies
-    "alloy-hardforks",
-    "alloy-op-hardforks",
-
-    # Kona crates - git vs registry sources from different dependency paths
-    "kona-genesis",
-    "kona-registry",
-
     # Windows platform crates - different versions used by various upstream deps
     "windows-sys",
     "windows",
@@ -137,7 +129,6 @@ skip = [
     "crossterm",
     "gloo-timers",
     "indexmap",
-    "kona-genesis",
     "opentelemetry",
     "opentelemetry-http",
     "opentelemetry-otlp",
