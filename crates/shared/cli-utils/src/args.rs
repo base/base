@@ -23,7 +23,7 @@ pub struct LogArgs {
         long = "verbose",
         action = ArgAction::Count,
         default_value = "3",
-        env = "BASE_LOG_LEVEL",
+        env = "BASE_NODE_LOG_LEVEL",
         global = true
     )]
     pub level: u8,
@@ -33,11 +33,16 @@ pub struct LogArgs {
     pub stdout_quiet: bool,
 
     /// Stdout log format.
-    #[arg(long = "log-format", default_value = "full", env = "BASE_STDOUT_FORMAT", global = true)]
+    #[arg(
+        long = "log-format",
+        default_value = "full",
+        env = "BASE_NODE_LOG_FORMAT",
+        global = true
+    )]
     pub stdout_format: LogFormat,
 
     /// Directory for file logging (enables file logging when set).
-    #[arg(long = "log-dir", env = "BASE_LOG_DIR", global = true)]
+    #[arg(long = "log-dir", env = "BASE_NODE_LOG_DIR", global = true)]
     pub file_directory: Option<PathBuf>,
 
     /// File log format.
@@ -82,7 +87,7 @@ impl From<LogArgs> for LogConfig {
 
 /// Global arguments shared across all CLI commands.
 ///
-/// Chain ID defaults to Base Mainnet (8453). Can be set via `--network` or `BASE_NETWORK` env.
+/// Chain ID defaults to Base Mainnet (8453). Can be set via `--network` or `BASE_NODE_NETWORK` env.
 #[derive(Debug, Clone, Parser)]
 pub struct GlobalArgs {
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
@@ -92,7 +97,7 @@ pub struct GlobalArgs {
         short = 'n',
         global = true,
         default_value = "8453",
-        env = "BASE_NETWORK"
+        env = "BASE_NODE_NETWORK"
     )]
     pub l2_chain_id: alloy_chains::Chain,
 
@@ -241,5 +246,51 @@ mod tests {
 
         let cli = GlobalCli::parse_from(["test", "--network", "base"]);
         assert_eq!(cli.global.l2_chain_id.id(), 8453); // Base Mainnet
+    }
+
+    /// Tests for environment variable parsing.
+    ///
+    /// These tests verify that the `BASE_NODE_` prefixed env vars work correctly.
+    /// We test using CLI args (which clap parses the same way) to avoid test
+    /// isolation issues with global environment variables.
+    mod env_vars {
+        use super::*;
+
+        /// Verify that LogArgs fields have the expected env var names.
+        /// This is done by checking the clap metadata.
+        #[test]
+        fn log_args_env_var_names() {
+            use clap::CommandFactory;
+
+            let cmd = TestCli::command();
+            let args: Vec<_> = cmd.get_arguments().collect();
+
+            // Find the verbose arg and check its env var
+            let verbose_arg = args.iter().find(|a| a.get_long() == Some("verbose"));
+            assert!(verbose_arg.is_some(), "verbose arg should exist");
+            assert_eq!(
+                verbose_arg.unwrap().get_env().map(|s| s.to_str().unwrap()),
+                Some("BASE_NODE_LOG_LEVEL"),
+                "verbose should use BASE_NODE_LOG_LEVEL env var"
+            );
+
+            // Find the log-format arg and check its env var
+            let format_arg = args.iter().find(|a| a.get_long() == Some("log-format"));
+            assert!(format_arg.is_some(), "log-format arg should exist");
+            assert_eq!(
+                format_arg.unwrap().get_env().map(|s| s.to_str().unwrap()),
+                Some("BASE_NODE_LOG_FORMAT"),
+                "log-format should use BASE_NODE_LOG_FORMAT env var"
+            );
+
+            // Find the log-dir arg and check its env var
+            let dir_arg = args.iter().find(|a| a.get_long() == Some("log-dir"));
+            assert!(dir_arg.is_some(), "log-dir arg should exist");
+            assert_eq!(
+                dir_arg.unwrap().get_env().map(|s| s.to_str().unwrap()),
+                Some("BASE_NODE_LOG_DIR"),
+                "log-dir should use BASE_NODE_LOG_DIR env var"
+            );
+        }
     }
 }

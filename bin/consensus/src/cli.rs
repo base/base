@@ -2,15 +2,18 @@
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
 use base_client_cli::{
-    BuilderClientArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs,
-    RollupBoostFlags, RpcArgs, SequencerArgs,
+    L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
 use clap::Parser;
+use kona_engine::RollupBoostServerArgs;
 use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
+use rollup_boost_kona::ExecutionMode;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
+use url::Url;
 
 use crate::{metrics::init_rollup_config_metrics, version};
 
@@ -51,10 +54,6 @@ pub struct Cli {
     #[clap(flatten)]
     pub l2_client_args: L2ClientArgs,
 
-    /// Optional block builder client.
-    #[clap(flatten)]
-    pub builder_client_args: BuilderClientArgs,
-
     /// L1 configuration file.
     #[clap(flatten)]
     pub l1_config: L1ConfigFile,
@@ -71,16 +70,13 @@ pub struct Cli {
     /// SEQUENCER CLI arguments.
     #[command(flatten)]
     pub sequencer_flags: SequencerArgs,
-    /// Rollup Boost CLI arguments.
-    #[command(flatten)]
-    pub rollup_boost_flags: RollupBoostFlags,
 }
 
 impl Cli {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
-        // Initialize telemetry - allow subcommands to customize the filter.
-        Self::init_logs(&self.global)?;
+        // Initialize logging from global arguments.
+        LogConfig::from(self.global.logging.clone()).init_tracing_subscriber()?;
 
         // Initialize unified metrics
         self.global.metrics.init_with(|| {
@@ -139,20 +135,26 @@ impl Cli {
             .await?;
         let rpc_config = self.rpc_flags.clone().into();
 
+        // TODO: Remove hardcoded builder and rollup_boost config once we have our own
+        // RollupNodeBuilder implementation. These are required by kona's EngineConfig
+        // but are effectively disabled (execution_mode = Disabled, flashblocks = None).
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
-            builder_url: self.builder_client_args.l2_builder_rpc.clone(),
-            builder_jwt_secret: self
-                .builder_client_args
-                .jwt_secret()
-                .map_err(|e| eyre::eyre!(e))?,
-            builder_timeout: Duration::from_millis(self.builder_client_args.builder_timeout),
+            builder_url: Url::parse("http://localhost:8552").expect("valid url"),
+            builder_jwt_secret: JwtSecret::random(),
+            builder_timeout: Duration::from_millis(30),
             l2_url: self.l2_client_args.l2_engine_rpc.clone(),
             l2_jwt_secret: jwt_secret,
             l2_timeout: Duration::from_millis(self.l2_client_args.l2_engine_timeout),
             l1_url: self.l1_rpc_args.l1_eth_rpc.clone(),
             mode: self.node_mode,
-            rollup_boost: self.rollup_boost_flags.clone().as_rollup_boost_args(),
+            rollup_boost: RollupBoostServerArgs {
+                initial_execution_mode: ExecutionMode::Disabled,
+                block_selection_policy: None,
+                external_state_root: false,
+                ignore_unhealthy_builders: false,
+                flashblocks: None,
+            },
         };
 
         RollupNodeBuilder::new(
@@ -173,15 +175,5 @@ impl Cli {
         })?;
 
         Ok(())
-    }
-
-    /// Initializes the logging system based on global arguments.
-    pub fn init_logs(args: &GlobalArgs) -> eyre::Result<()> {
-        // Filter out discovery warnings since they're very very noisy.
-        let filter = tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive("discv5=error".parse()?);
-
-        let config: LogConfig = args.logging.clone().into();
-        config.init_tracing_subscriber_with_filter(filter)
     }
 }
