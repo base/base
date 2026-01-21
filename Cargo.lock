@@ -1463,6 +1463,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert_matches"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b34d609dfbaf33d6889b2b7106d3ca345eacad44200913df5ba02bfd31d2ba9"
+
+[[package]]
 name = "async-channel"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2830,6 +2836,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "codspeed"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f4cce9c27c49c4f101fffeebb1826f41a9df2e7498b7cd4d95c0658b796c6c"
+dependencies = [
+ "colored",
+ "libc",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "codspeed-criterion-compat"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3c23d880a28a2aab52d38ca8481dd7a3187157d0a952196b6db1db3c8499725"
+dependencies = [
+ "codspeed",
+ "codspeed-criterion-compat-walltime",
+ "colored",
+]
+
+[[package]]
+name = "codspeed-criterion-compat-walltime"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b0a2f7365e347f4f22a67e9ea689bf7bc89900a354e22e26cf8a531a42c8fbb"
+dependencies = [
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "codspeed",
+ "criterion-plot",
+ "is-terminal",
+ "itertools 0.10.5",
+ "num-traits",
+ "once_cell",
+ "oorandom",
+ "plotters",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tinytemplate",
+ "walkdir",
+]
+
+[[package]]
 name = "coins-bip32"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2885,6 +2942,16 @@ name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "colored"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
+dependencies = [
+ "lazy_static",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "combine"
@@ -6756,7 +6823,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap 2.13.0",
  "metrics",
- "ordered-float",
+ "ordered-float 4.6.0",
  "quanta",
  "radix_trie",
  "rand 0.9.2",
@@ -6773,7 +6840,9 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
  "hashbrown 0.16.1",
+ "indexmap 2.13.0",
  "metrics",
+ "ordered-float 5.1.0",
  "quanta",
  "rand 0.9.2",
  "rand_xoshiro",
@@ -7894,6 +7963,15 @@ name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "ordered-float"
+version = "5.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f4779c6901a562440c3786d08192c6fbda7c1c2060edd10006b05ee35d10f2d"
 dependencies = [
  "num-traits",
 ]
@@ -9781,7 +9859,6 @@ dependencies = [
 [[package]]
 name = "reth-engine-tree"
 version = "1.10.0"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.0#b25f32a977b489f9b84254c7811a2a5a25a81369"
 dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
@@ -9790,26 +9867,40 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-engine",
+ "assert_matches",
+ "codspeed-criterion-compat",
  "crossbeam-channel",
  "dashmap 6.1.0",
  "derive_more",
+ "eyre",
  "futures",
  "metrics",
+ "metrics-util 0.20.1",
  "mini-moka",
  "moka",
  "parking_lot",
+ "proptest",
+ "rand 0.8.5",
+ "rand 0.9.2",
  "rayon",
  "reth-chain-state 1.10.0",
  "reth-chainspec 1.10.0",
  "reth-consensus 1.10.0",
  "reth-db",
+ "reth-db-common",
+ "reth-e2e-test-utils",
  "reth-engine-primitives 1.10.0",
  "reth-errors 1.10.0",
+ "reth-ethereum-consensus",
+ "reth-ethereum-engine-primitives 1.10.0",
  "reth-ethereum-primitives 1.10.0",
  "reth-evm 1.10.0",
+ "reth-evm-ethereum",
  "reth-execution-types 1.10.0",
+ "reth-exex-types",
  "reth-metrics 1.10.0",
  "reth-network-p2p",
+ "reth-node-ethereum",
  "reth-payload-builder 1.10.0",
  "reth-payload-primitives 1.10.0",
  "reth-primitives-traits 1.10.0",
@@ -9821,6 +9912,7 @@ dependencies = [
  "reth-stages-api",
  "reth-static-file",
  "reth-tasks 1.10.0",
+ "reth-testing-utils",
  "reth-tracing",
  "reth-trie 1.10.0",
  "reth-trie-parallel",
@@ -9828,7 +9920,9 @@ dependencies = [
  "reth-trie-sparse-parallel",
  "revm 33.1.0",
  "revm-primitives",
+ "revm-state",
  "schnellru",
+ "serde_json",
  "smallvec",
  "thiserror 2.0.17",
  "tokio",
@@ -10218,6 +10312,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "derive_more",
+ "parking_lot",
  "reth-chainspec 1.10.0",
  "reth-ethereum-forks 1.10.0",
  "reth-ethereum-primitives 1.10.0",
