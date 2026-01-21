@@ -2,7 +2,7 @@
 
 Thanks for your interest in improving Base.
 
-This document will help you get started. **Do not let this document intimidate you**. It should be considered as a guide to help you navigate the process.
+This document will help you get started. **Do not let this document intimidate you**. It should be considered a guide to help you navigate the process.
 
 ## Ways to Contribute
 
