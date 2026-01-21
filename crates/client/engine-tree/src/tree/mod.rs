@@ -59,6 +59,10 @@ pub mod precompile_cache;
 #[expect(unused)]
 mod trie_updates;
 
+mod cached_execution;
+pub use cached_execution::CachedExecutionProvider;
+
+
 mod base;
 pub use base::BaseEngineValidator;
 

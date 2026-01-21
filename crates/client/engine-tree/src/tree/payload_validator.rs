@@ -1139,7 +1139,7 @@ pub type ValidationOutcome<N, E = InsertPayloadError<BlockTy<N>>> = Result<Execu
 
 /// Strategy describing how to compute the state root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StateRootStrategy {
+pub enum StateRootStrategy {
     /// Use the state root task (background sparse trie computation).
     StateRootTask,
     /// Run the parallel state root computation on the calling thread.
