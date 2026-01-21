@@ -16,16 +16,15 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{EthGetBlock, Network, RpcWithBlock, network::Ethereum};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatus};
+/// Response type for EIP-1186 account proofs.
+///
+/// Re-exported from `alloy_rpc_types_eth` for convenience.
+pub use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_transport::TransportResult;
 use kona_engine::HyperAuthClient;
 use kona_genesis::RollupConfig;
 use op_alloy_network::Optimism;
 use op_alloy_provider::ext::engine::OpEngineApi;
-
-/// Response type for EIP-1186 account proofs.
-///
-/// Re-exported from `alloy_rpc_types_eth` for convenience.
-pub use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 
 /// A storage key for proof queries.
 pub type StorageKey = B256;
