@@ -56,10 +56,12 @@ mod payload_processor;
 pub mod payload_validator;
 mod persistence_state;
 pub mod precompile_cache;
-#[cfg(test)]
-mod tests;
 #[expect(unused)]
 mod trie_updates;
+
+mod base;
+pub use base::BaseEngineValidator;
+
 
 use crate::tree::error::AdvancePersistenceError;
 pub use block_buffer::BlockBuffer;

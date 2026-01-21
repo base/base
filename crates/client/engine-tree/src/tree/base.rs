@@ -1,25 +1,17 @@
 //! Types and traits for validating blocks and payloads.
 
 use crate::tree::{
-    cached_state::CachedStateProvider,
-    error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError},
-    instrumented_state::InstrumentedStateProvider,
-    payload_processor::{executor::WorkloadExecutor, PayloadProcessor},
-    precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap},
-    sparse_trie::StateRootComputeOutcome,
-    EngineApiMetrics, EngineApiTreeState, ExecutionEnv, PayloadHandle, StateProviderBuilder,
-    StateProviderDatabase, TreeConfig,
+    EngineApiMetrics, EngineApiTreeState, EngineValidator, ExecutionEnv, PayloadHandle, StateProviderBuilder, StateProviderDatabase, TreeConfig, cached_state::CachedStateProvider, error::{InsertBlockError, InsertBlockErrorKind, InsertPayloadError}, instrumented_state::InstrumentedStateProvider, payload_processor::{PayloadProcessor, executor::WorkloadExecutor}, payload_validator::{BlockOrPayload, StateRootStrategy, TreeCtx, ValidationOutcome}, precompile_cache::{CachedPrecompile, CachedPrecompileMetrics, PrecompileCacheMap}, sparse_trie::StateRootComputeOutcome
 };
 use alloy_consensus::transaction::Either;
 use alloy_eip7928::BlockAccessList;
-use alloy_eips::{eip1898::BlockWithParent, NumHash};
 use alloy_evm::Evm;
 use alloy_primitives::B256;
 use rayon::prelude::*;
-use reth_chain_state::{CanonicalInMemoryState, DeferredTrieData, ExecutedBlock};
+use reth_chain_state::{DeferredTrieData, ExecutedBlock};
 use reth_consensus::{ConsensusError, FullConsensus};
 use reth_engine_primitives::{
-    ConfigureEngineEvm, ExecutableTxIterator, ExecutionPayload, InvalidBlockHook, PayloadValidator,
+    ConfigureEngineEvm, ExecutableTxIterator, InvalidBlockHook, PayloadValidator,
 };
 use reth_errors::{BlockExecutionError, ProviderResult};
 use reth_evm::{
@@ -30,7 +22,7 @@ use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
 };
 use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, BlockTy, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock,
+    AlloyBlockHeader, BlockBody, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock,
     SealedHeader, SignerRecoverable,
 };
 use reth_provider::{
@@ -51,51 +43,6 @@ use std::{
 };
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
-/// Context providing access to tree state during validation.
-///
-/// This context is provided to the [`EngineValidator`] and includes the state of the tree's
-/// internals
-pub struct TreeCtx<'a, N: NodePrimitives> {
-    /// The engine API tree state
-    state: &'a mut EngineApiTreeState<N>,
-    /// Reference to the canonical in-memory state
-    canonical_in_memory_state: &'a CanonicalInMemoryState<N>,
-}
-
-impl<'a, N: NodePrimitives> std::fmt::Debug for TreeCtx<'a, N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TreeCtx")
-            .field("state", &"EngineApiTreeState")
-            .field("canonical_in_memory_state", &self.canonical_in_memory_state)
-            .finish()
-    }
-}
-
-impl<'a, N: NodePrimitives> TreeCtx<'a, N> {
-    /// Creates a new tree context
-    pub const fn new(
-        state: &'a mut EngineApiTreeState<N>,
-        canonical_in_memory_state: &'a CanonicalInMemoryState<N>,
-    ) -> Self {
-        Self { state, canonical_in_memory_state }
-    }
-
-    /// Returns a reference to the engine tree state
-    pub const fn state(&self) -> &EngineApiTreeState<N> {
-        &*self.state
-    }
-
-    /// Returns a mutable reference to the engine tree state
-    pub const fn state_mut(&mut self) -> &mut EngineApiTreeState<N> {
-        self.state
-    }
-
-    /// Returns a reference to the canonical in-memory state
-    pub const fn canonical_in_memory_state(&self) -> &'a CanonicalInMemoryState<N> {
-        self.canonical_in_memory_state
-    }
-}
-
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
 /// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
@@ -104,7 +51,7 @@ impl<'a, N: NodePrimitives> TreeCtx<'a, N> {
 /// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
 /// used as a standalone component, but rather as a building block for concrete implementations.
 #[derive(derive_more::Debug)]
-pub struct BasicEngineValidator<P, Evm, V>
+pub struct BaseEngineValidator<P, Evm, V>
 where
     Evm: ConfigureEvm,
 {
@@ -131,7 +78,7 @@ where
     validator: V,
 }
 
-impl<N, P, Evm, V> BasicEngineValidator<P, Evm, V>
+impl<N, P, Evm, V> BaseEngineValidator<P, Evm, V>
 where
     N: NodePrimitives,
     P: DatabaseProviderFactory<
@@ -1134,78 +1081,7 @@ where
     }
 }
 
-/// Output of block or payload validation.
-pub type ValidationOutcome<N, E = InsertPayloadError<BlockTy<N>>> = Result<ExecutedBlock<N>, E>;
-
-/// Strategy describing how to compute the state root.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateRootStrategy {
-    /// Use the state root task (background sparse trie computation).
-    StateRootTask,
-    /// Run the parallel state root computation on the calling thread.
-    Parallel,
-    /// Fall back to synchronous computation via the state provider.
-    Synchronous,
-}
-
-/// Type that validates the payloads processed by the engine.
-///
-/// This provides the necessary functions for validating/executing payloads/blocks.
-pub trait EngineValidator<
-    Types: PayloadTypes,
-    N: NodePrimitives = <<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives,
->: Send + Sync + 'static
-{
-    /// Validates the payload attributes with respect to the header.
-    ///
-    /// By default, this enforces that the payload attributes timestamp is greater than the
-    /// timestamp according to:
-    ///   > 7. Client software MUST ensure that payloadAttributes.timestamp is greater than
-    ///   > timestamp
-    ///   > of a block referenced by forkchoiceState.headBlockHash.
-    ///
-    /// See also: <https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#specification-1>
-    fn validate_payload_attributes_against_header(
-        &self,
-        attr: &Types::PayloadAttributes,
-        header: &N::BlockHeader,
-    ) -> Result<(), InvalidPayloadAttributesError>;
-
-    /// Ensures that the given payload does not violate any consensus rules that concern the block's
-    /// layout.
-    ///
-    /// This function must convert the payload into the executable block and pre-validate its
-    /// fields.
-    ///
-    /// Implementers should ensure that the checks are done in the order that conforms with the
-    /// engine-API specification.
-    fn convert_payload_to_block(
-        &self,
-        payload: Types::ExecutionData,
-    ) -> Result<SealedBlock<N::Block>, NewPayloadError>;
-
-    /// Validates a payload received from engine API.
-    fn validate_payload(
-        &mut self,
-        payload: Types::ExecutionData,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N>;
-
-    /// Validates a block downloaded from the network.
-    fn validate_block(
-        &mut self,
-        block: SealedBlock<N::Block>,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N>;
-
-    /// Hook called after an executed block is inserted directly into the tree.
-    ///
-    /// This is invoked when blocks are inserted via `InsertExecutedBlock` (e.g., locally built
-    /// blocks by sequencers) to allow implementations to update internal state such as caches.
-    fn on_inserted_executed_block(&self, block: ExecutedBlock<N>);
-}
-
-impl<N, Types, P, Evm, V> EngineValidator<Types> for BasicEngineValidator<P, Evm, V>
+impl<N, Types, P, Evm, V> EngineValidator<Types> for BaseEngineValidator<P, Evm, V>
 where
     P: DatabaseProviderFactory<
             Provider: BlockReader
@@ -1264,73 +1140,5 @@ where
             block.recovered_block.block_with_parent(),
             block.execution_output.state(),
         );
-    }
-}
-
-/// Enum representing either block or payload being validated.
-#[derive(Debug)]
-pub enum BlockOrPayload<T: PayloadTypes> {
-    /// Payload.
-    Payload(T::ExecutionData),
-    /// Block.
-    Block(SealedBlock<BlockTy<<T::BuiltPayload as BuiltPayload>::Primitives>>),
-}
-
-impl<T: PayloadTypes> BlockOrPayload<T> {
-    /// Returns the hash of the block.
-    pub fn hash(&self) -> B256 {
-        match self {
-            Self::Payload(payload) => payload.block_hash(),
-            Self::Block(block) => block.hash(),
-        }
-    }
-
-    /// Returns the number and hash of the block.
-    pub fn num_hash(&self) -> NumHash {
-        match self {
-            Self::Payload(payload) => payload.num_hash(),
-            Self::Block(block) => block.num_hash(),
-        }
-    }
-
-    /// Returns the parent hash of the block.
-    pub fn parent_hash(&self) -> B256 {
-        match self {
-            Self::Payload(payload) => payload.parent_hash(),
-            Self::Block(block) => block.parent_hash(),
-        }
-    }
-
-    /// Returns [`BlockWithParent`] for the block.
-    pub fn block_with_parent(&self) -> BlockWithParent {
-        match self {
-            Self::Payload(payload) => payload.block_with_parent(),
-            Self::Block(block) => block.block_with_parent(),
-        }
-    }
-
-    /// Returns a string showing whether or not this is a block or payload.
-    pub const fn type_name(&self) -> &'static str {
-        match self {
-            Self::Payload(_) => "payload",
-            Self::Block(_) => "block",
-        }
-    }
-
-    /// Returns the block access list if available.
-    pub const fn block_access_list(&self) -> Option<Result<BlockAccessList, alloy_rlp::Error>> {
-        // TODO decode and return `BlockAccessList`
-        None
-    }
-
-    /// Returns the number of transactions in the payload or block.
-    pub fn transaction_count(&self) -> usize
-    where
-        T::ExecutionData: ExecutionPayload,
-    {
-        match self {
-            Self::Payload(payload) => payload.transaction_count(),
-            Self::Block(block) => block.transaction_count(),
-        }
     }
 }
