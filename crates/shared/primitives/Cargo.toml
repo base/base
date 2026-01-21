@@ -65,5 +65,5 @@ test-utils = [
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types",
 	"dep:serde_json",
-	"kona-engine?/test-utils"
+	"kona-engine?/test-utils",
 ]
