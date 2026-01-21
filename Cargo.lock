@@ -1922,7 +1922,6 @@ dependencies = [
  "kona-node-service",
  "kona-providers-alloy",
  "metrics",
- "reth-optimism-primitives",
  "rollup-boost",
  "strum 0.27.2",
  "tracing",
