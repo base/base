@@ -3,6 +3,14 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+#[cfg(feature = "engine")]
+pub mod engine;
+#[cfg(feature = "engine")]
+pub use engine::{
+    BlockProvider, DirectEngineApi, EIP1186AccountProofResponse, LegacyPayloadSupport,
+    ProofProvider, RollupConfigProvider, StorageKey,
+};
+
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 
