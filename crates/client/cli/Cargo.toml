@@ -31,9 +31,6 @@ kona-registry.workspace = true
 # Serde
 serde_json.workspace = true
 
-# Reth (enables `serde` + `reth-codec` on `reth-optimism-primitives` via `rpc` feature)
-# reth-optimism-evm = { workspace = true, features = ["rpc"] }
-
 # Alloy
 alloy-chains.workspace = true
 alloy-primitives.workspace = true
