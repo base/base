@@ -18,7 +18,6 @@ base-jwt = { workspace = true, features = ["engine-validation"] }
 # Kona
 kona-rpc.workspace = true
 kona-node-service.workspace = true
-kona-engine.workspace = true
 kona-genesis.workspace = true
 kona-derive.workspace = true
 kona-disc.workspace = true
@@ -28,7 +27,6 @@ kona-sources.workspace = true
 kona-providers-alloy.workspace = true
 kona-cli = { workspace = true, features = ["secrets"] }
 kona-registry.workspace = true
-rollup-boost-kona.workspace = true
 
 # Serde
 serde_json.workspace = true
