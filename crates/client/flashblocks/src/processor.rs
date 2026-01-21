@@ -443,6 +443,8 @@ where
                 pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
                 pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
                 pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
+                pending_blocks_builder
+                    .with_transaction_result(tx_hash, executed_transaction.result);
             }
 
             (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();

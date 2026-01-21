@@ -2,14 +2,16 @@
 
 use base_client_engine::BaseEngineValidatorBuilder;
 use reth_node_builder::{
-    Node, NodeAdapter, NodeComponentsBuilder,
-    components::{BasicPayloadServiceBuilder, ComponentsBuilder},
+    BuilderContext, Node, NodeAdapter, NodeComponentsBuilder,
+    components::{BasicPayloadServiceBuilder, ComponentsBuilder, ExecutorBuilder},
     node::{FullNodeTypes, NodeTypes},
 };
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{
     OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
     OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
+    OpRethReceiptBuilder,
     args::RollupArgs,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };
@@ -40,6 +42,16 @@ pub struct BaseNode {
     /// batcher via the `miner_` api)
     pub gas_limit_config: OpGasLimitConfig,
 }
+
+/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Optimism specific builders.
+pub type BaseNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
+    Node,
+    OpPoolBuilder,
+    BasicPayloadServiceBuilder<Payload>,
+    OpNetworkBuilder,
+    OpExecutorBuilder,
+    OpConsensusBuilder,
+>;
 
 impl BaseNode {
     /// Creates a new instance of the Optimism node type.

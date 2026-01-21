@@ -2,19 +2,23 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use base_flashblocks::FlashblocksState;
+use alloy_evm::EvmFactory;
+use base_flashblocks::{FlashblocksAPI, FlashblocksState};
+use op_alloy_consensus::OpReceipt;
+use op_alloy_rpc_types_engine::OpExecutionData;
+use op_revm::OpHaltReason;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::FullConsensus;
 use reth_engine_primitives::{ConfigureEngineEvm, InvalidBlockHook, PayloadValidator};
 use reth_engine_tree::tree::{
-    BasicEngineValidator, EngineValidator,
+    BaseEngineValidator, CachedExecutionProvider, EngineValidator,
     error::InsertPayloadError,
     payload_validator::{BlockOrPayload, TreeCtx, ValidationOutcome},
 };
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, block::BlockExecutorFactory};
 use reth_node_api::{
-    AddOnsContext, BlockTy, FullNodeComponents, InvalidPayloadAttributesError, NodeTypes,
-    PayloadTypes, TreeConfig,
+    AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, InvalidPayloadAttributesError,
+    NodeTypes, PayloadTypes, TreeConfig,
 };
 use reth_node_builder::{
     invalid_block_hook::InvalidBlockHookExt,
@@ -26,8 +30,81 @@ use reth_provider::{
     BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory, HashedPostStateProvider,
     PruneCheckpointReader, StageCheckpointReader, StateProviderFactory, StateReader, TrieReader,
 };
+use revm::context::result::{ExecutionResult, HaltReason, ResultAndState, SuccessReason};
+use revm_primitives::B256;
 use tracing::instrument;
 
+#[derive(Debug, Clone)]
+pub struct FlashblocksCachedExecutionProvider<P> {
+    flashblocks_state: Option<Arc<FlashblocksState>>,
+
+    provider: P,
+}
+
+impl<P> FlashblocksCachedExecutionProvider<P> {
+    pub fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
+        Self { provider, flashblocks_state }
+    }
+}
+
+impl<P, Receipt> CachedExecutionProvider<Receipt, OpHaltReason>
+    for FlashblocksCachedExecutionProvider<P>
+where
+    P: BlockNumReader,
+{
+    fn get_cached_execution_for_tx(
+        &self,
+        parent_block_hash: &B256,
+        prev_tx_hashes: &[B256],
+        tx_hash: &B256,
+    ) -> Option<ResultAndState<OpHaltReason>> {
+        let Some(flashblocks_state) = self.flashblocks_state.as_ref() else {
+            info!("Not using cached results - missing flashblocks state");
+            return None;
+        };
+        let Some(pending_blocks) = flashblocks_state.get_pending_blocks().clone() else {
+            info!("Not using cached results - missing pending blocks");
+            return None;
+        };
+
+        let Ok(Some(parent_block_number)) = self.provider.block_number(*parent_block_hash) else {
+            info!(
+                "Not using cached results - missing parent block number for hash: {}",
+                parent_block_hash
+            );
+            return None;
+        };
+
+        let this_block_number = parent_block_number.saturating_add(1);
+
+        let tracked_txns = pending_blocks.get_transactions_for_block(this_block_number);
+        let tracked_txn_hashes: Vec<_> =
+            tracked_txns.iter().map(|tx| tx.inner.inner.tx_hash()).collect();
+
+        // ensure tracked_txn_hashes starts with prev_tx_hashes
+        if tracked_txn_hashes
+            .iter()
+            .take(prev_tx_hashes.len())
+            .zip(prev_tx_hashes.into_iter().copied())
+            .all(|(a, b)| *a == b)
+        {
+            info!(
+                "Not using cached results - tracked txn hashes do not match prev tx hashes, tracked: {:?}, prev: {:?}",
+                tracked_txn_hashes, prev_tx_hashes
+            );
+            return None;
+        }
+
+        let receipt_and_state = pending_blocks
+            .get_transaction_result(*tx_hash)
+            .zip(pending_blocks.get_transaction_state(tx_hash));
+
+        info!("Using cached results - receipt and state found for tx: {:?}", tx_hash);
+        let (result, state) = receipt_and_state?;
+
+        Some(ResultAndState::new(result, state))
+    }
+}
 /// Basic implementation of [`EngineValidatorBuilder`].
 ///
 /// This builder creates a [`BasicEngineValidator`] using the provided payload validator builder.
@@ -65,17 +142,27 @@ where
 impl<Node, EV> EngineValidatorBuilder<Node> for BaseEngineValidatorBuilder<EV>
 where
     Node: FullNodeComponents<
-        Evm: ConfigureEngineEvm<
-            <<Node::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData,
+        Evm: ConfigureEngineEvm<OpExecutionData>
+                 + ConfigureEvm<
+            BlockExecutorFactory: BlockExecutorFactory<
+                EvmFactory: EvmFactory<HaltReason = OpHaltReason>,
+            >,
         >,
     >,
+    <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
+        PayloadTypes<ExecutionData = OpExecutionData>,
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: reth_engine_primitives::PayloadValidator<
             <Node::Types as NodeTypes>::Payload,
             Block = BlockTy<Node::Types>,
         >,
 {
-    type EngineValidator = BaseEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
+    type EngineValidator = BaseEngineValidator<
+        Node::Provider,
+        Node::Evm,
+        EV::Validator,
+        FlashblocksCachedExecutionProvider<Node::Provider>,
+    >;
 
     async fn build_tree_validator(
         self,
@@ -92,155 +179,10 @@ where
             validator,
             tree_config,
             invalid_block_hook,
-        ))
-    }
-}
-
-/// A helper type that provides reusable payload validation logic for network-specific validators.
-///
-/// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
-///
-/// This type contains common validation, execution, and state root computation logic that can be
-/// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
-/// used as a standalone component, but rather as a building block for concrete implementations.
-#[derive(derive_more::Debug)]
-pub struct BaseEngineValidator<P, Evm, V>
-where
-    Evm: ConfigureEvm,
-{
-    inner: BasicEngineValidator<P, Evm, V>,
-}
-
-impl<N, P, Evm, V> BaseEngineValidator<P, Evm, V>
-where
-    N: NodePrimitives,
-    P: DatabaseProviderFactory<
-            Provider: BlockReader
-                          + TrieReader
-                          + StageCheckpointReader
-                          + PruneCheckpointReader
-                          + ChangeSetReader
-                          + BlockNumReader,
-        > + BlockReader<Header = N::BlockHeader>
-        + ChangeSetReader
-        + BlockNumReader
-        + StateProviderFactory
-        + StateReader
-        + HashedPostStateProvider
-        + Clone
-        + 'static,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
-{
-    /// Creates a new `TreePayloadValidator`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        provider: P,
-        consensus: Arc<dyn FullConsensus<N>>,
-        evm_config: Evm,
-        validator: V,
-        config: TreeConfig,
-        invalid_block_hook: Box<dyn InvalidBlockHook<N>>,
-    ) -> Self {
-        Self {
-            inner: BasicEngineValidator::new(
-                provider,
-                consensus,
-                evm_config,
-                validator,
-                config,
-                invalid_block_hook,
+            FlashblocksCachedExecutionProvider::new(
+                ctx.node.provider().clone(),
+                self.flashblocks_state.clone(),
             ),
-        }
-    }
-
-    /// Validates a block that has already been converted from a payload.
-    ///
-    /// This method performs:
-    /// - Consensus validation
-    /// - Block execution
-    /// - State root computation
-    /// - Fork detection
-    #[instrument(
-        level = "debug",
-        target = "engine::tree::payload_validator",
-        skip_all,
-        fields(
-            parent = ?input.parent_hash(),
-            type_name = ?input.type_name(),
-        )
-    )]
-    pub fn validate_block_with_state<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
-        &mut self,
-        input: BlockOrPayload<T>,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N, InsertPayloadError<N::Block>>
-    where
-        V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
-    {
-        self.inner.validate_block_with_state(input, ctx)
-    }
-}
-
-impl<N, Types, P, Evm, V> EngineValidator<Types> for BaseEngineValidator<P, Evm, V>
-where
-    P: DatabaseProviderFactory<
-            Provider: BlockReader
-                          + TrieReader
-                          + StageCheckpointReader
-                          + PruneCheckpointReader
-                          + ChangeSetReader
-                          + BlockNumReader,
-        > + BlockReader<Header = N::BlockHeader>
-        + StateProviderFactory
-        + StateReader
-        + ChangeSetReader
-        + BlockNumReader
-        + HashedPostStateProvider
-        + Clone
-        + 'static,
-    N: NodePrimitives,
-    V: PayloadValidator<Types, Block = N::Block>,
-    Evm: ConfigureEngineEvm<Types::ExecutionData, Primitives = N> + 'static,
-    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
-{
-    fn validate_payload_attributes_against_header(
-        &self,
-        attr: &Types::PayloadAttributes,
-        header: &N::BlockHeader,
-    ) -> Result<(), InvalidPayloadAttributesError> {
-        self.inner.validate_payload_attributes_against_header(attr, header)
-    }
-
-    fn convert_payload_to_block(
-            &self,
-            payload: <Types as PayloadTypes>::ExecutionData,
-    ) -> Result<reth_primitives_traits::SealedBlock<<<<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block>, NewPayloadError>{
-        self.inner.convert_payload_to_block(payload)
-    }
-
-    fn validate_payload(
-        &mut self,
-        payload: Types::ExecutionData,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N> {
-        self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
-    }
-
-    fn validate_block(
-        &mut self,
-        block: SealedBlock<N::Block>,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N> {
-        self.validate_block_with_state(BlockOrPayload::Block(block), ctx)
-    }
-
-    fn on_inserted_executed_block(
-        &self,
-        block: reth_chain_state::ExecutedBlock<
-            <<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives,
-        >,
-    ) {
-        self.inner.on_inserted_executed_block(block)
+        ))
     }
 }

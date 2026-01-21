@@ -9,12 +9,19 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use op_alloy_consensus::{OpReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth_evm::{Evm, FromRecoveredTx, op_revm::L1BlockInfo};
+use reth_evm::{
+    Evm, FromRecoveredTx,
+    op_revm::{L1BlockInfo, OpHaltReason},
+};
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
+use revm::{
+    Database, DatabaseCommit,
+    context::result::{ExecutionResult, ResultAndState},
+    state::EvmState,
+};
 
 use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
 
@@ -27,6 +34,8 @@ pub struct ExecutedPendingTransaction {
     pub receipt: OpTransactionReceipt,
     /// The updated EVM state.
     pub state: EvmState,
+    /// The result of the transaction.
+    pub result: ExecutionResult<OpHaltReason>,
 }
 
 /// Executes or fetches cached values for transactions in a flashblock.
@@ -46,7 +55,7 @@ pub struct PendingStateBuilder<E, ChainSpec> {
 
 impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
 where
-    E: Evm<DB = DB>,
+    E: Evm<DB = DB, HaltReason = OpHaltReason>,
     DB: Database + DatabaseCommit,
     E::Tx: FromRecoveredTx<OpTxEnvelope>,
     ChainSpec: OpHardforks,
@@ -102,13 +111,21 @@ where
         let cached_data = self.prev_pending_blocks.as_ref().and_then(|p| {
             let receipt = p.get_receipt(tx_hash)?;
             let state = p.get_transaction_state(&tx_hash)?;
-            Some((receipt, state))
+            let result = p.get_transaction_result(tx_hash)?;
+            Some((receipt, state, result))
         });
 
         // If cached, we can fill out pending block data using previous execution results
         // If not cached, we need to execute the transaction and build pending block data from scratch
-        if let Some((receipt, state)) = cached_data {
-            self.execute_with_cached_data(transaction, receipt, state, idx, effective_gas_price)
+        if let Some((receipt, state, result)) = cached_data {
+            self.execute_with_cached_data(
+                transaction,
+                receipt,
+                result,
+                state,
+                idx,
+                effective_gas_price,
+            )
         } else {
             self.execute_with_evm(transaction, idx, effective_gas_price)
         }
@@ -119,6 +136,7 @@ where
         &mut self,
         transaction: Recovered<OpTxEnvelope>,
         receipt: OpTransactionReceipt,
+        result: ExecutionResult<OpHaltReason>,
         state: EvmState,
         idx: usize,
         effective_gas_price: u128,
@@ -151,7 +169,7 @@ where
             .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
-        Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state })
+        Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state, result })
     }
 
     /// Executes the transaction through the EVM and builds the result from scratch.
@@ -191,7 +209,7 @@ where
                 let receipt = self.receipt_builder.build(
                     &mut self.evm,
                     &transaction,
-                    result,
+                    result.clone(),
                     self.cumulative_gas_used,
                     self.pending_block.timestamp,
                 )?;
@@ -248,7 +266,12 @@ where
                 };
                 self.evm.db_mut().commit(state.clone());
 
-                Ok(ExecutedPendingTransaction { rpc_transaction, receipt: op_receipt, state })
+                Ok(ExecutedPendingTransaction {
+                    rpc_transaction,
+                    receipt: op_receipt,
+                    state,
+                    result,
+                })
             }
             Err(e) => Err(ExecutionError::TransactionFailed {
                 tx_hash,

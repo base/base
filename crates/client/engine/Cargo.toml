@@ -49,3 +49,16 @@ revm-primitives.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 derive_more.workspace = true
+
+alloy-op-evm.workspace = true
+op-alloy-consensus.workspace = true
+op-revm.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-optimism-forks.workspace = true
+reth-optimism-primitives.workspace = true
+revm.workspace = true
+reth-optimism-evm.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+reth-storage-errors.workspace = true
+alloy-op-hardforks.workspace = true
+thiserror.workspace = true
