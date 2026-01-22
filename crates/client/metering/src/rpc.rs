@@ -14,7 +14,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     MeterBlockResponse, PendingState, PendingTrieCache, block::meter_block, meter::meter_bundle,
@@ -187,7 +187,14 @@ where
             pending_state,
         )
         .map_err(|e| {
-            error!(error = %e, "Bundle metering failed");
+            // Sample error msg:
+            // Transaction $TX_HASH execution failed: EVM reported invalid transaction ($TX_HASH): nonce $EXPECTED_NONCE too high, expected $EXPECTED_NONCE"
+            let error_msg = e.to_string();
+            if error_msg.contains("nonce") {
+                debug!(error = %e, "Bundle metering failed");
+            } else {
+                error!(error = %e, "Bundle metering failed");
+            }
             jsonrpsee::types::ErrorObjectOwned::owned(
                 jsonrpsee::types::ErrorCode::InternalError.code(),
                 format!("Bundle metering failed: {}", e),
