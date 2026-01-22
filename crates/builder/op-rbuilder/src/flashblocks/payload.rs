@@ -691,7 +691,7 @@ where
             state,
             ctx,
             info,
-            true, // Force state root calculation
+            true,
         )?;
 
         let elapsed = start_time.elapsed();
@@ -703,7 +703,6 @@ where
             "Finalized payload with state root"
         );
 
-        // Set the finalized cell - this unblocks the waiting resolve_kind
         finalized_cell.set(final_payload);
 
         Ok(())
