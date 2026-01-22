@@ -27,4 +27,4 @@ mod types;
 pub use types::{MeterBlockResponse, MeterBlockTransactions};
 
 mod transaction;
-pub use transaction::validate_tx;
+pub use transaction::{validate_tx, TxValidationError};

@@ -49,6 +49,7 @@ metrics-derive.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 base-client-node = { workspace = true, features = ["test-utils"] }

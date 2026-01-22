@@ -14,6 +14,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
+use reth_optimism_evm::extract_l1_info_from_tx;
 use tracing::{error, info};
 
 use crate::{
@@ -177,6 +178,42 @@ where
             })
         });
 
+        let first_tx = self.provider
+            .block_by_hash(header.hash())
+            .map_err(|e| {
+                error!(error = %e, "Failed to get block by hash");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {}", e),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {}", header.hash()),
+                    None::<()>,
+                )
+            })?
+            .body
+            .transactions
+            .first()
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block has no transactions: {}", header.hash()),
+                    None::<()>,
+                )
+            })?
+            .clone();
+        let l1_block_info = extract_l1_info_from_tx(&first_tx).map_err(|e| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                format!("Failed to extract L1 block info from transaction: {}", e),
+                None::<()>,
+            )
+        })?;
+
         // Meter bundle using utility function
         let output = meter_bundle(
             state_provider,
@@ -185,6 +222,7 @@ where
             &header,
             parent_beacon_block_root,
             pending_state,
+            l1_block_info,
         )
         .map_err(|e| {
             error!(error = %e, "Bundle metering failed");

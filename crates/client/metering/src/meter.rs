@@ -1,11 +1,12 @@
 //! Bundle metering logic.
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
 use alloy_primitives::{B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use eyre::{Result as EyreResult, eyre};
+use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -14,7 +15,7 @@ use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
 
-use crate::metrics::Metrics;
+use crate::{metrics::Metrics, transaction::validate_tx};
 
 /// Computes the pending trie input from the bundle state.
 ///
@@ -97,6 +98,7 @@ pub fn meter_bundle<SP>(
     header: &SealedHeader,
     parent_beacon_block_root: Option<B256>,
     pending_state: Option<PendingState>,
+    mut l1_block_info: L1BlockInfo,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -149,6 +151,14 @@ where
         extra_data: header.extra_data().clone(),
     };
 
+    // Pre-fetch account information for all transactions before creating builder
+    let mut accounts = HashMap::new();
+    for tx in bundle.transactions() {
+        let from = tx.recover_signer()?;
+        let account = db.database.basic_account(&from)?;
+        accounts.insert(from, account);
+    }
+
     // Execute transactions
     let mut results = Vec::new();
     let mut total_gas_used = 0u64;
@@ -168,6 +178,12 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
+
+            let account = accounts.get(&from)
+                .ok_or_else(|| eyre!("Account not found for address: {}", from))?
+                .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
+            validate_tx(account, &tx, &mut l1_block_info)
+                .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
             let gas_used = builder
                 .execute_transaction(tx.clone())
