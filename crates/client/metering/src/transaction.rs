@@ -1,18 +1,17 @@
 use alloy_consensus::{Transaction, Typed2718, constants::KECCAK_EMPTY, transaction::Recovered};
 use alloy_primitives::{B256, U256};
-use eyre::{Result as EyreResult, eyre};
 use op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS;
 use op_revm::{OpSpecId, l1block::L1BlockInfo};
 use tracing::warn;
 
-enum TxValidationError {
+#[derive(Debug, PartialEq)]
+pub enum TxValidationError {
     Eip4844NotSupported,
     InteropNotSupported,
     AccountIs7702ButTxIsNot7702,
     TransactionNonceTooLow(u64, u64),
     InsufficientFundsForTransfer(U256, U256),
     InsufficientFundsForL1Gas(U256, U256),
-    Success,
 }
 
 struct AccountInfo {
@@ -33,7 +32,7 @@ pub fn validate_tx<T: Transaction>(
     txn: &Recovered<T>,
     data: &[u8],
     l1_block_info: &mut L1BlockInfo,
-) -> EyreResult<TxValidationError> {
+) -> Result<(), TxValidationError> {
     // skip eip4844 transactions
     if txn.is_eip4844() {
         warn!(message = "EIP-4844 transactions are not supported");
@@ -83,28 +82,25 @@ pub fn validate_tx<T: Transaction>(
         return Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account.balance));
     }
 
-    Ok(TxValidationError::Success)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use alloy_primitives::Address;
-    use alloy_consensus::SignableTransaction;
-    use alloy_consensus::{Transaction, constants::KECCAK_EMPTY, transaction::SignerRecoverable};
-    use alloy_consensus::{TxEip1559, TxEip4844, TxEip7702};
-    use alloy_primitives::{bytes, keccak256};
+    use alloy_consensus::{
+        SignableTransaction, Transaction, TxEip1559, TxEip4844, TxEip7702, constants::KECCAK_EMPTY,
+        transaction::SignerRecoverable,
+    };
+    use alloy_primitives::{Address, bytes, keccak256};
     use alloy_signer_local::PrivateKeySigner;
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_network::TxSignerSync;
     use revm_context_interface::transaction::{AccessList, AccessListItem};
 
+    use super::*;
+
     fn create_account(nonce: u64, balance: U256) -> AccountInfo {
-        AccountInfo {
-            balance,
-            nonce,
-            code_hash: KECCAK_EMPTY,
-        }
+        AccountInfo { balance, nonce, code_hash: KECCAK_EMPTY }
     }
 
     fn create_7702_account() -> AccountInfo {
@@ -119,6 +115,7 @@ mod tests {
         L1BlockInfo::default()
     }
 
+    #[test]
     fn test_valid_tx() {
         // Create a sample EIP-1559 transaction
         let signer = PrivateKeySigner::random();
@@ -141,12 +138,10 @@ mod tests {
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
         let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
-        assert!(
-            validate_tx(account, &recovered_tx, &data, &mut l1_block_info)
-                .is_ok()
-        );
+        assert!(validate_tx(account, &recovered_tx, &data, &mut l1_block_info).is_ok());
     }
 
+    #[test]
     fn test_valid_7702_tx() {
         let signer = PrivateKeySigner::random();
         let mut tx = TxEip7702 {
@@ -169,12 +164,10 @@ mod tests {
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
         let envelope = OpTxEnvelope::Eip7702(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
-        assert!(
-            validate_tx(account, &recovered_tx, &data, &mut l1_block_info)
-                .is_ok()
-        );
+        assert!(validate_tx(account, &recovered_tx, &data, &mut l1_block_info).is_ok());
     }
 
+    #[test]
     fn test_err_interop_tx() {
         let signer = PrivateKeySigner::random();
 
@@ -205,10 +198,11 @@ mod tests {
 
         assert_eq!(
             validate_tx(account, &recovered_tx, &data, &mut l1_block_info),
-            Err(eyre!("EIP-4844 transactions are not supported"))
+            Err(TxValidationError::InteropNotSupported)
         );
     }
 
+    #[test]
     fn test_err_eip4844_tx() {
         let signer = PrivateKeySigner::random();
         let mut tx = TxEip4844 {
@@ -230,16 +224,15 @@ mod tests {
 
         let data = tx.input().to_vec();
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-        let recovered_tx = tx
-            .into_signed(signature)
-            .try_into_recovered()
-            .expect("failed to recover tx");
+        let recovered_tx =
+            tx.into_signed(signature).try_into_recovered().expect("failed to recover tx");
         assert_eq!(
             validate_tx(account, &recovered_tx, &data, &mut l1_block_info),
-            Err(eyre!("EIP-4844 transactions are not supported"))
+            Err(TxValidationError::Eip4844NotSupported)
         );
     }
 
+    #[test]
     fn test_err_tx_not_7702() {
         let signer = PrivateKeySigner::random();
 
@@ -266,10 +259,11 @@ mod tests {
 
         assert_eq!(
             validate_tx(account, &recovered_tx, &data, &mut l1_block_info),
-            Err(eyre!("Account is a 7702 account but tx is not a 7702 tx"))
+            Err(TxValidationError::AccountIs7702ButTxIsNot7702)
         );
     }
 
+    #[test]
     fn test_err_tx_nonce_too_low() {
         let signer = PrivateKeySigner::random();
         let mut tx = TxEip1559 {
@@ -287,8 +281,8 @@ mod tests {
         let account = create_account(1, U256::from(1000000000000000000u128));
         let mut l1_block_info = create_l1_block_info();
 
-        let nonce = account.nonce;
         let tx_nonce = tx.nonce();
+        let nonce = account.nonce;
 
         let data = tx.input().to_vec();
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
@@ -296,12 +290,11 @@ mod tests {
         let recovered_tx = envelope.try_into_recovered().unwrap();
         assert_eq!(
             validate_tx(account, &recovered_tx, &data, &mut l1_block_info),
-            Err(
-                eyre!("Transaction nonce: {} is not the latest nonce: {}", tx_nonce, nonce)
-            )
+            Err(TxValidationError::TransactionNonceTooLow(tx_nonce, nonce))
         );
     }
 
+    #[test]
     fn test_err_tx_insufficient_funds() {
         let signer = PrivateKeySigner::random();
         let mut tx = TxEip1559 {
@@ -316,8 +309,12 @@ mod tests {
             input: bytes!("").clone(),
         };
 
-        let account = create_account(0, U256::from(1000000u128));
+        let account_balance = U256::from(1000000u128);
+        let account = create_account(0, account_balance);
         let mut l1_block_info = create_l1_block_info();
+
+        let max_fee = tx.max_fee_per_gas().saturating_mul(tx.gas_limit() as u128);
+        let txn_cost = tx.value().saturating_add(U256::from(max_fee));
 
         let data = tx.input().to_vec();
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
@@ -325,10 +322,11 @@ mod tests {
         let recovered_tx = envelope.try_into_recovered().unwrap();
         assert_eq!(
             validate_tx(account, &recovered_tx, &data, &mut l1_block_info),
-            Err(eyre!("Insufficient funds for transfer: {} for transfer: {}", txn_cost, account.balance))
+            Err(TxValidationError::InsufficientFundsForTransfer(txn_cost, account_balance))
         );
     }
 
+    #[test]
     fn test_err_tx_insufficient_funds_for_l1_gas() {
         let signer = PrivateKeySigner::random();
         let mut tx = TxEip1559 {
@@ -344,9 +342,15 @@ mod tests {
         };
 
         // fund the account with enough funds to cover the txn cost but not enough to cover the l1 cost
-        let account = create_account(0, U256::from(4201000000u128));
+        let account_balance = U256::from(4201000000u128);
+        let account = create_account(0, account_balance);
         let mut l1_block_info = create_l1_block_info();
         l1_block_info.tx_l1_cost = Some(U256::from(1000000u128));
+
+        let max_fee = tx.max_fee_per_gas().saturating_mul(tx.gas_limit() as u128);
+        let txn_cost = tx.value().saturating_add(U256::from(max_fee));
+        let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(tx.input(), OpSpecId::ISTHMUS);
+        let l1_cost = txn_cost.saturating_add(l1_cost_addition);
 
         let data = tx.input().to_vec();
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
@@ -355,7 +359,7 @@ mod tests {
 
         assert_eq!(
             validate_tx(account, &recovered_tx, &data, &mut l1_block_info),
-            Err(eyre!("Insufficient funds for L1 gas: {} for transfer: {}", l1_cost, account.balance))
+            Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account_balance))
         );
-    }    
+    }
 }
