@@ -42,6 +42,17 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_DISABLE_STATE_ROOT"
     )]
     pub flashblocks_disable_state_root: bool,
+
+    /// Whether to compute state root only when get_payload is called (finalization).
+    /// When enabled, flashblocks are built without state root, but the final payload
+    /// returned by get_payload will have the state root computed.
+    /// Requires --flashblocks.disable-state-root to be effective.
+    #[arg(
+        long = "flashblocks.compute-state-root-on-finalize",
+        default_value = "false",
+        env = "FLASHBLOCKS_COMPUTE_STATE_ROOT_ON_FINALIZE"
+    )]
+    pub flashblocks_compute_state_root_on_finalize: bool,
 }
 
 impl Default for FlashblocksArgs {
@@ -53,6 +64,7 @@ impl Default for FlashblocksArgs {
             flashblocks_fixed: false,
             flashblocks_leeway_time: 75,
             flashblocks_disable_state_root: false,
+            flashblocks_compute_state_root_on_finalize: false,
         }
     }
 }

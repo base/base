@@ -5,6 +5,66 @@ use base_builder_cli::{FlashblocksArgs, OpRbuilderArgs};
 
 use crate::tests::{TransactionBuilderExt, setup_test_instance_with_args};
 
+/// Test that when `compute_state_root_on_finalize` is enabled:
+/// 1. Flashblocks are built without state root (state_root = ZERO in intermediate blocks)
+/// 2. The final payload returned by get_payload has a valid state root (non-zero)
+#[tokio::test]
+async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
+    let args = OpRbuilderArgs {
+        chain_block_time: 2000, // 2 second block time for more flashblocks
+        flashblocks: FlashblocksArgs {
+            flashblocks_port: 0,
+            flashblocks_addr: "127.0.0.1".into(),
+            flashblocks_block_time: 200,
+            flashblocks_leeway_time: 100,
+            flashblocks_fixed: true,
+            flashblocks_disable_state_root: true,
+            flashblocks_compute_state_root_on_finalize: true,
+        },
+        ..Default::default()
+    };
+    let rbuilder = setup_test_instance_with_args(args).await?;
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Send some transactions
+    for _ in 0..3 {
+        let _ = driver.create_transaction().random_valid_transfer().send().await?;
+    }
+
+    // Build a block - this will trigger get_payload which should compute state root
+    let block = driver.build_new_block().await?;
+
+    // Verify the block has transactions
+    assert_eq!(
+        block.transactions.len(),
+        4, // 3 user txs + 1 deposit
+        "Block should contain deposit + user transactions"
+    );
+
+    // Verify that the FINAL block has a valid (non-zero) state root
+    assert_ne!(
+        block.header.state_root,
+        B256::ZERO,
+        "Final block state root should NOT be zero when compute_state_root_on_finalize is enabled"
+    );
+
+    // Verify flashblocks were produced
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert!(!flashblocks.is_empty(), "Flashblocks should have been produced");
+
+    // Verify intermediate flashblocks have zero state root (they skip state root calculation)
+    for fb in &flashblocks {
+        assert_eq!(
+            fb.diff.state_root,
+            B256::ZERO,
+            "Intermediate flashblocks should have zero state root"
+        );
+    }
+
+    flashblocks_listener.stop().await
+}
+
 #[tokio::test]
 async fn smoke_dynamic_base() -> eyre::Result<()> {
     let args = OpRbuilderArgs {
@@ -226,6 +286,7 @@ async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
             flashblocks_leeway_time: 100,
             flashblocks_fixed: false,
             flashblocks_disable_state_root: true,
+            flashblocks_compute_state_root_on_finalize: false,
         },
         ..Default::default()
     };

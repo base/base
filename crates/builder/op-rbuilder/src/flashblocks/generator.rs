@@ -79,6 +79,8 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     extra_block_deadline: std::time::Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
+    /// Whether to compute state root only on finalization (when get_payload is called).
+    compute_state_root_on_finalize: bool,
 }
 
 // === impl BlockPayloadJobGenerator ===
@@ -93,6 +95,7 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
+        compute_state_root_on_finalize: bool,
     ) -> Self {
         Self {
             client,
@@ -103,6 +106,7 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             extra_block_deadline,
             pre_cached: None,
+            compute_state_root_on_finalize,
         }
     }
 
@@ -194,6 +198,8 @@ where
             builder: self.builder.clone(),
             config,
             cell: BlockCell::new(),
+            finalized_cell: BlockCell::new(),
+            compute_state_root_on_finalize: self.compute_state_root_on_finalize,
             cancel: cancel_token,
             publish_guard,
             deadline,
@@ -244,8 +250,13 @@ where
     ///
     /// See [PayloadBuilder]
     pub(crate) builder: Builder,
-    /// The cell that holds the built payload.
+    /// The cell that holds the built payload (intermediate flashblocks, may not have state root).
     pub(crate) cell: BlockCell<Builder::BuiltPayload>,
+    /// The cell that holds the finalized payload with state root computed.
+    /// This is set when `resolve_kind` is called and finalization is requested.
+    pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
+    /// Whether to compute state root only on finalization (when get_payload is called).
+    pub(crate) compute_state_root_on_finalize: bool,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
     /// Mutex to synchronize cancellation with payload publishing.
@@ -290,7 +301,14 @@ where
             self.cancel.cancel();
         }
 
-        let resolve_future = ResolvePayload::new(self.cell.wait_for_value());
+        // If compute_state_root_on_finalize is enabled, wait for the finalized cell
+        // Otherwise, just return the current best payload from the regular cell
+        let resolve_future = if self.compute_state_root_on_finalize {
+            ResolvePayload::new(self.finalized_cell.wait_for_value())
+        } else {
+            ResolvePayload::new(self.cell.wait_for_value())
+        };
+
         (resolve_future, KeepPayloadJobAlive::No)
     }
 }
@@ -304,6 +322,10 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub cancel: CancellationToken,
     /// Mutex to synchronize cancellation with payload publishing.
     pub publish_guard: Arc<Mutex<()>>,
+    /// Cell to store the finalized payload with state root.
+    pub finalized_cell: BlockCell<Payload>,
+    /// Whether to compute state root only on finalization (when get_payload is called).
+    pub compute_state_root_on_finalize: bool,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -320,13 +342,21 @@ where
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
         let publish_guard = self.publish_guard.clone();
+        let finalized_cell = self.finalized_cell.clone();
+        let compute_state_root_on_finalize = self.compute_state_root_on_finalize;
 
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking(Box::pin(async move {
-            let args =
-                BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
+            let args = BuildArguments {
+                cached_reads,
+                config: payload_config,
+                cancel,
+                publish_guard,
+                finalized_cell,
+                compute_state_root_on_finalize,
+            };
 
             let result = builder.try_build(args, cell).await;
             let _ = tx.send(result);
@@ -671,6 +701,7 @@ mod tests {
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),
+            false, // compute_state_root_on_finalize
         );
 
         // this is not nice but necessary
