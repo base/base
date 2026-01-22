@@ -20,7 +20,7 @@ FAL adapts the BAL specification for chains that produce flashblocks—increment
 
 1. **Flashblock Delta Structure**: FAL operates on flashblock deltas that contain incremental changes, not complete canonical blocks
 2. **Metadata Storage**: FAL hash is stored in the flashblock metadata field, not a block header field
-3. **No Beacon Chain Features**: FAL omits EIP-4895 (withdrawals), EIP-4788 (beacon root), EIP-7002 (withdrawal requests), and EIP-7251 (consolidations)
+3. **No Beacon Chain Features**: FAL omits [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895) (withdrawals), [EIP-4788](https://eips.ethereum.org/EIPS/eip-4788) (beacon root), [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002) (withdrawal requests), and [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) (consolidations)
 
 ### Fee Distribution
 
@@ -143,7 +143,7 @@ It **MUST** include:
 
 Addresses with no state changes **MUST** still be present with empty change lists.
 
-Entries from an EIP-2930 access list **MUST NOT** be included automatically. Only addresses and storage slots that are actually touched or changed during execution are recorded.
+Entries from an [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930) access list **MUST NOT** be included automatically. Only addresses and storage slots that are actually touched or changed during execution are recorded.
 
 ### Ordering and Determinism
 
@@ -578,6 +578,11 @@ Increased flashblock size impacts propagation. Average overhead can be reasonabl
 
 - [EIP-7928: Block-Level Access Lists](https://eips.ethereum.org/EIPS/eip-7928) - The original BAL specification for Ethereum L1
 - [EIP-2930: Optional Access Lists](https://eips.ethereum.org/EIPS/eip-2930) - Transaction-level access lists
+- [EIP-4895: Beacon Chain Push Withdrawals](https://eips.ethereum.org/EIPS/eip-4895) - Enables validator withdrawals from the Beacon Chain to the execution layer
+- [EIP-4788: Beacon Block Root in the EVM](https://eips.ethereum.org/EIPS/eip-4788) - Exposes the Beacon Chain block root to the EVM via a system contract
+- [EIP-7002: Execution Layer Triggerable Withdrawals](https://eips.ethereum.org/EIPS/eip-7002) - Allows validators to trigger withdrawals directly from the execution layer
+- [EIP-7251: Increase the MAX_EFFECTIVE_BALANCE](https://eips.ethereum.org/EIPS/eip-7251) - Increases the maximum effective balance for Ethereum validators
+- [EIP-7702: Set EOA Account Code](https://eips.ethereum.org/EIPS/eip-7702) - Allows externally owned accounts (EOAs) to temporarily set executable code
 - [OP Stack Specification](https://specs.optimism.io/) - OP Stack technical specifications
 
 ## Copyright
