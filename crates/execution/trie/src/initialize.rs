@@ -1,4 +1,5 @@
-//! Backfill job for proofs storage. Handles storing the existing state into the proofs storage.
+//! Initialization job for proofs storage. Handles storing the existing state into the proofs
+//! storage.
 
 use crate::{
     api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore},
@@ -20,15 +21,15 @@ use reth_trie_common::{
 use std::{collections::HashMap, time::Instant};
 use tracing::info;
 
-/// Batch size threshold for storing entries during backfill
-const BACKFILL_STORAGE_THRESHOLD: usize = 100000;
+/// Batch size threshold for storing entries during initialization
+const INITIALIZE_STORAGE_THRESHOLD: usize = 100000;
 
-/// Threshold for logging progress during backfill
-const BACKFILL_LOG_THRESHOLD: usize = 100000;
+/// Threshold for logging progress during initialization
+const INITIALIZE_LOG_THRESHOLD: usize = 100000;
 
-/// Backfill job for external storage.
+/// Initialization job for external storage.
 #[derive(Debug)]
-pub struct BackfillJob<'a, Tx: DbTx, S: OpProofsStore + Send> {
+pub struct InitializationJob<'a, Tx: DbTx, S: OpProofsStore + Send> {
     storage: S,
     tx: &'a Tx,
 }
@@ -98,7 +99,7 @@ define_simple_cursor_iter!(
 );
 define_dup_cursor_iter!(StoragesTrieIter, tables::StoragesTrie, B256, StorageTrieEntry);
 
-/// Trait to estimate the progress of a backfill job based on the key.
+/// Trait to estimate the progress of a initialization job based on the key.
 trait CompletionEstimatable {
     // Returns a progress estimate as a percentage (0.0 to 1.0)
     fn estimate_progress(&self) -> f64;
@@ -129,8 +130,8 @@ impl CompletionEstimatable for StoredNibbles {
     }
 }
 
-/// Backfill a table from a source iterator to a storage function. Handles batching and logging.
-async fn backfill<
+/// Initialize a table from a source iterator to a storage function. Handles batching and logging.
+async fn initialize<
     S: Iterator<Item = Result<(Key, Value), DatabaseError>>,
     F: Future<Output = Result<(), OpProofsStorageError>> + Send,
     Key: CompletionEstimatable + Clone + 'static,
@@ -146,7 +147,7 @@ async fn backfill<
 
     let mut total_entries: u64 = 0;
 
-    info!("Starting {} backfill", name);
+    info!("Starting {} initialization", name);
     let start_time = Instant::now();
 
     let mut source = source.peekable();
@@ -199,14 +200,14 @@ async fn backfill<
         save_fn(entries).await?;
     }
 
-    info!("{} backfill complete: {} entries", name, total_entries);
+    info!("{} initialization complete: {} entries", name, total_entries);
     Ok(total_entries)
 }
 
 impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
-    BackfillJob<'a, Tx, S>
+    InitializationJob<'a, Tx, S>
 {
-    /// Create a new backfill job.
+    /// Create a new initialization job.
     pub const fn new(storage: S, tx: &'a Tx) -> Self {
         Self { storage, tx }
     }
@@ -281,8 +282,8 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         Ok(())
     }
 
-    /// Backfill hashed accounts data
-    async fn backfill_hashed_accounts(
+    /// Initialize hashed accounts data
+    async fn initialize_hashed_accounts(
         &self,
         start_key: Option<B256>,
     ) -> Result<(), OpProofsStorageError> {
@@ -292,15 +293,15 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
             start_cursor
                 .seek(latest)?
                 .filter(|(k, _)| *k == latest)
-                .ok_or(OpProofsStorageError::BackfillInconsistentState)?;
+                .ok_or(OpProofsStorageError::InitializeStorageInconsistentState)?;
         }
 
         let source = HashedAccountsIter::new(start_cursor);
-        backfill(
+        initialize(
             "hashed accounts",
             source,
-            BACKFILL_STORAGE_THRESHOLD,
-            BACKFILL_LOG_THRESHOLD,
+            INITIALIZE_STORAGE_THRESHOLD,
+            INITIALIZE_LOG_THRESHOLD,
             |entries| self.save_hashed_accounts(entries),
         )
         .await?;
@@ -308,8 +309,8 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         Ok(())
     }
 
-    /// Backfill hashed storage data
-    async fn backfill_hashed_storages(
+    /// Initialize hashed storage data
+    async fn initialize_hashed_storages(
         &self,
         start_key: Option<HashedStorageKey>,
     ) -> Result<(), OpProofsStorageError> {
@@ -319,15 +320,15 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
             start_cursor
                 .seek_by_key_subkey(latest.hashed_address, latest.hashed_storage_key)?
                 .filter(|v| v.key == latest.hashed_storage_key)
-                .ok_or(OpProofsStorageError::BackfillInconsistentState)?;
+                .ok_or(OpProofsStorageError::InitializeStorageInconsistentState)?;
         }
 
         let source = HashedStoragesIter::new(start_cursor);
-        backfill(
+        initialize(
             "hashed storage",
             source,
-            BACKFILL_STORAGE_THRESHOLD,
-            BACKFILL_LOG_THRESHOLD,
+            INITIALIZE_STORAGE_THRESHOLD,
+            INITIALIZE_LOG_THRESHOLD,
             |entries| self.save_hashed_storages(entries),
         )
         .await?;
@@ -335,8 +336,8 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         Ok(())
     }
 
-    /// Backfill accounts trie data
-    async fn backfill_accounts_trie(
+    /// Initialize accounts trie data
+    async fn initialize_accounts_trie(
         &self,
         start_key: Option<StoredNibbles>,
     ) -> Result<(), OpProofsStorageError> {
@@ -346,15 +347,15 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
             start_cursor
                 .seek(latest_key.clone())?
                 .filter(|(k, _)| *k == latest_key)
-                .ok_or(OpProofsStorageError::BackfillInconsistentState)?;
+                .ok_or(OpProofsStorageError::InitializeStorageInconsistentState)?;
         }
 
         let source = AccountsTrieIter::new(start_cursor);
-        backfill(
+        initialize(
             "accounts trie",
             source,
-            BACKFILL_STORAGE_THRESHOLD,
-            BACKFILL_LOG_THRESHOLD,
+            INITIALIZE_STORAGE_THRESHOLD,
+            INITIALIZE_LOG_THRESHOLD,
             |entries| self.save_account_branches(entries),
         )
         .await?;
@@ -362,8 +363,8 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         Ok(())
     }
 
-    /// Backfill storage trie data
-    async fn backfill_storages_trie(
+    /// Initialize storage trie data
+    async fn initialize_storages_trie(
         &self,
         start_key: Option<StorageTrieKey>,
     ) -> Result<(), OpProofsStorageError> {
@@ -376,15 +377,15 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
                     StoredNibblesSubKey::from(latest_key.path.0),
                 )?
                 .filter(|v| v.nibbles.0 == latest_key.path.0)
-                .ok_or(OpProofsStorageError::BackfillInconsistentState)?;
+                .ok_or(OpProofsStorageError::InitializeStorageInconsistentState)?;
         }
 
         let source = StoragesTrieIter::new(start_cursor);
-        backfill(
+        initialize(
             "storage trie",
             source,
-            BACKFILL_STORAGE_THRESHOLD,
-            BACKFILL_LOG_THRESHOLD,
+            INITIALIZE_STORAGE_THRESHOLD,
+            INITIALIZE_LOG_THRESHOLD,
             |entries| self.save_storage_branches(entries),
         )
         .await?;
@@ -392,12 +393,15 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         Ok(())
     }
 
-    /// Run complete backfill of all preimage data
-    async fn backfill_trie(&self, anchor: InitialStateAnchor) -> Result<(), OpProofsStorageError> {
-        self.backfill_hashed_accounts(anchor.latest_hashed_account_key).await?;
-        self.backfill_hashed_storages(anchor.latest_hashed_storage_key).await?;
-        self.backfill_storages_trie(anchor.latest_storage_trie_key).await?;
-        self.backfill_accounts_trie(anchor.latest_account_trie_key).await?;
+    /// Run complete initialization of all preimage data
+    async fn initialize_trie(
+        &self,
+        anchor: InitialStateAnchor,
+    ) -> Result<(), OpProofsStorageError> {
+        self.initialize_hashed_accounts(anchor.latest_hashed_account_key).await?;
+        self.initialize_hashed_storages(anchor.latest_hashed_storage_key).await?;
+        self.initialize_storages_trie(anchor.latest_storage_trie_key).await?;
+        self.initialize_accounts_trie(anchor.latest_account_trie_key).await?;
         Ok(())
     }
 
@@ -407,16 +411,16 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         best_number: u64,
         best_hash: B256,
     ) -> Result<(), OpProofsStorageError> {
-        let block = anchor.block.ok_or(OpProofsStorageError::BackfillInconsistentState)?;
+        let block = anchor.block.ok_or(OpProofsStorageError::InitializeStorageInconsistentState)?;
 
         if block.number != best_number || block.hash != best_hash {
-            return Err(OpProofsStorageError::BackfillInconsistentState);
+            return Err(OpProofsStorageError::InitializeStorageInconsistentState);
         }
 
         Ok(())
     }
 
-    /// Run the backfill job.
+    /// Run the initialization job.
     pub async fn run(&self, best_number: u64, best_hash: B256) -> Result<(), OpProofsStorageError> {
         let anchor = self.storage.initial_state_anchor().await?;
 
@@ -432,7 +436,7 @@ impl<'a, Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
             }
         }
 
-        self.backfill_trie(anchor).await?;
+        self.initialize_trie(anchor).await?;
         self.storage.commit_initial_state().await?;
 
         Ok(())
@@ -478,7 +482,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_hashed_accounts() {
+    async fn test_initialize_hashed_accounts() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -511,10 +515,10 @@ mod tests {
         drop(cursor);
         tx.commit().unwrap();
 
-        // Run backfill
+        // Run initialization
         let tx = db.tx().unwrap();
-        let job = BackfillJob::new(storage.clone(), &tx);
-        job.backfill_hashed_accounts(None).await.unwrap();
+        let job = InitializationJob::new(storage.clone(), &tx);
+        job.initialize_hashed_accounts(None).await.unwrap();
 
         // Verify data was stored (will be in sorted order)
         let mut account_cursor = storage.account_hashed_cursor(100).unwrap();
@@ -529,7 +533,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_hashed_storage() {
+    async fn test_initialize_hashed_storage() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -562,10 +566,10 @@ mod tests {
         drop(cursor);
         tx.commit().unwrap();
 
-        // Run backfill
+        // Run initialization
         let tx = db.tx().unwrap();
-        let job = BackfillJob::new(storage.clone(), &tx);
-        job.backfill_hashed_storages(None).await.unwrap();
+        let job = InitializationJob::new(storage.clone(), &tx);
+        job.initialize_hashed_storages(None).await.unwrap();
 
         // Verify data was stored for addr1
         let mut storage_cursor = storage.storage_hashed_cursor(addr1, 100).unwrap();
@@ -588,7 +592,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_accounts_trie() {
+    async fn test_initialize_accounts_trie() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -610,10 +614,10 @@ mod tests {
         drop(cursor);
         tx.commit().unwrap();
 
-        // Run backfill
+        // Run initialization
         let tx = db.tx().unwrap();
-        let job = BackfillJob::new(storage.clone(), &tx);
-        job.backfill_accounts_trie(None).await.unwrap();
+        let job = InitializationJob::new(storage.clone(), &tx);
+        job.initialize_accounts_trie(None).await.unwrap();
 
         // Verify data was stored
         let mut trie_cursor = storage.account_trie_cursor(100).unwrap();
@@ -626,7 +630,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_storages_trie() {
+    async fn test_initialize_storages_trie() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -669,10 +673,10 @@ mod tests {
         drop(cursor);
         tx.commit().unwrap();
 
-        // Run backfill
+        // Run initialization
         let tx = db.tx().unwrap();
-        let job = BackfillJob::new(storage.clone(), &tx);
-        job.backfill_storages_trie(None).await.unwrap();
+        let job = InitializationJob::new(storage.clone(), &tx);
+        job.initialize_storages_trie(None).await.unwrap();
 
         // Verify data was stored for addr1
         let mut trie_cursor = storage.storage_trie_cursor(addr1, 100).unwrap();
@@ -695,7 +699,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_full_backfill_run() {
+    async fn test_full_initialize_run() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -746,9 +750,9 @@ mod tests {
 
         tx.commit().unwrap();
 
-        // Run full backfill
+        // Run full initialization
         let tx = db.tx().unwrap();
-        let job = BackfillJob::new(storage.clone(), &tx);
+        let job = InitializationJob::new(storage.clone(), &tx);
         let best_number = 100;
         let best_hash = B256::repeat_byte(0x42);
 
@@ -758,13 +762,13 @@ mod tests {
 
         job.run(best_number, best_hash).await.unwrap();
 
-        // Should be set after backfill
+        // Should be set after initialization
         assert_eq!(
             storage.get_earliest_block_number().await.unwrap(),
             Some((best_number, best_hash))
         );
 
-        // Verify data was backfilled
+        // Verify data was initialized
         let mut account_cursor = storage.account_hashed_cursor(100).unwrap();
         assert!(account_cursor.next().unwrap().is_some());
 
@@ -779,7 +783,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_run_skips_if_already_done() {
+    async fn test_initialize_run_skips_if_already_done() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -792,9 +796,9 @@ mod tests {
         storage.commit_initial_state().await.expect("commit anchor");
 
         let tx = db.tx().unwrap();
-        let job = BackfillJob::new(storage.clone(), &tx);
+        let job = InitializationJob::new(storage.clone(), &tx);
 
-        // Run backfill - should skip
+        // Run initialization - should skip
         job.run(100, B256::repeat_byte(0x42)).await.unwrap();
 
         // Should still have the old anchor
@@ -813,7 +817,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_resumes_hashed_accounts_with_no_dups() {
+    async fn test_initialize_resumes_hashed_accounts_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -836,11 +840,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #1
+        // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_hashed_accounts(None).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_hashed_accounts(None).await.unwrap();
         }
 
         // Resume point must be k2 (max)
@@ -862,11 +866,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #2 (restart)
+        // Initialization #2 (restart)
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_hashed_accounts(Some(k2)).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_hashed_accounts(Some(k2)).await.unwrap();
         }
 
         // Now resume point must be k4
@@ -896,7 +900,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_resumes_hashed_storages_with_no_dups() {
+    async fn test_initialize_resumes_hashed_storages_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -926,11 +930,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #1
+        // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_hashed_storages(None).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_hashed_storages(None).await.unwrap();
         }
 
         // Latest key must be (a2, s21) because a2 > a1
@@ -951,11 +955,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #2
+        // Initialization #2
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_hashed_storages(Some(HashedStorageKey::new(a2, s21))).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_hashed_storages(Some(HashedStorageKey::new(a2, s21))).await.unwrap();
         }
 
         // Latest key now must be (a2, s22)
@@ -992,7 +996,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_resumes_accounts_trie_with_no_dups() {
+    async fn test_initialize_resumes_accounts_trie_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -1016,11 +1020,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #1
+        // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_accounts_trie(None).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_accounts_trie(None).await.unwrap();
         }
 
         assert_eq!(
@@ -1037,11 +1041,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #2
+        // Initialization #2
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_accounts_trie(Some(p2.clone())).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_accounts_trie(Some(p2.clone())).await.unwrap();
         }
 
         assert_eq!(
@@ -1063,7 +1067,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_backfill_resumes_storages_trie_with_no_dups() {
+    async fn test_initialize_resumes_storages_trie_with_no_dups() {
         let db = create_test_rw_db();
         let dir = TempDir::new().unwrap();
         let store = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env"));
@@ -1097,11 +1101,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #1
+        // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_storages_trie(None).await.unwrap();
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_storages_trie(None).await.unwrap();
         }
 
         // Latest must be (a2, n2) because a2 > a1
@@ -1126,11 +1130,11 @@ mod tests {
             tx.commit().unwrap();
         }
 
-        // Backfill #2
+        // Initialization #2
         {
             let tx = db.tx().unwrap();
-            let job = BackfillJob::new(store.clone(), &tx);
-            job.backfill_storages_trie(Some(StorageTrieKey::new(a2, StoredNibbles::from(n2.0))))
+            let job = InitializationJob::new(store.clone(), &tx);
+            job.initialize_storages_trie(Some(StorageTrieKey::new(a2, StoredNibbles::from(n2.0))))
                 .await
                 .unwrap();
         }
