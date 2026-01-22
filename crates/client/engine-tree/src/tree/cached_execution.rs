@@ -17,7 +17,7 @@ pub trait CachedExecutionProvider<Receipt, HaltReason> {
     fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
-        prev_tx_hashes: impl Iterator<Item = &'a B256>,
+        prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
     ) -> Option<ResultAndState<HaltReason>>;
 }
@@ -31,7 +31,7 @@ impl<Receipt, HaltReason> CachedExecutionProvider<Receipt, HaltReason>
     fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
-        prev_tx_hashes: impl Iterator<Item = &'a B256>,
+        prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
     ) -> Option<ResultAndState<HaltReason>> {
         None
@@ -43,6 +43,7 @@ pub struct CachedExecutor<E, C> {
     cached_execution_provider: C,
     txs: Vec<B256>,
     block_state_root: B256,
+    all_txs_cached: bool,
 }
 
 impl<E, C> CachedExecutor<E, C> {
@@ -52,7 +53,7 @@ impl<E, C> CachedExecutor<E, C> {
         txs: Vec<B256>,
         block_state_root: B256,
     ) -> Self {
-        Self { executor, cached_execution_provider, txs, block_state_root }
+        Self { executor, cached_execution_provider, txs, block_state_root, all_txs_cached: true }
     }
 }
 
@@ -70,13 +71,17 @@ where
         &mut self,
         executing_tx: impl ExecutableTx<Self>,
     ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
-        let prev_txs = self
-            .txs
-            .iter()
-            .take_while(|tx| *tx != executing_tx.tx().tx_hash());;
+
+        if !self.all_txs_cached {
+            return self.executor.execute_transaction_without_commit(executing_tx);
+        }
+
+        // find tx just before this one
+        let prev_tx_hash = self.txs.iter().take_while(|tx| *tx != executing_tx.tx().tx_hash()).last();
+        
         let cached_execution = self.cached_execution_provider.get_cached_execution_for_tx(
             &self.block_state_root,
-            prev_txs,
+            prev_tx_hash,
             &executing_tx.tx().tx_hash(),
         );
         if let Some(cached_execution) = cached_execution {
@@ -86,6 +91,7 @@ where
             }
             return Ok(cached_execution);
         }
+        self.all_txs_cached = false;
         self.executor.execute_transaction_without_commit(executing_tx)
     }
 

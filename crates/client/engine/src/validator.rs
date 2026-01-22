@@ -55,41 +55,36 @@ where
     fn get_cached_execution_for_tx<'a>(
         &self,
         parent_block_hash: &B256,
-        prev_tx_hashes: impl Iterator<Item = &'a B256>,
+        prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
     ) -> Option<ResultAndState<OpHaltReason>> {
         let Some(flashblocks_state) = self.flashblocks_state.as_ref() else {
-            // info!("Not using cached results - missing flashblocks state");
             return None;
         };
         let Some(pending_blocks) = flashblocks_state.get_pending_blocks().clone() else {
-            // info!("Not using cached results - missing pending blocks");
             return None;
         };
 
         let Ok(Some(parent_block_number)) = self.provider.block_number(*parent_block_hash) else {
-            // info!(
-            //     "Not using cached results - missing parent block number for hash: {}",
-            //     parent_block_hash
-            // );
             return None;
         };
 
         let this_block_number = parent_block_number.saturating_add(1);
 
         let tracked_txns = pending_blocks.get_transactions_for_block(this_block_number);
-        let tracked_txn_hashes: Vec<_> =
-            tracked_txns.iter().map(|tx| tx.inner.inner.tx_hash()).collect();
 
-        // ensure tracked_txn_hashes starts with prev_tx_hashes
-        if !tracked_txn_hashes
-            .iter()
-            .zip(prev_tx_hashes)
-            .all(|(a, b)| a == b)
-        {
-            // let first_mismatch = tracked_txn_hashes.iter().zip(prev_tx_hashes).find(|(a, b)| a != b);
-            // info!("First mismatch: {:?}", first_mismatch);
-            return None;
+        if let Some(prev_cached_hash) = prev_cached_hash {
+            // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
+            if !tracked_txns.iter().map(|tx| tx.inner.inner.tx_hash()).any(|hash| &hash == prev_cached_hash) {
+                warn!("Not using cached results - previous transaction not cached: {:?}", prev_cached_hash);
+                return None;
+            }
+        } else {
+            // must be the first tx in the block
+            if tracked_txns.get(0).map(|tx| tx.inner.inner.tx_hash()) != Some(*tx_hash) {
+                warn!("Not using cached results - first transaction not cached: {:?}", tx_hash);
+                return None;
+            }
         }
 
         let receipt_and_state = pending_blocks
