@@ -701,7 +701,7 @@ mod tests {
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),
-            false, // compute_state_root_on_finalize
+            false,
         );
 
         // this is not nice but necessary
