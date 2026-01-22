@@ -35,6 +35,11 @@ pub struct FlashblocksConfig {
 
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
+
+    /// Whether to compute state root only when get_payload is called (finalization).
+    /// When enabled, flashblocks are built without state root, but the final payload
+    /// returned by get_payload will have the state root computed.
+    pub compute_state_root_on_finalize: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -45,6 +50,7 @@ impl Default for FlashblocksConfig {
             leeway_time: Duration::from_millis(50),
             fixed: false,
             disable_state_root: false,
+            compute_state_root_on_finalize: false,
         }
     }
 }
@@ -66,7 +72,17 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
-        Ok(Self { ws_addr, interval, leeway_time, fixed, disable_state_root })
+        let compute_state_root_on_finalize =
+            args.flashblocks.flashblocks_compute_state_root_on_finalize;
+
+        Ok(Self {
+            ws_addr,
+            interval,
+            leeway_time,
+            fixed,
+            disable_state_root,
+            compute_state_root_on_finalize,
+        })
     }
 }
 
