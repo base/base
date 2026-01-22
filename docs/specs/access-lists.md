@@ -243,7 +243,7 @@ The **L1 attributes transaction** (deposited transaction at index 0):
 
 Record system contract storage diffs of the **single** updated storage slot in the ring buffer.
 
-**OP Stack Note:** Block hash storage may use the same EIP-2935 mechanism or a modified version. Record whatever storage changes actually occur.
+**OP Stack Note:** Block hash storage may use the same [EIP-2935](https://specs.optimism.io/protocol/isthmus/derivation.html#eip-2935-contract-deployment) mechanism or a modified version. Record whatever storage changes actually occur. See [OP Stack Specification](https://eips.ethereum.org/EIPS/eip-2935?utm_source=chatgpt.com) for details on block hash storage implementation.
 
 ### Edge Cases (General, inherited from BAL)
 
