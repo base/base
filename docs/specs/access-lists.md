@@ -578,6 +578,7 @@ Increased flashblock size impacts propagation. Average overhead can be reasonabl
 
 - [EIP-7928: Block-Level Access Lists](https://eips.ethereum.org/EIPS/eip-7928) - The original BAL specification for Ethereum L1
 - [EIP-2930: Optional Access Lists](https://eips.ethereum.org/EIPS/eip-2930) - Transaction-level access lists
+- [EIP-2935: Block Hash Storage](https://eips.ethereum.org/EIPS/eip-2935) - Provides a mechanism for storing historical block hashes in state, used for L2 compatibility and OP Stack integration
 - [EIP-4895: Beacon Chain Push Withdrawals](https://eips.ethereum.org/EIPS/eip-4895) - Enables validator withdrawals from the Beacon Chain to the execution layer
 - [EIP-4788: Beacon Block Root in the EVM](https://eips.ethereum.org/EIPS/eip-4788) - Exposes the Beacon Chain block root to the EVM via a system contract
 - [EIP-7002: Execution Layer Triggerable Withdrawals](https://eips.ethereum.org/EIPS/eip-7002) - Allows validators to trigger withdrawals directly from the execution layer
