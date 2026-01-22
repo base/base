@@ -10,6 +10,7 @@ use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use tracing::{error, info};
 use tokio::sync::{
     Mutex,
     broadcast::{self, Sender},
