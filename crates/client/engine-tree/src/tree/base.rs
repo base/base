@@ -598,7 +598,6 @@ where
             });
         }
 
-        let tx_iter = handle.iter_transactions().collect::<Vec<_>>();
         let txs = match &input {
             BlockOrPayload::Payload(payload) => payload
                 .payload

@@ -6,17 +6,18 @@ use reth_evm::{
     execute::ExecutableTxFor,
 };
 use reth_provider::ExecutionOutcome;
-use revm::context::result::ResultAndState;
+use reth_revm::State;
+use revm::{Database, context::result::ResultAndState};
 use revm_primitives::B256;
 
 use crate::tree::error::InsertBlockErrorKind;
 
 pub trait CachedExecutionProvider<Receipt, HaltReason> {
     // TODO: what do we need to check to ensure the tx execution is valid?
-    fn get_cached_execution_for_tx(
+    fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
-        prev_tx_hashes: &[B256],
+        prev_tx_hashes: impl Iterator<Item = &'a B256>,
         tx_hash: &B256,
     ) -> Option<ResultAndState<HaltReason>>;
 }
@@ -27,10 +28,10 @@ pub struct NoopCachedExecutionProvider;
 impl<Receipt, HaltReason> CachedExecutionProvider<Receipt, HaltReason>
     for NoopCachedExecutionProvider
 {
-    fn get_cached_execution_for_tx(
+    fn get_cached_execution_for_tx<'a>(
         &self,
         start_state_root: &B256,
-        prev_tx_hashes: &[B256],
+        prev_tx_hashes: impl Iterator<Item = &'a B256>,
         tx_hash: &B256,
     ) -> Option<ResultAndState<HaltReason>> {
         None
@@ -55,9 +56,10 @@ impl<E, C> CachedExecutor<E, C> {
     }
 }
 
-impl<E, C> BlockExecutor for CachedExecutor<E, C>
+impl<'a, E, C, DB> BlockExecutor for CachedExecutor<E, C>
 where
-    E: BlockExecutor<Transaction: TxHashRef>,
+    DB: Database + 'a,
+    E: BlockExecutor<Transaction: TxHashRef, Evm: Evm<DB = &'a mut State<DB>>>,
     C: CachedExecutionProvider<E::Receipt, <E::Evm as Evm>::HaltReason>,
 {
     type Transaction = E::Transaction;
@@ -71,15 +73,17 @@ where
         let prev_txs = self
             .txs
             .iter()
-            .take_while(|tx| *tx != executing_tx.tx().tx_hash())
-            .cloned()
-            .collect::<Vec<_>>();
+            .take_while(|tx| *tx != executing_tx.tx().tx_hash());;
         let cached_execution = self.cached_execution_provider.get_cached_execution_for_tx(
             &self.block_state_root,
-            &prev_txs,
+            prev_txs,
             &executing_tx.tx().tx_hash(),
         );
         if let Some(cached_execution) = cached_execution {
+            // load accounts into cache
+            for (address, _) in cached_execution.state.iter() {
+                let _ = self.executor.evm_mut().db_mut().load_cache_account(*address);
+            }
             return Ok(cached_execution);
         }
         self.executor.execute_transaction_without_commit(executing_tx)
