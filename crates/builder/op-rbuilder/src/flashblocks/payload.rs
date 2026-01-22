@@ -565,8 +565,6 @@ where
                 };
 
                 if cancelled {
-                    // Consistent with fallback block behavior
-                    best_payload.set(new_payload);
                     self.record_flashblocks_metrics(
                         ctx,
                         info,
