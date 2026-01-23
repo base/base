@@ -1,7 +1,7 @@
 use alloy_eip7928::{
     AccountChanges, BalanceChange, CodeChange, NonceChange, SlotChanges, StorageChange,
 };
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use revm::{
     primitives::{HashMap, HashSet},
     state::Bytecode,
@@ -45,9 +45,9 @@ impl FlashblockAccessListBuilder {
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct AccountChangesBuilder {
     /// Mapping from Storage Slot -> (Transaction Index -> New Value)
-    pub storage_changes: HashMap<B256, HashMap<u64, B256>>,
+    pub storage_changes: HashMap<U256, HashMap<u64, U256>>,
     /// Set of storage slots
-    pub storage_reads: HashSet<B256>,
+    pub storage_reads: HashSet<U256>,
     /// Mapping from Transaction Index -> New Balance
     pub balance_changes: HashMap<u64, U256>,
     /// Mapping from Transaction Index -> New Nonce
@@ -79,17 +79,17 @@ impl AccountChangesBuilder {
                 .storage_changes
                 .drain()
                 .map(|(slot, sc)| SlotChanges {
-                    slot: slot.into(),
+                    slot,
                     changes: sc
                         .into_iter()
                         .map(|(tx_idx, val)| StorageChange {
                             block_access_index: tx_idx,
-                            new_value: val.into(),
+                            new_value: val,
                         })
                         .collect(),
                 })
                 .collect(),
-            storage_reads: self.storage_reads.into_iter().map(|slot| slot.into()).collect(),
+            storage_reads: self.storage_reads.into_iter().collect(),
             balance_changes: self
                 .balance_changes
                 .into_iter()

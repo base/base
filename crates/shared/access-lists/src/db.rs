@@ -107,9 +107,9 @@ where
                 if prev != new {
                     account_changes
                         .storage_changes
-                        .entry(B256::from(*slot))
+                        .entry(*slot)
                         .or_default()
-                        .insert(self.index, new.into());
+                        .insert(self.index, new);
                 }
             }
         }
@@ -144,10 +144,14 @@ where
         self.db.code_by_hash(code_hash)
     }
 
-    fn storage(&mut self, address: Address, key: StorageKey) -> Result<StorageValue, Self::Error> {
+    fn storage(
+        &mut self,
+        address: Address,
+        index: StorageKey,
+    ) -> Result<StorageValue, Self::Error> {
         let account = self.access_list.changes.entry(address).or_default();
-        account.storage_reads.insert(B256::from(key));
-        self.db.storage(address, key)
+        account.storage_reads.insert(index);
+        self.db.storage(address, index)
     }
 
     fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
