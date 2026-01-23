@@ -28,12 +28,12 @@ pub enum TxValidationError {
 }
 
 /// Helper function to validate a transaction. A valid transaction must satisfy the following criteria:
-/// - If the transaction is not EIP-4844
-/// - If the transaction is not a cross chain tx
+/// - The transaction is not EIP-4844
+/// - The transaction is not a cross chain tx
 /// - If the transaction is a 7702 tx, then the account is a 7702 account
-/// - If the transaction's nonce is the latest
-/// - If the transaction's execution cost is less than the account's balance
-/// - If the transaction's L1 gas cost is less than the account's balance
+/// - The transaction's nonce is the latest
+/// - The transaction's execution cost is less than the account's balance
+/// - The transaction's L1 gas cost is less than the account's balance
 ///   
 /// Note: We don't need to check for EIP-4844 because bundle transactions are Recovered<OpTxEnvelope>
 /// which only Legacy, Eip2930, Eip1559, Eip7702, and Deposit.
