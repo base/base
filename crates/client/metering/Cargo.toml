@@ -30,6 +30,10 @@ reth-trie-common.workspace = true
 # revm
 revm-database.workspace = true
 
+# op
+op-revm.workspace = true
+op-alloy-consensus.workspace = true
+
 # alloy
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -45,6 +49,7 @@ metrics-derive.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true
+derive_more.workspace = true
 
 [dev-dependencies]
 base-client-node = { workspace = true, features = ["test-utils"] }
@@ -57,3 +62,5 @@ alloy-rpc-client.workspace = true
 op-alloy-consensus.workspace = true
 rand.workspace = true
 tokio.workspace = true
+op-alloy-network.workspace = true
+revm-context-interface.workspace = true
