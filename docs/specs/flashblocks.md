@@ -194,3 +194,15 @@ Returns the number of transactions sent from an address (nonce).
 - Returns standard JSON-RPC error responses for invalid requests
 - Returns `null` for non-existent transactions or blocks
 - Falls back to standard behavior when flashblocks are disabled or unavailable
+
+**Error Response Example:**
+```json
+{
+  "id": 1,
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": "blockNumber must be a valid hex string or 'pending'"
+  }
+}
