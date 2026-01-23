@@ -11,8 +11,8 @@ pub use subscription::tracex_subscription;
 
 mod rpc;
 pub use rpc::{
-    Status, TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
-    TransactionLifecycleResponse,
+    Status, TransactionLifecycleResponse, TransactionStatusApiImpl, TransactionStatusApiServer,
+    TransactionStatusResponse,
 };
 
 mod tracker;

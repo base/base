@@ -1,6 +1,6 @@
 //! RPC implementation for transaction status queries.
 
-use tokio::sync::mpsc::Receiver;
+use std::sync::Arc;
 
 use alloy_primitives::TxHash;
 use jsonrpsee::{
@@ -10,11 +10,11 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
+use moka::sync::Cache;
 use reth_transaction_pool::TransactionPool;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::Receiver;
 use tracing::{info, warn};
-use moka::sync::Cache;
-use std::sync::Arc;
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
@@ -50,7 +50,10 @@ pub trait TransactionStatusApi {
 
     /// Gets the lifecycle events of a transaction
     #[method(name = "transactionLifecycle")]
-    async fn transaction_lifecycle(&self, tx_hash: TxHash) -> RpcResult<TransactionLifecycleResponse>;
+    async fn transaction_lifecycle(
+        &self,
+        tx_hash: TxHash,
+    ) -> RpcResult<TransactionLifecycleResponse>;
 }
 
 /// Implementation of the transaction status RPC API.
@@ -89,11 +92,7 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiImpl<Pool> {
             }
         });
 
-        Ok(Self {
-            sequencer_client,
-            pool,
-            tx_events_cache,
-        })
+        Ok(Self { sequencer_client, pool, tx_events_cache })
     }
 }
 
@@ -125,9 +124,14 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
         }
     }
 
-    async fn transaction_lifecycle(&self, tx_hash: TxHash) -> RpcResult<TransactionLifecycleResponse> {
+    async fn transaction_lifecycle(
+        &self,
+        tx_hash: TxHash,
+    ) -> RpcResult<TransactionLifecycleResponse> {
         let Some(ref tx_events) = self.tx_events_cache.get(&tx_hash) else {
-            return Ok(TransactionLifecycleResponse::Unknown(format!("transaction not found in cache: {tx_hash}, it may have been evicted from the cache")));
+            return Ok(TransactionLifecycleResponse::Unknown(format!(
+                "transaction not found in cache: {tx_hash}, it may have been evicted from the cache"
+            )));
         };
 
         Ok(TransactionLifecycleResponse::Events(tx_events.clone()))
@@ -143,16 +147,15 @@ mod tests {
     };
     use serde_json::{self, json};
 
-    use crate::{tracker::Tracker, TxEvent, Pool};
-
     use super::*;
+    use crate::{Pool, TxEvent, tracker::Tracker};
 
     #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {
         let pool = testing_pool();
         let (_, tx_recv) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
-        let rpc =
-            TransactionStatusApiImpl::new(None, pool.clone(), tx_recv).expect("should be able to init rpc");
+        let rpc = TransactionStatusApiImpl::new(None, pool.clone(), tx_recv)
+            .expect("should be able to init rpc");
 
         let result = rpc
             .transaction_status(TxHash::random())
@@ -197,8 +200,9 @@ mod tests {
         });
 
         let (_, tx_recv) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
-        let rpc = TransactionStatusApiImpl::new(Some(sequencer.base_url()), testing_pool(), tx_recv)
-            .expect("should be able to init rpc");
+        let rpc =
+            TransactionStatusApiImpl::new(Some(sequencer.base_url()), testing_pool(), tx_recv)
+                .expect("should be able to init rpc");
 
         let status = rpc.transaction_status(tx).await;
         assert!(status.is_err());
@@ -215,8 +219,9 @@ mod tests {
 
         let sequencer = MockServer::start();
         let (_, tx_recv) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
-        let rpc = TransactionStatusApiImpl::new(Some(sequencer.base_url()), testing_pool(), tx_recv)
-            .expect("should be able to init rpc");
+        let rpc =
+            TransactionStatusApiImpl::new(Some(sequencer.base_url()), testing_pool(), tx_recv)
+                .expect("should be able to init rpc");
 
         let response = |id: u8, status: Status| {
             json!({
@@ -269,7 +274,8 @@ mod tests {
         let pool = testing_pool();
         let (tx_send, tx_recv) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
         let mut tracker = Tracker::new(false, tx_send);
-        let rpc = TransactionStatusApiImpl::new(None, pool.clone(), tx_recv).expect("should be able to init rpc");
+        let rpc = TransactionStatusApiImpl::new(None, pool.clone(), tx_recv)
+            .expect("should be able to init rpc");
 
         // Insert a transaction as queued first, then move it to pending
         // This will trigger the event to be sent to the channel
@@ -287,7 +293,9 @@ mod tests {
         let lifecycle = rpc.transaction_lifecycle(tx_hash).await?;
         let events = match lifecycle {
             TransactionLifecycleResponse::Events(e) => e,
-            TransactionLifecycleResponse::Unknown(msg) => panic!("Expected events, got Unknown: {}", msg),
+            TransactionLifecycleResponse::Unknown(msg) => {
+                panic!("Expected events, got Unknown: {}", msg)
+            }
         };
         assert_eq!(events.len(), 2);
         assert!(events[0].contains("queued"));
@@ -303,7 +311,9 @@ mod tests {
         let lifecycle = rpc.transaction_lifecycle(tx_hash).await?;
         let events = match lifecycle {
             TransactionLifecycleResponse::Events(e) => e,
-            TransactionLifecycleResponse::Unknown(msg) => panic!("Expected events, got Unknown: {}", msg),
+            TransactionLifecycleResponse::Unknown(msg) => {
+                panic!("Expected events, got Unknown: {}", msg)
+            }
         };
         assert_eq!(events.len(), 3);
         assert!(events[0].contains("queued"));

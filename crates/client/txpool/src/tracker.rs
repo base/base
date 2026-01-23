@@ -50,7 +50,10 @@ impl Tracker {
     }
 
     /// Parse [`FullTransactionEvent`]s and update the tracker.
-    pub async fn handle_event<T: PoolTransaction>(&mut self, event: FullTransactionEvent<T>) -> eyre::Result<()> {
+    pub async fn handle_event<T: PoolTransaction>(
+        &mut self,
+        event: FullTransactionEvent<T>,
+    ) -> eyre::Result<()> {
         match event {
             FullTransactionEvent::Pending(tx_hash) => {
                 self.transaction_inserted(tx_hash, TxEvent::Pending).await?;
@@ -88,7 +91,10 @@ impl Tracker {
         self.track_flashblock_transactions(&pending_blocks);
     }
 
-    async fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) -> eyre::Result<()> {
+    async fn track_committed_chain<N: NodePrimitives>(
+        &mut self,
+        chain: &Chain<N>,
+    ) -> eyre::Result<()> {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
                 self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion).await?;
@@ -106,7 +112,11 @@ impl Tracker {
     }
 
     /// Track the first time we see a transaction in the mempool.
-    pub async fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) -> eyre::Result<()> {
+    pub async fn transaction_inserted(
+        &mut self,
+        tx_hash: TxHash,
+        event: TxEvent,
+    ) -> eyre::Result<()> {
         // If we've seen the tx before, don't track it again. For example,
         // if a tx was pending then moved to queued, we don't want to update the timestamp
         // with the queued timestamp.
@@ -168,7 +178,11 @@ impl Tracker {
     }
 
     /// Track a transaction being included in a block or dropped.
-    pub async fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) -> eyre::Result<()> {
+    pub async fn transaction_completed(
+        &mut self,
+        tx_hash: TxHash,
+        event: TxEvent,
+    ) -> eyre::Result<()> {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
@@ -222,7 +236,11 @@ impl Tracker {
     }
 
     /// Track a transaction being replaced by removing it from the cache and adding the new tx.
-    pub async fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) -> eyre::Result<()> {
+    pub async fn transaction_replaced(
+        &mut self,
+        tx_hash: TxHash,
+        replaced_by: TxHash,
+    ) -> eyre::Result<()> {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);

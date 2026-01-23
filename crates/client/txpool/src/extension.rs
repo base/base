@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::TxHash;
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
-use alloy_primitives::TxHash;
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
@@ -54,8 +54,9 @@ impl BaseNodeExtension for TxPoolExtension {
             info!(message = "Starting Transaction Status RPC");
             let (tx_send, tx_recv) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
 
-            let proxy_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone(), tx_recv)
-                .expect("Failed to create transaction status proxy");
+            let proxy_api =
+                TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone(), tx_recv)
+                    .expect("Failed to create transaction status proxy");
             ctx.modules.merge_configured(proxy_api.into_rpc())?;
 
             // Start the tracing subscription if enabled
@@ -68,7 +69,13 @@ impl BaseNodeExtension for TxPoolExtension {
                 let fb_state: Arc<FlashblocksState> =
                     flashblocks_config.as_ref().map(|cfg| cfg.state.clone()).unwrap_or_default();
 
-                tokio::spawn(tracex_subscription(canonical_stream, fb_state, pool, logs_enabled, tx_send));
+                tokio::spawn(tracex_subscription(
+                    canonical_stream,
+                    fb_state,
+                    pool,
+                    logs_enabled,
+                    tx_send,
+                ));
             }
 
             Ok(())
