@@ -212,7 +212,7 @@ where
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let BuildArguments { mut cached_reads, config, cancel: block_cancel } = args;
+        let BuildArguments { mut cached_reads, config, cancel: block_cancel, publish_guard } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
@@ -401,6 +401,7 @@ where
                     &mut best_txs,
                     &block_cancel,
                     &best_payload,
+                    &publish_guard,
                     &fb_span,
                 )
                 .await
@@ -458,6 +459,7 @@ where
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
+        publish_guard: &std::sync::Mutex<()>,
         span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
@@ -544,9 +546,25 @@ where
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
-                // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
-                // To ensure that we will return same blocks as rollup-boost (to leverage caches)
-                if block_cancel.is_cancelled() {
+                // Synchronized check + publish.
+                // The publish_guard mutex ensures that if get_payload (resolve_kind) is called,
+                // it will either:
+                // 1. Cancel before we acquire the lock → we see cancelled and return early
+                // 2. Wait for us to release the lock → we publish, then it cancels (correct behavior)
+                let (cancelled, flashblock_byte_size) = {
+                    let _guard = publish_guard.lock().unwrap();
+                    if block_cancel.is_cancelled() {
+                        (true, 0)
+                    } else {
+                        let size = self
+                            .ws_pub
+                            .publish(&fb_payload)
+                            .wrap_err("failed to publish flashblock via websocket")?;
+                        (false, size)
+                    }
+                };
+
+                if cancelled {
                     self.record_flashblocks_metrics(
                         ctx,
                         info,
@@ -556,10 +574,8 @@ where
                     );
                     return Ok(None);
                 }
-                let flashblock_byte_size = self
-                    .ws_pub
-                    .publish(&fb_payload)
-                    .wrap_err("failed to publish flashblock via websocket")?;
+
+                // Send to handler and set best_payload outside mutex.
                 self.payload_tx
                     .send(new_payload.clone())
                     .await
