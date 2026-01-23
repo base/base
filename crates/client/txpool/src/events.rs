@@ -4,9 +4,10 @@ use std::time::Instant;
 
 use chrono::{DateTime, Local};
 use derive_more::Display;
+use serde::{Deserialize, Serialize};
 
 /// Types of transaction events to track.
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TxEvent {
     /// Transaction dropped from the pool.
     #[display("dropped")]

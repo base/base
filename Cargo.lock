@@ -2188,6 +2188,7 @@ dependencies = [
  "lru 0.16.3",
  "metrics",
  "metrics-derive",
+ "moka",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
  "reth-node-api",

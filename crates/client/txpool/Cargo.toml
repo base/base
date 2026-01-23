@@ -42,6 +42,8 @@ derive_more = { workspace = true, features = ["display"] }
 tracing.workspace = true
 serde.workspace = true
 metrics-derive.workspace = true
+moka.workspace = true
+eyre.workspace = true
 
 [dev-dependencies]
 base-client-node = { workspace = true, features = ["test-utils"] }

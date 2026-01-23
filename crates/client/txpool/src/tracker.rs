@@ -15,6 +15,7 @@ use reth_primitives_traits::transaction::TxHashRef;
 use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
+use tokio::sync::mpsc::Sender;
 
 use crate::{EventLog, Metrics, Pool, TxEvent};
 
@@ -29,6 +30,8 @@ pub struct Tracker {
     enable_logs: bool,
     /// Metrics for the `reth_transaction_tracing` component.
     metrics: Metrics,
+    /// Sender for sending transaction events to the RPC layer.
+    tx_send: Sender<(TxHash, Vec<String>)>,
 }
 
 impl Tracker {
@@ -36,45 +39,48 @@ impl Tracker {
     pub const MAX_SIZE: usize = 20_000;
 
     /// Create a new tracker.
-    pub fn new(enable_logs: bool) -> Self {
+    pub fn new(enable_logs: bool, tx_send: Sender<(TxHash, Vec<String>)>) -> Self {
         Self {
             txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             enable_logs,
             metrics: Metrics::default(),
+            tx_send,
         }
     }
 
     /// Parse [`FullTransactionEvent`]s and update the tracker.
-    pub fn handle_event<T: PoolTransaction>(&mut self, event: FullTransactionEvent<T>) {
+    pub async fn handle_event<T: PoolTransaction>(&mut self, event: FullTransactionEvent<T>) -> eyre::Result<()> {
         match event {
             FullTransactionEvent::Pending(tx_hash) => {
-                self.transaction_inserted(tx_hash, TxEvent::Pending);
-                self.transaction_moved(tx_hash, Pool::Pending);
+                self.transaction_inserted(tx_hash, TxEvent::Pending).await?;
+                self.transaction_moved(tx_hash, Pool::Pending).await?;
             }
             FullTransactionEvent::Queued(tx_hash, _) => {
-                self.transaction_inserted(tx_hash, TxEvent::Queued);
-                self.transaction_moved(tx_hash, Pool::Queued);
+                self.transaction_inserted(tx_hash, TxEvent::Queued).await?;
+                self.transaction_moved(tx_hash, Pool::Queued).await?;
             }
             FullTransactionEvent::Discarded(tx_hash) => {
-                self.transaction_completed(tx_hash, TxEvent::Dropped);
+                self.transaction_completed(tx_hash, TxEvent::Dropped).await?;
             }
             FullTransactionEvent::Replaced { transaction, replaced_by } => {
                 let tx_hash = transaction.hash();
-                self.transaction_replaced(*tx_hash, TxHash::from(replaced_by));
+                self.transaction_replaced(*tx_hash, TxHash::from(replaced_by)).await?;
             }
             _ => {
                 // Other events.
             }
         }
+        Ok(())
     }
 
     /// Parse [`CanonStateNotification`]s and update the tracker.
-    pub fn handle_canon_state_notification<N: NodePrimitives>(
+    pub async fn handle_canon_state_notification<N: NodePrimitives>(
         &mut self,
         notification: CanonStateNotification<N>,
-    ) {
-        self.track_committed_chain(&notification.committed());
+    ) -> eyre::Result<()> {
+        self.track_committed_chain(&notification.committed()).await?;
+        Ok(())
     }
 
     /// Parse flashblock updates and track transaction inclusion in flashblocks.
@@ -82,12 +88,14 @@ impl Tracker {
         self.track_flashblock_transactions(&pending_blocks);
     }
 
-    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) {
+    async fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) -> eyre::Result<()> {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
-                self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion).await?;
             }
         }
+
+        Ok(())
     }
 
     fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks) {
@@ -98,12 +106,12 @@ impl Tracker {
     }
 
     /// Track the first time we see a transaction in the mempool.
-    pub fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
+    pub async fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) -> eyre::Result<()> {
         // If we've seen the tx before, don't track it again. For example,
         // if a tx was pending then moved to queued, we don't want to update the timestamp
         // with the queued timestamp.
         if self.txs.contains(&tx_hash) {
-            return;
+            return Ok(());
         }
 
         // If the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
@@ -112,13 +120,15 @@ impl Tracker {
             && let Some((tx_hash, event_log)) = self.txs.peek_lru()
         {
             self.log(tx_hash, event_log, "Transaction inserted");
+            self.tx_send.send((*tx_hash, event_log.to_vec())).await?;
         }
 
         self.txs.put(tx_hash, EventLog::new(Local::now(), event));
+        Ok(())
     }
 
     /// Track a transaction moving from one pool to another.
-    pub fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
+    pub async fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) -> eyre::Result<()> {
         // If we've seen the transaction pending or queued before, track the pending <> queue transition.
         if let Some(prev_pool) = self.tx_states.get(&tx_hash)
             && prev_pool != &pool
@@ -135,7 +145,7 @@ impl Tracker {
 
                 if self.is_overflowed(&tx_hash, &event_log) {
                     // The tx is already removed from the cache from `pop`.
-                    return;
+                    return Ok(());
                 }
 
                 // Set pending_time if transitioning to pending
@@ -144,25 +154,27 @@ impl Tracker {
                 }
 
                 event_log.push(Local::now(), event);
-                self.txs.put(tx_hash, event_log);
+                self.txs.put(tx_hash, event_log.clone());
 
                 Self::record_histogram(time_in_mempool, event);
+                self.tx_send.send((tx_hash, event_log.to_vec())).await?;
             }
         }
 
         // Update the new pool the transaction is in.
         self.tx_states.put(tx_hash, pool.clone());
         debug!(target: "tracex", tx_hash = ?tx_hash, state = ?pool, "Transaction moved pools");
+        Ok(())
     }
 
     /// Track a transaction being included in a block or dropped.
-    pub fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
+    pub async fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) -> eyre::Result<()> {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
             if self.is_overflowed(&tx_hash, &event_log) {
-                return;
+                return Ok(());
             }
             // Don't add it back to LRU so that we keep the LRU cache size small which will help longer-lived txs
             // but do update the event log with the final event (i.e., included/dropped).
@@ -181,7 +193,10 @@ impl Tracker {
             // If a tx is included/dropped, log it now.
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
             Self::record_histogram(time_in_mempool, event);
+            self.tx_send.send((tx_hash, event_log.to_vec())).await?;
         }
+
+        Ok(())
     }
 
     /// Track a transaction being included in a flashblock. This will not remove
@@ -207,21 +222,24 @@ impl Tracker {
     }
 
     /// Track a transaction being replaced by removing it from the cache and adding the new tx.
-    pub fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
+    pub async fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) -> eyre::Result<()> {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
             debug!(target: "tracex", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
 
             if self.is_overflowed(&tx_hash, &event_log) {
-                return;
+                return Ok(());
             }
             // Keep the event log and update the tx hash.
             event_log.push(Local::now(), TxEvent::Replaced);
-            self.txs.put(replaced_by, event_log);
+            self.txs.put(replaced_by, event_log.clone());
 
             Self::record_histogram(time_in_mempool, TxEvent::Replaced);
+            self.tx_send.send((replaced_by, event_log.to_vec())).await?;
         }
+
+        Ok(())
     }
 
     /// Logs an [`EventLog`] through tracing.
@@ -266,13 +284,14 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_transaction_inserted_pending() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_inserted_pending() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Insert a pending transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
         assert_eq!(tracker.txs.len(), 1);
 
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
@@ -280,15 +299,18 @@ mod tests {
         assert_eq!(event_log.events[0].1, TxEvent::Pending);
         // Pending transactions should have pending_time set
         assert!(event_log.pending_time.is_some());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_inserted_queued() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_inserted_queued() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Insert a queued transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued).await?;
         assert_eq!(tracker.txs.len(), 1);
 
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
@@ -296,19 +318,22 @@ mod tests {
         assert_eq!(event_log.events[0].1, TxEvent::Queued);
         // Queued transactions should not have pending_time set yet
         assert!(event_log.pending_time.is_none());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_inserted_duplicate_ignored() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_inserted_duplicate_ignored() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Insert same transaction twice
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
         let first_mempool_time = tracker.txs.get(&tx_hash).unwrap().mempool_time;
 
         // Second insert should be ignored
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued).await?;
         assert_eq!(tracker.txs.len(), 1);
 
         let event_log = tracker.txs.get(&tx_hash).unwrap();
@@ -317,45 +342,51 @@ mod tests {
         assert_eq!(event_log.events[0].1, TxEvent::Pending);
         // mempool_time should not have changed
         assert_eq!(event_log.mempool_time, first_mempool_time);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_moved_queued_to_pending() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_moved_queued_to_pending() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Start with queued transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued).await?;
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
 
         // Verify no pending_time initially
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
 
         // Move to pending
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
 
         // Verify event was logged and pending_time was set
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
         assert_eq!(event_log.events.len(), 2);
         assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
         assert!(event_log.pending_time.is_some());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_moved_pending_to_queued() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_moved_pending_to_queued() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Start with pending transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
 
         // Verify pending_time is set
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
         let pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
 
         // Move to queued
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
 
         // Verify event was logged and pending_time is preserved
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
@@ -363,71 +394,83 @@ mod tests {
         assert_eq!(event_log.events[1].1, TxEvent::PendingToQueued);
         // pending_time should be preserved (not reset)
         assert_eq!(event_log.pending_time, pending_time);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_moved_same_pool_no_event() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_moved_same_pool_no_event() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Insert and move to pending
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
 
         // Try moving to same pool again
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
 
         // Should still only have 1 event
         let event_log = tracker.txs.get(&tx_hash).expect("tx should exist");
         assert_eq!(event_log.events.len(), 1);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_completed_block_inclusion_with_pending_time() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_completed_block_inclusion_with_pending_time() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Create a pending transaction (which sets pending_time)
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
 
         // Verify pending_time is set
         assert!(tracker.txs.peek(&tx_hash).unwrap().pending_time.is_some());
 
         // Complete the transaction with block inclusion
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion).await?;
 
         // Transaction should be removed from txs cache
         assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_completed_dropped() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_completed_dropped() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Insert transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
 
         // Drop the transaction
-        tracker.transaction_completed(tx_hash, TxEvent::Dropped);
+        tracker.transaction_completed(tx_hash, TxEvent::Dropped).await?;
 
         // Transaction should be removed from cache
         assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_replaced() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_replaced() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
         let replacement_hash = TxHash::random();
 
         // Insert original transaction
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
         assert_eq!(tracker.txs.len(), 1);
 
         // Replace transaction
-        tracker.transaction_replaced(tx_hash, replacement_hash);
+        tracker.transaction_replaced(tx_hash, replacement_hash).await?;
 
         // Original should be gone, replacement should exist
         assert!(tracker.txs.get(&tx_hash).is_none());
@@ -438,29 +481,35 @@ mod tests {
         assert_eq!(event_log.events.len(), 2);
         assert_eq!(event_log.events[0].1, TxEvent::Pending);
         assert_eq!(event_log.events[1].1, TxEvent::Replaced);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_transaction_replaced_nonexistent() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_transaction_replaced_nonexistent() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
         let replacement_hash = TxHash::random();
 
         // Try to replace a transaction that doesn't exist
-        tracker.transaction_replaced(tx_hash, replacement_hash);
+        tracker.transaction_replaced(tx_hash, replacement_hash).await?;
 
         // Nothing should happen
         assert_eq!(tracker.txs.len(), 0);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_is_overflowed() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_is_overflowed() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Create an event log - starts with 1 event (Pending)
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
 
         // Add events until we hit the limit (limit is 10, we have 1 event already)
         for _ in 0..9 {
@@ -474,51 +523,57 @@ mod tests {
         assert_eq!(tracker.txs.get(&tx_hash).unwrap().events.len(), 10);
 
         // Try to move again - should trigger overflow check
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
 
         // Transaction should be removed due to overflow
         assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_pending_time_set_only_once() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_pending_time_set_only_once() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // Start with queued
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued).await?;
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
 
         // Move to pending (should set pending_time)
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
         let first_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
         assert!(first_pending_time.is_some());
 
         // Move back to queued
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
 
         // Move to pending again (should NOT reset pending_time)
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
         let second_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
 
         // pending_time should be the same as the first time
         assert_eq!(first_pending_time, second_pending_time);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_full_transaction_lifecycle_queued_to_pending_to_inclusion() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_full_transaction_lifecycle_queued_to_pending_to_inclusion() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // 1. Transaction enters as queued
-        tracker.transaction_inserted(tx_hash, TxEvent::Queued);
-        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued).await?;
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_none());
 
         // 2. Transaction moves to pending
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
 
         let event_log = tracker.txs.get(&tx_hash).unwrap();
@@ -527,35 +582,41 @@ mod tests {
         assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
 
         // 3. Transaction included in block
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion).await?;
         assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_full_transaction_lifecycle_pending_to_inclusion() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_full_transaction_lifecycle_pending_to_inclusion() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash = TxHash::random();
 
         // 1. Transaction enters as pending
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
-        tracker.transaction_moved(tx_hash, Pool::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
 
         // 2. Transaction included in block
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion).await?;
         assert!(tracker.txs.get(&tx_hash).is_none());
+
+        Ok(())
     }
 
-    #[test]
-    fn test_multiple_transactions_independence() {
-        let mut tracker = Tracker::new(false);
+    #[tokio::test]
+    async fn test_multiple_transactions_independence() -> eyre::Result<()> {
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         let tx_hash1 = TxHash::random();
         let tx_hash2 = TxHash::random();
 
         // Insert two different transactions
-        tracker.transaction_inserted(tx_hash1, TxEvent::Pending);
-        tracker.transaction_inserted(tx_hash2, TxEvent::Queued);
+        tracker.transaction_inserted(tx_hash1, TxEvent::Pending).await?;
+        tracker.transaction_inserted(tx_hash2, TxEvent::Queued).await?;
 
         assert_eq!(tracker.txs.len(), 2);
 
@@ -564,18 +625,21 @@ mod tests {
         assert!(tracker.txs.get(&tx_hash2).unwrap().pending_time.is_none());
 
         // Complete one
-        tracker.transaction_completed(tx_hash1, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash1, TxEvent::BlockInclusion).await?;
 
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
+
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_fb_inclusion() -> eyre::Result<()> {
         // Setup
         let harness = FlashblocksBuilderTestHarness::new().await;
-        let mut tracker = Tracker::new(false);
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
 
         // Build transaction & flashblock
@@ -589,7 +653,7 @@ mod tests {
         let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
 
         // Mimic sending a tx to the mpool/builder
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
 
         // Wait a bit to simulate builder picking and building the tx into the pending block
         time::sleep(Duration::from_millis(10)).await;
@@ -609,7 +673,7 @@ mod tests {
 
         // Wait until its included in canonical block
         time::sleep(Duration::from_millis(1500)).await;
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion).await?;
 
         // It should be removed from the tracker
         assert!(tracker.txs.get(&tx_hash).is_none());
@@ -621,7 +685,8 @@ mod tests {
     async fn test_can_receive_fb() -> eyre::Result<()> {
         // Setup
         let harness = FlashblocksBuilderTestHarness::new().await;
-        let mut tracker = Tracker::new(false);
+        let (tx_send, _) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
         harness.send_flashblock(FlashblockBuilder::new_base(&harness).build()).await;
 
         // Subscribe to flashblocks
@@ -652,7 +717,7 @@ mod tests {
         let tx_hash = *tx.hash();
         let fb = FlashblockBuilder::new(&harness, 1).with_transactions(vec![tx]).build();
 
-        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending).await?;
         // Send the flashblock
         harness.send_flashblock(fb).await;
 
