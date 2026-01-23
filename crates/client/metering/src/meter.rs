@@ -295,6 +295,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert!(output.results.is_empty());
@@ -345,6 +346,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert_eq!(output.results.len(), 1);
@@ -396,6 +398,7 @@ mod tests {
             &sealed_without_root,
             None,
             None,
+            L1BlockInfo::default(),
         )
         .expect_err("missing parent beacon block root should fail");
         assert!(
@@ -415,6 +418,7 @@ mod tests {
             &sealed_without_root,
             Some(header.parent_beacon_block_root().unwrap_or(B256::ZERO)),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert!(output.total_time_us > 0);
@@ -481,6 +485,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert_eq!(output.results.len(), 2);
@@ -560,6 +565,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         // Verify invariant: total time must include state root time
@@ -617,6 +623,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None, // No pending state
+            L1BlockInfo::default(),
         );
 
         assert!(
@@ -662,6 +669,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             Some(pending_state),
+            L1BlockInfo::default(),
         );
 
         assert!(

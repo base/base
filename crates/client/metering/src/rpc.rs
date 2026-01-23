@@ -405,9 +405,30 @@ mod tests {
         Ok((harness, client))
     }
 
+    async fn generate_txs_for_block(chain_id: u64) -> Vec<Bytes> {
+        vec![
+            TransactionBuilder::default()
+                .signer(Account::Charlie.signer_b256())
+                .chain_id(chain_id)
+                .nonce(0)
+                .to(address!("0x1111111111111111111111111111111111111111"))
+                .value(1000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(1_000_000_000)
+                .max_priority_fee_per_gas(1_000_000_000)
+                .into_eip1559()
+                .into_encoded()
+                .clone()
+                .into_encoded_bytes()
+        ]
+    }
+
     #[tokio::test]
     async fn test_meter_bundle_empty() -> eyre::Result<()> {
-        let (_harness, client) = setup().await?;
+        let (harness, client) = setup().await?;
+
+        // Build a block with a tx so that we don't get an error about missing L1 block info
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
         let bundle = create_bundle(vec![], 0, None);
 
@@ -416,7 +437,7 @@ mod tests {
         assert_eq!(response.results.len(), 0);
         assert_eq!(response.total_gas_used, 0);
         assert_eq!(response.gas_fees, U256::from(0));
-        assert_eq!(response.state_block_number, 0);
+        assert_eq!(response.state_block_number, 1);
 
         Ok(())
     }
@@ -424,6 +445,8 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
+
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
         let sender_address = Account::Alice.address();
         let sender_secret = Account::Alice.signer_b256();
@@ -466,6 +489,8 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
+
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
         let address1 = Account::Alice.address();
         let secret1 = Account::Alice.signer_b256();
@@ -548,36 +573,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
-        let (_harness, client) = setup().await?;
+        let (harness, client) = setup().await?;
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
-        let bundle = create_bundle(vec![], 0, None);
+        let bundle = create_bundle(vec![], 1, None);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
-        assert_eq!(response.state_block_number, 0);
+        assert_eq!(response.state_block_number, 1);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
-        let (_harness, client) = setup().await?;
+        let (harness, client) = setup().await?;
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
-        let bundle1 = create_bundle(vec![], 0, None);
+        let bundle1 = create_bundle(vec![], 1, None);
         let response1: MeterBundleResponse = client.request("base_meterBundle", (bundle1,)).await?;
 
         let bundle2 = create_bundle(vec![], 999, None);
         let response2: MeterBundleResponse = client.request("base_meterBundle", (bundle2,)).await?;
 
         assert_eq!(response1.state_block_number, response2.state_block_number);
-        assert_eq!(response1.state_block_number, 0);
+        assert_eq!(response1.state_block_number, 1);
 
         Ok(())
     }
 
     #[tokio::test]
     async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
-        let (_harness, client) = setup().await?;
+        let (harness, client) = setup().await?;
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
         let custom_timestamp = 1234567890;
         let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
@@ -592,13 +620,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
-        let (_harness, client) = setup().await?;
+        let (harness, client) = setup().await?;
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
         let bundle = create_bundle(vec![], 999999, None);
 
         let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
 
-        assert_eq!(response.state_block_number, 0);
+        assert_eq!(response.state_block_number, 1);
 
         Ok(())
     }
@@ -606,6 +635,7 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
+        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
 
         let secret1 = Account::Alice.signer_b256();
         let secret2 = Account::Bob.signer_b256();

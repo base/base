@@ -5,24 +5,25 @@ use reth_primitives_traits::Account;
 use op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS;
 use op_revm::{OpSpecId, l1block::L1BlockInfo};
 use tracing::warn;
+use derive_more::Display;
 
 /// Errors that can occur when validating a transaction.
-#[derive(Debug, PartialEq, thiserror::Error)]
+#[derive(Debug, PartialEq, Display)]
 pub enum TxValidationError {
     /// Interop transactions are not supported
-    #[error("Interop transactions are not supported")]
+    #[display("Interop transactions are not supported")]
     InteropNotSupported,
     /// Account is 7702 but tx is not 7702
-    #[error("Account is 7702 but tx is not 7702")]
+    #[display("Account is 7702 but tx is not 7702")]
     AccountIs7702ButTxIsNot7702,
     /// Transaction nonce is too low
-    #[error("Transaction nonce is too low")]
+    #[display("Transaction nonce: {_0} is too low, account nonce: {_1}")]
     TransactionNonceTooLow(u64, u64),
     /// Insufficient funds for transfer
-    #[error("Insufficient funds for transfer")]
+    #[display("Insufficient funds for transfer: {_0}, account balance: {_1}")]
     InsufficientFundsForTransfer(U256, U256),
     /// Insufficient funds for L1 gas
-    #[error("Insufficient funds for L1 gas")]
+    #[display("Insufficient funds for L1 gas: {_0}, account balance: {_1}")]
     InsufficientFundsForL1Gas(U256, U256),
 }
 
