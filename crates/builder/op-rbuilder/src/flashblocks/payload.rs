@@ -17,7 +17,7 @@ use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_node_api::{Block, BuiltPayloadExecutedBlock, NodePrimitives, PayloadBuilderError};
+use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
