@@ -248,7 +248,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{Address, Bytes, keccak256};
+    use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use base_bundles::{Bundle, ParsedBundle};
     use base_client_node::test_utils::{Account, TestHarness};
     use eyre::Context;
@@ -678,6 +678,117 @@ mod tests {
             result_with_pending.is_ok(),
             "Transaction with nonce=1 should succeed with pending state showing nonce=1: {:?}",
             result_with_pending.err()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_err_interop_tx() -> eyre::Result<()> {
+        use revm_context_interface::transaction::{AccessList, AccessListItem};
+
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        // Create a transaction with cross-L2 interop address in access list
+        let to = Address::random();
+        let access_list = AccessList::from(vec![AccessListItem {
+            address: op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS,
+            storage_keys: vec![],
+        }]);
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(to)
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .access_list(access_list)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let result = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+            L1BlockInfo::default(),
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Interop transactions are not supported"),
+            "Expected interop error"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_err_insufficient_funds() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let to = Address::random();
+        // TestHarness uses build_test_genesis() which gives accounts 1 million ETH.
+        // Transaction cost = value + (gas_limit * max_fee_per_gas)
+        // We set value to 2 million ETH which exceeds the 1 million ETH balance
+        let value_eth = 2_000_000u128;
+        let value_in_wei = value_eth.saturating_mul(Unit::ETHER.wei().to::<u128>());
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(to)
+            .value(value_in_wei)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let result = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+            L1BlockInfo::default(),
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Insufficient funds"),
+            "Expected insufficient funds error"
         );
 
         Ok(())
