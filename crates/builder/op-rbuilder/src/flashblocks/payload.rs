@@ -687,12 +687,7 @@ where
         let start_time = Instant::now();
 
         // Build the final block WITH state root computed
-        let (final_payload, _) = build_block(
-            state,
-            ctx,
-            info,
-            true,
-        )?;
+        let (final_payload, _) = build_block(state, ctx, info, true)?;
 
         let elapsed = start_time.elapsed();
         info!(
