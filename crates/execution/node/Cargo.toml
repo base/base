@@ -64,6 +64,7 @@ clap.workspace = true
 serde.workspace = true
 eyre.workspace = true
 url.workspace = true
+humantime.workspace = true
 
 # test-utils dependencies
 reth-db-api = { workspace = true, optional = true, features = ["op"] }
