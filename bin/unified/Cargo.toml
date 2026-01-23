@@ -15,10 +15,30 @@ workspace = true
 [dependencies]
 # Workspace
 base-cli-utils.workspace = true
+base-client-node.workspace = true
+
+# reth
+reth-chainspec.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-cli.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-node-core.workspace = true
+reth-cli-util.workspace = true
+
+# Alloy
+alloy-rpc-types-engine.workspace = true
+
+# Async
+tokio.workspace = true
+futures-util.workspace = true
 
 # CLI
 clap.workspace = true
 eyre.workspace = true
+url.workspace = true
+
+# Tracing
+tracing.workspace = true
 
 # Metrics
 metrics.workspace = true

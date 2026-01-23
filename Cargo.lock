@@ -14306,10 +14306,22 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 name = "unified"
 version = "0.0.0"
 dependencies = [
+ "alloy-rpc-types-engine",
  "base-cli-utils",
+ "base-client-node",
  "clap",
  "eyre",
+ "futures-util",
  "metrics",
+ "reth-chainspec",
+ "reth-cli-util",
+ "reth-node-core",
+ "reth-optimism-chainspec",
+ "reth-optimism-cli",
+ "reth-optimism-node",
+ "tokio",
+ "tracing",
+ "url",
  "vergen",
  "vergen-git2",
 ]

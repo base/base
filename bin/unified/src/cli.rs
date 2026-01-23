@@ -1,30 +1,17 @@
-//! Contains the CLI entry point for the Base unified binary.
+//! CLI arguments for the unified binary.
 
-use base_cli_utils::{CliStyles, GlobalArgs};
-use clap::Parser;
+use base_cli_utils::GlobalArgs;
+use clap::Args;
+use reth_optimism_node::args::RollupArgs;
 
-use crate::version;
-
-/// The Base Consensus CLI.
-#[derive(Parser, Clone, Debug)]
-#[command(
-    author,
-    version = version::SHORT_VERSION,
-    long_version = version::LONG_VERSION,
-    styles = CliStyles::init(),
-    about,
-    long_about = None
-)]
-pub struct Cli {
-    /// Global arguments for the Base Consensus CLI.
+/// CLI arguments for the unified binary.
+#[derive(Debug, Clone, Args)]
+pub struct UnifiedArgs {
+    /// Global logging and metrics arguments.
     #[command(flatten)]
     pub global: GlobalArgs,
-}
 
-impl Cli {
-    /// Runs the CLI.
-    pub fn run(self) -> eyre::Result<()> {
-        println!("Base Unified CLI");
-        Err(eyre::eyre!("Not yet implemented"))
-    }
+    /// Rollup arguments for the execution client.
+    #[command(flatten)]
+    pub rollup_args: RollupArgs,
 }
