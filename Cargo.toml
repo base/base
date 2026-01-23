@@ -223,8 +223,7 @@ op-alloy-rpc-types-engine = { version = "0.23.1", default-features = false }
 alloy-op-evm = { version = "0.25.0", default-features = false }
 alloy-op-hardforks = "0.4.4"
 
-# rollup-boost
-rollup-boost = { git = "https://github.com/flashbots/rollup-boost", tag = "v0.7.11" }
+# rollup-boost for Kona transitive dep
 rollup-boost-kona = { package = "rollup-boost", version = "0.7.12" }
 
 # op-revm
