@@ -229,18 +229,6 @@ dependencies = [
 
 [[package]]
 name = "alloy-eip7928"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "926b2c0d34e641cf8b17bf54ce50fda16715b9f68ad878fa6128bae410c6f890"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "borsh",
- "serde",
-]
-
-[[package]]
-name = "alloy-eip7928"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6adac476434bf024279164dcdca299309f0c7d1e3557024eb7a83f8d9d01c6b5"
@@ -1714,7 +1702,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
- "alloy-eip7928 0.1.0",
+ "alloy-eip7928",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
@@ -9593,7 +9581,7 @@ version = "1.10.2"
 source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.2#8e3b5e6a99439561b73c5dd31bd3eced2e994d60"
 dependencies = [
  "alloy-consensus",
- "alloy-eip7928 0.3.0",
+ "alloy-eip7928",
  "alloy-eips",
  "alloy-evm",
  "alloy-primitives",
@@ -11178,7 +11166,7 @@ source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.2#8e3b5e6a99439561b7
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
- "alloy-eip7928 0.3.0",
+ "alloy-eip7928",
  "alloy-eips",
  "alloy-evm",
  "alloy-genesis",
@@ -11258,7 +11246,7 @@ name = "reth-rpc-api"
 version = "1.10.2"
 source = "git+https://github.com/paradigmxyz/reth?tag=v1.10.2#8e3b5e6a99439561b73c5dd31bd3eced2e994d60"
 dependencies = [
- "alloy-eip7928 0.3.0",
+ "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
  "alloy-json-rpc",
@@ -12319,7 +12307,7 @@ version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "311720d4f0f239b041375e7ddafdbd20032a33b7bae718562ea188e188ed9fd3"
 dependencies = [
- "alloy-eip7928 0.3.0",
+ "alloy-eip7928",
  "bitflags 2.10.0",
  "revm-bytecode 8.0.0",
  "revm-primitives 22.0.0",

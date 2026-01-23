@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    AccessListContract, AccountInfo, B256, Bytecode, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
+    AccessListContract, AccountInfo, Bytecode, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
     OpTransaction, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
@@ -43,7 +43,7 @@ fn test_sload_zero_value() {
 
     // Verify storage read is recorded (slot 0 for `value`)
     let contract_changes = contract_entry.unwrap();
-    let slot_0 = B256::ZERO;
+    let slot_0 = U256::ZERO;
     let has_storage_read = contract_changes.storage_reads.contains(&slot_0);
     assert!(has_storage_read, "Contract should have storage read for slot 0 (value)");
 }
@@ -106,7 +106,7 @@ fn test_update_one_value() {
     let contract_changes = contract_entry.unwrap();
 
     // Verify storage write at slot 0 with new value 42 at tx_index 0
-    let slot_0 = B256::ZERO;
+    let slot_0 = U256::ZERO;
     let storage_change = contract_changes.storage_changes.iter().find(|sc| sc.slot == slot_0);
     assert!(storage_change.is_some(), "Contract should have storage change for slot 0");
 
@@ -116,7 +116,7 @@ fn test_update_one_value() {
         "Storage change should be at tx_index 0"
     );
     assert!(
-        slot_change.changes.iter().any(|c| c.new_value == B256::from(U256::from(42))),
+        slot_change.changes.iter().any(|c| c.new_value == U256::from(42)),
         "Storage value should be 42"
     );
 
@@ -166,7 +166,7 @@ fn test_multi_sload_same_slot() {
 
     // Verify storage reads exist - `a` and `b` are packed in slot 1
     // The slot should only appear once even if read multiple times
-    let slot_1 = B256::from(U256::from(1));
+    let slot_1 = U256::from(1);
     let slot_1_reads: Vec<_> =
         contract_changes.storage_reads.iter().filter(|sr| **sr == slot_1).collect();
     assert_eq!(slot_1_reads.len(), 1, "Slot 1 should only appear once in storage_reads (deduped)");

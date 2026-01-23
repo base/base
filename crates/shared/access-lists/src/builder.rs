@@ -79,17 +79,17 @@ impl AccountChangesBuilder {
                 .storage_changes
                 .drain()
                 .map(|(slot, sc)| SlotChanges {
-                    slot,
+                    slot: slot.into(),
                     changes: sc
                         .into_iter()
                         .map(|(tx_idx, val)| StorageChange {
                             block_access_index: tx_idx,
-                            new_value: val,
+                            new_value: val.into(),
                         })
                         .collect(),
                 })
                 .collect(),
-            storage_reads: self.storage_reads.into_iter().collect(),
+            storage_reads: self.storage_reads.into_iter().map(|slot| slot.into()).collect(),
             balance_changes: self
                 .balance_changes
                 .into_iter()
