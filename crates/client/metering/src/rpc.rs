@@ -8,6 +8,7 @@ use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::core::{RpcResult, async_trait};
+use op_revm::L1BlockInfo;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::extract_l1_info_from_tx;
 use reth_optimism_primitives::OpBlock;
@@ -178,44 +179,7 @@ where
             })
         });
 
-        // Get the first transaction from a L2 block to retrieve the L1 block info. The L1 block
-        // info is required to check for transaction validity.
-        let first_tx = self
-            .provider
-            .block_by_hash(header.hash())
-            .map_err(|e| {
-                error!(error = %e, "Failed to get block by hash");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get block: {}", e),
-                    None::<()>,
-                )
-            })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {}", header.hash()),
-                    None::<()>,
-                )
-            })?
-            .body
-            .transactions
-            .first()
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block has no transactions: {}", header.hash()),
-                    None::<()>,
-                )
-            })?
-            .clone();
-        let l1_block_info = extract_l1_info_from_tx(&first_tx).map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                format!("Failed to extract L1 block info from transaction: {}", e),
-                None::<()>,
-            )
-        })?;
+        let l1_block_info = self.get_l1_block_info(&header)?;
 
         // Meter bundle using utility function
         let output = meter_bundle(
@@ -358,6 +322,47 @@ where
         + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
+    /// Get the first transaction from a L2 block to retrieve the L1 block info.
+    fn get_l1_block_info(&self, header: &SealedHeader) -> RpcResult<L1BlockInfo> {
+        let first_tx = self
+            .provider
+            .block_by_hash(header.hash())
+            .map_err(|e| {
+                error!(error = %e, "Failed to get block by hash");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {}", e),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {}", header.hash()),
+                    None::<()>,
+                )
+            })?
+            .body
+            .transactions
+            .first()
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block has no transactions: {}", header.hash()),
+                    None::<()>,
+                )
+            })?
+            .clone();
+
+        extract_l1_info_from_tx(&first_tx).map_err(|e| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                format!("Failed to extract L1 block info from transaction: {}", e),
+                None::<()>,
+            )
+        })
+    }
+
     /// Internal helper to meter a block's execution
     fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {
         meter_block(self.provider.clone(), self.provider.chain_spec(), block).map_err(|e| {

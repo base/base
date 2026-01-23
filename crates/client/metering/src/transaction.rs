@@ -71,7 +71,6 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     }
 
     // For EIP-1559 transactions: `max_fee_per_gas * gas_limit + tx_value`.
-    // ref: https://github.com/paradigmxyz/reth/blob/main/crates/transaction-pool/src/traits.rs#L1186
     let max_fee = txn.max_fee_per_gas().saturating_mul(txn.gas_limit() as u128);
     let txn_cost = txn.value().saturating_add(U256::from(max_fee));
 
