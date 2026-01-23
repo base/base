@@ -143,6 +143,8 @@ mod tests {
     };
     use serde_json::{self, json};
 
+    use crate::{tracker::Tracker, TxEvent, Pool};
+
     use super::*;
 
     #[tokio::test]
@@ -257,6 +259,56 @@ mod tests {
             .expect("should be able to fetch transaction status");
         assert_eq!(Status::Unknown, status.status);
         unknown_mock.assert();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_transaction_lifecycle_e2e() -> eyre::Result<()> {
+        // Setup
+        let pool = testing_pool();
+        let (tx_send, tx_recv) = tokio::sync::mpsc::channel::<(TxHash, Vec<String>)>(1000);
+        let mut tracker = Tracker::new(false, tx_send);
+        let rpc = TransactionStatusApiImpl::new(None, pool.clone(), tx_recv).expect("should be able to init rpc");
+
+        // Insert a transaction as queued first, then move it to pending
+        // This will trigger the event to be sent to the channel
+        let tx_hash = TxHash::random();
+        tracker.transaction_inserted(tx_hash, TxEvent::Queued).await?;
+        tracker.transaction_moved(tx_hash, Pool::Queued).await?;
+
+        // Move from queued to pending - this will send the events to the channel
+        tracker.transaction_moved(tx_hash, Pool::Pending).await?;
+
+        // Wait for the cache to be populated (the spawned task needs time to process)
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Query the lifecycle - should have Queued and QueuedToPending events
+        let lifecycle = rpc.transaction_lifecycle(tx_hash).await?;
+        let events = match lifecycle {
+            TransactionLifecycleResponse::Events(e) => e,
+            TransactionLifecycleResponse::Unknown(msg) => panic!("Expected events, got Unknown: {}", msg),
+        };
+        assert_eq!(events.len(), 2);
+        assert!(events[0].contains("queued"));
+        assert!(events[1].contains("queued_to_pending"));
+
+        // Now include it
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion).await?;
+
+        // Wait for the cache to be populated (the spawned task needs time to process)
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Query the lifecycle - should have BlockInclusion event
+        let lifecycle = rpc.transaction_lifecycle(tx_hash).await?;
+        let events = match lifecycle {
+            TransactionLifecycleResponse::Events(e) => e,
+            TransactionLifecycleResponse::Unknown(msg) => panic!("Expected events, got Unknown: {}", msg),
+        };
+        assert_eq!(events.len(), 3);
+        assert!(events[0].contains("queued"));
+        assert!(events[1].contains("queued_to_pending"));
+        assert!(events[2].contains("block_inclusion"));
 
         Ok(())
     }
