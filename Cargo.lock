@@ -2092,7 +2092,6 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rpc-client",
- "alloy-signer-local",
  "arc-swap",
  "base-bundles",
  "base-client-node",

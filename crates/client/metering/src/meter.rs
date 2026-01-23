@@ -151,7 +151,8 @@ where
         extra_data: header.extra_data().clone(),
     };
 
-    // Pre-fetch account information for all transactions before creating builder
+    // Pre-fetch account information for all transactions before creating builder. The
+    // account information is used to validate the transaction.
     let mut accounts = HashMap::new();
     for tx in bundle.transactions() {
         let from = tx.recover_signer()?;
@@ -178,11 +179,12 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
-
-            let account = accounts.get(&from)
+            let account = accounts
+                .get(&from)
                 .ok_or_else(|| eyre!("Account not found for address: {}", from))?
                 .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
-            validate_tx(account, &tx, &mut l1_block_info)
+
+            validate_tx(account, tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
             let gas_used = builder

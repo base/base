@@ -63,5 +63,4 @@ op-alloy-consensus.workspace = true
 rand.workspace = true
 tokio.workspace = true
 op-alloy-network.workspace = true
-alloy-signer-local.workspace = true
 revm-context-interface.workspace = true

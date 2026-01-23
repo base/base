@@ -9,12 +9,12 @@ use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::extract_l1_info_from_tx;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
-use reth_optimism_evm::extract_l1_info_from_tx;
 use tracing::{error, info};
 
 use crate::{
@@ -178,7 +178,10 @@ where
             })
         });
 
-        let first_tx = self.provider
+        // Get the first transaction from a L2 block to retrieve the L1 block info. The L1 block
+        // info is required to check for transaction validity.
+        let first_tx = self
+            .provider
             .block_by_hash(header.hash())
             .map_err(|e| {
                 error!(error = %e, "Failed to get block by hash");
@@ -418,8 +421,7 @@ mod tests {
                 .max_priority_fee_per_gas(1_000_000_000)
                 .into_eip1559()
                 .into_encoded()
-                .clone()
-                .into_encoded_bytes()
+                .into_encoded_bytes(),
         ]
     }
 
@@ -428,7 +430,9 @@ mod tests {
         let (harness, client) = setup().await?;
 
         // Build a block with a tx so that we don't get an error about missing L1 block info
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let bundle = create_bundle(vec![], 0, None);
 
@@ -446,7 +450,9 @@ mod tests {
     async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
 
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let sender_address = Account::Alice.address();
         let sender_secret = Account::Alice.signer_b256();
@@ -490,7 +496,9 @@ mod tests {
     async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
 
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let address1 = Account::Alice.address();
         let secret1 = Account::Alice.signer_b256();
@@ -574,7 +582,9 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let bundle = create_bundle(vec![], 1, None);
 
@@ -588,7 +598,9 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let bundle1 = create_bundle(vec![], 1, None);
         let response1: MeterBundleResponse = client.request("base_meterBundle", (bundle1,)).await?;
@@ -605,7 +617,9 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let custom_timestamp = 1234567890;
         let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
@@ -621,7 +635,9 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let bundle = create_bundle(vec![], 999999, None);
 
@@ -635,7 +651,9 @@ mod tests {
     #[tokio::test]
     async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
         let (harness, client) = setup().await?;
-        harness.build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await).await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
 
         let secret1 = Account::Alice.signer_b256();
         let secret2 = Account::Bob.signer_b256();
@@ -699,6 +717,19 @@ mod tests {
 
         // Bundle gas price should be weighted average: (3*21000 + 7*21000) / (21000 + 21000) = 5 gwei
         assert_eq!(response.bundle_gas_price, U256::from(5000000000u64));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_no_l1_block_info() -> eyre::Result<()> {
+        let (_harness, client) = setup().await?;
+
+        let bundle = create_bundle(vec![], 1, None);
+        let response: Result<MeterBundleResponse, _> =
+            client.request("base_meterBundle", (bundle,)).await;
+
+        assert!(response.is_err());
 
         Ok(())
     }

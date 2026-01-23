@@ -1,11 +1,11 @@
-use alloy_consensus::{Transaction, Typed2718, transaction::Recovered};
-use alloy_primitives::U256;
+use alloy_consensus::{Transaction, Typed2718, constants::KECCAK_EMPTY, transaction::Recovered};
 use alloy_eips::Encodable2718;
-use reth_primitives_traits::Account;
+use alloy_primitives::U256;
+use derive_more::Display;
 use op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS;
 use op_revm::{OpSpecId, l1block::L1BlockInfo};
+use reth_primitives_traits::Account;
 use tracing::warn;
-use derive_more::Display;
 
 /// Errors that can occur when validating a transaction.
 #[derive(Debug, PartialEq, Display)]
@@ -34,6 +34,7 @@ pub enum TxValidationError {
 /// - If the transaction's nonce is the latest
 /// - If the transaction's execution cost is less than the account's balance
 /// - If the transaction's L1 gas cost is less than the account's balance
+///   
 /// Note: We don't need to check for EIP-4844 because bundle transactions are Recovered<OpTxEnvelope>
 /// which only Legacy, Eip2930, Eip1559, Eip7702, and Deposit.
 pub fn validate_tx<T: Transaction + Encodable2718>(
@@ -56,7 +57,10 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     }
 
     // error if account is 7702 but tx is not 7702
-    if account.bytecode_hash.is_some() && !txn.is_eip7702() {
+    if account.bytecode_hash.is_some()
+        && account.bytecode_hash.unwrap() != KECCAK_EMPTY
+        && !txn.is_eip7702()
+    {
         return Err(TxValidationError::AccountIs7702ButTxIsNot7702);
     }
 
@@ -92,11 +96,10 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{
-        SignableTransaction, Transaction, TxEip1559, TxEip7702, constants::KECCAK_EMPTY,
-        transaction::SignerRecoverable,
+        SignableTransaction, Transaction, TxEip1559, TxEip7702, transaction::SignerRecoverable,
     };
     use alloy_primitives::{Address, bytes, keccak256};
-    use alloy_signer_local::PrivateKeySigner;
+    use base_client_node::test_utils::Account as BaseAccount;
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_network::TxSignerSync;
     use revm_context_interface::transaction::{AccessList, AccessListItem};
@@ -104,7 +107,7 @@ mod tests {
     use super::*;
 
     fn create_account(nonce: u64, balance: U256) -> Account {
-        Account { balance, nonce, bytecode_hash: Some(KECCAK_EMPTY) }
+        Account { balance, nonce, bytecode_hash: None }
     }
 
     fn create_7702_account() -> Account {
@@ -122,7 +125,7 @@ mod tests {
     #[test]
     fn test_valid_tx() {
         // Create a sample EIP-1559 transaction
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip1559 {
             chain_id: 1,
             nonce: 0,
@@ -132,7 +135,7 @@ mod tests {
             to: Address::random().into(),
             value: U256::from(10000000000000u128),
             access_list: Default::default(),
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         let account = create_account(0, U256::from(1000000000000000000u128));
@@ -146,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_valid_7702_tx() {
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip7702 {
             chain_id: 1,
             nonce: 0,
@@ -157,7 +160,7 @@ mod tests {
             value: U256::from(10000000000000u128),
             authorization_list: Default::default(),
             access_list: Default::default(),
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         let account = create_7702_account();
@@ -171,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_err_interop_tx() {
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
 
         let access_list = AccessList::from(vec![AccessListItem {
             address: CROSS_L2_INBOX_ADDRESS,
@@ -187,7 +190,7 @@ mod tests {
             to: Address::random().into(),
             value: U256::from(10000000000000u128),
             access_list,
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         let account = create_account(0, U256::from(1000000000000000000u128));
@@ -205,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_err_tx_not_7702() {
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
 
         let mut tx = TxEip1559 {
             chain_id: 1,
@@ -216,7 +219,7 @@ mod tests {
             to: Address::random().into(),
             value: U256::from(10000000000000u128),
             access_list: Default::default(),
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         // account is 7702
@@ -235,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_err_tx_nonce_too_low() {
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip1559 {
             chain_id: 1,
             nonce: 0,
@@ -245,7 +248,7 @@ mod tests {
             to: Address::random().into(),
             value: U256::from(10000000000000u128),
             access_list: Default::default(),
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         let account = create_account(1, U256::from(1000000000000000000u128));
@@ -265,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_err_tx_insufficient_funds() {
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip1559 {
             chain_id: 1,
             nonce: 0,
@@ -275,7 +278,7 @@ mod tests {
             to: Address::random().into(),
             value: U256::from(10000000000000u128),
             access_list: Default::default(),
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         let account_balance = U256::from(1000000u128);
@@ -296,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_err_tx_insufficient_funds_for_l1_gas() {
-        let signer = PrivateKeySigner::random();
+        let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip1559 {
             chain_id: 1,
             nonce: 0,
@@ -306,7 +309,7 @@ mod tests {
             to: Address::random().into(),
             value: U256::from(1000000u128),
             access_list: Default::default(),
-            input: bytes!("").clone(),
+            input: bytes!(""),
         };
 
         // fund the account with enough funds to cover the txn cost but not enough to cover the l1 cost
