@@ -3,14 +3,14 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use eyre::{Result as EyreResult, eyre};
 use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
@@ -153,7 +153,7 @@ where
 
     // Pre-fetch account information for all transactions before creating builder. The
     // account information is used to validate the transaction.
-    let mut accounts = HashMap::new();
+    let mut accounts: HashMap<Address, Option<Account>> = HashMap::new();
     for tx in bundle.transactions() {
         let from = tx.recover_signer()?;
         let account = db.database.basic_account(&from)?;
@@ -181,9 +181,10 @@ where
             let gas_price = tx.max_fee_per_gas();
             let account = accounts
                 .get(&from)
-                .ok_or_else(|| eyre!("Account not found for address: {}", from))?
+                .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?
                 .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
 
+            // Don't waste resources metering invalid transactions
             validate_tx(account, tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
@@ -256,6 +257,7 @@ mod tests {
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
+    use revm_context_interface::transaction::{AccessList, AccessListItem};
 
     use super::*;
 
@@ -685,8 +687,6 @@ mod tests {
 
     #[tokio::test]
     async fn meter_bundle_err_interop_tx() -> eyre::Result<()> {
-        use revm_context_interface::transaction::{AccessList, AccessListItem};
-
         let harness = TestHarness::new().await?;
         let latest = harness.latest_block();
         let header = latest.sealed_header().clone();
