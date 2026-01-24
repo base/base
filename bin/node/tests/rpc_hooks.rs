@@ -16,6 +16,7 @@ use base_metering::MeteringExtension;
 use base_txpool::{Status, TransactionStatusResponse, TxPoolExtension, TxpoolConfig};
 use eyre::Result;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
+use jsonrpsee_types::ErrorCode;
 
 /// Test that multiple RPC-providing extensions are all accessible when installed together.
 ///
@@ -32,14 +33,15 @@ async fn rpc_hooks_accumulate_across_extensions() -> Result<()> {
     let chain_spec = load_chain_spec();
 
     // Install multiple RPC-providing extensions
-    let mut extensions: Vec<Box<dyn BaseNodeExtension>> = Vec::new();
-    extensions.push(Box::new(TxPoolExtension::new(TxpoolConfig {
-        tracing_enabled: false,
-        tracing_logs_enabled: false,
-        sequencer_rpc: None,
-        flashblocks_config: None,
-    })));
-    extensions.push(Box::new(MeteringExtension::new(true, None)));
+    let extensions: Vec<Box<dyn BaseNodeExtension>> = vec![
+        Box::new(TxPoolExtension::new(TxpoolConfig {
+            tracing_enabled: false,
+            tracing_logs_enabled: false,
+            sequencer_rpc: None,
+            flashblocks_config: None,
+        })),
+        Box::new(MeteringExtension::new(true, None)),
+    ];
 
     let node =
         base_client_node::test_utils::LocalNode::new(extensions, Arc::clone(&chain_spec)).await?;
@@ -65,7 +67,7 @@ async fn rpc_hooks_accumulate_across_extensions() -> Result<()> {
             // Method exists but returned an error - this is fine as long as it's not MethodNotFound
             assert_ne!(
                 err.code(),
-                jsonrpsee::types::ErrorCode::MethodNotFound.code(),
+                ErrorCode::MethodNotFound.code(),
                 "metering RPC missing - RPC hooks are not accumulating properly"
             );
         }
