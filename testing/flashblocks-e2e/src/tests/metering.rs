@@ -112,8 +112,7 @@ pub(crate) fn category() -> TestCategory {
             Test {
                 name: "meter_bundle_high_state_root_time".to_string(),
                 description: Some(
-                    "Meter bundle with high state root time (~650 accounts, ~16.25 Mgas)"
-                        .to_string(),
+                    "Meter bundle with high state root time (~400 accounts)".to_string(),
                 ),
                 run: Box::new(|client| Box::pin(test_meter_bundle_high_state_root_time(client))),
                 skip_if: Some(Box::new(|client| {
@@ -128,8 +127,7 @@ pub(crate) fn category() -> TestCategory {
             Test {
                 name: "meter_bundle_high_execution_time".to_string(),
                 description: Some(
-                    "Meter bundle with high execution time (~30k bn256Add calls, ~15 Mgas)"
-                        .to_string(),
+                    "Meter bundle with high execution time (~20k bn256Add calls)".to_string(),
                 ),
                 run: Box::new(|client| Box::pin(test_meter_bundle_high_execution_time(client))),
                 skip_if: Some(Box::new(|client| {
@@ -327,6 +325,15 @@ async fn test_meter_bundle_state_root_timing(client: &TestClient) -> Result<()> 
         "State root timing from ETH transfer"
     );
 
+    // Verify ETH transfer uses exactly 21000 gas
+    ensure!(
+        response.total_gas_used == 21000,
+        "ETH transfer should use exactly 21000 gas, got {}",
+        response.total_gas_used
+    );
+
+    // Timing values exist in the response - the field type guarantees they're non-negative
+
     Ok(())
 }
 
@@ -349,18 +356,20 @@ async fn test_meter_bundle_state_root_timing_simulator(client: &TestClient) -> R
     let nonce = client.peek_nonce().await?;
 
     // Use Simulator contract to create accounts (increases state root time)
+    // Account creation: ~25k gas each, storage: ~20k gas each (cold SSTORE)
     let config = SimulatorConfigBuilder::new()
         .create_accounts(10) // Create 10 accounts to stress state root
         .create_storage(50) // Create 50 storage slots for gas pressure
         .build();
     let calldata = encode_run_call(&config);
 
+    // 10 accounts × 25k + 50 storage × 20k = 1.25M + overhead
     let mut tx_request = OpTransactionRequest::default()
         .from(from)
         .to(simulator_addr)
         .input(calldata.into())
         .nonce(nonce)
-        .gas_limit(1_000_000) // Simulator needs more gas
+        .gas_limit(2_000_000)
         .max_fee_per_gas(1_000_000_000)
         .max_priority_fee_per_gas(1_000_000);
     tx_request.set_chain_id(client.chain_id());
@@ -378,13 +387,26 @@ async fn test_meter_bundle_state_root_timing_simulator(client: &TestClient) -> R
         "State root timing from Simulator bundle"
     );
 
+    // Verify gas is used (simulator should consume gas for account/storage creation)
+    ensure!(
+        response.total_gas_used > 21000,
+        "Simulator bundle should use more gas than simple transfer, got {}",
+        response.total_gas_used
+    );
+
+    // Verify timing values are present and positive
+    ensure!(
+        response.total_execution_time_us > 0,
+        "Execution time should be positive for simulator workload"
+    );
+
     Ok(())
 }
 
 /// Test metering with high state root calculation time.
 ///
-/// Creates ~650 accounts to use ~16.25 Mgas, stressing state root computation.
-/// This respects the EIP-7825 per-transaction gas limit of 16.78 Mgas.
+/// Creates ~400 accounts stressing state root computation.
+/// The Simulator contract charges ~40k+ gas per account creation (including loop overhead).
 async fn test_meter_bundle_high_state_root_time(client: &TestClient) -> Result<()> {
     let from = client.signer_address().ok_or_else(|| eyre::eyre!("No signer"))?;
     let simulator_addr =
@@ -398,8 +420,8 @@ async fn test_meter_bundle_high_state_root_time(client: &TestClient) -> Result<(
 
     let nonce = client.peek_nonce().await?;
 
-    // 650 accounts × 25,000 gas = 16.25 Mgas (under 16.78M EIP-7825 limit)
-    let config = SimulatorConfigBuilder::new().create_accounts(650).build();
+    // 400 accounts - the Simulator contract has ~26-30k gas overhead per account
+    let config = SimulatorConfigBuilder::new().create_accounts(400).build();
     let calldata = encode_run_call(&config);
 
     let mut tx_request = OpTransactionRequest::default()
@@ -421,17 +443,34 @@ async fn test_meter_bundle_high_state_root_time(client: &TestClient) -> Result<(
         state_root_time_us = response.state_root_time_us,
         total_execution_time_us = response.total_execution_time_us,
         total_gas_used = response.total_gas_used,
-        accounts_created = 650,
+        accounts_created = 400,
         "High state root time test"
     );
+
+    // Verify the transaction completed (didn't hit gas limit)
+    ensure!(
+        response.total_gas_used < 16_500_000,
+        "Transaction should not hit gas limit (got {}), reduce account count",
+        response.total_gas_used
+    );
+
+    // Verify meaningful gas was used (at least 8M for 400 accounts)
+    ensure!(
+        response.total_gas_used >= 8_000_000,
+        "Expected significant gas usage for 400 account creations, got {}",
+        response.total_gas_used
+    );
+
+    // Verify timing values are present and positive
+    ensure!(response.total_execution_time_us > 0, "Execution time should be positive");
 
     Ok(())
 }
 
 /// Test metering with high execution time using bn256Add precompile.
 ///
-/// Calls bn256Add (0x06) ~30,000 times to use ~15 Mgas of execution.
-/// This respects the EIP-7825 per-transaction gas limit of 16.78 Mgas.
+/// Calls bn256Add (0x06) many times for execution-heavy workload.
+/// Precompile calls are execution-heavy but create minimal state changes.
 async fn test_meter_bundle_high_execution_time(client: &TestClient) -> Result<()> {
     let from = client.signer_address().ok_or_else(|| eyre::eyre!("No signer"))?;
     let simulator_addr =
@@ -445,10 +484,10 @@ async fn test_meter_bundle_high_execution_time(client: &TestClient) -> Result<()
 
     let nonce = client.peek_nonce().await?;
 
-    // bn256Add precompile at address 0x06, 500 gas per call
-    // 30,000 calls × 500 gas = 15 Mgas
+    // bn256Add precompile at address 0x06, ~500 gas per call + significant loop overhead (~800 total)
+    // 15,000 calls to stay well under 16M gas limit
     let bn256_add = Address::from_word(B256::from(U256::from(6)));
-    let config = SimulatorConfigBuilder::new().precompile_calls(30_000, bn256_add).build();
+    let config = SimulatorConfigBuilder::new().precompile_calls(15_000, bn256_add).build();
     let calldata = encode_run_call(&config);
 
     let mut tx_request = OpTransactionRequest::default()
@@ -470,8 +509,35 @@ async fn test_meter_bundle_high_execution_time(client: &TestClient) -> Result<()
         state_root_time_us = response.state_root_time_us,
         total_execution_time_us = response.total_execution_time_us,
         total_gas_used = response.total_gas_used,
-        precompile_calls = 30_000,
+        precompile_calls = 15_000,
         "High execution time test"
+    );
+
+    // Verify the transaction completed (didn't hit gas limit)
+    ensure!(
+        response.total_gas_used < 16_000_000,
+        "Transaction should not hit gas limit (got {}), reduce precompile calls",
+        response.total_gas_used
+    );
+
+    // Verify meaningful gas was used (at least 6M for 15k precompile calls)
+    ensure!(
+        response.total_gas_used >= 6_000_000,
+        "Expected significant gas usage for 15k precompile calls, got {}",
+        response.total_gas_used
+    );
+
+    // Verify timing values are present and positive
+    ensure!(response.total_execution_time_us > 0, "Execution time should be positive");
+
+    // The high execution time test should show execution time dominating over state root time.
+    // With 30k precompile calls, execution time should be significantly higher than state root
+    // time since we're not creating new accounts (minimal trie changes).
+    ensure!(
+        response.total_execution_time_us >= response.state_root_time_us,
+        "For precompile-heavy workloads, execution time ({} μs) should be >= state root time ({} μs)",
+        response.total_execution_time_us,
+        response.state_root_time_us
     );
 
     Ok(())
