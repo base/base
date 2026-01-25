@@ -12,3 +12,118 @@ exclude = [
     'https://img.shields.io/github/issues-pr-raw/base/base',
     'https://rustup.rs/',
 ]
+verbose = "debug"
+no_progress = false
+exclude_all_private = false
+accept = [200, 403] # 403 status code is often returned by private repos instead of 404
+
+exclude_path = [
+    "shared/primitives/contracts/lib",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".git",
+    "vendor",
+    "tmp",
+    "temp",
+    ".cache",
+    "coverage",
+    ".next",
+    ".nuxt",
+    "out",
+    "public/assets",
+]
+
+exclude = [
+    'foo.bar',
+    'localhost',
+    'https://img.shields.io/github/commit-activity/w/base/base',
+    'https://img.shields.io/github/issues-pr-raw/base/base',
+    'https://rustup.rs/',
+    # Internal/Local URLs
+    '127.0.0.1',
+    '0.0.0.0',
+    'localhost:*',
+    '*.local',
+    '*.localhost',
+    
+    # Example domains
+    'example.com',
+    'example.org',
+    'example.net',
+    'test.com',
+    'foo.com',
+    'bar.com',
+    
+    # Placeholder URLs
+    'https://your-domain.com',
+    'http://placeholder.com',
+    'https://www.example.com',
+    
+    # Common CDN/Badge services that might be flaky
+    'https://img.shields.io/*',
+    'https://badge.fury.io/*',
+    'https://codecov.io/*',
+    'https://circleci.com/*',
+    'https://travis-ci.org/*',
+    'https://github.com/*/workflows/*',
+    
+    # Documentation sites that might have rate limits
+    'https://docs.rs/*',
+    'https://crates.io/*',
+    'https://lib.rs/*',
+    
+    # Social media (often rate limited)
+    'https://twitter.com/*',
+    'https://x.com/*',
+    'https://linkedin.com/*',
+    'https://facebook.com/*',
+    
+    # Video platforms
+    'https://youtube.com/*',
+    'https://youtu.be/*',
+    'https://vimeo.com/*',
+    
+    # Package registries
+    'https://registry.npmjs.org/*',
+    'https://pypi.org/*',
+    'https://rubygems.org/*',
+    
+    # Mail links
+    'mailto:*',
+    
+    # File protocols
+    'file:///*',
+    
+    # Anchors (same page links)
+    '#*',
+]
+
+# Retry settings
+[retry]
+max_retries = 3
+wait_time = 5
+
+# Timeout settings
+[timeout]
+default = 30
+
+# Headers (for authentication if needed)
+[headers]
+# Accept = "text/html"
+# User-Agent = "lychee/link-checker"
+
+# Cache settings
+[cache]
+max_age = 86400 # 24 hours in seconds
+
+# Include patterns (if you want to check only specific files)
+[include]
+# Only check markdown files
+# patterns = ["*.md", "*.markdown"]
+
+# Remap URLs (useful for redirects)
+[remap]
+# "http://example.com" = "https://example.com"
+# "old-domain.com" = "new-domain.com"
