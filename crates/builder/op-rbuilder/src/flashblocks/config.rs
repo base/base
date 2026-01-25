@@ -35,6 +35,9 @@ pub struct FlashblocksConfig {
 
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
+
+    /// Should we enable background state trie cache warming via state root calculation
+    pub enable_state_trie_warming: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -45,6 +48,7 @@ impl Default for FlashblocksConfig {
             leeway_time: Duration::from_millis(50),
             fixed: false,
             disable_state_root: false,
+            enable_state_trie_warming: false,
         }
     }
 }
@@ -66,7 +70,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
-        Ok(Self { ws_addr, interval, leeway_time, fixed, disable_state_root })
+        let enable_state_trie_warming = args.flashblocks.flashblocks_enable_state_trie_warming;
+
+        Ok(Self { ws_addr, interval, leeway_time, fixed, disable_state_root, enable_state_trie_warming })
     }
 }
 

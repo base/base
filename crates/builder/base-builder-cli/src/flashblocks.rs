@@ -42,6 +42,16 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_DISABLE_STATE_ROOT"
     )]
     pub flashblocks_disable_state_root: bool,
+
+    /// Enable background state trie cache warming via state root calculation.
+    /// When enabled, state roots are calculated in the background after each
+    /// flashblock to warm state trie caches for faster witness generation.
+    #[arg(
+        long = "flashblocks.enable-state-trie-warming",
+        default_value = "false",
+        env = "FLASHBLOCKS_ENABLE_STATE_TRIE_WARMING"
+    )]
+    pub flashblocks_enable_state_trie_warming: bool,
 }
 
 impl Default for FlashblocksArgs {
@@ -53,6 +63,7 @@ impl Default for FlashblocksArgs {
             flashblocks_fixed: false,
             flashblocks_leeway_time: 75,
             flashblocks_disable_state_root: false,
+            flashblocks_enable_state_trie_warming: false,
         }
     }
 }
