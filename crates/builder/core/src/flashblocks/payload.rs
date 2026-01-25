@@ -46,7 +46,7 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 use crate::{
     BuilderConfig, ExecutionInfo,
     flashblocks::{
-        FlashblocksExtraCtx,
+        FlashblocksExtraCtx, StateTrieWarmer,
         best_txs::BestFlashblocksTxs,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
@@ -101,11 +101,13 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
     pub config: BuilderConfig,
     /// The metrics for the builder
     pub metrics: Arc<BuilderMetrics>,
+    /// State trie warmer for background state root calculation
+    pub state_trie_warmer: Arc<StateTrieWarmer>,
 }
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     /// `OpPayloadBuilder` constructor.
-    pub(super) const fn new(
+    pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
@@ -114,7 +116,11 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<BuilderMetrics>,
     ) -> Self {
-        Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics }
+        let state_trie_warmer = Arc::new(StateTrieWarmer::new(
+            config.flashblocks.enable_state_trie_warming,
+            metrics.clone(),
+        ));
+        Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics, state_trie_warmer }
     }
 }
 
@@ -630,6 +636,27 @@ where
                     .await
                     .wrap_err("failed to send built payload to handler")?;
                 best_payload.set(new_payload);
+
+                // Start state trie warming with the updated state after publishing the flashblock
+                // If a warming task is already running, this will be a no-op
+                // This continuously refreshes warming with the latest payload state
+                match self.client.state_by_block_hash(ctx.parent().hash()) {
+                    Ok(warming_provider) => {
+                        self.state_trie_warmer.start_warming(
+                            warming_provider,
+                            state.bundle_state.clone(),
+                            ctx.block_number(),
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            target: "payload_builder",
+                            block_number = ctx.block_number(),
+                            %err,
+                            "Failed to get state provider for trie warming"
+                        );
+                    }
+                }
 
                 // Record flashblock build duration
                 ctx.metrics.flashblock_build_duration.record(flashblock_build_start_time.elapsed());

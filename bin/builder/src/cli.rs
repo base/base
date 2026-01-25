@@ -58,6 +58,16 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_COMPUTE_STATE_ROOT_ON_FINALIZE"
     )]
     pub flashblocks_compute_state_root_on_finalize: bool,
+
+    /// Whether to enable background state trie warming during block building.
+    /// When enabled, state root calculations are performed in the background
+    /// to warm OS/DB caches, improving final state root computation performance.
+    #[arg(
+        long = "flashblocks.enable-state-trie-warming",
+        default_value = "false",
+        env = "FLASHBLOCKS_ENABLE_STATE_TRIE_WARMING"
+    )]
+    pub flashblocks_enable_state_trie_warming: bool,
 }
 
 impl Default for FlashblocksArgs {
@@ -70,6 +80,7 @@ impl Default for FlashblocksArgs {
             flashblocks_leeway_time: 75,
             flashblocks_disable_state_root: false,
             flashblocks_compute_state_root_on_finalize: false,
+            flashblocks_enable_state_trie_warming: false,
         }
     }
 }
@@ -207,6 +218,9 @@ impl TryFrom<&Args> for FlashblocksConfig {
             compute_state_root_on_finalize: args
                 .flashblocks
                 .flashblocks_compute_state_root_on_finalize,
+            enable_state_trie_warming: args
+                .flashblocks
+                .flashblocks_enable_state_trie_warming,
         })
     }
 }
