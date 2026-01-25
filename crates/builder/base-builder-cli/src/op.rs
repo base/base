@@ -16,22 +16,22 @@ pub enum ResourceMeteringMode {
     /// Resource metering is disabled. No time limit checks are performed.
     #[default]
     Off,
-    /// Observe mode: collect metrics about transactions that would exceed time limits,
+    /// Dry-run mode: collect metrics about transactions that would exceed time limits,
     /// but don't actually reject them. Useful for gathering data before enforcement.
-    Observe,
+    DryRun,
     /// Enforce mode: reject transactions that exceed time limits.
     Enforce,
 }
 
 impl ResourceMeteringMode {
-    /// Returns true if metering data should be collected (observe or enforce mode).
+    /// Returns true if metering data should be collected (dry-run or enforce mode).
     pub const fn is_enabled(&self) -> bool {
-        matches!(self, Self::Observe | Self::Enforce)
+        matches!(self, Self::DryRun | Self::Enforce)
     }
 
-    /// Returns true if limits should only be observed, not enforced.
-    pub const fn is_observe_only(&self) -> bool {
-        matches!(self, Self::Observe)
+    /// Returns true if limits should only be observed in dry-run mode, not enforced.
+    pub const fn is_dry_run(&self) -> bool {
+        matches!(self, Self::DryRun)
     }
 }
 
@@ -71,7 +71,7 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
     pub extra_block_deadline_secs: u64,
 
-    /// Resource metering mode: off (disabled), observe (collect metrics without enforcing),
+    /// Resource metering mode: off (disabled), dry-run (collect metrics without enforcing),
     /// or enforce (reject transactions exceeding time limits)
     #[arg(long = "builder.resource-metering-mode", default_value = "off", value_enum)]
     pub resource_metering_mode: ResourceMeteringMode,

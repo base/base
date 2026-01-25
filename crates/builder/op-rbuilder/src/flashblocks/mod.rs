@@ -61,7 +61,7 @@ pub struct BuilderConfig {
     /// is calculated once at the end.
     pub block_state_root_time_budget_us: Option<u128>,
 
-    /// Resource metering mode: off, observe, or enforce.
+    /// Resource metering mode: off, dry-run, or enforce.
     pub resource_metering_mode: ResourceMeteringMode,
 
     /// Unified transaction data store (backrun bundles + resource metering)

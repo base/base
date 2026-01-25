@@ -125,7 +125,7 @@ pub struct OpPayloadBuilderCtx {
     pub flashblock_execution_time_budget_us: Option<u128>,
     /// Block-level state root calculation time budget in microseconds.
     pub block_state_root_time_budget_us: Option<u128>,
-    /// Resource metering mode: off, observe, or enforce.
+    /// Resource metering mode: off, dry-run, or enforce.
     pub resource_metering_mode: ResourceMeteringMode,
     /// Unified transaction data store (backrun bundles + resource metering)
     pub tx_data_store: TxDataStore,
@@ -548,11 +548,11 @@ impl OpPayloadBuilderCtx {
                         _ => {}
                     }
 
-                    if self.resource_metering_mode.is_observe_only() {
-                        // In observe-only mode, log but don't reject
+                    if self.resource_metering_mode.is_dry_run() {
+                        // In dry-run mode, log but don't reject
                         warn!(
                             target: "payload_builder",
-                            message = "Transaction would exceed time limits (observe-only)",
+                            message = "Transaction would exceed time limits (dry-run mode)",
                             tx_hash = ?tx_hash,
                             result = %result,
                             predicted_exec_us = ?predicted_execution_time_us,

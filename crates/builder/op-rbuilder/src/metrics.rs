@@ -183,7 +183,7 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundle_execution_duration: Histogram,
 
     // === Resource Metering Observation Metrics ===
-    /// Transactions that would be rejected by time-based resource limits (observe-only mode)
+    /// Transactions that would be rejected by time-based resource limits (dry-run mode)
     pub resource_limit_would_reject_total: Counter,
     /// Transactions that exceeded per-tx execution time limit
     pub tx_execution_time_exceeded_total: Counter,
