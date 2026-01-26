@@ -173,6 +173,16 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundle_insert_duration: Histogram,
     /// Duration of executing all backrun bundles for a target transaction
     pub backrun_bundle_execution_duration: Histogram,
+    /// Number of state trie warming tasks started
+    pub state_trie_warming_started_count: Counter,
+    /// Number of state trie warming tasks completed successfully
+    pub state_trie_warming_completed_count: Counter,
+    /// Number of state trie warming tasks skipped (already warming)
+    pub state_trie_warming_skipped_count: Counter,
+    /// Number of state trie warming tasks that encountered errors
+    pub state_trie_warming_error_count: Counter,
+    /// Histogram of state trie warming duration (completed tasks only)
+    pub state_trie_warming_duration: Histogram,
 }
 
 impl OpRBuilderMetrics {
