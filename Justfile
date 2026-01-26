@@ -89,7 +89,7 @@ build-node:
 
 # Build the contracts used for tests
 build-contracts:
-    cd crates/shared/primitives/contracts && forge build
+    cd crates/shared/primitives/contracts && forge soldeer install && forge build
 
 # Cleans the workspace
 clean:
