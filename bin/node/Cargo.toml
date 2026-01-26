@@ -31,3 +31,14 @@ clap.workspace = true
 [features]
 default = []
 jemalloc = [ "reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc" ]
+
+[dev-dependencies]
+base-client-node = { workspace = true, features = ["test-utils"] }
+base-metering.workspace = true
+base-txpool.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+eyre.workspace = true
+jsonrpsee = { workspace = true, features = ["http-client"] }
+jsonrpsee-types.workspace = true
+serde_json.workspace = true
+alloy-primitives.workspace = true
