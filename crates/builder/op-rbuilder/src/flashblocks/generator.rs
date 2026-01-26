@@ -253,7 +253,6 @@ where
     /// The cell that holds the built payload (intermediate flashblocks, may not have state root).
     pub(crate) cell: BlockCell<Builder::BuiltPayload>,
     /// The cell that holds the finalized payload with state root computed.
-    /// This is set when `resolve_kind` is called and finalization is requested.
     pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
     /// Whether to compute state root only on finalization (when get_payload is called).
     pub(crate) compute_state_root_on_finalize: bool,
@@ -301,8 +300,6 @@ where
             self.cancel.cancel();
         }
 
-        // If compute_state_root_on_finalize is enabled, wait for the finalized cell
-        // Otherwise, just return the current best payload from the regular cell
         let resolve_future = if self.compute_state_root_on_finalize {
             ResolvePayload::new(self.finalized_cell.wait_for_value())
         } else {

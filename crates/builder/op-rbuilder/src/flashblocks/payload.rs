@@ -672,7 +672,6 @@ where
     }
 
     /// Finalize the payload by computing the state root and setting the finalized cell.
-    /// This is called when the build loop exits and `compute_state_root_on_finalize` is enabled.
     fn finalize_payload<DB, P>(
         &self,
         state: &mut State<DB>,
