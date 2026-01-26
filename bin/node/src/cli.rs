@@ -19,7 +19,7 @@ pub struct Args {
     )]
     pub max_pending_blocks_depth: u64,
 
-    /// Enable transaction tracing ExEx for mempool-to-block timing analysis
+    /// Enable transaction tracing for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
 

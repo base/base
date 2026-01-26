@@ -14,9 +14,9 @@ use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_subscri
 /// Transaction pool configuration.
 #[derive(Debug, Clone)]
 pub struct TxpoolConfig {
-    /// Enables the transaction tracing ExEx.
+    /// Enables transaction tracing.
     pub tracing_enabled: bool,
-    /// Emits `info`-level logs for the tracing ExEx when enabled.
+    /// Emits `info`-level logs for transaction tracing when enabled.
     pub tracing_logs_enabled: bool,
     /// Sequencer RPC endpoint for transaction status proxying.
     pub sequencer_rpc: Option<String>,
