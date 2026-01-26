@@ -211,7 +211,14 @@ where
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let BuildArguments { mut cached_reads, config, cancel: block_cancel, publish_guard } = args;
+        let BuildArguments {
+            mut cached_reads,
+            config,
+            cancel: block_cancel,
+            finalized_cell,
+            compute_state_root_on_finalize,
+            publish_guard,
+        } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
         let span = if config.parent_header.number.is_multiple_of(self.config.sampling_ratio) {
@@ -388,6 +395,9 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
+                if compute_state_root_on_finalize {
+                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                }
                 return Ok(());
             }
 
@@ -414,6 +424,9 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
+                    if compute_state_root_on_finalize {
+                        self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    }
                     return Ok(());
                 }
                 Err(err) => {
@@ -440,6 +453,9 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
+                    if compute_state_root_on_finalize {
+                        self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    }
                     return Ok(());
                 }
             }
@@ -652,6 +668,37 @@ where
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
+    }
+
+    /// Finalize the payload by computing the state root and setting the finalized cell.
+    fn finalize_payload<DB, P>(
+        &self,
+        state: &mut State<DB>,
+        ctx: &OpPayloadBuilderCtx,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        finalized_cell: &BlockCell<OpBuiltPayload>,
+    ) -> Result<(), PayloadBuilderError>
+    where
+        DB: Database<Error = ProviderError> + AsRef<P>,
+        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    {
+        let start_time = Instant::now();
+
+        // Build the final block WITH state root computed
+        let (final_payload, _) = build_block(state, ctx, info, true)?;
+
+        let elapsed = start_time.elapsed();
+        info!(
+            target: "payload_builder",
+            block_number = ctx.block_number(),
+            block_hash = ?final_payload.block().hash(),
+            elapsed_ms = elapsed.as_millis(),
+            "Finalized payload with state root"
+        );
+
+        finalized_cell.set(final_payload);
+
+        Ok(())
     }
 
     /// Calculate number of flashblocks.
