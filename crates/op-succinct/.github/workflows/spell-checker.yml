@@ -27,7 +27,8 @@ jobs:
         id: check_for_typos
         uses: reviewdog/action-misspell@v1
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
           path: "./book"
           locale: "US"
           exclude: |
