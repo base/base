@@ -1,9 +1,0 @@
-[submodule "crates/shared/primitives/contracts/lib/forge-std"]
-	path = crates/shared/primitives/contracts/lib/forge-std
-	url = https://github.com/foundry-rs/forge-std
-[submodule "crates/shared/primitives/contracts/lib/solmate"]
-	path = crates/shared/primitives/contracts/lib/solmate
-	url = https://github.com/transmissions11/solmate
-[submodule "crates/shared/primitives/contracts/lib/openzeppelin-contracts"]
-	path = crates/shared/primitives/contracts/lib/openzeppelin-contracts
-	url = https://github.com/OpenZeppelin/openzeppelin-contracts

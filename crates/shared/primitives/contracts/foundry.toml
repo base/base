@@ -1,10 +1,16 @@
 [profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["dependencies"]
 remappings = [
-    "@openzeppelin/=lib/openzeppelin-contracts/",
-    "solmate/=lib/solmate/src/"
+    "forge-std/=dependencies/forge-std-1.14.0/src/",
+    "@openzeppelin/=dependencies/openzeppelin-contracts-4.8.0/",
+    "solmate/=dependencies/solmate-6.7.0/src/"
 ]
+
+[dependencies]
+forge-std = "1.14.0"
+openzeppelin-contracts = { version = "4.8.0", git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git", tag = "v4.8.0" }
+solmate = { version = "6.7.0", git = "https://github.com/transmissions11/solmate.git", tag = "v6" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
