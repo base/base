@@ -62,6 +62,7 @@ base-engine-ext = { path = "crates/shared/engine-ext" }
 base-access-lists = { path = "crates/shared/access-lists" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
+base-proofs-extension = { path = "crates/client/proofs" }
 
 # Client
 base-txpool = { path = "crates/client/txpool" }
@@ -130,12 +131,9 @@ reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
@@ -154,6 +152,14 @@ reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = 
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
+
+# op-reth
+reth-optimism-rpc = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
+reth-optimism-node = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
+reth-optimism-cli = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
+reth-optimism-trie = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
+reth-optimism-exex = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
 
 # revm
 revm = { version = "34.0.0", default-features = false }

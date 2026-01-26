@@ -53,6 +53,7 @@ base-primitives = { workspace = true, optional = true }
 
 # reth
 reth-db = { workspace = true, features = ["op"] }
+reth-exex = { workspace = true }
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-storage.workspace = true

@@ -19,6 +19,7 @@ base-client-node.workspace = true
 base-flashblocks-node.workspace = true
 base-metering.workspace = true
 base-txpool.workspace = true
+base-proofs-extension.workspace = true
 
 # reth
 reth-optimism-node.workspace = true

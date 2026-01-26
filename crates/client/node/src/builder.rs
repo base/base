@@ -3,6 +3,7 @@
 use std::fmt;
 
 use eyre::Result;
+use reth_exex::ExExContext;
 use reth_node_builder::{
     NodeAdapter, NodeComponentsBuilder,
     node::FullNode,
@@ -111,6 +112,17 @@ impl BaseBuilder {
         L: FnOnce(OpBuilder) -> R,
     {
         launcher(self.build())
+    }
+
+    /// Installs an ExEx extension with the given name and closure.
+    pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
+    where
+        F: FnOnce(ExExContext<OpNodeAdapter>) -> R + Send + 'static,
+        R: Future<Output = eyre::Result<E>> + Send,
+        E: Future<Output = eyre::Result<()>> + Send,
+    {
+        self.builder = self.builder.install_exex(exex_id, exex);
+        self
     }
 
     /// Maps the add-ons with the given closure.
