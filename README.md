@@ -136,3 +136,11 @@ _(Details about specific configuration files, environment variables, or command-
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+---
+### 🛡️ Base Ecosystem Contributor
+- **Builder:** @temhemc
+- **Focus:** Supporting the growth and decentralization of the @base network.
+- **Commitment:** Actively engaging with the community and contributing to the onchain documentation.
+- **Vision:** Dedicated to the mission of bringing the world onchain by fostering a helpful and builder-centric environment. 🔵
+---
