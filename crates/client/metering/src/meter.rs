@@ -645,12 +645,14 @@ mod tests {
                     nonce: 0, // original
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    account_id: None,
                 }),
                 Some(AccountInfo {
                     balance: U256::from(1_000_000_000u64),
                     nonce: 1, // pending (after first flashblock tx)
                     code_hash: KECCAK_EMPTY,
                     code: None,
+                    account_id: None,
                 }),
                 Default::default(), // no storage changes
             )],

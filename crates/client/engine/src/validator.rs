@@ -4,7 +4,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use base_flashblocks::FlashblocksState;
 use reth_chainspec::EthChainSpec;
-use reth_consensus::{ConsensusError, FullConsensus};
+use reth_consensus::FullConsensus;
 use reth_engine_primitives::{ConfigureEngineEvm, InvalidBlockHook, PayloadValidator};
 use reth_engine_tree::tree::{
     BasicEngineValidator, EngineValidator,
@@ -18,13 +18,13 @@ use reth_node_api::{
 };
 use reth_node_builder::{
     invalid_block_hook::InvalidBlockHookExt,
-    rpc::{EngineValidatorBuilder, PayloadValidatorBuilder},
+    rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
 };
 use reth_payload_primitives::{BuiltPayload, NewPayloadError};
-use reth_primitives_traits::{NodePrimitives, RecoveredBlock};
+use reth_primitives_traits::{NodePrimitives, SealedBlock};
 use reth_provider::{
-    BlockReader, DatabaseProviderFactory, HashedPostStateProvider, PruneCheckpointReader,
-    StageCheckpointReader, StateProviderFactory, StateReader, TrieReader,
+    BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory, HashedPostStateProvider,
+    PruneCheckpointReader, StageCheckpointReader, StateProviderFactory, StateReader,
 };
 use tracing::instrument;
 
@@ -81,6 +81,7 @@ where
         self,
         ctx: &AddOnsContext<'_, Node>,
         tree_config: TreeConfig,
+        changeset_cache: ChangesetCache,
     ) -> eyre::Result<Self::EngineValidator> {
         let validator = self.payload_validator_builder.build(ctx).await?;
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
@@ -92,6 +93,7 @@ where
             validator,
             tree_config,
             invalid_block_hook,
+            changeset_cache,
         ))
     }
 }
@@ -115,8 +117,14 @@ impl<N, P, Evm, V> BaseEngineValidator<P, Evm, V>
 where
     N: NodePrimitives,
     P: DatabaseProviderFactory<
-            Provider: BlockReader + TrieReader + StageCheckpointReader + PruneCheckpointReader,
+            Provider: BlockReader
+                          + StageCheckpointReader
+                          + PruneCheckpointReader
+                          + ChangeSetReader
+                          + BlockNumReader,
         > + BlockReader<Header = N::BlockHeader>
+        + ChangeSetReader
+        + BlockNumReader
         + StateProviderFactory
         + StateReader
         + HashedPostStateProvider
@@ -128,11 +136,12 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
-        consensus: Arc<dyn FullConsensus<N, Error = ConsensusError>>,
+        consensus: Arc<dyn FullConsensus<N>>,
         evm_config: Evm,
         validator: V,
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook<N>>,
+        changeset_cache: ChangesetCache,
     ) -> Self {
         Self {
             inner: BasicEngineValidator::new(
@@ -142,6 +151,7 @@ where
                 validator,
                 config,
                 invalid_block_hook,
+                changeset_cache,
             ),
         }
     }
@@ -178,10 +188,16 @@ where
 impl<N, Types, P, Evm, V> EngineValidator<Types> for BaseEngineValidator<P, Evm, V>
 where
     P: DatabaseProviderFactory<
-            Provider: BlockReader + TrieReader + StageCheckpointReader + PruneCheckpointReader,
+            Provider: BlockReader
+                          + StageCheckpointReader
+                          + PruneCheckpointReader
+                          + ChangeSetReader
+                          + BlockNumReader,
         > + BlockReader<Header = N::BlockHeader>
         + StateProviderFactory
         + StateReader
+        + ChangeSetReader
+        + BlockNumReader
         + HashedPostStateProvider
         + Clone
         + 'static,
@@ -198,12 +214,11 @@ where
         self.inner.validate_payload_attributes_against_header(attr, header)
     }
 
-    fn ensure_well_formed_payload(
-        &self,
-        payload: Types::ExecutionData,
-    ) -> Result<RecoveredBlock<N::Block>, NewPayloadError> {
-        let block = self.inner.ensure_well_formed_payload(payload)?;
-        Ok(block)
+    fn convert_payload_to_block(
+            &self,
+            payload: <Types as PayloadTypes>::ExecutionData,
+    ) -> Result<reth_primitives_traits::SealedBlock<<<<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block>, NewPayloadError>{
+        self.inner.convert_payload_to_block(payload)
     }
 
     fn validate_payload(
@@ -216,9 +231,18 @@ where
 
     fn validate_block(
         &mut self,
-        block: RecoveredBlock<N::Block>,
+        block: SealedBlock<N::Block>,
         ctx: TreeCtx<'_, N>,
     ) -> ValidationOutcome<N> {
         self.validate_block_with_state(BlockOrPayload::Block(block), ctx)
+    }
+
+    fn on_inserted_executed_block(
+        &self,
+        block: reth_chain_state::ExecutedBlock<
+            <<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives,
+        >,
+    ) {
+        self.inner.on_inserted_executed_block(block)
     }
 }

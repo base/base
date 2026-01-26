@@ -10,7 +10,7 @@ use base_client_cli::{
 use clap::Parser;
 use kona_engine::RollupBoostServerArgs;
 use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
-use rollup_boost_kona::ExecutionMode;
+use rollup_boost::ExecutionMode;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
 use url::Url;
