@@ -16,4 +16,16 @@ pub enum EngineError {
     /// Engine communication failed.
     #[error("engine error: {0}")]
     Engine(String),
+
+    /// Provider query failed.
+    #[error("provider error: {0}")]
+    Provider(String),
+
+    /// Block not found during lookup.
+    #[error("block not found: {0}")]
+    BlockNotFound(String),
+
+    /// Forkchoice state has not been initialized.
+    #[error("forkchoice state not initialized")]
+    ForkchoiceNotInitialized,
 }

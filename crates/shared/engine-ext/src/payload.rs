@@ -14,7 +14,7 @@ use tracing::debug;
 
 use crate::{EngineError, InProcessEngineClient};
 
-impl InProcessEngineClient {
+impl<P> InProcessEngineClient<P> {
     /// Sends a new payload to the execution layer (Engine API v2).
     pub async fn new_payload_v2(
         &self,

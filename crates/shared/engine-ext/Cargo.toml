@@ -12,11 +12,21 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# base
+base-primitives = { path = "../primitives", features = ["engine"] }
+
+# kona
+kona-protocol.workspace = true
+
 # reth
 reth-engine-primitives.workspace = true
 reth-optimism-node.workspace = true
 reth-payload-builder.workspace = true
 reth-payload-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-provider.workspace = true
+reth-storage-api.workspace = true
+reth-optimism-primitives.workspace = true
 
 # alloy
 alloy-eips.workspace = true
@@ -27,5 +37,6 @@ alloy-rpc-types-engine.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 
 # misc
+parking_lot.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

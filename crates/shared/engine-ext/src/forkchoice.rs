@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::{EngineError, InProcessEngineClient};
 
-impl InProcessEngineClient {
+impl<P> InProcessEngineClient<P> {
     /// Updates the fork choice state (Engine API v2).
     pub async fn fork_choice_updated_v2(
         &self,
@@ -15,10 +15,16 @@ impl InProcessEngineClient {
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> Result<ForkchoiceUpdated, EngineError> {
         debug!(head = ?state.head_block_hash, "Sending fork_choice_updated_v2 via channel");
-        self.consensus_handle
+        let result = self
+            .consensus_handle
             .fork_choice_updated(state, payload_attributes, EngineApiMessageVersion::V2)
             .await
-            .map_err(|e| EngineError::Engine(e.to_string()))
+            .map_err(|e| EngineError::Engine(e.to_string()))?;
+
+        // Update the forkchoice tracker with the new state.
+        self.forkchoice.update(state);
+
+        Ok(result)
     }
 
     /// Updates the fork choice state (Engine API v3).
@@ -28,9 +34,15 @@ impl InProcessEngineClient {
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> Result<ForkchoiceUpdated, EngineError> {
         debug!(head = ?state.head_block_hash, "Sending fork_choice_updated_v3 via channel");
-        self.consensus_handle
+        let result = self
+            .consensus_handle
             .fork_choice_updated(state, payload_attributes, EngineApiMessageVersion::V3)
             .await
-            .map_err(|e| EngineError::Engine(e.to_string()))
+            .map_err(|e| EngineError::Engine(e.to_string()))?;
+
+        // Update the forkchoice tracker with the new state.
+        self.forkchoice.update(state);
+
+        Ok(result)
     }
 }
