@@ -7519,7 +7519,6 @@ dependencies = [
  "reth-db",
  "reth-evm",
  "reth-execution-types",
- "reth-exex",
  "reth-ipc",
  "reth-metrics",
  "reth-network-peers",

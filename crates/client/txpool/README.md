@@ -9,7 +9,7 @@ Base-specific transaction pool extensions for `reth`, including transaction trac
 
 This crate provides:
 
-- **Transaction Tracing ExEx**: An execution extension that subscribes to mempool events and chain notifications to track how long a transaction spends in each stage of the lifecycle before it is included, dropped, or replaced.
+- **Transaction Tracing**: Subscribes to mempool events and chain notifications to track how long a transaction spends in each stage of the lifecycle before it is included, dropped, or replaced.
 - **Transaction Status RPC**: An RPC API (`txpool_transactionStatus`) to query the current status and lifecycle events of a transaction by hash.
 - **Tracker**: Core tracking logic for recording pending/queued transitions, replacements, drops, and block inclusion.
 - **Metrics**: Histogram metrics for mempool residency by event type to help spot latency regressions.

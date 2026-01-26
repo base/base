@@ -29,7 +29,6 @@ reth-cli-util.workspace = true
 reth-db.workspace = true
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true
-reth-exex.workspace = true
 reth-chainspec.workspace = true
 reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
