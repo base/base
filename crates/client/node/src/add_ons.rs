@@ -91,7 +91,7 @@ where
     N: FullNodeComponents<Types: OpNodeTypes>,
     OpEthApiBuilder<NetworkT>: EthApiBuilder<N>,
 {
-    /// Build a [`OpAddOns`] using [`OpAddOnsBuilder`].
+    /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder<NetworkT> {
         BaseAddOnsBuilder::default()
     }
@@ -416,7 +416,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
 }
 
 impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
-    /// Builds an instance of [`OpAddOns`].
+    /// Builds an instance of [`BaseAddOns`].
     pub fn build<N, PVB, EB, EVB>(
         self,
     ) -> BaseAddOns<N, OpEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware>
