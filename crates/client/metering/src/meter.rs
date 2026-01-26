@@ -1,20 +1,21 @@
 //! Bundle metering logic.
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use eyre::{Result as EyreResult, eyre};
+use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
 
-use crate::metrics::Metrics;
+use crate::{metrics::Metrics, transaction::validate_tx};
 
 /// Computes the pending trie input from the bundle state.
 ///
@@ -97,6 +98,7 @@ pub fn meter_bundle<SP>(
     header: &SealedHeader,
     parent_beacon_block_root: Option<B256>,
     pending_state: Option<PendingState>,
+    mut l1_block_info: L1BlockInfo,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -149,6 +151,15 @@ where
         extra_data: header.extra_data().clone(),
     };
 
+    // Pre-fetch account information for all transactions before creating builder. The
+    // account information is used to validate the transaction.
+    let mut accounts: HashMap<Address, Option<Account>> = HashMap::new();
+    for tx in bundle.transactions() {
+        let from = tx.recover_signer()?;
+        let account = db.database.basic_account(&from)?;
+        accounts.insert(from, account);
+    }
+
     // Execute transactions
     let mut results = Vec::new();
     let mut total_gas_used = 0u64;
@@ -168,6 +179,14 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
+            let account = accounts
+                .get(&from)
+                .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?
+                .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
+
+            // Don't waste resources metering invalid transactions
+            validate_tx(account, tx, &mut l1_block_info)
+                .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
             let gas_used = builder
                 .execute_transaction(tx.clone())
@@ -230,7 +249,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{Address, Bytes, keccak256};
+    use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use base_bundles::{Bundle, ParsedBundle};
     use base_client_node::test_utils::{Account, TestHarness};
     use eyre::Context;
@@ -238,6 +257,7 @@ mod tests {
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
+    use revm_context_interface::transaction::{AccessList, AccessListItem};
 
     use super::*;
 
@@ -279,6 +299,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert!(output.results.is_empty());
@@ -329,6 +350,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert_eq!(output.results.len(), 1);
@@ -380,6 +402,7 @@ mod tests {
             &sealed_without_root,
             None,
             None,
+            L1BlockInfo::default(),
         )
         .expect_err("missing parent beacon block root should fail");
         assert!(
@@ -399,6 +422,7 @@ mod tests {
             &sealed_without_root,
             Some(header.parent_beacon_block_root().unwrap_or(B256::ZERO)),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert!(output.total_time_us > 0);
@@ -465,6 +489,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         assert_eq!(output.results.len(), 2);
@@ -544,6 +569,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None,
+            L1BlockInfo::default(),
         )?;
 
         // Verify invariant: total time must include state root time
@@ -601,6 +627,7 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             None, // No pending state
+            L1BlockInfo::default(),
         );
 
         assert!(
@@ -646,12 +673,122 @@ mod tests {
             &header,
             header.parent_beacon_block_root(),
             Some(pending_state),
+            L1BlockInfo::default(),
         );
 
         assert!(
             result_with_pending.is_ok(),
             "Transaction with nonce=1 should succeed with pending state showing nonce=1: {:?}",
             result_with_pending.err()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_err_interop_tx() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        // Create a transaction with cross-L2 interop address in access list
+        let to = Address::random();
+        let access_list = AccessList::from(vec![AccessListItem {
+            address: op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS,
+            storage_keys: vec![],
+        }]);
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(to)
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .access_list(access_list)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let result = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+            L1BlockInfo::default(),
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Interop transactions are not supported"),
+            "Expected interop error"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_err_insufficient_funds() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let to = Address::random();
+        // TestHarness uses build_test_genesis() which gives accounts 1 million ETH.
+        // Transaction cost = value + (gas_limit * max_fee_per_gas)
+        // We set value to 2 million ETH which exceeds the 1 million ETH balance
+        let value_eth = 2_000_000u128;
+        let value_in_wei = value_eth.saturating_mul(Unit::ETHER.wei().to::<u128>());
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(to)
+            .value(value_in_wei)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let result = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+            L1BlockInfo::default(),
+        );
+
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Insufficient funds"),
+            "Expected insufficient funds error"
         );
 
         Ok(())

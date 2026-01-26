@@ -104,9 +104,10 @@ async fn backrun_bundle_all_or_nothing_revert() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Tests that multiple backrun bundles for the same target tx are sorted by total priority fee
-/// - Bundles with higher total priority fee are processed first
-/// - Both bundles can land if they don't conflict
+/// Tests that only one backrun bundle executes per target tx, choosing the highest total priority fee
+/// - Bundles are sorted by total priority fee (descending)
+/// - Only the first successful bundle executes
+/// - Lower priority bundles are not executed
 #[tokio::test]
 async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -227,42 +228,27 @@ async fn backrun_bundles_sorted_by_total_fee() -> eyre::Result<()> {
     let block = driver.latest_full().await?;
     let tx_hashes: Vec<_> = block.transactions.hashes().collect();
 
-    // All txs should be in block
+    // Target tx should be in block
     assert!(tx_hashes.contains(&target_tx_hash), "Target tx not included in block");
-    assert!(tx_hashes.contains(&bundle_a_tx1_hash), "Bundle A tx1 not included in block");
-    assert!(tx_hashes.contains(&bundle_a_tx2_hash), "Bundle A tx2 not included in block");
-    assert!(tx_hashes.contains(&bundle_b_tx1_hash), "Bundle B tx1 not included in block");
-    assert!(tx_hashes.contains(&bundle_b_tx2_hash), "Bundle B tx2 not included in block");
 
-    // 7. Verify ordering: Bundle A txs come BEFORE Bundle B txs
-    //    (higher total fee bundle processed first)
-    let a_tx1_pos = tx_hashes
-        .iter()
-        .position(|h| *h == bundle_a_tx1_hash)
-        .expect("Bundle A tx1 position not found");
-    let a_tx2_pos = tx_hashes
-        .iter()
-        .position(|h| *h == bundle_a_tx2_hash)
-        .expect("Bundle A tx2 position not found");
-    let b_tx1_pos = tx_hashes
-        .iter()
-        .position(|h| *h == bundle_b_tx1_hash)
-        .expect("Bundle B tx1 position not found");
-    let b_tx2_pos = tx_hashes
-        .iter()
-        .position(|h| *h == bundle_b_tx2_hash)
-        .expect("Bundle B tx2 position not found");
-
-    // Bundle A (higher total fee) should come before Bundle B
-    let bundle_a_last_pos = a_tx1_pos.max(a_tx2_pos);
-    let bundle_b_first_pos = b_tx1_pos.min(b_tx2_pos);
-
+    // Bundle A (higher total fee 110) should be in block
     assert!(
-        bundle_a_last_pos < bundle_b_first_pos,
-        "Bundle A (total fee 110) should be processed before Bundle B (total fee 55). \
-         Bundle A last tx at pos {}, Bundle B first tx at pos {}",
-        bundle_a_last_pos,
-        bundle_b_first_pos
+        tx_hashes.contains(&bundle_a_tx1_hash),
+        "Bundle A tx1 should be included (highest priority bundle)"
+    );
+    assert!(
+        tx_hashes.contains(&bundle_a_tx2_hash),
+        "Bundle A tx2 should be included (highest priority bundle)"
+    );
+
+    // Bundle B (lower total fee 55) should NOT be in block (only one bundle executes per target)
+    assert!(
+        !tx_hashes.contains(&bundle_b_tx1_hash),
+        "Bundle B tx1 should NOT be included (only one bundle per target tx)"
+    );
+    assert!(
+        !tx_hashes.contains(&bundle_b_tx2_hash),
+        "Bundle B tx2 should NOT be included (only one bundle per target tx)"
     );
 
     Ok(())

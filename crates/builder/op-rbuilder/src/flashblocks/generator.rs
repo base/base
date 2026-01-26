@@ -190,6 +190,9 @@ where
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
+        // Create shared mutex for synchronizing cancellation with payload publishing
+        let publish_guard = Arc::new(Mutex::new(()));
+
         let mut job = BlockPayloadJob {
             executor: self.executor.clone(),
             builder: self.builder.clone(),
@@ -198,6 +201,7 @@ where
             finalized_cell: BlockCell::new(),
             compute_state_root_on_finalize: self.compute_state_root_on_finalize,
             cancel: cancel_token,
+            publish_guard,
             deadline,
             build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_header.hash()),
@@ -255,6 +259,8 @@ where
     pub(crate) compute_state_root_on_finalize: bool,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
+    /// Mutex to synchronize cancellation with payload publishing.
+    pub(crate) publish_guard: Arc<Mutex<()>>,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
     /// Caches all disk reads for the state the new payloads build on
@@ -289,8 +295,11 @@ where
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
         tracing::info!("Resolve kind {:?}", kind);
 
-        // check if self.cell has a payload
-        self.cancel.cancel();
+        // Acquire mutex before cancelling to synchronize with payload publishing.
+        {
+            let _guard = self.publish_guard.lock().unwrap();
+            self.cancel.cancel();
+        }
 
         // If compute_state_root_on_finalize is enabled, wait for the finalized cell
         // Otherwise, just return the current best payload from the regular cell
@@ -311,6 +320,8 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancellationToken,
+    /// Mutex to synchronize cancellation with payload publishing.
+    pub publish_guard: Arc<Mutex<()>>,
     /// Cell to store the finalized payload with state root.
     pub finalized_cell: BlockCell<Payload>,
     /// Whether to compute state root only on finalization (when get_payload is called).
@@ -330,6 +341,7 @@ where
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
+        let publish_guard = self.publish_guard.clone();
         let finalized_cell = self.finalized_cell.clone();
         let compute_state_root_on_finalize = self.compute_state_root_on_finalize;
 
@@ -341,6 +353,7 @@ where
                 cached_reads,
                 config: payload_config,
                 cancel,
+                publish_guard,
                 finalized_cell,
                 compute_state_root_on_finalize,
             };
