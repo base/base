@@ -53,7 +53,7 @@ fn record_rejected_tx_priority_fee(reason: TxnExecutionResult, priority_fee: f64
         }
         _ => "unknown",
     };
-    metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r).record(priority_fee);
+    reth_metrics::metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r).record(priority_fee);
 }
 
 #[derive(Debug, Default, Clone)]
