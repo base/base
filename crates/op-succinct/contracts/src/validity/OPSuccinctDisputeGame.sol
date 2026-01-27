@@ -5,6 +5,7 @@ import {OPSuccinctL2OutputOracle} from "./OPSuccinctL2OutputOracle.sol";
 import {Clone} from "@solady/utils/Clone.sol";
 import {ISemver} from "interfaces/universal/ISemver.sol";
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
 import {Claim, GameStatus, GameType, GameTypes, Hash, Timestamp} from "@optimism/src/dispute/lib/Types.sol";
 import {GameNotInProgress, OutOfOrderResolution} from "@optimism/src/dispute/lib/Errors.sol";
 
@@ -15,6 +16,9 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
 
     /// @notice The address of the L2 output oracle proxy contract.
     address internal immutable L2_OUTPUT_ORACLE;
+
+    /// @notice The anchor state registry contract.
+    IAnchorStateRegistry internal immutable ANCHOR_STATE_REGISTRY;
 
     /// @notice The timestamp of the game's global creation.
     Timestamp public createdAt;
@@ -32,8 +36,9 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     /// @custom:semver v3.0.0
     string public constant version = "v3.0.0";
 
-    constructor(address _l2OutputOracle) {
+    constructor(address _l2OutputOracle, IAnchorStateRegistry _anchorStateRegistry) {
         L2_OUTPUT_ORACLE = _l2OutputOracle;
+        ANCHOR_STATE_REGISTRY = _anchorStateRegistry;
     }
 
     ////////////////////////////////////////////////////////////
@@ -48,7 +53,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         OPSuccinctL2OutputOracle oracle = OPSuccinctL2OutputOracle(L2_OUTPUT_ORACLE);
 
         oracle.proposeL2Output(
-            configName(), rootClaim().raw(), l2BlockNumber(), l1BlockNumber(), proof(), proverAddress()
+            configName(), rootClaim().raw(), l2SequenceNumber(), l1BlockNumber(), proof(), proverAddress()
         );
 
         this.resolve();
@@ -84,9 +89,9 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         return Hash.wrap(_getArgBytes32(0x34));
     }
 
-    /// @notice The l2BlockNumber of the disputed output root in the `L2OutputOracle`.
-    function l2BlockNumber() public pure returns (uint256 l2BlockNumber_) {
-        l2BlockNumber_ = _getArgUint256(0x54);
+    /// @notice The l2SequenceNumber (block number) of the disputed output root in the `L2OutputOracle`.
+    function l2SequenceNumber() public pure returns (uint256 l2SequenceNumber_) {
+        l2SequenceNumber_ = _getArgUint256(0x54);
     }
 
     /// @notice The l2BlockNumber of the disputed output root in the `L2OutputOracle`.
@@ -170,5 +175,11 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     /// @return l2OutputOracle_ The address of the L2OutputOracle.
     function l2OutputOracle() external view returns (address l2OutputOracle_) {
         l2OutputOracle_ = L2_OUTPUT_ORACLE;
+    }
+
+    /// @notice Returns the anchor state registry contract.
+    /// @return registry_ The IAnchorStateRegistry contract instance.
+    function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_) {
+        registry_ = ANCHOR_STATE_REGISTRY;
     }
 }

@@ -71,10 +71,9 @@ contract UpgradeOPSuccinctFDG is Script {
             AccessManager(vm.envAddress("ACCESS_MANAGER"))
         );
 
-        // Generate the calldata for setImplementation.
-        bytes memory calldata_ = abi.encodeWithSelector(
-            DisputeGameFactory.setImplementation.selector, gameType, IDisputeGame(address(newImpl))
-        );
+        // Generate the calldata for setImplementation (using explicit signature for overloaded function).
+        bytes memory calldata_ =
+            abi.encodeWithSignature("setImplementation(uint32,address)", GameType.unwrap(gameType), address(newImpl));
 
         string memory calldataString = string.concat("Upgrade Calldata: ", vm.toString(calldata_));
         console.log(calldataString);

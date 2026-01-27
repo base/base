@@ -12,7 +12,7 @@ import {
     GameType,
     Hash,
     LibClock,
-    OutputRoot,
+    Proposal,
     Timestamp
 } from "src/dispute/lib/Types.sol";
 import {
@@ -158,7 +158,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
 
     /// @notice The starting output root of the game that is proven from in case of a challenge.
     /// @dev This should match the claim root of the parent game.
-    OutputRoot public startingOutputRoot;
+    Proposal public startingOutputRoot;
 
     /// @notice A boolean for whether or not the game type was respected when the game was created.
     bool public wasRespectedGameTypeWhenCreated;
@@ -264,8 +264,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
                 revert InvalidParentGame();
             }
 
-            startingOutputRoot = OutputRoot({
-                l2BlockNumber: OPSuccinctFaultDisputeGame(address(proxy)).l2BlockNumber(),
+            startingOutputRoot = Proposal({
+                l2SequenceNumber: OPSuccinctFaultDisputeGame(address(proxy)).l2SequenceNumber(),
                 root: Hash.wrap(OPSuccinctFaultDisputeGame(address(proxy)).rootClaim().raw())
             });
 
@@ -273,13 +273,13 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
             if (proxy.status() == GameStatus.CHALLENGER_WINS) revert InvalidParentGame();
         } else {
             // When there is no parent game, the starting output root is the anchor state for the game type.
-            (startingOutputRoot.root, startingOutputRoot.l2BlockNumber) =
+            (startingOutputRoot.root, startingOutputRoot.l2SequenceNumber) =
                 IAnchorStateRegistry(ANCHOR_STATE_REGISTRY).anchors(GAME_TYPE);
         }
 
         // Do not allow the game to be initialized if the root claim corresponds to a block at or before the
         // configured starting block number.
-        if (l2BlockNumber() <= startingOutputRoot.l2BlockNumber) {
+        if (l2SequenceNumber() <= startingOutputRoot.l2SequenceNumber) {
             revert UnexpectedRootClaim(rootClaim());
         }
 
@@ -307,9 +307,15 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
             GameType.unwrap(ANCHOR_STATE_REGISTRY.respectedGameType()) == GameType.unwrap(GAME_TYPE);
     }
 
+    /// @notice The L2 sequence number (block number) for which this game is proposing an output root.
+    function l2SequenceNumber() public pure returns (uint256 l2SequenceNumber_) {
+        l2SequenceNumber_ = _getArgUint256(0x54);
+    }
+
     /// @notice The L2 block number for which this game is proposing an output root.
+    /// @dev Alias for l2SequenceNumber() for backward compatibility.
     function l2BlockNumber() public pure returns (uint256 l2BlockNumber_) {
-        l2BlockNumber_ = _getArgUint256(0x54);
+        l2BlockNumber_ = l2SequenceNumber();
     }
 
     /// @notice The parent index of the game.
@@ -319,7 +325,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
 
     /// @notice Only the starting block number of the game.
     function startingBlockNumber() external view returns (uint256 startingBlockNumber_) {
-        startingBlockNumber_ = startingOutputRoot.l2BlockNumber;
+        startingBlockNumber_ = startingOutputRoot.l2SequenceNumber;
     }
 
     /// @notice Starting output root of the game.
@@ -373,7 +379,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
             l1Head: Hash.unwrap(l1Head()),
             l2PreRoot: Hash.unwrap(startingOutputRoot.root),
             claimRoot: rootClaim().raw(),
-            claimBlockNum: l2BlockNumber(),
+            claimBlockNum: l2SequenceNumber(),
             rollupConfigHash: ROLLUP_CONFIG_HASH,
             rangeVkeyCommitment: RANGE_VKEY_COMMITMENT,
             proverAddress: msg.sender

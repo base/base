@@ -11,6 +11,7 @@ import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {GameType, GameTypes} from "src/dispute/lib/Types.sol";
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
 import {LibString} from "@solady/utils/LibString.sol";
 
 contract OPSuccinctDFGDeployer is Script, Utils {
@@ -31,8 +32,11 @@ contract OPSuccinctDFGDeployer is Script, Utils {
             }
         }
 
+        // Get anchor state registry from environment.
+        IAnchorStateRegistry anchorStateRegistry = IAnchorStateRegistry(vm.envAddress("ANCHOR_STATE_REGISTRY"));
+
         // Initialize the dispute game based on the existing L2OO_ADDRESS.
-        OPSuccinctDisputeGame game = new OPSuccinctDisputeGame(address(l2OutputOracleProxy));
+        OPSuccinctDisputeGame game = new OPSuccinctDisputeGame(address(l2OutputOracleProxy), anchorStateRegistry);
 
         // Deploy the factory implementation
         DisputeGameFactory factoryImpl = new DisputeGameFactory();

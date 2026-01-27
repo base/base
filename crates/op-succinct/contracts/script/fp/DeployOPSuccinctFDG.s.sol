@@ -5,7 +5,7 @@ pragma solidity ^0.8.15;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {Claim, GameType, Hash, OutputRoot, Duration} from "src/dispute/lib/Types.sol";
+import {Claim, GameType, Hash, Proposal, Duration} from "src/dispute/lib/Types.sol";
 import {LibString} from "@solady/utils/LibString.sol";
 
 // Interfaces
@@ -13,17 +13,17 @@ import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
 import {ISP1Verifier} from "@sp1-contracts/src/ISP1Verifier.sol";
 import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
-import {ISuperchainConfig} from "interfaces/L1/ISuperchainConfig.sol";
-import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
+import {ISystemConfig} from "interfaces/L1/ISystemConfig.sol";
 
 // Contracts
 import {AnchorStateRegistry} from "src/dispute/AnchorStateRegistry.sol";
 import {AccessManager} from "../../src/fp/AccessManager.sol";
-import {SuperchainConfig} from "src/L1/SuperchainConfig.sol";
 import {DisputeGameFactory} from "src/dispute/DisputeGameFactory.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Proxy} from "@optimism/src/universal/Proxy.sol";
+import {ProxyAdmin} from "@optimism/src/universal/ProxyAdmin.sol";
 import {OPSuccinctFaultDisputeGame} from "../../src/fp/OPSuccinctFaultDisputeGame.sol";
 import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
+import {MockSystemConfig} from "../../src/utils/MockSystemConfig.sol";
 
 // Utils
 import {Utils} from "../../test/helpers/Utils.sol";
@@ -75,9 +75,20 @@ contract DeployOPSuccinctFDG is Script, Utils {
     }
 
     function deployContracts(FDGConfig memory config) internal returns (DeployedContracts memory) {
-        // Deploy factory proxy.
-        ERC1967Proxy factoryProxy = new ERC1967Proxy(
-            address(new DisputeGameFactory()),
+        // Deploy ProxyAdmin with msg.sender as owner.
+        ProxyAdmin proxyAdmin = new ProxyAdmin(msg.sender);
+        console.log("ProxyAdmin deployed at:", address(proxyAdmin));
+
+        // Deploy factory implementation.
+        DisputeGameFactory factoryImpl = new DisputeGameFactory();
+
+        // Deploy factory proxy using Optimism Proxy pattern.
+        Proxy factoryProxy = new Proxy(address(proxyAdmin));
+
+        // Initialize the factory through ProxyAdmin.
+        proxyAdmin.upgradeAndCall(
+            payable(address(factoryProxy)),
+            address(factoryImpl),
             abi.encodeWithSelector(DisputeGameFactory.initialize.selector, msg.sender)
         );
         DisputeGameFactory factory = DisputeGameFactory(address(factoryProxy));
@@ -87,11 +98,12 @@ contract DeployOPSuccinctFDG is Script, Utils {
         // Deploy MockOptimismPortal2 or get OptimismPortal2
         address payable portalAddress = deployOrGetOptimismPortal2(config, gameType);
 
-        OutputRoot memory startingAnchorRoot =
-            OutputRoot({root: Hash.wrap(config.startingRoot), l2BlockNumber: config.startingL2BlockNumber});
+        Proposal memory startingAnchorRoot =
+            Proposal({root: Hash.wrap(config.startingRoot), l2SequenceNumber: config.startingL2BlockNumber});
 
         // Deploy anchor state registry
-        AnchorStateRegistry registry = deployAnchorStateRegistry(factory, portalAddress, startingAnchorRoot);
+        AnchorStateRegistry registry =
+            deployAnchorStateRegistry(config, factory, startingAnchorRoot, gameType, proxyAdmin);
 
         // Deploy and configure access manager
         AccessManager accessManager = deployAccessManager(config, address(factoryProxy));
@@ -142,20 +154,33 @@ contract DeployOPSuccinctFDG is Script, Utils {
     }
 
     function deployAnchorStateRegistry(
+        FDGConfig memory config,
         DisputeGameFactory factory,
-        address payable portalAddress,
-        OutputRoot memory startingAnchorRoot
+        Proposal memory startingAnchorRoot,
+        GameType gameType,
+        ProxyAdmin proxyAdmin
     ) internal returns (AnchorStateRegistry) {
-        // Deploy the anchor state registry proxy.
-        ERC1967Proxy registryProxy = new ERC1967Proxy(
-            address(new AnchorStateRegistry()),
+        // Deploy MockSystemConfig for testing (in production, use existing SystemConfig)
+        // Pass msg.sender as guardian for deployment scripts
+        MockSystemConfig mockSystemConfig = new MockSystemConfig(msg.sender);
+
+        // Deploy the anchor state registry implementation with finality delay
+        AnchorStateRegistry registryImpl = new AnchorStateRegistry(config.disputeGameFinalityDelaySeconds);
+
+        // Deploy the anchor state registry proxy using Optimism Proxy pattern.
+        Proxy registryProxy = new Proxy(address(proxyAdmin));
+
+        // Initialize the registry through ProxyAdmin.
+        proxyAdmin.upgradeAndCall(
+            payable(address(registryProxy)),
+            address(registryImpl),
             abi.encodeCall(
                 AnchorStateRegistry.initialize,
                 (
-                    ISuperchainConfig(address(new SuperchainConfig())),
+                    ISystemConfig(address(mockSystemConfig)),
                     IDisputeGameFactory(address(factory)),
-                    IOptimismPortal2(portalAddress),
-                    startingAnchorRoot
+                    startingAnchorRoot,
+                    gameType
                 )
             )
         );

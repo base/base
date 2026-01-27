@@ -3,10 +3,12 @@ pragma solidity ^0.8.15;
 
 // Testing
 import "forge-std/Test.sol";
+import {Proxy} from "@optimism/src/universal/Proxy.sol";
+import {ProxyAdmin} from "@optimism/src/universal/ProxyAdmin.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Libraries
-import {Claim, Duration, GameStatus, GameType, Hash, OutputRoot, Timestamp} from "src/dispute/lib/Types.sol";
+import {Claim, Duration, GameStatus, GameType, Hash, Proposal, Timestamp} from "src/dispute/lib/Types.sol";
 import {
     BadAuth,
     IncorrectBondAmount,
@@ -31,19 +33,18 @@ import {DisputeGameFactory} from "src/dispute/DisputeGameFactory.sol";
 import {OPSuccinctFaultDisputeGame} from "src/fp/OPSuccinctFaultDisputeGame.sol";
 import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
 import {AnchorStateRegistry} from "src/dispute/AnchorStateRegistry.sol";
-import {SuperchainConfig} from "src/L1/SuperchainConfig.sol";
 import {AccessManager} from "src/fp/AccessManager.sol";
 
 // Interfaces
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
 import {ISP1Verifier} from "@sp1-contracts/src/ISP1Verifier.sol";
-import {ISuperchainConfig} from "interfaces/L1/ISuperchainConfig.sol";
-import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
+import {ISystemConfig} from "interfaces/L1/ISystemConfig.sol";
 import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
 
 // Utils
 import {MockOptimismPortal2} from "../../src/utils/MockOptimismPortal2.sol";
+import {MockSystemConfig} from "../../src/utils/MockSystemConfig.sol";
 
 contract OPSuccinctFaultDisputeGameTest is Test {
     // Event definitions matching those in OPSuccinctFaultDisputeGame.
@@ -52,7 +53,8 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     event Resolved(GameStatus indexed status);
 
     DisputeGameFactory factory;
-    ERC1967Proxy factoryProxy;
+    Proxy factoryProxy;
+    ProxyAdmin proxyAdmin;
 
     OPSuccinctFaultDisputeGame gameImpl;
     OPSuccinctFaultDisputeGame parentGame;
@@ -83,12 +85,20 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     OPSuccinctFaultDisputeGame separateParentGame;
 
     function setUp() public {
+        // Deploy ProxyAdmin with this test contract as owner.
+        proxyAdmin = new ProxyAdmin(address(this));
+
         // Deploy the implementation contract for DisputeGameFactory.
         DisputeGameFactory factoryImpl = new DisputeGameFactory();
 
-        // Deploy a proxy pointing to the factory implementation.
-        factoryProxy = new ERC1967Proxy(
-            address(factoryImpl), abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
+        // Deploy an Optimism Proxy pointing to ProxyAdmin.
+        factoryProxy = new Proxy(address(proxyAdmin));
+
+        // Initialize the factory through ProxyAdmin.
+        proxyAdmin.upgradeAndCall(
+            payable(address(factoryProxy)),
+            address(factoryImpl),
+            abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
         );
 
         // Cast the proxy to the factory contract.
@@ -98,23 +108,27 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         SP1MockVerifier sp1Verifier = new SP1MockVerifier();
 
         // Create an anchor state registry.
-        SuperchainConfig superchainConfig = new SuperchainConfig();
+        // Pass address(this) as guardian so the test contract can call guardian-restricted functions.
+        MockSystemConfig mockSystemConfig = new MockSystemConfig(address(this));
         portal = new MockOptimismPortal2(gameType, disputeGameFinalityDelaySeconds);
-        OutputRoot memory startingAnchorRoot = OutputRoot({root: Hash.wrap(keccak256("genesis")), l2BlockNumber: 0});
+        Proposal memory startingAnchorRoot = Proposal({root: Hash.wrap(keccak256("genesis")), l2SequenceNumber: 0});
 
-        ERC1967Proxy proxy = new ERC1967Proxy(
-            address(new AnchorStateRegistry()),
+        AnchorStateRegistry registryImpl = new AnchorStateRegistry(disputeGameFinalityDelaySeconds);
+        Proxy registryProxy = new Proxy(address(proxyAdmin));
+        proxyAdmin.upgradeAndCall(
+            payable(address(registryProxy)),
+            address(registryImpl),
             abi.encodeCall(
                 AnchorStateRegistry.initialize,
                 (
-                    ISuperchainConfig(address(superchainConfig)),
+                    ISystemConfig(address(mockSystemConfig)),
                     IDisputeGameFactory(address(factory)),
-                    IOptimismPortal2(payable(address(portal))),
-                    startingAnchorRoot
+                    startingAnchorRoot,
+                    gameType
                 )
             )
         );
-        anchorStateRegistry = AnchorStateRegistry(address(proxy));
+        anchorStateRegistry = AnchorStateRegistry(address(registryProxy));
 
         // Create a new access manager with a 2 week permissionless timeout.
         accessManager = new AccessManager(2 weeks, IDisputeGameFactory(address(factory)));
@@ -209,7 +223,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         assertEq(game.rootClaim().raw(), rootClaim.raw());
         assertEq(game.maxChallengeDuration().raw(), maxChallengeDuration.raw());
         assertEq(game.maxProveDuration().raw(), maxProveDuration.raw());
-        assertEq(game.l2BlockNumber(), l2BlockNumber);
+        assertEq(game.l2SequenceNumber(), l2BlockNumber);
         assertEq(game.createdAt().raw(), block.timestamp);
         assertEq(game.extraData(), abi.encodePacked(l2BlockNumber, parentIndex));
         assertEq(game.parentIndex(), parentIndex);
@@ -588,7 +602,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     // Test: Cannot create a game with a blacklisted parent game
     // =========================================
     function testParentGameNotValid() public {
-        portal.blacklistDisputeGame(IDisputeGame(address(game)));
+        // In v5.0.0, blacklisting is done through AnchorStateRegistry (requires guardian).
+        // This test contract is the guardian via MockSystemConfig.
+        anchorStateRegistry.blacklistDisputeGame(IDisputeGame(address(game)));
 
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
@@ -600,28 +616,29 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     }
 
     // =========================================
-    // Test: Cannot create a game with a parent game that is not respected
+    // Test: Cannot create a game with a retired parent game
+    // Note: In v5.0.0, "respected" status is based on wasRespectedGameTypeWhenCreated flag,
+    // not current game type. The retirement mechanism is used to invalidate old games.
     // =========================================
-    function testParentGameNotRespected() public {
-        // Create a game that is not respected at index 2.
+    function testParentGameRetired() public {
+        // Create a game at index 2.
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
         factory.create{value: 1 ether}(
-            gameType, Claim.wrap(keccak256("not-respected-parent-game")), abi.encodePacked(uint256(3000), uint32(1))
+            gameType, Claim.wrap(keccak256("will-be-retired-parent")), abi.encodePacked(uint256(3000), uint32(1))
         );
         vm.stopPrank();
 
-        // Set the respected game type to a different game type.
-        portal.setRespectedGameType(GameType.wrap(43));
+        // Update the retirement timestamp (guardian function) to retire all existing games.
+        // This test contract is the guardian via MockSystemConfig.
+        anchorStateRegistry.updateRetirementTimestamp();
 
-        // Try to create a game with a parent game that is not respected.
+        // Try to create a game with a retired parent game.
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
         vm.expectRevert(InvalidParentGame.selector);
         factory.create{value: 1 ether}(
-            gameType,
-            Claim.wrap(keccak256("child-with-not-respected-parent")),
-            abi.encodePacked(uint256(4000), uint32(2))
+            gameType, Claim.wrap(keccak256("child-with-retired-parent")), abi.encodePacked(uint256(4000), uint32(2))
         );
         vm.stopPrank();
     }
@@ -699,9 +716,17 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // Deploy the implementation contract for new DisputeGameFactory.
         DisputeGameFactory newFactoryImpl = new DisputeGameFactory();
 
-        // Deploy a proxy pointing to the new factory implementation.
-        ERC1967Proxy newFactoryProxy = new ERC1967Proxy(
-            address(newFactoryImpl), abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
+        // Deploy a new ProxyAdmin for this factory.
+        ProxyAdmin newProxyAdmin = new ProxyAdmin(address(this));
+
+        // Deploy an Optimism Proxy pointing to the new ProxyAdmin.
+        Proxy newFactoryProxy = new Proxy(address(newProxyAdmin));
+
+        // Initialize the new factory through ProxyAdmin.
+        newProxyAdmin.upgradeAndCall(
+            payable(address(newFactoryProxy)),
+            address(newFactoryImpl),
+            abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
         );
 
         // Cast the proxy to the DisputeGameFactory interface.
