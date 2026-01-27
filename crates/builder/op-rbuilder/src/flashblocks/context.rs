@@ -566,6 +566,7 @@ impl OpPayloadBuilderCtx {
             let miner_fee = tx
                 .effective_tip_per_gas(base_fee)
                 .expect("fee is always valid; execution succeeded");
+            self.metrics.tx_priority_fee.record(miner_fee as f64);
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
 
             // append sender and transaction to the respective lists
