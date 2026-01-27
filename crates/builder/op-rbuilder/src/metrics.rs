@@ -151,6 +151,8 @@ pub struct OpRBuilderMetrics {
     pub rejected_tx_priority_fee_internal_error: Histogram,
     /// Priority fee of rejected transactions: Max gas per transaction exceeded
     pub rejected_tx_priority_fee_max_gas_exceeded: Histogram,
+    /// Priority fee of rejected transactions: EVM error
+    pub rejected_tx_priority_fee_evm_error: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
     pub reduced_flashblocks_number: Histogram,
     /// How much less flashblocks we issued in reality, comparing to calculated number for block

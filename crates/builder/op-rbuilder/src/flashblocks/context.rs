@@ -515,9 +515,8 @@ impl OpPayloadBuilderCtx {
             let ResultAndState { result, state } = match evm.transact(&tx) {
                 Ok(res) => res,
                 Err(err) => {
+                    let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     if let Some(err) = err.as_invalid_tx_err() {
-                        let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
-
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
                             self.metrics
@@ -539,6 +538,7 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
                     // this is an error that we should treat as fatal for this attempt
+                    self.metrics.rejected_tx_priority_fee_evm_error.record(priority_fee);
                     log_txn(TxnExecutionResult::EvmError);
                     return Err(PayloadBuilderError::evm(err));
                 }
