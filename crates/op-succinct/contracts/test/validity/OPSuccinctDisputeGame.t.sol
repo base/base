@@ -3,10 +3,12 @@ pragma solidity ^0.8.15;
 
 // Testing
 import "forge-std/Test.sol";
+import {Proxy} from "@optimism/src/universal/Proxy.sol";
+import {ProxyAdmin} from "@optimism/src/universal/ProxyAdmin.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 // Libraries
-import {Claim, GameStatus, GameType, GameTypes, Hash, OutputRoot, Timestamp} from "src/dispute/lib/Types.sol";
+import {Claim, GameStatus, GameType, GameTypes, Hash, Proposal, Timestamp} from "src/dispute/lib/Types.sol";
 import {AlreadyInitialized, GameNotInProgress, NoCreditToClaim, GameNotFinalized} from "src/dispute/lib/Errors.sol";
 import {Utils} from "../helpers/Utils.sol";
 
@@ -16,8 +18,6 @@ import {OPSuccinctDisputeGame} from "src/validity/OPSuccinctDisputeGame.sol";
 import {OPSuccinctL2OutputOracle} from "src/validity/OPSuccinctL2OutputOracle.sol";
 import {AnchorStateRegistry} from "src/dispute/AnchorStateRegistry.sol";
 import {SuperchainConfig} from "src/L1/SuperchainConfig.sol";
-import {Proxy} from "@optimism/src/universal/Proxy.sol";
-
 // Interfaces
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
@@ -27,18 +27,22 @@ import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol"
 
 // Utils
 import {MockOptimismPortal2} from "../../src/utils/MockOptimismPortal2.sol";
+import {MockSystemConfig} from "../../src/utils/MockSystemConfig.sol";
+import {ISystemConfig} from "interfaces/L1/ISystemConfig.sol";
 
 contract OPSuccinctDisputeGameTest is Test, Utils {
     // Event definitions matching those in OPSuccinctDisputeGame.
     event Resolved(GameStatus indexed status);
 
     DisputeGameFactory factory;
-    ERC1967Proxy factoryProxy;
+    Proxy factoryProxy;
+    ProxyAdmin proxyAdmin;
 
     OPSuccinctDisputeGame gameImpl;
     OPSuccinctDisputeGame game;
 
     OPSuccinctL2OutputOracle l2OutputOracle;
+    AnchorStateRegistry anchorStateRegistry;
 
     address proposer = address(0x123);
 
@@ -51,12 +55,20 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
     uint256 l1BlockNumber = 1000;
 
     function setUp() public {
+        // Deploy ProxyAdmin with this test contract as owner.
+        proxyAdmin = new ProxyAdmin(address(this));
+
         // Deploy the implementation contract for DisputeGameFactory.
         DisputeGameFactory factoryImpl = new DisputeGameFactory();
 
-        // Deploy a proxy pointing to the factory implementation.
-        factoryProxy = new ERC1967Proxy(
-            address(factoryImpl), abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
+        // Deploy an Optimism Proxy pointing to ProxyAdmin.
+        factoryProxy = new Proxy(address(proxyAdmin));
+
+        // Initialize the factory through ProxyAdmin.
+        proxyAdmin.upgradeAndCall(
+            payable(address(factoryProxy)),
+            address(factoryImpl),
+            abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
         );
 
         // Cast the proxy to the factory contract.
@@ -65,8 +77,31 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
         // Deploy L2OutputOracle using Utils helper functions.
         (l2OutputOracle,) = deployL2OutputOracleWithStandardParams(proposer, address(0), address(this));
 
+        // Deploy anchor state registry for v5.0.0 compatibility.
+        MockSystemConfig mockSystemConfig = new MockSystemConfig(address(this));
+        uint256 disputeGameFinalityDelaySeconds = 604800; // 7 days
+        Proposal memory startingAnchorRoot = Proposal({root: Hash.wrap(keccak256("genesis")), l2SequenceNumber: 0});
+
+        AnchorStateRegistry registryImpl = new AnchorStateRegistry(disputeGameFinalityDelaySeconds);
+        Proxy registryProxy = new Proxy(address(proxyAdmin));
+        proxyAdmin.upgradeAndCall(
+            payable(address(registryProxy)),
+            address(registryImpl),
+            abi.encodeCall(
+                AnchorStateRegistry.initialize,
+                (
+                    ISystemConfig(address(mockSystemConfig)),
+                    IDisputeGameFactory(address(factory)),
+                    startingAnchorRoot,
+                    gameType
+                )
+            )
+        );
+        anchorStateRegistry = AnchorStateRegistry(address(registryProxy));
+
         // Deploy the implementation of OPSuccinctDisputeGame.
-        gameImpl = new OPSuccinctDisputeGame(address(l2OutputOracle));
+        gameImpl =
+            new OPSuccinctDisputeGame(address(l2OutputOracle), IAnchorStateRegistry(address(anchorStateRegistry)));
 
         // Register our reference implementation under the specified gameType.
         factory.setImplementation(gameType, IDisputeGame(address(gameImpl)));
@@ -110,7 +145,7 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
         assertEq(game.gameType().raw(), gameType.raw());
         assertEq(game.gameCreator(), address(l2OutputOracle));
         assertEq(game.rootClaim().raw(), rootClaim);
-        assertEq(game.l2BlockNumber(), l2BlockNumber);
+        assertEq(game.l2SequenceNumber(), l2BlockNumber);
         assertEq(game.l1BlockNumber(), l1BlockNumber);
         assertEq(game.proverAddress(), proposer);
         assertEq(game.configName(), l2OutputOracle.GENESIS_CONFIG_NAME());

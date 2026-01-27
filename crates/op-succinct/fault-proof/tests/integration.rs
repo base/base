@@ -545,7 +545,7 @@ mod integration {
         if is_retired {
             let parent_created_at = parent_game.createdAt().call().await?;
 
-            let portal = env.mock_optimism_portal2(anchor_registry).await?;
+            let portal = env.mock_optimism_portal2().await?;
 
             let respected_game_type_updated_at = portal.respectedGameTypeUpdatedAt().call().await?;
 

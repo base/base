@@ -301,20 +301,40 @@ impl TestEnvironment {
             DisputeGameFactory::setInitBondCall { _gameType: game_type, _initBond: init_bond };
         self.send_factory_tx(set_init_call.abi_encode(), None).await?;
 
-        let set_impl_call =
-            DisputeGameFactory::setImplementationCall { _gameType: game_type, _impl: legacy_impl };
+        let set_impl_call = DisputeGameFactory::setImplementation_0Call {
+            _gameType: game_type,
+            _impl: legacy_impl,
+        };
         self.send_factory_tx(set_impl_call.abi_encode(), None).await?;
 
         info!("✓ Setup legacy game type {game_type} with implementation at {legacy_impl}");
         Ok(legacy_impl)
     }
 
-    /// Set the respected game type on the OptimismPortal2.
+    /// Set the respected game type on the AnchorStateRegistry.
+    /// In v5.0.0, respected game type is stored in AnchorStateRegistry, not OptimismPortal2.
     pub async fn set_respected_game_type(&self, game_type: u32) -> Result<()> {
-        let set_type_call = MockOptimismPortal2::setRespectedGameTypeCall { _gameType: game_type };
-        self.send_portal_tx(set_type_call.abi_encode(), None).await?;
+        let set_type_call = AnchorStateRegistry::setRespectedGameTypeCall { _gameType: game_type };
+        self.send_anchor_state_registry_tx(set_type_call.abi_encode(), None).await?;
         info!("✓ Set respected game type to {game_type}");
         Ok(())
+    }
+
+    pub async fn send_anchor_state_registry_tx(
+        &self,
+        call: Vec<u8>,
+        value: Option<Uint<256, 4>>,
+    ) -> Result<()> {
+        let proposer_signer =
+            SignerLock::new(Signer::new_local_signer(self.private_keys.proposer)?);
+        send_contract_transaction(
+            &proposer_signer,
+            &self.rpc_config.l1_rpc,
+            self.deployed.anchor_state_registry,
+            Bytes::from(call),
+            value,
+        )
+        .await
     }
 
     pub async fn send_factory_tx(&self, call: Vec<u8>, value: Option<Uint<256, 4>>) -> Result<()> {
@@ -394,10 +414,11 @@ impl TestEnvironment {
 
     pub async fn mock_optimism_portal2(
         &self,
-        anchor_registry: AnchorStateRegistryInstance<impl alloy_provider::Provider + Clone>,
     ) -> Result<MockOptimismPortal2Instance<impl alloy_provider::Provider + Clone>> {
         let provider = self.provider_with_role(Role::Proposer)?;
-        let portal_addr = anchor_registry.portal().call().await?;
+        // In v5.0.0, AnchorStateRegistry no longer has a portal() method.
+        // Use the portal address from deployed contracts instead.
+        let portal_addr = self.deployed.portal;
         let portal = MockOptimismPortal2::new(portal_addr, provider);
         Ok(portal)
     }

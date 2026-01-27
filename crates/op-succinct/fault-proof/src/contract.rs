@@ -49,7 +49,7 @@ sol! {
     #[allow(missing_docs)]
     #[sol(rpc)]
     interface IFaultDisputeGame {
-        function l2BlockNumber() external view returns (uint256 l2BlockNumber_);
+        function l2SequenceNumber() external view returns (uint256 l2SequenceNumber_);
     }
 
     #[sol(rpc)]
@@ -60,8 +60,8 @@ sol! {
         /// @notice Getter for the creator of the dispute game.
         function gameCreator() public pure returns (address creator_);
 
-        /// @notice The L2 block number for which this game is proposing an output root.
-        function l2BlockNumber() public pure returns (uint256 l2BlockNumber_);
+        /// @notice The L2 sequence number (block number) for which this game is proposing an output root.
+        function l2SequenceNumber() public pure returns (uint256 l2SequenceNumber_);
 
         /// @notice Only the starting block number of the game.
         function startingBlockNumber() external view returns (uint256 startingBlockNumber_);
