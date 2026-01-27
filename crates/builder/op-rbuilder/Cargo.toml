@@ -26,7 +26,7 @@ reth-optimism-txpool.workspace = true
 reth-cli.workspace = true
 reth-cli-commands.workspace = true
 reth-cli-util.workspace = true
-reth-db.workspace = true
+reth-db = { workspace = true, features = ["op"] }
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true
 reth-chainspec.workspace = true
@@ -76,7 +76,7 @@ alloy-serde.workspace = true
 alloy-json-rpc.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
-alloy-sol-types.workspace = true
+alloy-sol-types = { workspace = true, features = ["json"] }
 
 # op
 alloy-op-evm.workspace = true

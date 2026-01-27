@@ -90,9 +90,7 @@ kona-node-service = { git = "https://github.com/ethereum-optimism/optimism", rev
 kona-providers-alloy = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
 
 # reth
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2", features = [
-    "op",
-] }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
@@ -136,9 +134,7 @@ reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2", features = [
-    "client",
-] }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
@@ -154,20 +150,13 @@ reth-optimism-storage = { git = "https://github.com/paradigmxyz/reth", tag = "v1
 reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2", features = [
-    "serde",
-    "reth-codec",
-] }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 
 # revm
-revm = { version = "34.0.0", features = [
-    "std",
-    "secp256k1",
-    "optional_balance_check",
-], default-features = false }
+revm = { version = "34.0.0", default-features = false }
 revm-state = { version = "9.0.0", default-features = false }
 revm-context = { version = "13.0.0", default-features = false }
 revm-bytecode = { version = "8.0.0", default-features = false }
@@ -203,19 +192,12 @@ alloy-transport-http = "1.4.3"
 alloy-node-bindings = "1.4.3"
 alloy-network-primitives = "1.4.3"
 alloy-evm = { version = "0.26.3", default-features = false }
-alloy-consensus = { version = "1.4.3", features = ["kzg"] }
-alloy-sol-types = { version = "1.5.0", features = ["json"] }
-alloy-rpc-types-beacon = { version = "1.4.3", features = ["ssz"] }
-alloy-rpc-types-engine = { version = "1.4.3", features = ["ssz"] }
-alloy-primitives = { version = "1.5.0", default-features = false, features = [
-    "map-foldhash",
-] }
-alloy-provider = { version = "1.4.3", features = [
-    "ipc",
-    "pubsub",
-    "txpool-api",
-    "engine-api",
-] }
+alloy-consensus = "1.4.3"
+alloy-sol-types = "1.5.0"
+alloy-rpc-types-beacon = "1.4.3"
+alloy-rpc-types-engine = "1.4.3"
+alloy-primitives = { version = "1.5.0", default-features = false }
+alloy-provider = "1.4.3"
 
 # op-alloy
 alloy-op-hardforks = "0.4.4"
@@ -238,8 +220,8 @@ op-revm = { version = "15.0.0", default-features = false }
 # tokio
 tokio = "1.48.0"
 tokio-stream = "0.1.17"
-tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
-tokio-util = { version = "0.7.4", features = ["codec"] }
+tokio-tungstenite = "0.28.0"
+tokio-util = "0.7.4"
 
 # async
 futures = "0.3.31"
@@ -256,7 +238,7 @@ jsonrpsee-types = "0.26.0"
 vergen = "9.1.0"
 vergen-git2 = "9.1.0"
 clap_builder = "4.5.19"
-clap = { version = "4.5.53", features = ["derive", "env", "string"] }
+clap = "4.5.53"
 
 # Tracing
 tracing = "0.1.43"
@@ -324,8 +306,8 @@ testcontainers = "0.24.0"
 concurrent-queue = "2.5.0"
 tikv-jemallocator = "0.6"
 ethereum_ssz_derive = "0.9.0"
-moka = { version = "0.12", features = ["future"] }
-hyper = { version = "1.7.0", features = ["http1"] }
+moka = "0.12"
+hyper = "1.7.0"
 either = { version = "1.15.0", default-features = false }
-opentelemetry = { version = "0.31", features = ["trace"] }
-time = { version = "0.3.44", features = ["macros", "formatting", "parsing"] }
+opentelemetry = "0.31"
+time = "0.3.44"
