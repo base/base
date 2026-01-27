@@ -9,7 +9,7 @@ use reth_node_builder::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{
     OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
-    OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
+    OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
     args::RollupArgs,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };
@@ -134,7 +134,7 @@ impl BaseNode {
 
 impl<N> Node<N> for BaseNode
 where
-    N: FullNodeTypes<Types: OpFullNodeTypes + OpNodeTypes>,
+    N: FullNodeTypes<Types: OpNodeTypes<ChainSpec = OpChainSpec>>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,

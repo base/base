@@ -13,10 +13,11 @@ use arc_swap::Guard;
 use base_primitives::Flashblock;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use reth_evm::op_revm::OpHaltReason;
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use revm::state::EvmState;
+use revm::{context_interface::result::ExecutionResult, state::EvmState};
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
@@ -34,6 +35,7 @@ pub struct PendingBlocksBuilder {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
+    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
 
     bundle_state: BundleState,
 }
@@ -57,6 +59,7 @@ impl PendingBlocksBuilder {
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
+            transaction_results: HashMap::new(),
             state_overrides: None,
             bundle_state: BundleState::default(),
         }
@@ -128,6 +131,16 @@ impl PendingBlocksBuilder {
         self
     }
 
+    #[inline]
+    pub(crate) fn with_transaction_result(
+        &mut self,
+        hash: B256,
+        result: ExecutionResult<OpHaltReason>,
+    ) -> &Self {
+        self.transaction_results.insert(hash, result);
+        self
+    }
+
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
@@ -150,6 +163,7 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
+            transaction_results: self.transaction_results,
         })
     }
 }
@@ -170,6 +184,7 @@ pub struct PendingBlocks {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
+    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
 
     bundle_state: BundleState,
 }
@@ -274,6 +289,11 @@ impl PendingBlocks {
     /// Returns the receipt for a transaction.
     pub fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
         self.transaction_receipts.get(&tx_hash).cloned()
+    }
+
+    /// Returns the execution result for a transaction.
+    pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<ExecutionResult<OpHaltReason>> {
+        self.transaction_results.get(tx_hash).cloned()
     }
 
     /// Returns a transaction by its hash.
