@@ -1,10 +1,10 @@
 services:
-  # Generate all genesis configs (EL + CL)
-  genesis-generator:
+  # Setup genesis configs and devnet infrastructure
+  setup:
     build:
       context: ./devnet
       dockerfile: Dockerfile.configs
-    container_name: genesis-generator
+    container_name: setup
     volumes:
       - ./.devnet/l1/configs:/output
     environment:
@@ -13,18 +13,18 @@ services:
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
 
-  # Reth execution client
-  reth:
+  # L1 Execution Layer (Reth)
+  l1-el:
     image: ghcr.io/paradigmxyz/reth:v1.10.2
-    container_name: reth
+    container_name: l1-el
     depends_on:
-      genesis-generator:
+      setup:
         condition: service_completed_successfully
     ports:
-      - "8545:8545"   # HTTP RPC
-      - "8546:8546"   # WebSocket
-      - "8551:8551"   # Auth RPC (Engine API)
-      - "30303:30303" # P2P
+      - "4545:4545"   # HTTP RPC
+      - "4546:4546"   # WebSocket
+      - "4551:4551"   # Auth RPC (Engine API)
+      - "4303:4303"   # P2P
     volumes:
       - ./.devnet/l1/reth:/data
       - ./.devnet/l1/configs:/genesis:ro
@@ -36,39 +36,39 @@ services:
       - --color=never
       - --http
       - --http.addr=0.0.0.0
-      - --http.port=8545
+      - --http.port=4545
       - --http.api=admin,eth,web3,net,rpc,debug,txpool
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
-      - --ws.port=8546
+      - --ws.port=4546
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=8551
+      - --authrpc.port=4551
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --port=30303
+      - --port=4303
       - --disable-discovery
       - -vvv
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8545"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/4545"]
       interval: 1s
       timeout: 1s
       retries: 60
       start_period: 1s
     restart: unless-stopped
 
-  # Lighthouse beacon node
-  lighthouse-bn:
+  # L1 Consensus Layer (Lighthouse beacon node)
+  l1-cl:
     image: sigp/lighthouse:v8.0.1
-    container_name: lighthouse-bn
+    container_name: l1-cl
     depends_on:
-      reth:
+      l1-el:
         condition: service_healthy
     ports:
-      - "5052:5052"   # Beacon API
-      - "9000:9000"   # P2P TCP
-      - "9000:9000/udp" # P2P UDP
+      - "4052:4052"   # Beacon API
+      - "4900:4900"   # P2P TCP
+      - "4900:4900/udp" # P2P UDP
     volumes:
       - ./.devnet/l1/lighthouse:/data
       - ./.devnet/l1/configs:/genesis:ro
@@ -81,35 +81,35 @@ services:
       - --disable-peer-scoring
       - --staking
       - --enr-address=127.0.0.1
-      - --enr-udp-port=9000
-      - --enr-tcp-port=9000
-      - --port=9000
+      - --enr-udp-port=4900
+      - --enr-tcp-port=4900
+      - --port=4900
       - --http
       - --http-address=0.0.0.0
-      - --http-port=5052
+      - --http-port=4052
       - --http-allow-origin=*
       - --disable-packet-filter
       - --target-peers=0
       - --supernode
-      - --execution-endpoint=http://reth:8551
+      - --execution-endpoint=http://l1-el:4551
       - --execution-jwt=/genesis/jwt.hex
       - --always-prepare-payload
       - --prepare-payload-lookahead=8000
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5052"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/4052"]
       interval: 1s
       timeout: 1s
       retries: 60
       start_period: 1s
     restart: unless-stopped
 
-  # Lighthouse validator client
-  lighthouse-vc:
+  # L1 Validator Client (Lighthouse)
+  l1-vc:
     image: sigp/lighthouse:v8.0.1
-    container_name: lighthouse-vc
+    container_name: l1-vc
     depends_on:
-      lighthouse-bn:
+      l1-cl:
         condition: service_healthy
     volumes:
       - ./.devnet/l1/configs:/genesis
@@ -118,7 +118,7 @@ services:
       - vc
       - --testnet-dir=/genesis/cl
       - --datadir=/genesis/cl/validator_data
-      - --beacon-nodes=http://lighthouse-bn:5052
+      - --beacon-nodes=http://l1-cl:4052
       - --init-slashing-protection
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     restart: unless-stopped

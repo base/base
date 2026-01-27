@@ -25,8 +25,8 @@ RUN cargo chef cook --profile $PROFILE --recipe-path recipe.json
 
 # Now copy source and build (only your code compiles here)
 COPY . .
-RUN cargo build --profile $PROFILE --bin base-reth-node && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-reth-node /app/base-client
+RUN cargo build --profile $PROFILE --bin base-builder && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-builder /app/base-builder
 
 # --- Runtime image ---
 FROM ubuntu:24.04
@@ -37,6 +37,6 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY --from=builder /app/base-client ./
+COPY --from=builder /app/base-builder ./
 
-ENTRYPOINT ["./base-client"]
+ENTRYPOINT ["./base-builder"]

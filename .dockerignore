@@ -1,1 +1,8 @@
 target/
+assets/
+devnet/
+.devnet/
+.git/
+.github/
+.idea/
+docs/

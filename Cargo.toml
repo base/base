@@ -10,7 +10,7 @@ exclude = [".github/"]
 [workspace]
 resolver = "2"
 members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*"]
-default-members = ["bin/node", "bin/consensus"]
+default-members = ["bin/node", "bin/consensus", "bin/builder"]
 
 [workspace.metadata.cargo-udeps.ignore]
 normal = ["rustls-platform-verifier"]
