@@ -307,7 +307,10 @@ impl OpPayloadBuilderCtx {
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut fbal_db = FBALBuilderDb::new(&mut *db);
+        let min_tx_index = info.executed_transactions.iter().len() as u64;
+        fbal_db.set_index(min_tx_index);
+        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -333,6 +336,7 @@ impl OpPayloadBuilderCtx {
             let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
                 .then(|| {
                     evm.db_mut()
+                        .db_mut()
                         .load_cache_account(sequencer_tx.signer())
                         .map(|acc| acc.account_info().unwrap_or_default().nonce)
                 })
@@ -379,8 +383,10 @@ impl OpPayloadBuilderCtx {
             evm.db_mut().commit(state);
 
             // append sender and transaction to the respective lists
+            // and increment the next txn index for the access list
             info.executed_senders.push(sequencer_tx.signer());
             info.executed_transactions.push(sequencer_tx.into_inner());
+            evm.db_mut().inc_index();
         }
 
         let da_footprint_gas_scalar = self
@@ -392,6 +398,13 @@ impl OpPayloadBuilderCtx {
             });
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
+
+        match fbal_db.finish() {
+            Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
+            Err(err) => {
+                error!("Failed to finalize FBALBuilder: {}", err);
+            }
+        }
 
         Ok(info)
     }
@@ -418,8 +431,8 @@ impl OpPayloadBuilderCtx {
         let tx_da_limit = self.da_config.max_da_tx_size();
 
         let mut fbal_db = FBALBuilderDb::new(&mut *db);
-        // TODO: Persist indices across flashblocks
-        fbal_db.set_index(0);
+        let min_tx_index = info.executed_transactions.len() as u64;
+        fbal_db.set_index(min_tx_index);
         let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
 
         debug!(
@@ -546,9 +559,8 @@ impl OpPayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
-            // commit changes and increase index
+            // commit changes
             evm.db_mut().commit(state);
-            evm.db_mut().inc_index();
 
             // update add to total fees
             let miner_fee = tx
@@ -557,8 +569,10 @@ impl OpPayloadBuilderCtx {
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
 
             // append sender and transaction to the respective lists
+            // and increment the next txn index for the access list
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+            evm.db_mut().inc_index();
 
             if is_success && !backrun_bundles.is_empty() {
                 self.metrics.backrun_target_txs_found_total.increment(1);

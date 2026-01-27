@@ -782,7 +782,7 @@ struct FlashblocksMetadata {
     /// The block number this flashblock belongs to
     block_number: u64,
     /// The flashblock access list
-    access_list: Option<FlashblockAccessList>,
+    access_list: FlashblockAccessList,
 }
 
 fn execute_pre_steps<DB>(
@@ -958,9 +958,17 @@ where
     let new_transactions_encoded =
         new_transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
+    let min_tx_index = info.extra.last_flashblock_index as u64;
+    let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
+
     info.extra.last_flashblock_index = info.executed_transactions.len();
+
+    // finalize and build the FAL
+    let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
+    let access_list = fal_builder.build(min_tx_index, max_tx_index);
+
     let metadata: FlashblocksMetadata =
-        FlashblocksMetadata { block_number: ctx.parent().number + 1, access_list: None };
+        FlashblocksMetadata { block_number: ctx.parent().number + 1, access_list };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);
 
