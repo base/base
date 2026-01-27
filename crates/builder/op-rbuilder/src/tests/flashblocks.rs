@@ -97,8 +97,6 @@ async fn smoke_dynamic_base() -> eyre::Result<()> {
     let flashblocks = flashblocks_listener.get_flashblocks();
     assert_eq!(110, flashblocks.len());
 
-    dbg!(flashblocks);
-
     flashblocks_listener.stop().await
 }
 
