@@ -100,6 +100,7 @@ pub fn test_config(starting_l2_block_number: u64, starting_root: String) -> Faul
         rollup_config_hash: ROLLUP_CONFIG_HASH.to_string(),
         starting_l2_block_number,
         starting_root,
+        system_config_address: Address::ZERO.to_string(),
         use_sp1_mock_verifier: true,
         verifier_address: Address::ZERO.to_string(),
     }

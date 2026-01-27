@@ -160,9 +160,18 @@ contract DeployOPSuccinctFDG is Script, Utils {
         GameType gameType,
         ProxyAdmin proxyAdmin
     ) internal returns (AnchorStateRegistry) {
-        // Deploy MockSystemConfig for testing (in production, use existing SystemConfig)
-        // Pass msg.sender as guardian for deployment scripts
-        MockSystemConfig mockSystemConfig = new MockSystemConfig(msg.sender);
+        // Use existing SystemConfig or deploy MockSystemConfig for testing
+        address systemConfigAddress;
+        if (config.systemConfigAddress != address(0)) {
+            systemConfigAddress = config.systemConfigAddress;
+            console.log("Using existing SystemConfig:", systemConfigAddress);
+        } else {
+            // Deploy MockSystemConfig for testing
+            // Pass msg.sender as guardian for deployment scripts
+            MockSystemConfig mockSystemConfig = new MockSystemConfig(msg.sender);
+            systemConfigAddress = address(mockSystemConfig);
+            console.log("Deployed MockSystemConfig:", systemConfigAddress);
+        }
 
         // Deploy the anchor state registry implementation with finality delay
         AnchorStateRegistry registryImpl = new AnchorStateRegistry(config.disputeGameFinalityDelaySeconds);
@@ -177,7 +186,7 @@ contract DeployOPSuccinctFDG is Script, Utils {
             abi.encodeCall(
                 AnchorStateRegistry.initialize,
                 (
-                    ISystemConfig(address(mockSystemConfig)),
+                    ISystemConfig(systemConfigAddress),
                     IDisputeGameFactory(address(factory)),
                     startingAnchorRoot,
                     gameType
