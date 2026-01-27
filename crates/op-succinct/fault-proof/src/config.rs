@@ -356,6 +356,7 @@ pub struct FaultDisputeGameConfig {
     pub rollup_config_hash: String,
     pub starting_l2_block_number: u64,
     pub starting_root: String,
+    pub system_config_address: String,
     pub use_sp1_mock_verifier: bool,
     pub verifier_address: String,
 }

@@ -45,6 +45,7 @@ contract JSONDecoder {
         bytes32 rollupConfigHash;
         uint256 startingL2BlockNumber;
         bytes32 startingRoot;
+        address systemConfigAddress;
         bool useSp1MockVerifier;
         address verifierAddress;
     }

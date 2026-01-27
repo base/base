@@ -52,6 +52,9 @@ use serde_json::Value;
 /// ## Contract Configuration
 /// - `OPTIMISM_PORTAL2_ADDRESS`: Address of the OptimismPortal2 contract. If not provided or set to
 ///   zero address, a MockOptimismPortal2 will be deployed (default: zero address)
+/// - `SYSTEM_CONFIG_ADDRESS`: Address of the SystemConfig contract. If not provided, it is
+///   auto-derived from the rollup config. For testing, if set to zero address, a MockSystemConfig
+///   will be deployed (default: derived from rollup config)
 ///
 /// ## Starting State Configuration
 /// - `STARTING_L2_BLOCK_NUMBER`: L2 block number to use as the starting point for the dispute game.
@@ -126,6 +129,18 @@ async fn update_fdg_config() -> Result<()> {
         "0x0000000000000000000000000000000000000000".to_string()
     });
 
+    // SystemConfig configuration - derive from rollup config by default.
+    // For production deployments, this is required for proper guardian functionality.
+    // For testing, if zero address, a MockSystemConfig will be deployed.
+    let rollup_config =
+        data_fetcher.rollup_config.as_ref().ok_or(anyhow::anyhow!("Rollup config not found"))?;
+
+    let system_config_address = env::var("SYSTEM_CONFIG_ADDRESS").unwrap_or_else(|_| {
+        // Default to the address from rollup config
+        format!("{:?}", rollup_config.l1_system_config_address)
+    });
+    log::info!("Using SystemConfig address: {system_config_address}");
+
     // Get starting block number - use `latest finalized - dispute game finality delay` if not set.
     let starting_l2_block_number = match env::var("STARTING_L2_BLOCK_NUMBER") {
         Ok(n) => n.parse().unwrap(),
@@ -134,11 +149,7 @@ async fn update_fdg_config() -> Result<()> {
             let finalized_l2_header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
             let finalized_l2_block = finalized_l2_header.number;
 
-            let block_time = &data_fetcher
-                .rollup_config
-                .as_ref()
-                .ok_or(anyhow::anyhow!("Rollup config not found"))?
-                .block_time;
+            let block_time = &rollup_config.block_time;
 
             let num_blocks_for_finality = dispute_game_finality_delay_seconds / block_time;
             let search_start = finalized_l2_block.saturating_sub(num_blocks_for_finality);
@@ -199,6 +210,7 @@ async fn update_fdg_config() -> Result<()> {
         rollup_config_hash: shared_config.rollup_config_hash,
         starting_l2_block_number,
         starting_root: starting_output_root,
+        system_config_address,
         use_sp1_mock_verifier: shared_config.use_sp1_mock_verifier,
         verifier_address: shared_config.verifier_address,
     };
