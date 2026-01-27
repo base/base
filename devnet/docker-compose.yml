@@ -1,0 +1,123 @@
+services:
+  # Generate all genesis configs (EL + CL)
+  genesis-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile.configs
+    container_name: genesis-generator
+    volumes:
+      - configs:/output
+    environment:
+      - CHAIN_ID=1337
+      - SLOT_DURATION=12
+      - OUTPUT_DIR=/output
+      - SHARED_DIR=/output
+
+  # Reth execution client
+  reth:
+    image: ghcr.io/paradigmxyz/reth:v1.10.2
+    container_name: reth
+    depends_on:
+      genesis-generator:
+        condition: service_completed_successfully
+    ports:
+      - "8545:8545"   # HTTP RPC
+      - "8546:8546"   # WebSocket
+      - "8551:8551"   # Auth RPC (Engine API)
+      - "30303:30303" # P2P
+    volumes:
+      - reth-data:/data_reth
+      - configs:/genesis:ro
+    entrypoint: /usr/local/bin/reth
+    command:
+      - node
+      - --chain=/genesis/el/genesis.json
+      - --datadir=/data_reth
+      - --color=never
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=8551
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=30303
+      - --disable-discovery
+      - -vvv
+    restart: unless-stopped
+
+  # Lighthouse beacon node
+  lighthouse-bn:
+    image: sigp/lighthouse:v8.0.1
+    container_name: lighthouse-bn
+    depends_on:
+      reth:
+        condition: service_started
+    ports:
+      - "5052:5052"   # Beacon API
+      - "9000:9000"   # P2P TCP
+      - "9000:9000/udp" # P2P UDP
+    volumes:
+      - cl-data:/cl-data
+      - configs:/genesis:ro
+    command:
+      - lighthouse
+      - bn
+      - --testnet-dir=/genesis/cl
+      - --datadir=/cl-data/beacon
+      - --enable-private-discovery
+      - --disable-peer-scoring
+      - --staking
+      - --enr-address=127.0.0.1
+      - --enr-udp-port=9000
+      - --enr-tcp-port=9000
+      - --port=9000
+      - --http
+      - --http-address=0.0.0.0
+      - --http-port=5052
+      - --http-allow-origin=*
+      - --disable-packet-filter
+      - --target-peers=0
+      - --execution-endpoint=http://reth:8551
+      - --execution-jwt=/genesis/jwt.hex
+      - --always-prepare-payload
+      - --prepare-payload-lookahead=8000
+      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5052/eth/v1/node/syncing"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    restart: unless-stopped
+
+  # Lighthouse validator client
+  lighthouse-vc:
+    image: sigp/lighthouse:v8.0.1
+    container_name: lighthouse-vc
+    depends_on:
+      lighthouse-bn:
+        condition: service_started
+    volumes:
+      - cl-data:/cl-data
+      - configs:/genesis
+    command:
+      - lighthouse
+      - vc
+      - --testnet-dir=/genesis/cl
+      - --datadir=/genesis/cl/validator_data
+      - --beacon-nodes=http://lighthouse-bn:5052
+      - --init-slashing-protection
+      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    restart: unless-stopped
+
+volumes:
+  reth-data:
+  cl-data:
+  configs:
