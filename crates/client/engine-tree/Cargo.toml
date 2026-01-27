@@ -1,0 +1,50 @@
+[package]
+name = "base-engine-tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth-engine-tree = { workspace = true }
+reth-chain-state.workspace = true
+reth-consensus.workspace = true
+reth-engine-primitives.workspace = true
+reth-errors.workspace = true
+reth-evm.workspace = true
+reth-payload-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-provider.workspace = true
+reth-revm.workspace = true
+reth-trie.workspace = true
+reth-trie-parallel.workspace = true
+reth-trie-db.workspace = true
+base-alloy-consensus.workspace = true
+base-revm.workspace = true
+base-execution-primitives.workspace = true
+base-execution-evm.workspace = true
+base-execution-chainspec.workspace = true
+reth-tasks.workspace = true
+
+revm.workspace = true
+revm-primitives.workspace = true
+
+base-alloy-rpc-types-engine.workspace = true
+base-alloy-evm.workspace = true
+
+alloy-consensus.workspace = true
+alloy-eip7928.workspace = true
+alloy-eips.workspace = true
+alloy-evm.workspace = true
+alloy-primitives.workspace = true
+
+tokio.workspace = true
+tracing.workspace = true
+derive_more.workspace = true
+crossbeam-channel.workspace = true

@@ -547,7 +547,7 @@ where
             match receiver.recv().await {
                 Ok(pending_state) if pending_state.get_receipt(tx_hash).is_some() => {
                     debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
-                    return pending_state.get_receipt(tx_hash);
+                    return pending_state.get_receipt(tx_hash).cloned();
                 }
                 Ok(_) => {
                     trace!(message = "flashblock does not contain receipt", tx_hash = %tx_hash);

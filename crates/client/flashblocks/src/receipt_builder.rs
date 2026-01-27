@@ -71,7 +71,7 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
         &self,
         evm: &mut E,
         transaction: &Recovered<OpTxEnvelope>,
-        result: ExecutionResult<E::HaltReason>,
+        result: &ExecutionResult<E::HaltReason>,
         cumulative_gas_used: u64,
         timestamp: u64,
     ) -> Result<OpReceipt, ReceiptBuildError>
@@ -85,7 +85,7 @@ impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used,
-            logs: result.into_logs(),
+            logs: result.logs().to_vec(),
         };
 
         if tx_type == OpTxType::Deposit {
@@ -265,7 +265,8 @@ mod tests {
         let tx = create_legacy_tx();
         let result = create_success_result();
 
-        let receipt = builder.build(&mut evm, &tx, result, 21000, 0).expect("build should succeed");
+        let receipt =
+            builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
 
         assert!(matches!(receipt, OpReceipt::Legacy(_)));
         if let OpReceipt::Legacy(inner) = receipt {
@@ -284,7 +285,8 @@ mod tests {
         let tx = create_deposit_tx();
         let result = create_success_result();
 
-        let receipt = builder.build(&mut evm, &tx, result, 21000, 0).expect("build should succeed");
+        let receipt =
+            builder.build(&mut evm, &tx, &result, 21000, 0).expect("build should succeed");
 
         assert!(matches!(receipt, OpReceipt::Deposit(_)));
         if let OpReceipt::Deposit(deposit) = receipt {
@@ -307,7 +309,7 @@ mod tests {
         // Use a timestamp after Canyon activation (Base mainnet Canyon: 1704992401)
         let canyon_timestamp = 1704992401 + 1000;
         let receipt = builder
-            .build(&mut evm, &tx, result, 21000, canyon_timestamp)
+            .build(&mut evm, &tx, &result, 21000, canyon_timestamp)
             .expect("build should succeed");
 
         if let OpReceipt::Deposit(deposit) = receipt {
@@ -328,7 +330,8 @@ mod tests {
         let result: ExecutionResult<OpHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
 
-        let receipt = builder.build(&mut evm, &tx, result, 10000, 0).expect("build should succeed");
+        let receipt =
+            builder.build(&mut evm, &tx, &result, 10000, 0).expect("build should succeed");
 
         if let OpReceipt::Legacy(inner) = receipt {
             assert!(!inner.status.coerce_status()); // Failed transaction

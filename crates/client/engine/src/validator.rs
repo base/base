@@ -2,36 +2,109 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use base_flashblocks::FlashblocksState;
+use base_alloy_consensus::OpTxType;
+use base_alloy_evm::{OpBlockExecutorFactory, OpTxResult};
+use base_alloy_rpc_types_engine::OpExecutionData;
+use base_engine_tree::{BaseEngineValidator, CachedExecutionProvider};
+use base_execution_chainspec::OpChainSpec;
+use base_execution_primitives::OpPrimitives;
+use base_flashblocks::{FlashblocksAPI, FlashblocksState};
+use base_node_core::{OpEngineTypes, OpRethReceiptBuilder};
+use base_revm::OpHaltReason;
 use reth_chainspec::EthChainSpec;
-use reth_consensus::FullConsensus;
-use reth_engine_primitives::{ConfigureEngineEvm, InvalidBlockHook, PayloadValidator};
-use reth_engine_tree::tree::{
-    BasicEngineValidator, EngineValidator,
-    error::InsertPayloadError,
-    payload_validator::{BlockOrPayload, TreeCtx, ValidationOutcome},
-};
-use reth_evm::ConfigureEvm;
+use reth_engine_primitives::ConfigureEngineEvm;
+use reth_evm::{ConfigureEvm, eth::EthTxResult};
 use reth_node_api::{
-    AddOnsContext, BlockTy, FullNodeComponents, InvalidPayloadAttributesError, NodeTypes,
-    PayloadTypes, TreeConfig,
+    AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, NodeTypes, PayloadTypes, TreeConfig,
 };
 use reth_node_builder::{
     invalid_block_hook::InvalidBlockHookExt,
     rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
 };
-use reth_payload_primitives::{BuiltPayload, NewPayloadError};
-use reth_primitives_traits::{NodePrimitives, SealedBlock};
-use reth_provider::{
-    BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory, HashedPostStateProvider,
-    PruneCheckpointReader, StageCheckpointReader, StateProviderFactory, StateReader,
-    StorageChangeSetReader, StorageSettingsCache,
-};
-use tracing::instrument;
+use reth_provider::BlockNumReader;
+use revm::context::result::ExecResultAndState;
+use revm_primitives::B256;
+use tracing::warn;
 
+/// Provider that fetches cached execution results for transactions.
+#[derive(Debug, Clone)]
+pub struct FlashblocksCachedExecutionProvider<P> {
+    flashblocks_state: Option<Arc<FlashblocksState>>,
+
+    provider: P,
+}
+
+impl<P> FlashblocksCachedExecutionProvider<P> {
+    /// Creates a new [`FlashblocksCachedExecutionProvider`].
+    pub const fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
+        Self { provider, flashblocks_state }
+    }
+}
+
+impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
+    for FlashblocksCachedExecutionProvider<P>
+where
+    P: BlockNumReader,
+{
+    fn get_cached_execution_for_tx<'a>(
+        &self,
+        parent_block_hash: &B256,
+        prev_cached_hash: Option<&B256>,
+        tx_hash: &B256,
+    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+        let flashblocks_state = self.flashblocks_state.as_ref()?;
+
+        let parent_block_number = self.provider.block_number(*parent_block_hash).ok().flatten()?;
+
+        let this_block_number = parent_block_number.saturating_add(1);
+
+        let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
+
+        if let Some(prev_cached_hash) = prev_cached_hash {
+            // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
+            if !pending_blocks.has_transaction_hash(prev_cached_hash) {
+                warn!(
+                    "Not using cached results - previous transaction not cached: {:?}",
+                    prev_cached_hash
+                );
+                return None;
+            }
+        } else {
+            // must be the first tx in the block
+            if pending_blocks
+                .get_transactions_for_block(this_block_number)
+                .next()
+                .map(|tx| tx.inner.inner.tx_hash())
+                != Some(*tx_hash)
+            {
+                warn!("Not using cached results - first transaction not cached: {:?}", tx_hash);
+                return None;
+            }
+        }
+
+        let receipt_and_state = pending_blocks
+            .get_transaction_result(tx_hash)
+            .zip(pending_blocks.get_transaction_state(tx_hash))
+            .zip(pending_blocks.get_transaction_by_hash(*tx_hash))
+            .zip(pending_blocks.get_transaction_sender(tx_hash));
+
+        let (((result, state), tx), sender) = receipt_and_state?;
+
+        let eth_tx_result = EthTxResult {
+            result: ExecResultAndState::new(result.clone(), state),
+            blob_gas_used: 0,
+            tx_type: tx.inner.inner.tx_type(),
+        };
+
+        let op_tx_result =
+            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+
+        Some(op_tx_result)
+    }
+}
 /// Basic implementation of [`EngineValidatorBuilder`].
 ///
-/// This builder creates a [`BasicEngineValidator`] using the provided payload validator builder.
+/// This builder creates a [`BaseEngineValidator`] using the provided payload validator builder.
 #[derive(Debug, Clone)]
 pub struct BaseEngineValidatorBuilder<EV> {
     /// The payload validator builder used to create the engine validator.
@@ -66,17 +139,33 @@ where
 impl<Node, EV> EngineValidatorBuilder<Node> for BaseEngineValidatorBuilder<EV>
 where
     Node: FullNodeComponents<
-        Evm: ConfigureEngineEvm<
-            <<Node::Types as NodeTypes>::Payload as PayloadTypes>::ExecutionData,
+            Types: NodeTypes<
+                Payload = OpEngineTypes,
+                ChainSpec = OpChainSpec,
+                Primitives = OpPrimitives,
+            >,
+            Evm: ConfigureEngineEvm<OpExecutionData>
+                     + ConfigureEvm<
+                BlockExecutorFactory = OpBlockExecutorFactory<
+                    OpRethReceiptBuilder,
+                    Arc<OpChainSpec>,
+                >,
+            >,
         >,
-    >,
+    <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
+        PayloadTypes<ExecutionData = OpExecutionData>,
     EV: PayloadValidatorBuilder<Node>,
     EV::Validator: reth_engine_primitives::PayloadValidator<
             <Node::Types as NodeTypes>::Payload,
             Block = BlockTy<Node::Types>,
         >,
 {
-    type EngineValidator = BaseEngineValidator<Node::Provider, Node::Evm, EV::Validator>;
+    type EngineValidator = BaseEngineValidator<
+        Node::Provider,
+        Node::Evm,
+        EV::Validator,
+        FlashblocksCachedExecutionProvider<Node::Provider>,
+    >;
 
     async fn build_tree_validator(
         self,
@@ -94,163 +183,12 @@ where
             validator,
             tree_config,
             invalid_block_hook,
+            FlashblocksCachedExecutionProvider::new(
+                ctx.node.provider().clone(),
+                self.flashblocks_state.clone(),
+            ),
             changeset_cache,
             ctx.node.task_executor().clone(),
         ))
-    }
-}
-
-/// A helper type that provides reusable payload validation logic for network-specific validators.
-///
-/// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
-///
-/// This type contains common validation, execution, and state root computation logic that can be
-/// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
-/// used as a standalone component, but rather as a building block for concrete implementations.
-#[derive(derive_more::Debug)]
-pub struct BaseEngineValidator<P, Evm, V>
-where
-    Evm: ConfigureEvm,
-{
-    inner: BasicEngineValidator<P, Evm, V>,
-}
-
-impl<N, P, Evm, V> BaseEngineValidator<P, Evm, V>
-where
-    N: NodePrimitives,
-    P: DatabaseProviderFactory<
-            Provider: BlockReader
-                          + StageCheckpointReader
-                          + PruneCheckpointReader
-                          + ChangeSetReader
-                          + StorageChangeSetReader
-                          + StorageSettingsCache
-                          + BlockNumReader,
-        > + BlockReader<Header = N::BlockHeader>
-        + ChangeSetReader
-        + BlockNumReader
-        + StateProviderFactory
-        + StateReader
-        + HashedPostStateProvider
-        + Clone
-        + 'static,
-    Evm: ConfigureEvm<Primitives = N> + 'static,
-{
-    /// Creates a new `TreePayloadValidator`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        provider: P,
-        consensus: Arc<dyn FullConsensus<N>>,
-        evm_config: Evm,
-        validator: V,
-        config: TreeConfig,
-        invalid_block_hook: Box<dyn InvalidBlockHook<N>>,
-        changeset_cache: ChangesetCache,
-        runtime: reth_tasks::Runtime,
-    ) -> Self {
-        Self {
-            inner: BasicEngineValidator::new(
-                provider,
-                consensus,
-                evm_config,
-                validator,
-                config,
-                invalid_block_hook,
-                changeset_cache,
-                runtime,
-            ),
-        }
-    }
-
-    /// Validates a block that has already been converted from a payload.
-    ///
-    /// This method performs:
-    /// - Consensus validation
-    /// - Block execution
-    /// - State root computation
-    /// - Fork detection
-    #[instrument(
-        level = "debug",
-        target = "engine::tree::payload_validator",
-        skip_all,
-        fields(
-            parent = ?input.parent_hash(),
-            type_name = ?input.type_name(),
-        )
-    )]
-    pub fn validate_block_with_state<T: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>>(
-        &mut self,
-        input: BlockOrPayload<T>,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N, InsertPayloadError<N::Block>>
-    where
-        V: PayloadValidator<T, Block = N::Block>,
-        Evm: ConfigureEngineEvm<T::ExecutionData, Primitives = N>,
-    {
-        self.inner.validate_block_with_state(input, ctx)
-    }
-}
-
-impl<N, Types, P, Evm, V> EngineValidator<Types> for BaseEngineValidator<P, Evm, V>
-where
-    P: DatabaseProviderFactory<
-            Provider: BlockReader
-                          + StageCheckpointReader
-                          + PruneCheckpointReader
-                          + ChangeSetReader
-                          + StorageChangeSetReader
-                          + StorageSettingsCache
-                          + BlockNumReader,
-        > + BlockReader<Header = N::BlockHeader>
-        + StateProviderFactory
-        + StateReader
-        + ChangeSetReader
-        + BlockNumReader
-        + HashedPostStateProvider
-        + Clone
-        + 'static,
-    N: NodePrimitives,
-    V: PayloadValidator<Types, Block = N::Block>,
-    Evm: ConfigureEngineEvm<Types::ExecutionData, Primitives = N> + 'static,
-    Types: PayloadTypes<BuiltPayload: BuiltPayload<Primitives = N>>,
-{
-    fn validate_payload_attributes_against_header(
-        &self,
-        attr: &Types::PayloadAttributes,
-        header: &N::BlockHeader,
-    ) -> Result<(), InvalidPayloadAttributesError> {
-        self.inner.validate_payload_attributes_against_header(attr, header)
-    }
-
-    fn convert_payload_to_block(
-            &self,
-            payload: <Types as PayloadTypes>::ExecutionData,
-    ) -> Result<reth_primitives_traits::SealedBlock<<<<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block>, NewPayloadError>{
-        self.inner.convert_payload_to_block(payload)
-    }
-
-    fn validate_payload(
-        &mut self,
-        payload: Types::ExecutionData,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N> {
-        self.validate_block_with_state(BlockOrPayload::Payload(payload), ctx)
-    }
-
-    fn validate_block(
-        &mut self,
-        block: SealedBlock<N::Block>,
-        ctx: TreeCtx<'_, N>,
-    ) -> ValidationOutcome<N> {
-        self.validate_block_with_state(BlockOrPayload::Block(block), ctx)
-    }
-
-    fn on_inserted_executed_block(
-        &self,
-        block: reth_chain_state::ExecutedBlock<
-            <<Types as PayloadTypes>::BuiltPayload as BuiltPayload>::Primitives,
-        >,
-    ) {
-        self.inner.on_inserted_executed_block(block)
     }
 }
