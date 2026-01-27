@@ -1,3 +1,3 @@
 pub mod engine_api_builder;
 mod execution;
-pub use execution::{ExecutionInfo, TxnExecutionResult};
+pub use execution::{ExecutionInfo, ResourceLimits, TxResources, TxnExecutionResult};
