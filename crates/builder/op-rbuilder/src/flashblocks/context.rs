@@ -44,6 +44,17 @@ use crate::{
     tx_data_store::{TxData, TxDataStore},
 };
 
+fn record_rejected_tx_priority_fee(reason: TxnExecutionResult, priority_fee: f64) {
+    let r = match reason {
+        TxnExecutionResult::TransactionDALimitExceeded => "transaction_da_limit_exceeded",
+        TxnExecutionResult::BlockDALimitExceeded(_, _, _) => "block_da_limit_exceeded",
+        TxnExecutionResult::TransactionGasLimitExceeded(_, _, _) => "transaction_gas_limit_exceeded",
+        _ => "unknown",
+    };
+    metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r)
+        .record(priority_fee);
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FlashblocksExtraCtx {
     /// Current flashblock index
@@ -477,19 +488,7 @@ impl OpPayloadBuilderCtx {
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
-
-                match result {
-                    TxnExecutionResult::TransactionDALimitExceeded => {
-                        self.metrics.rejected_tx_priority_fee_da_limit.record(priority_fee);
-                    }
-                    TxnExecutionResult::BlockDALimitExceeded(_, _, _) => {
-                        self.metrics.rejected_tx_priority_fee_block_da_limit.record(priority_fee);
-                    }
-                    TxnExecutionResult::TransactionGasLimitExceeded(_, _, _) => {
-                        self.metrics.rejected_tx_priority_fee_block_gas_limit.record(priority_fee);
-                    }
-                    _ => {}
-                }
+                record_rejected_tx_priority_fee(result.clone(), priority_fee);
 
                 log_txn(result);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -513,7 +512,6 @@ impl OpPayloadBuilderCtx {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
-                        let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
                             log_txn(TxnExecutionResult::NonceTooLow);
@@ -521,9 +519,6 @@ impl OpPayloadBuilderCtx {
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            self.metrics
-                                .rejected_tx_priority_fee_internal_error
-                                .record(priority_fee);
                             log_txn(TxnExecutionResult::InternalError(err.clone()));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -559,9 +554,6 @@ impl OpPayloadBuilderCtx {
             if let Some(max_gas_per_txn) = self.max_gas_per_txn
                 && gas_used > max_gas_per_txn
             {
-                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
-                self.metrics.rejected_tx_priority_fee_max_gas_exceeded.record(priority_fee);
-
                 log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
