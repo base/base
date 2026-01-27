@@ -476,6 +476,21 @@ impl OpPayloadBuilderCtx {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+
+                match result {
+                    TxnExecutionResult::TransactionDALimitExceeded => {
+                        self.metrics.rejected_tx_priority_fee_da_limit.record(priority_fee);
+                    }
+                    TxnExecutionResult::BlockDALimitExceeded(_, _, _) => {
+                        self.metrics.rejected_tx_priority_fee_block_da_limit.record(priority_fee);
+                    }
+                    TxnExecutionResult::TransactionGasLimitExceeded(_, _, _) => {
+                        self.metrics.rejected_tx_priority_fee_block_gas_limit.record(priority_fee);
+                    }
+                    _ => {}
+                }
+
                 log_txn(result);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -483,6 +498,9 @@ impl OpPayloadBuilderCtx {
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                self.metrics.rejected_tx_priority_fee_sequencer_type.record(priority_fee);
+
                 log_txn(TxnExecutionResult::SequencerTransaction);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -498,13 +516,17 @@ impl OpPayloadBuilderCtx {
                 Ok(res) => res,
                 Err(err) => {
                     if let Some(err) = err.as_invalid_tx_err() {
+                        let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
+                            self.metrics.rejected_tx_priority_fee_nonce_too_low.record(priority_fee);
                             log_txn(TxnExecutionResult::NonceTooLow);
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
+                            self.metrics.rejected_tx_priority_fee_internal_error.record(priority_fee);
                             log_txn(TxnExecutionResult::InternalError(err.clone()));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -540,6 +562,9 @@ impl OpPayloadBuilderCtx {
             if let Some(max_gas_per_txn) = self.max_gas_per_txn
                 && gas_used > max_gas_per_txn
             {
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                self.metrics.rejected_tx_priority_fee_max_gas_exceeded.record(priority_fee);
+
                 log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
