@@ -1,24 +1,32 @@
 services:
-  # Setup genesis configs and devnet infrastructure
-  setup:
+  # =============================================================================
+  # L1 Setup and Infrastructure
+  # =============================================================================
+
+  # Setup L1 genesis configs (EL + CL genesis, validators)
+  setup-l1:
     build:
       context: ./devnet
       dockerfile: Dockerfile.configs
-    container_name: setup
+    container_name: setup-l1
     volumes:
       - ./.devnet/l1/configs:/output
+      - ./.devnet/l1/reth:/data/l1-reth
+      - ./.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - CHAIN_ID=1337
       - SLOT_DURATION=12
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
+      - L1_DATA_DIR=/data
+    entrypoint: ["/usr/local/bin/generate-l1-genesis.sh"]
 
   # L1 Execution Layer (Reth)
   l1-el:
     image: ghcr.io/paradigmxyz/reth:v1.10.2
     container_name: l1-el
     depends_on:
-      setup:
+      setup-l1:
         condition: service_completed_successfully
     ports:
       - "4545:4545"   # HTTP RPC
@@ -121,4 +129,311 @@ services:
       - --beacon-nodes=http://l1-cl:4052
       - --init-slashing-protection
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    restart: unless-stopped
+
+  # =============================================================================
+  # L2 Setup (deploys contracts to running L1)
+  # =============================================================================
+
+  # Setup L2 genesis by deploying OP contracts to L1 (live mode)
+  setup-l2:
+    build:
+      context: ./devnet
+      dockerfile: Dockerfile.configs
+    container_name: setup-l2
+    depends_on:
+      l1-el:
+        condition: service_healthy
+    volumes:
+      - ./.devnet/l1/configs:/output
+      - ./.devnet/l2/builder:/data/l2-builder
+      - ./.devnet/l2/builder-cl:/data/l2-builder-cl
+      - ./.devnet/l2/client:/data/l2-client
+      - ./.devnet/l2/client-cl:/data/l2-client-cl
+    environment:
+      - L1_RPC_URL=http://l1-el:4545
+      - L1_CHAIN_ID=1337
+      - L2_CHAIN_ID=84538453
+      - OUTPUT_DIR=/output
+      - L2_DATA_DIR=/data
+    entrypoint: ["/usr/local/bin/generate-l2-genesis.sh"]
+
+  # =============================================================================
+  # L2 Services (OP Stack)
+  # =============================================================================
+
+  # L2 Builder (Sequencer Execution Layer)
+  base-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.builder
+      args:
+        - PROFILE=dev
+    container_name: base-builder
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+    ports:
+      - "7545:7545"   # HTTP RPC
+      - "7546:7546"   # WebSocket
+      - "7551:7551"   # Auth RPC (Engine API)
+      - "7303:7303"   # P2P
+      - "7111:7111"   # Flashblocks
+      - "7090:7090"   # Metrics
+    volumes:
+      - ./.devnet/l2/builder:/data
+      - ./.devnet/l1/configs:/genesis:ro
+    entrypoint: /app/base-builder
+    command:
+      - node
+      - --chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=7545
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=7546
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=7551
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=7303
+      - --discovery.port=7303
+      - --p2p-secret-key-hex=2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+      - --flashblocks.addr=0.0.0.0
+      - --flashblocks.port=7111
+      - --metrics=0.0.0.0:7090
+      - --color=never
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/7545"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+      start_period: 2s
+    restart: unless-stopped
+
+  # L2 Builder CL (op-node sequencer)
+  base-builder-cl:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    container_name: base-builder-cl
+    depends_on:
+      base-builder:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+    ports:
+      - "7549:7549"   # RPC
+      - "7003:7003"   # P2P TCP
+      - "7003:7003/udp" # P2P UDP
+      - "7300:7300"   # Metrics
+    volumes:
+      - ./.devnet/l2/builder-cl:/data
+      - ./.devnet/l1/configs:/genesis:ro
+    command:
+      - op-node
+      - --l1
+      - http://l1-el:4545
+      - --l1.beacon
+      - http://l1-cl:4052
+      - --l2
+      - http://base-builder:7551
+      - --l2.jwt-secret
+      - /genesis/jwt.hex
+      - --rollup.config
+      - /genesis/l2/rollup.json
+      - --rollup.l1-chain-config
+      - /genesis/el/genesis.json
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "7549"
+      - --p2p.listen.tcp
+      - "7003"
+      - --p2p.listen.udp
+      - "7003"
+      # Use persistent P2P key for stable peer ID
+      - --p2p.priv.path
+      - /genesis/l2/builder-p2p-key.txt
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "7300"
+      - --sequencer.enabled
+      - --sequencer.l1-confs
+      - "0"
+      # Sequencer key (Account 5): 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
+      - --p2p.sequencer.key
+      - 8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+      - --p2p.scoring.peers
+      - none
+      - --p2p.ban.peers
+      - "false"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7549"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+      start_period: 2s
+    restart: unless-stopped
+
+  # OP Batcher (submits batches to L1)
+  op-batcher:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
+    container_name: op-batcher
+    depends_on:
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "6060:6060"   # Metrics
+    volumes:
+      - ./.devnet/l1/configs:/genesis:ro
+    command:
+      - op-batcher
+      - --l1-eth-rpc
+      - http://l1-el:4545
+      - --l2-eth-rpc
+      - http://base-builder:7545
+      - --rollup-rpc
+      - http://base-builder-cl:7549
+      # Batcher key (Account 6): 0x976EA74026E726554dB657fA54763abd0C3a0aa9
+      - --private-key
+      - "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e"
+      - --max-channel-duration
+      - "2"
+      - --poll-interval
+      - 1s
+      - --sub-safety-margin
+      - "4"
+      - --num-confirmations
+      - "1"
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "6060"
+    restart: unless-stopped
+
+  # L2 Client (Validator Execution Layer)
+  base-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+      args:
+        - PROFILE=dev
+    container_name: base-client
+    depends_on:
+      base-builder:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+    ports:
+      - "8545:8545"   # HTTP RPC
+      - "8546:8546"   # WebSocket
+      - "8551:8551"   # Auth RPC (Engine API)
+      - "8303:8303"   # P2P
+      - "8090:8090"   # Metrics
+    volumes:
+      - ./.devnet/l2/client:/data
+      - ./.devnet/l1/configs:/genesis:ro
+    entrypoint: /app/base-client
+    command:
+      - node
+      - --chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=8546
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=8551
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=8303
+      - --discovery.port=8303
+      - --metrics=0.0.0.0:8090
+      - --flashblocks-url=ws://base-builder:7111
+      # Builder enode ID from Anvil Account 9 P2P key
+      - --trusted-peers=enode://8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5@base-builder:7303
+      - --color=never
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8545"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+      start_period: 2s
+    restart: unless-stopped
+
+  # L2 Client CL (op-node follower)
+  base-client-cl:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    container_name: base-client-cl
+    depends_on:
+      base-client:
+        condition: service_healthy
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "8549:8549"   # RPC
+      - "8003:8003"   # P2P TCP
+      - "8003:8003/udp" # P2P UDP
+      - "8300:8300"   # Metrics
+    volumes:
+      - ./.devnet/l2/client-cl:/data
+      - ./.devnet/l1/configs:/genesis:ro
+    command:
+      - op-node
+      - --l1
+      - http://l1-el:4545
+      - --l1.beacon
+      - http://l1-cl:4052
+      - --l2
+      - http://base-client:8551
+      - --l2.jwt-secret
+      - /genesis/jwt.hex
+      - --rollup.config
+      - /genesis/l2/rollup.json
+      - --rollup.l1-chain-config
+      - /genesis/el/genesis.json
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "8549"
+      - --p2p.listen.tcp
+      - "8003"
+      - --p2p.listen.udp
+      - "8003"
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "8300"
+      # Connect to sequencer op-node for P2P gossip
+      - --p2p.static
+      - /dns4/base-builder-cl/tcp/7003/p2p/16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12
+      - --p2p.scoring.peers
+      - none
+      - --p2p.ban.peers
+      - "false"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8549"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+      start_period: 2s
     restart: unless-stopped

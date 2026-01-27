@@ -1,7 +1,19 @@
 FROM golang:1.25-alpine AS builder
 
 # Install build dependencies for CGO (required for BLS library)
-RUN apk add --no-cache git make gcc g++ musl-dev linux-headers
+RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl
+
+# Download op-deployer binary
+# URL format: op-deployer-{version_no_v}-linux-{arch}.tar.gz
+# Tarball contains: op-deployer-{version}-linux-{arch}/op-deployer
+ARG OP_DEPLOYER_VERSION=0.6.0-rc.3
+RUN ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g') && \
+    curl -L -o /tmp/op-deployer.tar.gz \
+    "https://github.com/ethereum-optimism/optimism/releases/download/op-deployer/v${OP_DEPLOYER_VERSION}/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}.tar.gz" && \
+    tar -xzf /tmp/op-deployer.tar.gz -C /tmp/ && \
+    mv /tmp/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}/op-deployer /go/bin/ && \
+    chmod +x /go/bin/op-deployer && \
+    rm -rf /tmp/op-deployer*
 
 # Build eth-beacon-genesis from source (has replace directives, can't use go install)
 WORKDIR /build
@@ -16,17 +28,17 @@ RUN go build -o /go/bin/eth2-val-tools .
 
 FROM alpine:latest
 
-RUN apk add --no-cache bash jq openssl
+RUN apk add --no-cache bash jq openssl curl
 
 # Copy the built binaries
 COPY --from=builder /go/bin/eth-genesis-state-generator /usr/local/bin/
 COPY --from=builder /go/bin/eth2-val-tools /usr/local/bin/
+COPY --from=builder /go/bin/op-deployer /usr/local/bin/
 
 # Create working directories
 RUN mkdir -p /config /output /shared
 
-# Copy genesis generation script
-COPY scripts/generate-genesis.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/generate-genesis.sh
-
-ENTRYPOINT ["/usr/local/bin/generate-genesis.sh"]
+# Copy genesis generation scripts
+COPY scripts/generate-l1-genesis.sh /usr/local/bin/
+COPY scripts/generate-l2-genesis.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/generate-l1-genesis.sh /usr/local/bin/generate-l2-genesis.sh

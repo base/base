@@ -102,7 +102,7 @@ check-udeps: build-contracts
 
 # Checks that shared crates don't depend on client crates
 check-crate-deps:
-    ./scripts/check-crate-deps.sh
+    ./scripts/ci/check-crate-deps.sh
 
 # Watches tests
 watch-test: build-contracts
@@ -129,8 +129,14 @@ devnet-down:
     -docker compose down
     rm -rf .devnet
 
-# Runs checks against the devnet to ensure all components are functional
-devnet-checks rpc="http://localhost:4545" pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" to="0x70997970C51812dc3A010C7d01b50e0d17dc79C8":
-    @echo "Block: $(cast block-number --rpc-url {{rpc}})"
-    @echo "Sending ETH tx..." && cast send --private-key {{pk}} --rpc-url {{rpc}} {{to}} --value 0.001ether --json | jq -r '"ETH tx: \(.transactionHash) block=\(.blockNumber) status=\(.status)"'
-    @echo "Sending blob tx..." && echo "blob" | cast send --private-key {{pk}} --rpc-url {{rpc}} --blob --path /dev/stdin {{to}} --json | jq -r '"Blob tx: \(.transactionHash) block=\(.blockNumber) status=\(.status) blobGas=\(.blobGasUsed)"'
+# Shows devnet block numbers and sync status
+devnet-status:
+    ./scripts/devnet/status.sh
+
+# Sends test transactions to L1 and L2
+devnet-smoke rpc="http://localhost:4545" pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" to="0x70997970C51812dc3A010C7d01b50e0d17dc79C8":
+    ./scripts/devnet/smoke.sh {{rpc}} {{pk}} {{to}}
+
+# Runs full devnet checks (status + smoke tests)
+devnet-checks rpc="http://localhost:4545" pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" to="0x70997970C51812dc3A010C7d01b50e0d17dc79C8": devnet-status
+    ./scripts/devnet/smoke.sh {{rpc}} {{pk}} {{to}}
