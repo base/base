@@ -123,3 +123,17 @@ bench-flashblocks:
 # Builds tester binary (requires testing feature)
 build-tester:
     cargo build -p op-rbuilder --bin tester --features "testing"
+
+# Stops devnet, deletes data, and starts fresh
+devnet: devnet-down
+    docker compose up -d
+
+# Stops devnet and deletes all data
+devnet-down:
+    -docker compose down
+    rm -rf .devnet
+
+devnet-checks rpc="http://localhost:8545" pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" to="0x70997970C51812dc3A010C7d01b50e0d17dc79C8":
+    @echo "Block: $(cast block-number --rpc-url {{rpc}})"
+    @echo "Sending ETH tx..." && cast send --private-key {{pk}} --rpc-url {{rpc}} {{to}} --value 0.001ether --json | jq -r '"ETH tx: \(.transactionHash) block=\(.blockNumber) status=\(.status)"'
+    @echo "Sending blob tx..." && echo "blob" | cast send --private-key {{pk}} --rpc-url {{rpc}} --blob --path /dev/stdin {{to}} --json | jq -r '"Blob tx: \(.transactionHash) block=\(.blockNumber) status=\(.status) blobGas=\(.blobGasUsed)"'

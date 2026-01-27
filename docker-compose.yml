@@ -2,11 +2,11 @@ services:
   # Generate all genesis configs (EL + CL)
   genesis-generator:
     build:
-      context: .
+      context: ./devnet
       dockerfile: Dockerfile.configs
     container_name: genesis-generator
     volumes:
-      - configs:/output
+      - ./.devnet/l1/configs:/output
     environment:
       - CHAIN_ID=1337
       - SLOT_DURATION=12
@@ -26,13 +26,13 @@ services:
       - "8551:8551"   # Auth RPC (Engine API)
       - "30303:30303" # P2P
     volumes:
-      - reth-data:/data_reth
-      - configs:/genesis:ro
+      - ./.devnet/l1/reth:/data
+      - ./.devnet/l1/configs:/genesis:ro
     entrypoint: /usr/local/bin/reth
     command:
       - node
       - --chain=/genesis/el/genesis.json
-      - --datadir=/data_reth
+      - --datadir=/data
       - --color=never
       - --http
       - --http.addr=0.0.0.0
@@ -50,6 +50,12 @@ services:
       - --port=30303
       - --disable-discovery
       - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8545"]
+      interval: 1s
+      timeout: 1s
+      retries: 60
+      start_period: 1s
     restart: unless-stopped
 
   # Lighthouse beacon node
@@ -58,19 +64,19 @@ services:
     container_name: lighthouse-bn
     depends_on:
       reth:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "5052:5052"   # Beacon API
       - "9000:9000"   # P2P TCP
       - "9000:9000/udp" # P2P UDP
     volumes:
-      - cl-data:/cl-data
-      - configs:/genesis:ro
+      - ./.devnet/l1/lighthouse:/data
+      - ./.devnet/l1/configs:/genesis:ro
     command:
       - lighthouse
       - bn
       - --testnet-dir=/genesis/cl
-      - --datadir=/cl-data/beacon
+      - --datadir=/data/beacon
       - --enable-private-discovery
       - --disable-peer-scoring
       - --staking
@@ -84,17 +90,18 @@ services:
       - --http-allow-origin=*
       - --disable-packet-filter
       - --target-peers=0
+      - --supernode
       - --execution-endpoint=http://reth:8551
       - --execution-jwt=/genesis/jwt.hex
       - --always-prepare-payload
       - --prepare-payload-lookahead=8000
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:5052/eth/v1/node/syncing"]
-      interval: 5s
-      timeout: 5s
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5052"]
+      interval: 1s
+      timeout: 1s
       retries: 60
-      start_period: 10s
+      start_period: 1s
     restart: unless-stopped
 
   # Lighthouse validator client
@@ -103,10 +110,9 @@ services:
     container_name: lighthouse-vc
     depends_on:
       lighthouse-bn:
-        condition: service_started
+        condition: service_healthy
     volumes:
-      - cl-data:/cl-data
-      - configs:/genesis
+      - ./.devnet/l1/configs:/genesis
     command:
       - lighthouse
       - vc
@@ -116,8 +122,3 @@ services:
       - --init-slashing-protection
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     restart: unless-stopped
-
-volumes:
-  reth-data:
-  cl-data:
-  configs:
