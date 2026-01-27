@@ -7,12 +7,12 @@ integrity = "64133846def1b04b1726d2bf1292c19050a0e8cb832b60c6104c19595b9699f8"
 
 [[dependencies]]
 name = "openzeppelin-contracts"
-version = "4.8.0"
+version = "5.5.0"
 git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git"
-rev = "49c0e4370d0cc50ea6090709e3835a3091e33ee2"
+rev = "fcbae5394ae8ad52d8e580a3477db99814b9d565"
 
 [[dependencies]]
 name = "solmate"
-version = "6.7.0"
+version = "6.8.0"
 git = "https://github.com/transmissions11/solmate.git"
-rev = "a9e3ea26a2dc73bfa87f0cb189687d029028e0c5"
+rev = "89365b880c4f3c786bdd453d4b8e8fe410344a69"

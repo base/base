@@ -4,13 +4,13 @@ out = "out"
 libs = ["dependencies"]
 remappings = [
     "forge-std/=dependencies/forge-std-1.14.0/src/",
-    "@openzeppelin/=dependencies/openzeppelin-contracts-4.8.0/",
-    "solmate/=dependencies/solmate-6.7.0/src/"
+    "@openzeppelin/=dependencies/openzeppelin-contracts-5.5.0/",
+    "solmate/=dependencies/solmate-6.8.0/src/"
 ]
 
 [dependencies]
 forge-std = "1.14.0"
-openzeppelin-contracts = { version = "4.8.0", git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git", tag = "v4.8.0" }
-solmate = { version = "6.7.0", git = "https://github.com/transmissions11/solmate.git", tag = "v6" }
+openzeppelin-contracts = { version = "5.5.0", git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git", tag = "v5.5.0" }
+solmate = { version = "6.8.0", git = "https://github.com/transmissions11/solmate.git", rev = "89365b880c4f3c786bdd453d4b8e8fe410344a69" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
