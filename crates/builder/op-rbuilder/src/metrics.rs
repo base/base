@@ -137,8 +137,6 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
-    /// Priority fee of transactions
-    pub tx_priority_fee: Histogram,
     /// Priority fee of rejected transactions: Transaction DA limit exceeded
     pub rejected_tx_priority_fee_da_limit: Histogram,
     /// Priority fee of rejected transactions: Block DA limit exceeded
