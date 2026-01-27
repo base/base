@@ -520,13 +520,17 @@ impl OpPayloadBuilderCtx {
 
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
-                            self.metrics.rejected_tx_priority_fee_nonce_too_low.record(priority_fee);
+                            self.metrics
+                                .rejected_tx_priority_fee_nonce_too_low
+                                .record(priority_fee);
                             log_txn(TxnExecutionResult::NonceTooLow);
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            self.metrics.rejected_tx_priority_fee_internal_error.record(priority_fee);
+                            self.metrics
+                                .rejected_tx_priority_fee_internal_error
+                                .record(priority_fee);
                             log_txn(TxnExecutionResult::InternalError(err.clone()));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
