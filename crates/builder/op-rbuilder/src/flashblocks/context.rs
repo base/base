@@ -48,11 +48,12 @@ fn record_rejected_tx_priority_fee(reason: TxnExecutionResult, priority_fee: f64
     let r = match reason {
         TxnExecutionResult::TransactionDALimitExceeded => "transaction_da_limit_exceeded",
         TxnExecutionResult::BlockDALimitExceeded(_, _, _) => "block_da_limit_exceeded",
-        TxnExecutionResult::TransactionGasLimitExceeded(_, _, _) => "transaction_gas_limit_exceeded",
+        TxnExecutionResult::TransactionGasLimitExceeded(_, _, _) => {
+            "transaction_gas_limit_exceeded"
+        }
         _ => "unknown",
     };
-    metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r)
-        .record(priority_fee);
+    metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r).record(priority_fee);
 }
 
 #[derive(Debug, Default, Clone)]
