@@ -143,16 +143,10 @@ pub struct OpRBuilderMetrics {
     pub rejected_tx_priority_fee_block_da_limit: Histogram,
     /// Priority fee of rejected transactions: Block gas limit exceeded
     pub rejected_tx_priority_fee_block_gas_limit: Histogram,
-    /// Priority fee of rejected transactions: Invalid transaction type (blob/deposit)
-    pub rejected_tx_priority_fee_sequencer_type: Histogram,
-    /// Priority fee of rejected transactions: Nonce too low
-    pub rejected_tx_priority_fee_nonce_too_low: Histogram,
     /// Priority fee of rejected transactions: Internal error (invalid signature, etc.)
     pub rejected_tx_priority_fee_internal_error: Histogram,
     /// Priority fee of rejected transactions: Max gas per transaction exceeded
     pub rejected_tx_priority_fee_max_gas_exceeded: Histogram,
-    /// Priority fee of rejected transactions: EVM error
-    pub rejected_tx_priority_fee_evm_error: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
     pub reduced_flashblocks_number: Histogram,
     /// How much less flashblocks we issued in reality, comparing to calculated number for block
