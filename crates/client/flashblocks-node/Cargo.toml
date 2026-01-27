@@ -73,7 +73,7 @@ base-flashblocks-node = { path = ".", features = ["test-utils"] }
 rand.workspace = true
 eyre.workspace = true
 revm = { workspace = true, features = ["std"] }
-reth-db.workspace = true
+reth-db = { workspace = true, features = ["op"] }
 once_cell.workspace = true
 reth-db-common.workspace = true
 alloy-rpc-client.workspace = true
