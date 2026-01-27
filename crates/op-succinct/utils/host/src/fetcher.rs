@@ -677,10 +677,9 @@ impl OPSuccinctDataFetcher {
         l2_end_block: u64,
         l1_head_hash: B256,
     ) -> Result<SingleChainHost> {
-        // If the rollup config is not already loaded, fetch and save it.
-        if self.rollup_config.is_none() {
+        let Some(rollup_config) = &self.rollup_config else {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
-        }
+        };
 
         if l2_start_block >= l2_end_block {
             return Err(anyhow::anyhow!(
@@ -743,7 +742,7 @@ impl OPSuccinctDataFetcher {
             agreed_l2_head_hash,
             claimed_l2_output_root,
             claimed_l2_block_number: l2_end_block,
-            l2_chain_id: None,
+            l2_chain_id: Some(rollup_config.l2_chain_id.id()),
             // Trim the trailing slash to avoid double slashes in the URL.
             l2_node_address: Some(
                 self.rpc_config.l2_rpc.as_str().trim_end_matches('/').to_string(),
