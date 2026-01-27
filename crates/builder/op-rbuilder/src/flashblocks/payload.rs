@@ -679,7 +679,7 @@ where
         &self,
         state: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        info: &mut ExecutionInfo,
         finalized_cell: &BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError>
     where
