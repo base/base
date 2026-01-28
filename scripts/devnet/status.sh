@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-# Source .env.devnet if it exists
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/../../.env.devnet"
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
-fi
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-L1_RPC="${1:-${L1_RPC_URL:-http://localhost:4545}}"
-L2_BUILDER_RPC="${2:-${L2_BUILDER_OP_RPC_URL:-http://localhost:7549}}"
-L2_BUILDER_OP_RPC="${3:-${L2_BUILDER_OP_RPC_URL:-http://localhost:7549}}"
-L2_CLIENT_RPC="${4:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}"
-L2_CLIENT_OP_RPC="${5:-${L2_CLIENT_OP_RPC_URL:-http://localhost:8549}}"
+L1_RPC="${1:-$L1_RPC_URL}"
+L2_BUILDER_OP_RPC="${2:-$L2_BUILDER_OP_RPC_URL}"
+L2_CLIENT_OP_RPC="${3:-$L2_CLIENT_OP_RPC_URL}"
 
 # Fetch L1 block number
 L1_BLOCK=$(cast block-number --rpc-url $L1_RPC 2>/dev/null || echo "N/A")

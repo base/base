@@ -9,28 +9,10 @@ L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 
 # Skip if L2 genesis already exists (for restarts)
-if [ -f "$OUTPUT_DIR/l2/genesis.json" ] && [ -f "$OUTPUT_DIR/l2/rollup.json" ]; then
+if [ -f "$OUTPUT_DIR/genesis.json" ] && [ -f "$OUTPUT_DIR/rollup.json" ]; then
   echo "=== L2 Genesis already exists, skipping generation ==="
   exit 0
 fi
-
-# Clean up any partial/stale L2 data for fresh start
-echo "=== Cleaning up existing L2 data ==="
-rm -rf "${OUTPUT_DIR:?}"/l2/*
-rm -rf "${L2_DATA_DIR:?}"/l2-builder/*
-rm -rf "${L2_DATA_DIR:?}"/l2-builder-cl/*
-rm -rf "${L2_DATA_DIR:?}"/l2-client/*
-rm -rf "${L2_DATA_DIR:?}"/l2-client-cl/*
-
-# Role accounts (from env vars or defaults)
-DEPLOYER_ADDR="${DEPLOYER_ADDR:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}"
-DEPLOYER_KEY="${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
-SEQUENCER_ADDR="${SEQUENCER_ADDR:-0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc}"
-BATCHER_ADDR="${BATCHER_ADDR:-0x976EA74026E726554dB657fA54763abd0C3a0aa9}"
-PROPOSER_ADDR="${PROPOSER_ADDR:-0x14dC79964da2C08b23698B3D3cc7Ca32193d9955}"
-CHALLENGER_ADDR="${CHALLENGER_ADDR:-0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f}"
-BUILDER_P2P_KEY="${BUILDER_P2P_KEY:-2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6}"
-BUILDER_ENODE_ID="${BUILDER_ENODE_ID:-8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5}"
 
 echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
@@ -66,9 +48,8 @@ L1_TIMESTAMP=$(echo "$L1_GENESIS" | jq -r '.timestamp')
 echo "L1 genesis hash: $L1_HASH"
 echo "L1 genesis timestamp: $L1_TIMESTAMP"
 
-# Create L2 output directory
-L2_OUTPUT_DIR="$OUTPUT_DIR/l2"
-mkdir -p "$L2_OUTPUT_DIR"
+# Create output directory
+mkdir -p "$OUTPUT_DIR"
 
 # =============================================================================
 # Run op-deployer in Live Mode
@@ -133,25 +114,25 @@ echo "Extracting L2 genesis..."
 op-deployer inspect genesis \
   --workdir "$OP_DEPLOYER_WORKDIR" \
   "$L2_CHAIN_ID" \
-  > "$L2_OUTPUT_DIR/genesis.json"
-echo "L2 genesis written to $L2_OUTPUT_DIR/genesis.json"
+  > "$OUTPUT_DIR/genesis.json"
+echo "L2 genesis written to $OUTPUT_DIR/genesis.json"
 
 echo "Extracting rollup config..."
 op-deployer inspect rollup \
   --workdir "$OP_DEPLOYER_WORKDIR" \
   "$L2_CHAIN_ID" \
-  > "$L2_OUTPUT_DIR/rollup.json"
-echo "Rollup config written to $L2_OUTPUT_DIR/rollup.json"
+  > "$OUTPUT_DIR/rollup.json"
+echo "Rollup config written to $OUTPUT_DIR/rollup.json"
 
 echo "Extracting L1 addresses..."
 op-deployer inspect l1 \
   --workdir "$OP_DEPLOYER_WORKDIR" \
   "$L2_CHAIN_ID" \
-  > "$L2_OUTPUT_DIR/l1-addresses.json"
-echo "L1 addresses written to $L2_OUTPUT_DIR/l1-addresses.json"
+  > "$OUTPUT_DIR/l1-addresses.json"
+echo "L1 addresses written to $OUTPUT_DIR/l1-addresses.json"
 
 # Verify the rollup.json has the correct L1 genesis hash
-ROLLUP_L1_HASH=$(jq -r '.genesis.l1.hash' "$L2_OUTPUT_DIR/rollup.json")
+ROLLUP_L1_HASH=$(jq -r '.genesis.l1.hash' "$OUTPUT_DIR/rollup.json")
 echo ""
 echo "=== Verifying L1 Genesis Hash ==="
 echo "Actual L1 genesis hash: $L1_HASH"
@@ -170,10 +151,10 @@ fi
 echo ""
 echo "=== Generating P2P Keys ==="
 
-echo "$BUILDER_P2P_KEY" > "$L2_OUTPUT_DIR/builder-p2p-key.txt"
-echo "$BUILDER_ENODE_ID" > "$L2_OUTPUT_DIR/builder-enode-id.txt"
+echo "$BUILDER_P2P_KEY" > "$OUTPUT_DIR/builder-p2p-key.txt"
+echo "$BUILDER_ENODE_ID" > "$OUTPUT_DIR/builder-enode-id.txt"
 
-echo "Builder P2P key written to $L2_OUTPUT_DIR/builder-p2p-key.txt"
+echo "Builder P2P key written to $OUTPUT_DIR/builder-p2p-key.txt"
 echo "Builder enode ID: $BUILDER_ENODE_ID"
 
 # Cleanup
@@ -183,10 +164,10 @@ echo ""
 echo "=== L2 Genesis Generation Complete ==="
 echo ""
 echo "Files generated:"
-echo "  L2 genesis: $L2_OUTPUT_DIR/genesis.json"
-echo "  Rollup config: $L2_OUTPUT_DIR/rollup.json"
-echo "  L1 addresses: $L2_OUTPUT_DIR/l1-addresses.json"
-echo "  Builder P2P key: $L2_OUTPUT_DIR/builder-p2p-key.txt"
+echo "  L2 genesis: $OUTPUT_DIR/genesis.json"
+echo "  Rollup config: $OUTPUT_DIR/rollup.json"
+echo "  L1 addresses: $OUTPUT_DIR/l1-addresses.json"
+echo "  Builder P2P key: $OUTPUT_DIR/builder-p2p-key.txt"
 echo ""
 echo "L2 Role assignments:"
 echo "  Deployer:   $DEPLOYER_ADDR"

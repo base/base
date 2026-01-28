@@ -133,7 +133,7 @@ services:
       l1-el:
         condition: service_healthy
     volumes:
-      - ./.devnet/l1/configs:/output
+      - ./.devnet:/devnet
       - ./.devnet/l2/builder:/data/l2-builder
       - ./.devnet/l2/builder-cl:/data/l2-builder-cl
       - ./.devnet/l2/client:/data/l2-client
@@ -142,7 +142,7 @@ services:
       - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
       - L1_CHAIN_ID=${L1_CHAIN_ID}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
-      - OUTPUT_DIR=/output
+      - OUTPUT_DIR=/devnet/l2/configs
       - L2_DATA_DIR=/data
       - DEPLOYER_ADDR=${DEPLOYER_ADDR}
       - DEPLOYER_KEY=${DEPLOYER_KEY}
@@ -174,6 +174,7 @@ services:
     volumes:
       - ./.devnet/l2/builder:/data
       - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-builder
     command:
       - node
@@ -226,6 +227,7 @@ services:
     volumes:
       - ./.devnet/l2/builder-cl:/data
       - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
     command:
       - op-node
       - --l1
@@ -326,6 +328,7 @@ services:
     volumes:
       - ./.devnet/l2/client:/data
       - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-client
     command:
       - node
@@ -374,6 +377,7 @@ services:
     volumes:
       - ./.devnet/l2/client-cl:/data
       - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
     command:
       - op-node
       - --l1

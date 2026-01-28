@@ -8,20 +8,11 @@ SLOT_DURATION="${SLOT_DURATION:-2}"
 L1_DATA_DIR="${L1_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 
-# Skip if genesis already exists (for restarts)
-if [ -f "$OUTPUT_DIR/el/genesis.json" ] && [ -f "$OUTPUT_DIR/cl/genesis.ssz" ]; then
-  echo "=== L1 Genesis already exists, skipping generation ==="
-  exit 0
+# Error if genesis already exists (run devnet-down first)
+if [ -f "$OUTPUT_DIR/el/genesis.json" ] || [ -f "$OUTPUT_DIR/cl/genesis.ssz" ]; then
+  echo "ERROR: L1 genesis already exists. Run 'just devnet-down' first." >&2
+  exit 1
 fi
-
-# Clean up any partial/stale data for fresh start
-echo "=== Cleaning up existing L1 data ==="
-rm -rf "${OUTPUT_DIR:?}"/el/*
-rm -rf "${OUTPUT_DIR:?}"/cl/*
-rm -rf "${OUTPUT_DIR:?}"/jwt.hex
-rm -rf "${OUTPUT_DIR:?}"/genesis_timestamp
-rm -rf "${L1_DATA_DIR:?}"/l1-reth/*
-rm -rf "${L1_DATA_DIR:?}"/l1-lighthouse/*
 
 # Anvil accounts balance: 1,000,000 ETH each (0xd3c21bcecceda1000000 = 1000000 * 10^18)
 BALANCE="0xd3c21bcecceda1000000"
