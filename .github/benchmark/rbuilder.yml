@@ -1,0 +1,27 @@
+# Benchmark config for testing rbuilder with base-reth-node as validator
+# This config tests transfer throughput with rbuilder as sequencer and
+# the base-reth-node (built from this repo) as the validator node.
+name: Rbuilder transfer throughput test
+description: Test rbuilder transfer throughput with base-reth-node as validator
+
+payloads:
+  - name: Transfer Only
+    type: transfer-only
+    id: transfer-only
+
+benchmarks:
+  - variables:
+      - type: payload
+        values:
+          - transfer-only
+      - type: node_type
+        values:
+          - rbuilder
+      - type: validator_node_type
+        values:
+          - base-reth-node
+      - type: num_blocks
+        value: 10
+      - type: gas_limit
+        values:
+          - 1000000000
