@@ -86,9 +86,35 @@ where
         (self.evm.into_db(), self.state_overrides)
     }
 
+    /// Executes a batch of transactions and returns the results.
+    ///
+    /// Returns a `BatchExecutionResult` containing all executed transactions and
+    /// access to the final database state. Results can be iterated as an async stream
+    /// via `into_stream()`.
+    ///
+    /// This interface enables future parallel execution with state prewarming while
+    /// maintaining sequential result delivery.
+    pub fn execute_batch(
+        mut self,
+        transactions: Vec<Recovered<OpTxEnvelope>>,
+    ) -> BatchExecutionResult<DB> {
+        // Process all transactions sequentially, collecting results.
+        // Future optimization: parallel execution with state prewarming.
+        let results: Vec<Result<ExecutedPendingTransaction, StateProcessorError>> = transactions
+            .into_iter()
+            .enumerate()
+            .map(|(idx, transaction)| self.execute_transaction(idx, transaction))
+            .collect();
+
+        // Extract DB and state_overrides immediately to avoid holding non-Send EVM across await
+        let (db, state_overrides) = self.into_db_and_state_overrides();
+
+        BatchExecutionResult { db, state_overrides, results }
+    }
+
     /// Executes a single transaction and updates internal state.
     /// Should be called in order for each transaction.
-    pub fn execute_transaction(
+    fn execute_transaction(
         &mut self,
         idx: usize,
         transaction: Recovered<OpTxEnvelope>,
@@ -280,5 +306,65 @@ where
             }
             .into()),
         }
+    }
+}
+
+/// Result of batch execution containing all transaction results and the final state.
+///
+/// Provides an async stream interface for iterating over results while maintaining
+/// access to the final database state after processing.
+#[derive(Debug)]
+pub struct BatchExecutionResult<DB> {
+    db: DB,
+    state_overrides: StateOverride,
+    results: Vec<Result<ExecutedPendingTransaction, StateProcessorError>>,
+}
+
+impl<DB> BatchExecutionResult<DB>
+where
+    DB: Database + DatabaseCommit,
+{
+    /// Returns an async stream over the execution results.
+    ///
+    /// The stream yields results in transaction order. This enables async iteration
+    /// patterns and prepares for future parallel execution support.
+    pub fn into_stream(
+        self,
+    ) -> (
+        impl futures_util::Stream<Item = Result<ExecutedPendingTransaction, StateProcessorError>>,
+        BatchExecutionHandle<DB>,
+    ) {
+        let handle = BatchExecutionHandle { db: self.db, state_overrides: self.state_overrides };
+        let stream = futures_util::stream::iter(self.results);
+        (stream, handle)
+    }
+
+    /// Consumes the result and returns the database and state overrides.
+    ///
+    /// Use this when you don't need to iterate over results as a stream.
+    pub fn into_db_and_state_overrides(self) -> (DB, StateOverride) {
+        (self.db, self.state_overrides)
+    }
+}
+
+/// Handle for accessing the final database state after batch execution.
+///
+/// This handle allows retrieval of the database and state overrides after all
+/// transactions have been processed through the stream.
+#[derive(Debug)]
+pub struct BatchExecutionHandle<DB> {
+    db: DB,
+    state_overrides: StateOverride,
+}
+
+impl<DB> BatchExecutionHandle<DB>
+where
+    DB: Database + DatabaseCommit,
+{
+    /// Consumes the handle and returns the database and state overrides.
+    ///
+    /// Should be called after the stream has been fully consumed.
+    pub fn into_db_and_state_overrides(self) -> (DB, StateOverride) {
+        (self.db, self.state_overrides)
     }
 }

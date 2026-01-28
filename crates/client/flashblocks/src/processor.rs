@@ -11,6 +11,7 @@ use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
+use futures_util::StreamExt;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;
@@ -80,7 +81,7 @@ where
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
-                    match self.process_canonical_block(prev_pending_blocks, &block) {
+                    match self.process_canonical_block(prev_pending_blocks, &block).await {
                         Ok(new_pending_blocks) => {
                             self.pending_blocks.swap(new_pending_blocks);
                         }
@@ -96,7 +97,7 @@ where
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
-                    match self.process_flashblock(prev_pending_blocks, flashblock) {
+                    match self.process_flashblock(prev_pending_blocks, flashblock).await {
                         Ok(new_pending_blocks) => {
                             if new_pending_blocks.is_some() {
                                 _ = self.sender.send(new_pending_blocks.clone().unwrap())
@@ -115,7 +116,7 @@ where
         }
     }
 
-    fn process_canonical_block(
+    async fn process_canonical_block(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         block: &RecoveredBlock<OpBlock>,
@@ -174,7 +175,7 @@ where
 
                 // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-                self.build_pending_state(None, &flashblocks)
+                self.build_pending_state(None, &flashblocks).await
             }
             ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
                 debug!(
@@ -184,7 +185,7 @@ where
                 );
 
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-                self.build_pending_state(None, &flashblocks)
+                self.build_pending_state(None, &flashblocks).await
             }
             ReconciliationStrategy::Continue => {
                 debug!(
@@ -197,7 +198,7 @@ where
                 );
                 // If no reorg, we can continue building on top of the existing pending state
                 // NOTE: We do not retain specific flashblocks here to avoid losing track of our "earliest" pending block number
-                self.build_pending_state(prev_pending_blocks, &flashblocks)
+                self.build_pending_state(prev_pending_blocks, &flashblocks).await
             }
             ReconciliationStrategy::NoPendingState => {
                 // This case is already handled above, but included for completeness
@@ -207,7 +208,7 @@ where
         }
     }
 
-    fn process_flashblock(
+    async fn process_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
@@ -216,7 +217,7 @@ where
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self.build_pending_state(None, &[flashblock]);
+                    return self.build_pending_state(None, &[flashblock]).await;
                 } else {
                     info!(message = "waiting for first Flashblock");
                     return Ok(None);
@@ -238,7 +239,7 @@ where
                 // or the first flashblock for the next block
                 let mut flashblocks = pending_blocks.get_flashblocks();
                 flashblocks.push(flashblock);
-                self.build_pending_state(prev_pending_blocks, &flashblocks)
+                self.build_pending_state(prev_pending_blocks, &flashblocks).await
             }
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block
@@ -273,7 +274,7 @@ where
         }
     }
 
-    fn build_pending_state(
+    async fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
@@ -368,7 +369,19 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
-            let mut pending_state_builder = PendingStateBuilder::new(
+            // Prepare the batch of recovered transactions for execution
+            let recovered_transactions: Vec<Recovered<OpTxEnvelope>> = txs_with_senders
+                .iter()
+                .map(|(tx, sender)| Recovered::new_unchecked(tx.clone(), *sender))
+                .collect();
+
+            // Register transaction senders with the pending blocks builder
+            for (tx, sender) in &txs_with_senders {
+                pending_blocks_builder.with_transaction_sender(tx.tx_hash(), *sender);
+                pending_blocks_builder.increment_nonce(*sender);
+            }
+
+            let pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
                 assembled.block,
@@ -377,16 +390,13 @@ where
                 state_overrides,
             );
 
-            for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
-                let tx_hash = transaction.tx_hash();
+            // Execute the batch and consume results from the async stream
+            let batch_result = pending_state_builder.execute_batch(recovered_transactions);
+            let (mut result_stream, execution_handle) = batch_result.into_stream();
 
-                pending_blocks_builder.with_transaction_sender(tx_hash, sender);
-                pending_blocks_builder.increment_nonce(sender);
-
-                let recovered_transaction = Recovered::new_unchecked(transaction, sender);
-
-                let executed_transaction =
-                    pending_state_builder.execute_transaction(idx, recovered_transaction)?;
+            while let Some(result) = result_stream.next().await {
+                let executed_transaction = result?;
+                let tx_hash = executed_transaction.rpc_transaction.inner.inner.tx_hash();
 
                 for (address, account) in executed_transaction.state.iter() {
                     if account.is_touched() {
@@ -401,7 +411,7 @@ where
                     .with_transaction_result(tx_hash, executed_transaction.result);
             }
 
-            (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
+            (db, state_overrides) = execution_handle.into_db_and_state_overrides();
             last_block_header = block_header;
         }
 
