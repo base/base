@@ -9,7 +9,8 @@ use base_execution_forks::OpHardforks;
 use base_execution_primitives::OpBlock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_provider::{BlockReader, BlockReaderIdExt, StateProviderFactory, StateReader};
+use reth_tasks::Runtime;
 use tokio::sync::{
     Mutex,
     broadcast::{self, Sender},
@@ -57,12 +58,22 @@ impl FlashblocksState {
     ///
     /// This spawns a background task that processes canonical blocks and flashblocks.
     /// Should be called after the node is launched and the provider is available.
-    pub fn start<Client>(&self, client: Client)
+    pub fn start<Client>(&self, client: Client, runtime: Runtime)
     where
         Client: StateProviderFactory
-            + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
-            + BlockReaderIdExt<Header = Header>
+            + ChainSpecProvider<
+                ChainSpec: EthChainSpec<Header = Header>
+                               + OpHardforks
+                               + Clone
+                               + Send
+                               + Sync
+                               + 'static,
+            > + BlockReaderIdExt<Header = Header>
+            + BlockReader
+            + StateReader
             + Clone
+            + Send
+            + Sync
             + 'static,
     {
         let state_processor = StateProcessor::new(
@@ -71,6 +82,7 @@ impl FlashblocksState {
             self.max_pending_blocks_depth,
             Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
+            runtime,
         );
 
         tokio::spawn(async move {
