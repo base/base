@@ -149,3 +149,7 @@ devnet-checks: devnet-status devnet-smoke
 devnet-flashblocks:
     go install github.com/danyalprout/flashblocks-websocket-client@latest
     flashblocks-websocket-client ws://localhost:${L2_BUILDER_FLASHBLOCKS_PORT}
+
+# Stream logs from devnet containers (optionally specify container names)
+devnet-logs *containers:
+    docker compose logs -f {{containers}}
