@@ -8,7 +8,7 @@ use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 
 use crate::flashblocks::FlashblocksExecutionInfo;
 
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Clone)]
 pub enum TxnExecutionResult {
     TransactionDALimitExceeded,
     #[display("BlockDALimitExceeded: total_da_used={_0} tx_da_size={_1} block_da_limit={_2}")]

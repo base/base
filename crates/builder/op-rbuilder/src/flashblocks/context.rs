@@ -44,6 +44,20 @@ use crate::{
     tx_data_store::{TxData, TxDataStore},
 };
 
+/// Records the priority fee of a rejected transaction with the given reason as a label.
+fn record_rejected_tx_priority_fee(reason: TxnExecutionResult, priority_fee: f64) {
+    let r = match reason {
+        TxnExecutionResult::TransactionDALimitExceeded => "transaction_da_limit_exceeded",
+        TxnExecutionResult::BlockDALimitExceeded(_, _, _) => "block_da_limit_exceeded",
+        TxnExecutionResult::TransactionGasLimitExceeded(_, _, _) => {
+            "transaction_gas_limit_exceeded"
+        }
+        _ => "unknown",
+    };
+    reth_metrics::metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r)
+        .record(priority_fee);
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FlashblocksExtraCtx {
     /// Current flashblock index
@@ -476,6 +490,9 @@ impl OpPayloadBuilderCtx {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(result.clone(), priority_fee);
+
                 log_txn(result);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
