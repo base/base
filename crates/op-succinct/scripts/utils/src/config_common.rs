@@ -74,9 +74,9 @@ pub async fn get_shared_config_data(
 
     // Set the verifier address.
     let verifier_address = env::var("VERIFIER_ADDRESS").unwrap_or_else(|_| {
-        // Default to Groth16 VerifierGateway contract address.
+        // Default to Plonk VerifierGateway contract address.
         // Source: https://docs.succinct.xyz/docs/sp1/verification/contract-addresses
-        "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_string()
+        "0x3B6041173B80E77f038f3F2C0f9744f04837185e".to_string()
     });
 
     let rollup_config = data_fetcher.rollup_config.as_ref().unwrap();

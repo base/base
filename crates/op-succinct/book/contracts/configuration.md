@@ -21,7 +21,7 @@ You can configure additional parameters when deploying or upgrading the `OPSucci
 | Parameter | Description |
 |-----------|-------------|
 | `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. Could be required for integrations that access consensus-layer data. |
-| `VERIFIER_ADDRESS` | Default: Succinct's official Groth16 VerifierGateway. Address of the `ISP1Verifier` contract used to verify proofs. For mock proofs, this is the address of the `SP1MockVerifier` contract. |
+| `VERIFIER_ADDRESS` | Default: Succinct's official Plonk VerifierGateway. Address of the `ISP1Verifier` contract used to verify proofs. For mock proofs, this is the address of the `SP1MockVerifier` contract. |
 | `STARTING_BLOCK_NUMBER` | Default: The finalized block number on L2. The block number to initialize the contract from. OP Succinct will start proving state roots from this block number. |
 | `SUBMISSION_INTERVAL` | Default: `10`. The minimum interval in L2 blocks for a proof to be submitted. An aggregation proof can be posted for any range larger than this interval. |
 | `FINALIZATION_PERIOD_SECS` | Default: `3600` (1 hour). The time period (in seconds) after which a proposed output becomes finalized and withdrawals can be processed. |

@@ -26,7 +26,7 @@ contract UpgradeTest is Test, Utils {
             startingOutputRoot: bytes32(0x0cde567c088a52c8ddc32c76d954c6def0cf3418524e9d70bb05e713d9b07586),
             startingTimestamp: 1733438634,
             submissionInterval: 2,
-            verifier: address(0x397A5f7f3dBd538f23DE225B51f532c34448dA9B),
+            verifier: address(0x3B6041173B80E77f038f3F2C0f9744f04837185e),
             aggregationVkey: bytes32(0x00ea4171dbd0027768055bee7f6d64e17e9cec99b29aad5d18e5d804b967775b),
             rangeVkeyCommitment: bytes32(0x1a4ebe5c47d55436319c425951eb1a7e04f560945e29eb454215d30b30987bbb),
             proxyAdmin: address(0x0000000000000000000000000000000000000000),
