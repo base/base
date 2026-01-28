@@ -11,6 +11,13 @@ use crate::{
     node::BaseNode,
 };
 
+/// The threshold for the number of blocks in the WAL before emitting a warning.
+///
+/// Base has ~2 second block times, which is 6x faster than Ethereum mainnet (~12 seconds).
+/// The default threshold of 128 blocks would trigger warnings too frequently on Base,
+/// so we use 6x the default (768) to maintain similar warning frequency.
+const BASE_WAL_BLOCKS_WARNING: usize = 768;
+
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]
 pub struct BaseNodeRunner {
@@ -69,7 +76,8 @@ impl BaseNodeRunner {
                     builder.task_executor().clone(),
                     builder.config().datadir(),
                     engine_tree_config,
-                );
+                )
+                .with_wal_blocks_warning(BASE_WAL_BLOCKS_WARNING);
 
                 builder.launch_with(launcher)
             })
