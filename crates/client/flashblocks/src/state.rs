@@ -9,7 +9,7 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_provider::{BlockReader, BlockReaderIdExt, StateProviderFactory, StateReader};
 use tokio::sync::{
     Mutex,
     broadcast::{self, Sender},
@@ -62,7 +62,11 @@ impl FlashblocksState {
         Client: StateProviderFactory
             + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
             + BlockReaderIdExt<Header = Header>
+            + BlockReader
+            + StateReader
             + Clone
+            + Send
+            + Sync
             + 'static,
     {
         let state_processor = StateProcessor::new(
