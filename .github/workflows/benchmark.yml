@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 jobs:
-  # Build base-reth-node and rbuilder together, cached by commit SHA
+  # Build base-reth-node and rbuilder together, cached by source hash
   build-binaries:
     name: Build binaries
     runs-on: ubuntu-latest
@@ -38,12 +38,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache binaries by commit SHA
+      # Cache based on Cargo files and crates source, not the whole repo
+      # This allows iterating on benchmark workflow without rebuilding binaries
+      - name: Cache binaries by source hash
         uses: actions/cache@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
         id: cache-binaries
         with:
           path: ~/bin
-          key: ${{ runner.os }}-binaries-${{ github.sha }}-${{ env.RBUILDER_VERSION }}
+          key: ${{ runner.os }}-binaries-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'bin/**') }}-${{ env.RBUILDER_VERSION }}
 
       - name: Checkout rbuilder
         if: steps.cache-binaries.outputs.cache-hit != 'true'
