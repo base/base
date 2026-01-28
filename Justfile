@@ -144,3 +144,8 @@ devnet-smoke:
 
 # Runs full devnet checks (status + smoke tests)
 devnet-checks: devnet-status devnet-smoke
+
+# Stream FB's from the builder via websocket
+devnet-flashblocks:
+    go install github.com/danyalprout/flashblocks-websocket-client@latest
+    flashblocks-websocket-client ws://localhost:${L2_BUILDER_FLASHBLOCKS_PORT}
