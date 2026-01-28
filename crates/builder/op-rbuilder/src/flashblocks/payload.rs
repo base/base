@@ -11,6 +11,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
+use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_flashtypes::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -71,7 +72,10 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 #[derive(Debug, Default, Clone)]
 pub struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
-    last_flashblock_index: usize,
+    pub(crate) last_flashblock_index: usize,
+
+    /// Flashblock-level access list builder
+    pub(crate) access_list_builder: FlashblockAccessListBuilder,
 }
 
 /// Optimism's payload builder
@@ -469,7 +473,7 @@ where
     >(
         &self,
         ctx: &OpPayloadBuilderCtx,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        info: &mut ExecutionInfo,
         state: &mut State<DB>,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
@@ -647,7 +651,7 @@ where
     fn record_flashblocks_metrics(
         &self,
         ctx: &OpPayloadBuilderCtx,
-        info: &ExecutionInfo<FlashblocksExecutionInfo>,
+        info: &ExecutionInfo,
         flashblocks_per_block: u64,
         span: &tracing::Span,
         message: &str,
@@ -675,7 +679,7 @@ where
         &self,
         state: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        info: &mut ExecutionInfo,
         finalized_cell: &BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError>
     where
@@ -775,13 +779,16 @@ where
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
+    /// The block number this flashblock belongs to
     block_number: u64,
+    /// The flashblock access list
+    access_list: FlashblockAccessList,
 }
 
 fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
-) -> Result<ExecutionInfo<FlashblocksExecutionInfo>, PayloadBuilderError>
+) -> Result<ExecutionInfo, PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + std::fmt::Debug + revm::Database,
 {
@@ -800,7 +807,7 @@ where
 pub(super) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
-    info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+    info: &mut ExecutionInfo,
     calculate_state_root: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
@@ -951,9 +958,17 @@ where
     let new_transactions_encoded =
         new_transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
+    let min_tx_index = info.extra.last_flashblock_index as u64;
+    let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
+
     info.extra.last_flashblock_index = info.executed_transactions.len();
+
+    // finalize and build the FAL
+    let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
+    let access_list = fal_builder.build(min_tx_index, max_tx_index);
+
     let metadata: FlashblocksMetadata =
-        FlashblocksMetadata { block_number: ctx.parent().number + 1 };
+        FlashblocksMetadata { block_number: ctx.parent().number + 1, access_list };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);
 

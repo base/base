@@ -7473,6 +7473,7 @@ dependencies = [
  "alloy-transport-http",
  "anyhow",
  "async-trait",
+ "base-access-lists",
  "base-builder-cli",
  "base-bundles",
  "base-flashtypes",

@@ -7,6 +7,7 @@ use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
+use base_access_lists::FBALBuilderDb;
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
@@ -34,10 +35,9 @@ use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
-    flashblocks::payload::FlashblocksExecutionInfo,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
@@ -183,10 +183,7 @@ impl OpPayloadBuilderCtx {
     /// This will return the cumulative DA bytes * scalar after Jovian
     /// after Ecotone, this will always return Some(0) as blobs aren't supported
     /// pre Ecotone, these fields aren't used.
-    pub fn blob_fields<Extra: Debug + Default>(
-        &self,
-        info: &ExecutionInfo<Extra>,
-    ) -> (Option<u64>, Option<u64>) {
+    pub fn blob_fields(&self, info: &ExecutionInfo) -> (Option<u64>, Option<u64>) {
         if self.is_jovian_active() {
             let scalar =
                 info.da_footprint_scalar.expect("Scalar must be defined for Jovian blocks");
@@ -307,10 +304,13 @@ impl OpPayloadBuilderCtx {
     pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
-    ) -> Result<ExecutionInfo<FlashblocksExecutionInfo>, PayloadBuilderError> {
+    ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut fbal_db = FBALBuilderDb::new(&mut *db);
+        let min_tx_index = info.executed_transactions.iter().len() as u64;
+        fbal_db.set_index(min_tx_index);
+        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -336,6 +336,7 @@ impl OpPayloadBuilderCtx {
             let depositor_nonce = (self.is_regolith_active() && sequencer_tx.is_deposit())
                 .then(|| {
                     evm.db_mut()
+                        .db_mut()
                         .load_cache_account(sequencer_tx.signer())
                         .map(|acc| acc.account_info().unwrap_or_default().nonce)
                 })
@@ -382,8 +383,10 @@ impl OpPayloadBuilderCtx {
             evm.db_mut().commit(state);
 
             // append sender and transaction to the respective lists
+            // and increment the next txn index for the access list
             info.executed_senders.push(sequencer_tx.signer());
             info.executed_transactions.push(sequencer_tx.into_inner());
+            evm.db_mut().inc_index();
         }
 
         let da_footprint_gas_scalar = self
@@ -396,6 +399,13 @@ impl OpPayloadBuilderCtx {
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
 
+        match fbal_db.finish() {
+            Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
+            Err(err) => {
+                error!("Failed to finalize FBALBuilder: {}", err);
+            }
+        }
+
         Ok(info)
     }
 
@@ -404,7 +414,7 @@ impl OpPayloadBuilderCtx {
     /// Returns `Ok(Some(())` if the job was cancelled.
     pub(super) fn execute_best_transactions(
         &self,
-        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
+        info: &mut ExecutionInfo,
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         block_gas_limit: u64,
@@ -418,9 +428,12 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated_fail = 0;
         let mut reverted_gas_used = 0;
         let base_fee = self.base_fee();
-
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+
+        let mut fbal_db = FBALBuilderDb::new(&mut *db);
+        let min_tx_index = info.executed_transactions.len() as u64;
+        fbal_db.set_index(min_tx_index);
+        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
 
         debug!(
             target: "payload_builder",
@@ -556,8 +569,10 @@ impl OpPayloadBuilderCtx {
             info.total_fees += U256::from(miner_fee) * U256::from(gas_used);
 
             // append sender and transaction to the respective lists
+            // and increment the next txn index for the access list
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+            evm.db_mut().inc_index();
 
             if is_success && !backrun_bundles.is_empty() {
                 self.metrics.backrun_target_txs_found_total.increment(1);
@@ -689,6 +704,15 @@ impl OpPayloadBuilderCtx {
 
                 // Remove the target tx from the backrun bundle store as already executed
                 self.tx_data_store.remove_backrun_bundles(&tx_hash);
+            }
+        }
+
+        match fbal_db.finish() {
+            Ok(fbal_builder) => {
+                info.extra.access_list_builder = fbal_builder;
+            }
+            Err(err) => {
+                error!("Failed to finalize FBALBuilder: {}", err);
             }
         }
 

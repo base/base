@@ -6,6 +6,8 @@ use derive_more::Display;
 use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 
+use crate::flashblocks::FlashblocksExecutionInfo;
+
 #[derive(Debug, Display)]
 pub enum TxnExecutionResult {
     TransactionDALimitExceeded,
@@ -26,7 +28,7 @@ pub enum TxnExecutionResult {
 }
 
 #[derive(Default, Debug)]
-pub struct ExecutionInfo<Extra: Debug + Default = ()> {
+pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
     pub executed_transactions: Vec<OpTransactionSigned>,
     /// The recovered senders for the executed transactions.
@@ -39,13 +41,13 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
-    /// Extra execution information that can be attached by individual builders.
-    pub extra: Extra,
+    /// Extra execution information for the Flashblocks builder
+    pub extra: FlashblocksExecutionInfo,
     /// DA Footprint Scalar for Jovian
     pub da_footprint_scalar: Option<u16>,
 }
 
-impl<T: Debug + Default> ExecutionInfo<T> {
+impl ExecutionInfo {
     /// Create a new instance with allocated slots.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {

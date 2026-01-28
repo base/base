@@ -52,6 +52,11 @@ where
         self.index = index;
     }
 
+    /// Increments the transaction index of the transaction currently being executed
+    pub const fn inc_index(&mut self) {
+        self.index += 1;
+    }
+
     /// Attempts to commit the changes to the underlying database
     /// as well as applies account/storage changes to the access list builder
     fn try_commit(
