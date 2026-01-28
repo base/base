@@ -1,20 +1,13 @@
 //! Flashblocks state processor.
 
-use std::{
-    collections::BTreeMap,
-    sync::{
-        Arc,
-        atomic::AtomicBool,
-    },
-    time::Instant,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use alloy_consensus::{
     Header,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::{BlockNumberOrTag, eip7928::BlockAccessList};
-use alloy_primitives::{Address, BlockNumber, B256};
+use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
@@ -24,13 +17,8 @@ use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_engine_tree::tree::{
-    CachedStateMetrics, CachedStateProvider, ExecutionCache, SavedCache, StateProviderBuilder,
-    payload_processor::{
-        ExecutionEnv, PayloadExecutionCache,
-        executor::WorkloadExecutor,
-        prewarm::{PrewarmCacheTask, PrewarmContext, PrewarmMetrics, PrewarmMode},
-    },
-    precompile_cache::PrecompileCacheMap,
+    CachedStateProvider,
+    payload_processor::executor::WorkloadExecutor,
 };
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
@@ -43,19 +31,13 @@ use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
+    BlockAssembler, CachePrewarmer, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
     PendingStateBuilder, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
     },
 };
-
-/// Default cache size in bytes (100MB).
-const DEFAULT_CACHE_SIZE: usize = 100_000_000;
-
-/// Default maximum number of prewarm workers.
-const DEFAULT_MAX_PREWARM_WORKERS: usize = 8;
 
 /// Messages consumed by the state processor.
 #[derive(Debug, Clone)]
@@ -75,14 +57,16 @@ pub struct StateProcessor<Client> {
     metrics: Metrics,
     client: Arc<Client>,
     sender: Sender<Arc<PendingBlocks>>,
-    /// Executor for spawning blocking prewarm tasks.
-    executor: WorkloadExecutor,
+    /// Cache prewarmer for BAL-based state prewarming.
+    cache_prewarmer: CachePrewarmer<Client>,
 }
 
 impl<Client> StateProcessor<Client>
 where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + ChainSpecProvider<
+            ChainSpec: EthChainSpec<Header = Header> + OpHardforks + Clone + Send + Sync + 'static,
+        >
         + BlockReaderIdExt<Header = Header>
         + BlockReader
         + StateReader
@@ -99,14 +83,17 @@ where
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
+        let client = Arc::new(client);
+        let cache_prewarmer =
+            CachePrewarmer::new(WorkloadExecutor::default(), Arc::clone(&client));
         Self {
             metrics: Metrics::default(),
             pending_blocks,
-            client: Arc::new(client),
+            client,
             max_depth,
             rx,
             sender,
-            executor: WorkloadExecutor::default(),
+            cache_prewarmer,
         }
     }
 
@@ -341,83 +328,12 @@ where
         // TODO: Get access list from flashblock metadata
         let access_list: Option<BlockAccessList> = None;
 
-        // Create saved cache for state prewarming (following payload_processor pattern)
-        let parent_hash = last_block_header.hash_slow();
-        let saved_cache = SavedCache::new(
-            parent_hash,
-            ExecutionCache::new(DEFAULT_CACHE_SIZE),
-            CachedStateMetrics::zeroed(),
-        );
+        // Set up cache with optional BAL prewarming (spawns background workers if BAL present)
+        let (cache, cache_metrics) = self
+            .cache_prewarmer
+            .setup_cache(&last_block_header, &evm_config, access_list)?;
 
-        // If we have a BAL, spawn PrewarmCacheTask in background to populate the cache
-        if let Some(bal) = access_list {
-            debug!(
-                message = "spawning PrewarmCacheTask for BAL prewarming",
-                block_number = canonical_block + 1,
-                parent_hash = %parent_hash
-            );
-
-            // Create StateProviderBuilder for prewarm workers to build their own providers
-            let provider_builder = StateProviderBuilder::new(
-                (*self.client).clone(),
-                parent_hash,
-                None, // No overlay blocks needed for flashblocks
-            );
-
-            // Create a minimal ExecutionEnv (BAL prewarming doesn't use EVM fields)
-            let execution_env = ExecutionEnv {
-                evm_env: evm_config
-                    .next_evm_env(&last_block_header, &OpNextBlockEnvAttributes {
-                        timestamp: 0,
-                        suggested_fee_recipient: Address::ZERO,
-                        prev_randao: B256::ZERO,
-                        gas_limit: 0,
-                        parent_beacon_block_root: None,
-                        extra_data: Default::default(),
-                    })
-                    .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?,
-                hash: B256::ZERO, // Not known yet for pending blocks
-                parent_hash,
-            };
-
-            // Create PrewarmContext
-            let prewarm_ctx = PrewarmContext {
-                env: execution_env,
-                evm_config: evm_config.clone(),
-                saved_cache: Some(saved_cache.clone()),
-                provider: provider_builder,
-                metrics: PrewarmMetrics::default(),
-                terminate_execution: Arc::new(AtomicBool::new(false)),
-                precompile_cache_disabled: true, // Not needed for BAL prewarming
-                precompile_cache_map: PrecompileCacheMap::default(),
-                v2_proofs_enabled: false,
-            };
-
-            // Create and spawn PrewarmCacheTask
-            let (prewarm_task, to_prewarm_task) = PrewarmCacheTask::new(
-                self.executor.clone(),
-                PayloadExecutionCache::default(),
-                prewarm_ctx,
-                None, // No multiproof
-                0,    // No transaction count hint for BAL mode
-                DEFAULT_MAX_PREWARM_WORKERS,
-            );
-
-            // Spawn the prewarm task in background (non-blocking)
-            // Use Recovered<OpTxEnvelope> as the transaction type (required by trait bounds)
-            let bal = Arc::new(bal);
-            self.executor.spawn_blocking(move || {
-                prewarm_task.run(
-                    PrewarmMode::<Recovered<OpTxEnvelope>>::BlockAccessList(bal),
-                    to_prewarm_task,
-                );
-            });
-        } else {
-            trace!(message = "no BAL available for prewarming", block_number = canonical_block + 1);
-        }
-
-        // Split the saved cache to wrap state provider (following payload_processor pattern)
-        let (cache, cache_metrics, _disable_metrics) = saved_cache.split();
+        // Wrap state provider with cache for execution
         let cached_state_provider = CachedStateProvider::new(state_provider, cache, cache_metrics);
         let state_provider_db = StateProviderDatabase::new(cached_state_provider);
         let mut pending_blocks_builder = PendingBlocksBuilder::new();

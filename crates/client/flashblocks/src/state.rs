@@ -60,7 +60,14 @@ impl FlashblocksState {
     pub fn start<Client>(&self, client: Client)
     where
         Client: StateProviderFactory
-            + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+            + ChainSpecProvider<
+                ChainSpec: EthChainSpec<Header = Header>
+                               + OpHardforks
+                               + Clone
+                               + Send
+                               + Sync
+                               + 'static,
+            >
             + BlockReaderIdExt<Header = Header>
             + BlockReader
             + StateReader
