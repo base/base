@@ -188,7 +188,10 @@ where
         let deadline = job_deadline(attributes.timestamp()) + self.extra_block_deadline;
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
-        let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
+
+        // Extract hash before moving parent_header into Arc to avoid cloning
+        let parent_hash = parent_header.hash();
+        let config = PayloadConfig::new(Arc::new(parent_header), attributes);
 
         // Create shared mutex for synchronizing cancellation with payload publishing
         let publish_guard = Arc::new(Mutex::new(()));
@@ -204,7 +207,7 @@ where
             publish_guard,
             deadline,
             build_complete: None,
-            cached_reads: self.maybe_pre_cached(parent_header.hash()),
+            cached_reads: self.maybe_pre_cached(parent_hash),
         };
 
         job.spawn_build_job();
