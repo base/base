@@ -39,9 +39,9 @@ COPY --from=builder /go/bin/op-deployer /usr/local/bin/
 RUN mkdir -p /config /output /shared /templates
 
 # Copy templates
-COPY templates/ /templates/
+COPY scripts/devnet/templates/ /templates/
 
 # Copy setup scripts
-COPY scripts/setup-l1.sh /usr/local/bin/
-COPY scripts/setup-l2.sh /usr/local/bin/
+COPY scripts/devnet/setup-l1.sh /usr/local/bin/
+COPY scripts/devnet/setup-l2.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/setup-l1.sh /usr/local/bin/setup-l2.sh
