@@ -137,12 +137,6 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
-    /// Priority fee of rejected transactions: Transaction DA limit exceeded
-    pub rejected_tx_priority_fee_da_limit: Histogram,
-    /// Priority fee of rejected transactions: Block DA limit exceeded
-    pub rejected_tx_priority_fee_block_da_limit: Histogram,
-    /// Priority fee of rejected transactions: Block gas limit exceeded
-    pub rejected_tx_priority_fee_block_gas_limit: Histogram,
     /// How much less flashblocks we issue to be on time with block construction
     pub reduced_flashblocks_number: Histogram,
     /// How much less flashblocks we issued in reality, comparing to calculated number for block
