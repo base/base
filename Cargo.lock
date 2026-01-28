@@ -2019,6 +2019,7 @@ dependencies = [
  "op-alloy-rpc-types",
  "rayon",
  "reth-chainspec",
+ "reth-engine-tree",
  "reth-evm",
  "reth-optimism-chainspec",
  "reth-optimism-evm",

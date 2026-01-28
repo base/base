@@ -1,13 +1,13 @@
 //! Flashblocks state processor.
 
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, ops::Range, sync::Arc, time::Instant};
 
 use alloy_consensus::{
     Header,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, BlockNumber};
+use alloy_eips::{BlockNumberOrTag, eip7928::BlockAccessList};
+use alloy_primitives::{Address, BlockNumber, StorageKey};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_flashtypes::Flashblock;
@@ -16,12 +16,13 @@ use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_engine_tree::tree::{CachedStateMetrics, CachedStateProvider, ExecutionCache};
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_provider::{AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
@@ -34,6 +35,172 @@ use crate::{
         ReorgDetector, SequenceValidationResult,
     },
 };
+
+/// Default cache size in bytes (100MB).
+const DEFAULT_CACHE_SIZE: usize = 100_000_000;
+
+/// Default maximum number of prewarm workers.
+const DEFAULT_MAX_PREWARM_WORKERS: usize = 8;
+
+/// Returns the total number of storage slots in a BlockAccessList.
+fn total_slots(bal: &BlockAccessList) -> usize {
+    bal.iter()
+        .map(|account| account.storage_changes.len() + account.storage_reads.len())
+        .sum()
+}
+
+/// Iterator over storage slots in a BlockAccessList with range-based filtering.
+struct BALSlotIter<'a> {
+    bal: &'a BlockAccessList,
+    range: Range<usize>,
+    current_index: usize,
+    account_idx: usize,
+    slot_idx: usize,
+}
+
+impl<'a> BALSlotIter<'a> {
+    fn new(bal: &'a BlockAccessList, range: Range<usize>) -> Self {
+        let mut iter = Self { bal, range, current_index: 0, account_idx: 0, slot_idx: 0 };
+        iter.skip_to_range_start();
+        iter
+    }
+
+    fn skip_to_range_start(&mut self) {
+        while self.account_idx < self.bal.len() {
+            let account = &self.bal[self.account_idx];
+            let slots_in_account = account.storage_changes.len() + account.storage_reads.len();
+            let account_end = self.current_index + slots_in_account;
+
+            if account_end <= self.range.start {
+                self.current_index = account_end;
+                self.account_idx += 1;
+                self.slot_idx = 0;
+            } else if self.current_index < self.range.start {
+                let skip_slots = self.range.start - self.current_index;
+                self.slot_idx = skip_slots;
+                self.current_index = self.range.start;
+                break;
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for BALSlotIter<'a> {
+    type Item = (Address, StorageKey);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current_index >= self.range.end {
+            return None;
+        }
+
+        while self.account_idx < self.bal.len() {
+            let account = &self.bal[self.account_idx];
+            let changed_len = account.storage_changes.len();
+            let total_len = changed_len + account.storage_reads.len();
+
+            if self.slot_idx < total_len {
+                let address = account.address;
+                let slot = if self.slot_idx < changed_len {
+                    account.storage_changes[self.slot_idx].slot
+                } else {
+                    account.storage_reads[self.slot_idx - changed_len]
+                };
+
+                self.slot_idx += 1;
+                self.current_index += 1;
+
+                if self.current_index > self.range.end {
+                    return None;
+                }
+
+                return Some((address, StorageKey::from(slot)));
+            }
+
+            self.account_idx += 1;
+            self.slot_idx = 0;
+        }
+
+        None
+    }
+}
+
+/// Prefetches storage slots from a BAL into the cache using parallel workers.
+///
+/// This spawns multiple rayon workers that iterate through assigned ranges of the BAL
+/// and access each storage slot to populate the cache. Each worker creates its own
+/// state provider from the client for thread safety.
+fn prefetch_bal_slots<Client>(
+    bal: &BlockAccessList,
+    client: &Client,
+    block_number: BlockNumber,
+    cache: &ExecutionCache,
+    metrics: &CachedStateMetrics,
+    max_workers: usize,
+) where
+    Client: StateProviderFactory + Sync,
+{
+    let total = total_slots(bal);
+    if total == 0 {
+        trace!(message = "no slots to prefetch in BAL");
+        return;
+    }
+
+    let workers_needed = total.min(max_workers);
+    let slots_per_worker = total / workers_needed;
+    let remainder = total % workers_needed;
+
+    debug!(
+        message = "starting BAL prefetch",
+        total_slots = total,
+        workers = workers_needed,
+        slots_per_worker = slots_per_worker
+    );
+
+    // Use rayon to spawn parallel workers
+    (0..workers_needed).into_par_iter().for_each(|i| {
+        let start = i * slots_per_worker + i.min(remainder);
+        let extra = if i < remainder { 1 } else { 0 };
+        let end = start + slots_per_worker + extra;
+
+        // Each worker creates its own state provider for thread safety
+        let state_provider = match client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number)) {
+            Ok(provider) => provider,
+            Err(err) => {
+                trace!(
+                    message = "failed to create state provider for prewarm worker",
+                    worker = i,
+                    error = %err
+                );
+                return;
+            }
+        };
+
+        let cached_provider =
+            CachedStateProvider::new(state_provider, cache.clone(), metrics.clone());
+
+        let mut last_address = None;
+        let mut slots_fetched = 0;
+
+        for (address, slot) in BALSlotIter::new(bal, start..end) {
+            // Fetch account if this is a new address
+            if last_address != Some(address) {
+                let _ = cached_provider.basic_account(&address);
+                last_address = Some(address);
+            }
+            // Access the slot to populate the cache
+            let _ = cached_provider.storage(address, slot);
+            slots_fetched += 1;
+        }
+
+        trace!(
+            message = "prewarm worker completed",
+            worker = i,
+            slots_fetched = slots_fetched
+        );
+    });
+}
 
 /// Messages consumed by the state processor.
 #[derive(Debug, Clone)]
@@ -301,7 +468,46 @@ where
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
-        let state_provider_db = StateProviderDatabase::new(state_provider);
+
+        // TODO: Get access list from flashblock metadata
+        let access_list: Option<BlockAccessList> = None;
+
+        // Create execution cache for state prewarming
+        let cache = ExecutionCache::new(DEFAULT_CACHE_SIZE);
+        let cache_metrics = CachedStateMetrics::zeroed();
+
+        // If we have a BAL, prefetch storage slots into the cache
+        if let Some(ref bal) = access_list {
+            let prewarm_start = Instant::now();
+            let slots = total_slots(bal);
+            debug!(
+                message = "starting BAL prewarm",
+                block_number = canonical_block + 1,
+                total_slots = slots
+            );
+
+            prefetch_bal_slots(
+                bal,
+                &self.client,
+                canonical_block,
+                &cache,
+                &cache_metrics,
+                DEFAULT_MAX_PREWARM_WORKERS,
+            );
+
+            debug!(
+                message = "BAL prewarm complete",
+                block_number = canonical_block + 1,
+                duration_ms = prewarm_start.elapsed().as_millis() as u64
+            );
+        } else {
+            trace!(message = "no BAL available for prewarming", block_number = canonical_block + 1);
+        }
+
+        // Wrap state provider with cache for execution
+        let cached_state_provider =
+            CachedStateProvider::new(state_provider, cache, cache_metrics);
+        let state_provider_db = StateProviderDatabase::new(cached_state_provider);
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Track state changes across flashblocks, accumulating bundle state
