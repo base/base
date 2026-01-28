@@ -44,6 +44,7 @@ use crate::{
     tx_data_store::{TxData, TxDataStore},
 };
 
+/// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: TxnExecutionResult, priority_fee: f64) {
     let r = match reason {
         TxnExecutionResult::TransactionDALimitExceeded => "transaction_da_limit_exceeded",
