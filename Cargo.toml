@@ -32,6 +32,8 @@ missing-const-for-fn = "warn"
 use-self = "warn"
 option-if-let-else = "warn"
 redundant-clone = "warn"
+clone-on-ref-ptr = "warn"
+unnecessary-to-owned = "warn"
 
 [profile.dev]
 debug = "line-tables-only"

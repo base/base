@@ -34,7 +34,7 @@ impl FlashblocksServiceBuilder {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.0.flashblocks.ws_addr, metrics.clone())?.into();
+            WebSocketPublisher::new(self.0.flashblocks.ws_addr, Arc::clone(&metrics))?.into();
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,

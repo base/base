@@ -156,7 +156,7 @@ where
             }
         });
 
-        let flashblocks_state = self.flashblocks_state.clone();
+        let flashblocks_state = Arc::clone(&self.flashblocks_state);
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 match message {

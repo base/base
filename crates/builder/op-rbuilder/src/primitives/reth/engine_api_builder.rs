@@ -1,5 +1,7 @@
 //! RPC component builder
 
+use std::sync::Arc;
+
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, BlockHash, U64};
 use alloy_rpc_types_engine::{
@@ -62,7 +64,7 @@ where
         };
         let inner = reth_rpc_engine_api::EngineApi::new(
             ctx.node.provider().clone(),
-            ctx.config.chain.clone(),
+            Arc::clone(&ctx.config.chain),
             ctx.beacon_engine_handle.clone(),
             PayloadStore::new(ctx.node.payload_builder_handle().clone()),
             ctx.node.pool().clone(),
