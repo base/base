@@ -329,12 +329,13 @@ where
         let access_list: Option<BlockAccessList> = None;
 
         // Set up cache with optional BAL prewarming (spawns background workers if BAL present)
-        let (cache, cache_metrics) = self
+        let cache_setup = self
             .cache_prewarmer
             .setup_cache(&last_block_header, &evm_config, access_list)?;
 
         // Wrap state provider with cache for execution
-        let cached_state_provider = CachedStateProvider::new(state_provider, cache, cache_metrics);
+        let cached_state_provider =
+            CachedStateProvider::new(state_provider, cache_setup.cache, cache_setup.metrics);
         let state_provider_db = StateProviderDatabase::new(cached_state_provider);
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
@@ -453,6 +454,11 @@ where
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
+
+        // Terminate prewarm task now that execution is complete
+        if let Some(prewarm_handle) = cache_setup.prewarm_handle {
+            prewarm_handle.terminate();
+        }
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }

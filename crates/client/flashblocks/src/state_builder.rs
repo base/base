@@ -38,11 +38,52 @@ use tracing::debug;
 
 use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
 
+use std::sync::mpsc::Sender;
+
+use reth_engine_tree::tree::payload_processor::prewarm::PrewarmTaskEvent;
+
 /// Default cache size in bytes (100MB).
 const DEFAULT_CACHE_SIZE: usize = 100_000_000;
 
 /// Default maximum number of prewarm workers.
 const DEFAULT_MAX_PREWARM_WORKERS: usize = 8;
+
+/// Handle for managing a running prewarm task.
+///
+/// Call [`PrewarmHandle::terminate`] when block execution is complete to cleanly
+/// shut down the prewarm task. If dropped without calling terminate, the task
+/// will exit when its channel is closed.
+#[derive(Debug)]
+pub struct PrewarmHandle {
+    sender: Sender<PrewarmTaskEvent<OpReceipt>>,
+}
+
+impl PrewarmHandle {
+    /// Signals the prewarm task to terminate.
+    ///
+    /// This should be called when block execution is complete.
+    pub fn terminate(self) {
+        // Create a dummy receiver to satisfy the type.
+        // With execution_outcome: None, the cache saving logic is skipped.
+        let (_tx, rx) = std::sync::mpsc::channel();
+
+        let _ = self.sender.send(PrewarmTaskEvent::Terminate {
+            execution_outcome: None,
+            valid_block_rx: rx,
+        });
+    }
+}
+
+/// Result of setting up a cache with optional prewarming.
+#[derive(Debug)]
+pub struct CacheSetupResult {
+    /// The execution cache to use with `CachedStateProvider`.
+    pub cache: ExecutionCache,
+    /// Metrics for the cache.
+    pub metrics: CachedStateMetrics,
+    /// Optional handle to terminate the prewarm task (only present if BAL was provided).
+    pub prewarm_handle: Option<PrewarmHandle>,
+}
 
 /// Manages cache prewarming for flashblocks execution.
 ///
@@ -65,15 +106,17 @@ where
 
     /// Sets up a cache and optionally spawns prewarming workers if a BAL is provided.
     ///
-    /// Returns the cache components needed to create a `CachedStateProvider`.
+    /// Returns `CacheSetupResult` containing the cache components and an optional
+    /// handle to terminate the prewarm task.
+    ///
     /// If a BAL is provided, background workers will populate the cache in parallel
-    /// with execution.
+    /// with execution. Call `prewarm_handle.terminate()` when execution is complete.
     pub fn setup_cache<ChainSpec>(
         &self,
         parent_header: &Header,
         evm_config: &OpEvmConfig<ChainSpec>,
         access_list: Option<BlockAccessList>,
-    ) -> Result<(ExecutionCache, CachedStateMetrics), ExecutionError>
+    ) -> Result<CacheSetupResult, ExecutionError>
     where
         ChainSpec: reth_chainspec::EthChainSpec<Header = Header>
             + OpHardforks
@@ -92,22 +135,24 @@ where
         );
 
         // If we have a BAL, spawn PrewarmCacheTask in background
-        if let Some(bal) = access_list {
-            self.spawn_prewarm_task(
+        let prewarm_handle = if let Some(bal) = access_list {
+            Some(self.spawn_prewarm_task(
                 parent_header,
                 parent_hash,
                 evm_config,
                 saved_cache.clone(),
                 bal,
-            )?;
-        }
+            )?)
+        } else {
+            None
+        };
 
         // Split the saved cache to return components for CachedStateProvider
-        let (cache, cache_metrics, _disable_metrics) = saved_cache.split();
-        Ok((cache, cache_metrics))
+        let (cache, metrics, _disable_metrics) = saved_cache.split();
+        Ok(CacheSetupResult { cache, metrics, prewarm_handle })
     }
 
-    /// Spawns the PrewarmCacheTask in background.
+    /// Spawns the PrewarmCacheTask in background and returns a handle to terminate it.
     fn spawn_prewarm_task<ChainSpec>(
         &self,
         parent_header: &Header,
@@ -115,7 +160,7 @@ where
         evm_config: &OpEvmConfig<ChainSpec>,
         saved_cache: SavedCache,
         bal: BlockAccessList,
-    ) -> Result<(), ExecutionError>
+    ) -> Result<PrewarmHandle, ExecutionError>
     where
         ChainSpec: reth_chainspec::EthChainSpec<Header = Header>
             + OpHardforks
@@ -165,8 +210,8 @@ where
             v2_proofs_enabled: false,
         };
 
-        // Create and spawn PrewarmCacheTask
-        let (prewarm_task, to_prewarm_task) = PrewarmCacheTask::new(
+        // Create PrewarmCacheTask
+        let (prewarm_task, actions_tx) = PrewarmCacheTask::new(
             self.executor.clone(),
             PayloadExecutionCache::default(),
             prewarm_ctx,
@@ -175,16 +220,19 @@ where
             DEFAULT_MAX_PREWARM_WORKERS,
         );
 
+        // Clone sender for the handle before moving into spawn
+        let handle_sender = actions_tx.clone();
+
         // Spawn the prewarm task in background (non-blocking)
         let bal = Arc::new(bal);
         self.executor.spawn_blocking(move || {
             prewarm_task.run(
                 PrewarmMode::<Recovered<OpTxEnvelope>>::BlockAccessList(bal),
-                to_prewarm_task,
+                actions_tx,
             );
         });
 
-        Ok(())
+        Ok(PrewarmHandle { sender: handle_sender })
     }
 }
 
