@@ -27,3 +27,4 @@ vergen-git2.workspace = true
 [features]
 default = [ "jemalloc" ]
 jemalloc = [ "op-rbuilder/jemalloc", "reth-cli-util/jemalloc" ]
+otlp = [ "op-rbuilder/otlp" ]
