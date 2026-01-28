@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 jobs:
-  # Build base-reth-node and rbuilder together to share compiled dependencies
+  # Build base-reth-node and rbuilder together, cached by commit SHA
   build-binaries:
     name: Build binaries
     runs-on: ubuntu-latest
@@ -38,7 +38,15 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cache binaries by commit SHA
+        uses: actions/cache@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        id: cache-binaries
+        with:
+          path: ~/bin
+          key: ${{ runner.os }}-binaries-${{ github.sha }}-${{ env.RBUILDER_VERSION }}
+
       - name: Checkout rbuilder
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: base/op-rbuilder
@@ -46,35 +54,48 @@ jobs:
           path: op-rbuilder
 
       - name: Install native dependencies
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
           packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
           version: 1.0
 
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+      - name: Set up Rust
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
 
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - name: Rust cache
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
           add-rust-environment-hash-key: "false"
           key: benchmark-${{ hashFiles('Cargo.lock') }}-${{ env.RBUILDER_VERSION }}
 
       - name: Install Foundry
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
         uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
         with:
           version: stable
 
       - name: Build base-reth-node
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
           cargo build --bin base-reth-node --profile maxperf
           mkdir -p ~/bin
           cp target/maxperf/base-reth-node ~/bin/
 
       - name: Build rbuilder
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
         working-directory: op-rbuilder
         run: |
           cargo build -p op-rbuilder --bin op-rbuilder --release
           cp target/release/op-rbuilder ~/bin/rbuilder
+
+      - name: Verify binaries exist
+        run: |
+          echo "Binaries in ~/bin:"
+          ls -la ~/bin/
 
       - name: Upload binaries artifact
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
