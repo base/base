@@ -29,5 +29,5 @@ reth-cli-util.workspace = true
 clap.workspace = true
 
 [features]
-default = []
+default = [ "jemalloc" ]
 jemalloc = [ "reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc" ]
