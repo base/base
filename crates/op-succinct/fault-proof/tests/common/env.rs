@@ -6,13 +6,13 @@ use std::{
 };
 
 use alloy_network::EthereumWallet;
-use alloy_primitives::{Address, Bytes, FixedBytes, Uint, U256};
+use alloy_primitives::{hex, Address, Bytes, FixedBytes, Uint, B256, U256};
 use alloy_provider::ProviderBuilder;
 use alloy_rpc_types_eth::TransactionReceipt;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use alloy_transport_http::reqwest::Url;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use op_succinct_bindings::{
     anchor_state_registry::AnchorStateRegistry::{self, AnchorStateRegistryInstance},
     dispute_game_factory::DisputeGameFactory::{self, DisputeGameFactoryInstance},
@@ -21,12 +21,16 @@ use op_succinct_bindings::{
         self, OPSuccinctFaultDisputeGameInstance,
     },
 };
+use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
+use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::{
     fetcher::{get_rpcs_from_env, OPSuccinctDataFetcher, RPCConfig},
     host::OPSuccinctHost,
     OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH,
 };
+use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::{Signer, SignerLock};
+use sp1_sdk::{HashableKey, Prover, ProverClient};
 use tokio::task::JoinHandle;
 use tracing::{info, Level};
 
@@ -81,10 +85,34 @@ impl Drop for TestEnvironment {
     }
 }
 
+/// Compute vkeys from ELF programs.
+/// Returns (aggregation_vkey, range_vkey_commitment) as B256 values.
+/// Uses the same computation as `proposer.rs` and `config_common.rs`.
+pub fn compute_vkeys() -> (B256, B256) {
+    let prover = ProverClient::builder().cpu().build();
+
+    let (_, agg_vk) = prover.setup(AGGREGATION_ELF);
+    let aggregation_vkey = {
+        let hex_str = agg_vk.bytes32();
+        B256::from_slice(&hex::decode(hex_str.trim_start_matches("0x")).unwrap())
+    };
+
+    let (_, range_vk) = prover.setup(get_range_elf_embedded());
+    let range_vkey_commitment = B256::from(u32_to_u8(range_vk.vk.hash_u32()));
+
+    (aggregation_vkey, range_vkey_commitment)
+}
+
 /// The test configuration, used for integration tests.
-pub fn test_config(starting_l2_block_number: u64, starting_root: String) -> FaultDisputeGameConfig {
+pub fn test_config(
+    starting_l2_block_number: u64,
+    starting_root: String,
+    aggregation_vkey: B256,
+    range_vkey_commitment: B256,
+    rollup_config_hash: B256,
+) -> FaultDisputeGameConfig {
     FaultDisputeGameConfig {
-        aggregation_vkey: AGGREGATION_VKEY.to_string(),
+        aggregation_vkey: aggregation_vkey.to_string(),
         challenger_addresses: vec![CHALLENGER_ADDRESS.to_string()],
         challenger_bond_wei: CHALLENGER_BOND.to::<u64>(),
         dispute_game_finality_delay_seconds: DISPUTE_GAME_FINALITY_DELAY_SECONDS,
@@ -96,8 +124,8 @@ pub fn test_config(starting_l2_block_number: u64, starting_root: String) -> Faul
         optimism_portal2_address: Address::ZERO.to_string(),
         permissionless_mode: false,
         proposer_addresses: vec![PROPOSER_ADDRESS.to_string()],
-        range_vkey_commitment: RANGE_VKEY_COMMITMENT.to_string(),
-        rollup_config_hash: ROLLUP_CONFIG_HASH.to_string(),
+        range_vkey_commitment: range_vkey_commitment.to_string(),
+        rollup_config_hash: rollup_config_hash.to_string(),
         starting_l2_block_number,
         starting_root,
         system_config_address: Address::ZERO.to_string(),
@@ -111,17 +139,30 @@ impl TestEnvironment {
     pub async fn setup() -> Result<Self> {
         init_logging();
 
+        // Compute vkeys from ELFs - these will match the proposer's computed vkeys
+        let (aggregation_vkey, range_vkey_commitment) = compute_vkeys();
+
         // Get environment variables
         let mut rpc_config = get_rpcs_from_env();
 
-        let fetcher = OPSuccinctDataFetcher::new();
+        let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+
+        // Compute rollup_config_hash from fetcher's chain config - matches proposer's computation
+        let rollup_config_hash = hash_rollup_config(
+            fetcher.rollup_config.as_ref().context("rollup_config required for test setup")?,
+        );
 
         // Setup fresh Anvil chain
         let anvil = setup_anvil_chain().await?;
 
         // Put the test config into ../contracts/opsuccinctfdgconfig.json
-        let test_config: FaultDisputeGameConfig =
-            test_config(anvil.starting_l2_block_number, anvil.starting_root.clone());
+        let test_config: FaultDisputeGameConfig = test_config(
+            anvil.starting_l2_block_number,
+            anvil.starting_root.clone(),
+            aggregation_vkey,
+            range_vkey_commitment,
+            rollup_config_hash,
+        );
         let json = serde_json::to_string_pretty(&test_config)?;
         std::fs::write(OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH.clone(), json)?;
 
@@ -153,8 +194,16 @@ impl TestEnvironment {
     pub async fn setup_with_starting_block_offset(offset: i64) -> Result<Self> {
         init_logging();
 
+        // Compute vkeys from ELFs - these will match the proposer's computed vkeys
+        let (aggregation_vkey, range_vkey_commitment) = compute_vkeys();
+
         let mut rpc_config = get_rpcs_from_env();
-        let fetcher = OPSuccinctDataFetcher::new();
+        let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+
+        // Compute rollup_config_hash from fetcher's chain config - matches proposer's computation
+        let rollup_config_hash = hash_rollup_config(
+            fetcher.rollup_config.as_ref().context("rollup_config required for test setup")?,
+        );
 
         // Setup anvil chain - gets actual L2 finalized block
         let anvil = setup_anvil_chain().await?;
@@ -176,7 +225,13 @@ impl TestEnvironment {
         };
 
         // Create config with offset starting block
-        let test_config = test_config(custom_starting_block, starting_root);
+        let test_config = test_config(
+            custom_starting_block,
+            starting_root,
+            aggregation_vkey,
+            range_vkey_commitment,
+            rollup_config_hash,
+        );
         let json = serde_json::to_string_pretty(&test_config)?;
         std::fs::write(OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH.clone(), json)?;
 
@@ -545,6 +600,82 @@ impl TestEnvironment {
 
         Ok(receipt)
     }
+
+    /// Deploy a new game implementation with custom vkeys via forge script and set it in the
+    /// factory. This simulates a hardfork where the game implementation changes.
+    /// Note: This also sets the implementation in the factory, so calling set_game_implementation
+    /// afterwards is not required.
+    pub async fn deploy_game_impl_with_vkeys(
+        &self,
+        aggregation_vkey: B256,
+        range_vkey_commitment: B256,
+    ) -> Result<Address> {
+        use std::process::Command;
+
+        // Get the SP1 verifier address from the existing game implementation
+        let provider = self.provider_with_role(Role::Proposer)?;
+        let existing_game =
+            OPSuccinctFaultDisputeGame::new(self.deployed.game_implementation, provider);
+        let verifier_address = existing_game.sp1Verifier().call().await?;
+
+        // Compute rollup_config_hash from the fetcher's chain config
+        // This stays the same during hardforks (only vkeys change)
+        let rollup_config_hash = hash_rollup_config(
+            self.fetcher.rollup_config.as_ref().context("rollup_config required")?,
+        );
+
+        let contracts_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("contracts");
+
+        // Build environment variables for the forge script
+        // Uses UpgradeOPSuccinctFDG.s.sol which deploys impl and sets it in factory
+        let output = Command::new("forge")
+            .arg("script")
+            .arg("script/fp/UpgradeOPSuccinctFDG.s.sol")
+            .arg("--broadcast")
+            .arg("--rpc-url")
+            .arg(&self.anvil.endpoint)
+            .arg("--private-key")
+            .arg(self.private_keys.deployer)
+            .arg("--json")
+            .env("FACTORY_ADDRESS", self.deployed.factory.to_string())
+            .env("GAME_TYPE", TEST_GAME_TYPE.to_string())
+            .env("VERIFIER_ADDRESS", verifier_address.to_string())
+            .env("ANCHOR_STATE_REGISTRY", self.deployed.anchor_state_registry.to_string())
+            .env("ACCESS_MANAGER", self.deployed.access_manager.to_string())
+            .env("AGGREGATION_VKEY", aggregation_vkey.to_string())
+            .env("RANGE_VKEY_COMMITMENT", range_vkey_commitment.to_string())
+            .env("ROLLUP_CONFIG_HASH", rollup_config_hash.to_string())
+            .env("MAX_CHALLENGE_DURATION", MAX_CHALLENGE_DURATION.to_string())
+            .env("MAX_PROVE_DURATION", MAX_PROVE_DURATION.to_string())
+            .env("CHALLENGER_BOND_WEI", CHALLENGER_BOND.to_string())
+            .current_dir(&contracts_dir)
+            .output()
+            .context("Failed to execute forge script")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Forge script failed: {}", stderr);
+        }
+
+        // Parse JSON output to extract gameImpl address
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let impl_address = parse_game_impl_address(&stdout)?;
+
+        info!("✓ Deployed and set game implementation with custom vkeys at {impl_address}");
+        Ok(impl_address)
+    }
+
+    /// Set the game implementation for a specific game type.
+    /// This upgrades the factory to use a new implementation (hardfork).
+    pub async fn set_game_implementation(&self, game_type: u32, new_impl: Address) -> Result<()> {
+        let set_impl_call =
+            DisputeGameFactory::setImplementation_0Call { _gameType: game_type, _impl: new_impl };
+        self.send_factory_tx(set_impl_call.abi_encode(), None).await?;
+
+        info!("✓ Set game implementation for type {game_type} to {new_impl}");
+        Ok(())
+    }
 }
 
 pub struct TestPrivateKeys {
@@ -586,4 +717,31 @@ pub fn init_logging() {
 
         tracing_subscriber::registry().with(fmt::layer().compact()).with(filter).init()
     });
+}
+
+/// Parse the forge script JSON output to extract the gameImpl address.
+fn parse_game_impl_address(output: &str) -> Result<Address> {
+    #[derive(serde::Deserialize)]
+    struct ForgeOutput {
+        returns: ForgeReturns,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ForgeReturns {
+        game_impl: AddressField,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct AddressField {
+        value: String,
+    }
+
+    let json_line =
+        output.lines().next().ok_or_else(|| anyhow::anyhow!("No output from forge script"))?;
+
+    let forge_output: ForgeOutput =
+        serde_json::from_str(json_line).context("Failed to parse forge output")?;
+
+    forge_output.returns.game_impl.value.parse().context("Failed to parse gameImpl address")
 }

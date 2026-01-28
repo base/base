@@ -157,6 +157,38 @@ deploy-mock-verifier env_file=".env":
     --broadcast \
     $VERIFY
 
+# Upgrade the game implementation contract (for hardfork/upgrade)
+# This script deploys a new OPSuccinctFaultDisputeGame implementation and sets it in the factory.
+# Required env vars: FACTORY_ADDRESS, GAME_TYPE, VERIFIER_ADDRESS, ANCHOR_STATE_REGISTRY, ACCESS_MANAGER,
+#                    AGGREGATION_VKEY, RANGE_VKEY_COMMITMENT, ROLLUP_CONFIG_HASH,
+#                    MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION, CHALLENGER_BOND_WEI
+upgrade-game-impl env_file=".env":
+    #!/usr/bin/env bash
+    set -aeo pipefail
+
+    source {{env_file}}
+
+    if [ -z "$L1_RPC" ]; then
+        echo "L1_RPC not set in {{env_file}}"
+        exit 1
+    fi
+
+    if [ -z "$PRIVATE_KEY" ]; then
+        echo "PRIVATE_KEY not set in {{env_file}}"
+        exit 1
+    fi
+
+    cd contracts
+
+    echo "Upgrading game implementation..."
+    forge script script/fp/UpgradeOPSuccinctFDG.s.sol \
+        --rpc-url "$L1_RPC" \
+        --private-key "$PRIVATE_KEY" \
+        --broadcast \
+        --slow
+
+    echo "Game implementation upgrade complete!"
+
 # Deploy the OPSuccinct L2 Output Oracle
 deploy-oracle env_file=".env" *features='':
     #!/usr/bin/env bash
