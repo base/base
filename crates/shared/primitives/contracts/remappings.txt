@@ -1,0 +1,3 @@
+@openzeppelin/=dependencies/openzeppelin-contracts-5.5.0/
+forge-std/=dependencies/forge-std-1.14.0/src/
+solmate/=dependencies/solmate-6.8.0/src/
