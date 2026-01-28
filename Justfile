@@ -1,4 +1,5 @@
 set positional-arguments := true
+set dotenv-filename := ".env.devnet"
 
 alias t := test
 alias f := fix
@@ -133,10 +134,13 @@ devnet-down:
 devnet-status:
     ./scripts/devnet/status.sh
 
+# Shows funded test accounts with live balances and nonces
+devnet-accounts:
+    ./scripts/devnet/accounts.sh
+
 # Sends test transactions to L1 and L2
-devnet-smoke rpc="http://localhost:4545" pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" to="0x70997970C51812dc3A010C7d01b50e0d17dc79C8":
-    ./scripts/devnet/smoke.sh {{rpc}} {{pk}} {{to}}
+devnet-smoke:
+    ./scripts/devnet/smoke.sh
 
 # Runs full devnet checks (status + smoke tests)
-devnet-checks rpc="http://localhost:4545" pk="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" to="0x70997970C51812dc3A010C7d01b50e0d17dc79C8": devnet-status
-    ./scripts/devnet/smoke.sh {{rpc}} {{pk}} {{to}}
+devnet-checks: devnet-status devnet-smoke

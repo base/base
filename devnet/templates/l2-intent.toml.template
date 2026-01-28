@@ -1,6 +1,6 @@
 configType = "custom"
 l1ChainID = ${L1_CHAIN_ID}
-fundDevAccounts = false
+fundDevAccounts = true
 l1ContractsLocator = "embedded"
 l2ContractsLocator = "embedded"
 

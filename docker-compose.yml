@@ -9,7 +9,7 @@ services:
       - ./.devnet/l1/reth:/data/l1-reth
       - ./.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
-      - CHAIN_ID=1337
+      - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=4
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
@@ -23,10 +23,10 @@ services:
       setup-l1:
         condition: service_completed_successfully
     ports:
-      - "4545:4545"   # HTTP RPC
-      - "4546:4546"   # WebSocket
-      - "4551:4551"   # Auth RPC (Engine API)
-      - "4303:4303"   # P2P
+      - "${L1_HTTP_PORT}:${L1_HTTP_PORT}"   # HTTP RPC
+      - "${L1_WS_PORT}:${L1_WS_PORT}"       # WebSocket
+      - "${L1_AUTH_PORT}:${L1_AUTH_PORT}"   # Auth RPC (Engine API)
+      - "${L1_P2P_PORT}:${L1_P2P_PORT}"     # P2P
     volumes:
       - ./.devnet/l1/reth:/data
       - ./.devnet/l1/configs:/genesis:ro
@@ -38,22 +38,22 @@ services:
       - --color=never
       - --http
       - --http.addr=0.0.0.0
-      - --http.port=4545
+      - --http.port=${L1_HTTP_PORT}
       - --http.api=admin,eth,web3,net,rpc,debug,txpool
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
-      - --ws.port=4546
+      - --ws.port=${L1_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=4551
+      - --authrpc.port=${L1_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --port=4303
+      - --port=${L1_P2P_PORT}
       - --disable-discovery
       - -vvv
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/4545"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -67,9 +67,9 @@ services:
       setup-l1:
         condition: service_completed_successfully
     ports:
-      - "4052:4052"   # Beacon API
-      - "4900:4900"   # P2P TCP
-      - "4900:4900/udp" # P2P UDP
+      - "${L1_CL_HTTP_PORT}:${L1_CL_HTTP_PORT}"     # Beacon API
+      - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}"       # P2P TCP
+      - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}/udp"   # P2P UDP
     volumes:
       - ./.devnet/l1/lighthouse:/data
       - ./.devnet/l1/configs:/genesis:ro
@@ -82,23 +82,23 @@ services:
       - --disable-peer-scoring
       - --staking
       - --enr-address=127.0.0.1
-      - --enr-udp-port=4900
-      - --enr-tcp-port=4900
-      - --port=4900
+      - --enr-udp-port=${L1_CL_P2P_PORT}
+      - --enr-tcp-port=${L1_CL_P2P_PORT}
+      - --port=${L1_CL_P2P_PORT}
       - --http
       - --http-address=0.0.0.0
-      - --http-port=4052
+      - --http-port=${L1_CL_HTTP_PORT}
       - --http-allow-origin=*
       - --disable-packet-filter
       - --target-peers=0
       - --supernode
-      - --execution-endpoint=http://l1-el:4551
+      - --execution-endpoint=http://l1-el:${L1_AUTH_PORT}
       - --execution-jwt=/genesis/jwt.hex
       - --always-prepare-payload
       - --prepare-payload-lookahead=8000
-      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --suggested-fee-recipient=${FEE_RECIPIENT}
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/4052"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_CL_HTTP_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -118,9 +118,9 @@ services:
       - vc
       - --testnet-dir=/genesis/cl
       - --datadir=/genesis/cl/validator_data
-      - --beacon-nodes=http://l1-cl:4052
+      - --beacon-nodes=http://l1-cl:${L1_CL_HTTP_PORT}
       - --init-slashing-protection
-      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --suggested-fee-recipient=${FEE_RECIPIENT}
     restart: unless-stopped
 
   setup-l2:
@@ -128,6 +128,7 @@ services:
       context: ./devnet
       dockerfile: Dockerfile.setup
     container_name: setup-l2
+    env_file: .env.devnet
     depends_on:
       l1-el:
         condition: service_healthy
@@ -138,11 +139,19 @@ services:
       - ./.devnet/l2/client:/data/l2-client
       - ./.devnet/l2/client-cl:/data/l2-client-cl
     environment:
-      - L1_RPC_URL=http://l1-el:4545
-      - L1_CHAIN_ID=1337
-      - L2_CHAIN_ID=84538453
+      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
       - OUTPUT_DIR=/output
       - L2_DATA_DIR=/data
+      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
+      - BATCHER_ADDR=${BATCHER_ADDR}
+      - PROPOSER_ADDR=${PROPOSER_ADDR}
+      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
+      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
+      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   base-builder:
@@ -156,12 +165,12 @@ services:
       setup-l2:
         condition: service_completed_successfully
     ports:
-      - "7545:7545"   # HTTP RPC
-      - "7546:7546"   # WebSocket
-      - "7551:7551"   # Auth RPC (Engine API)
-      - "7303:7303"   # P2P
-      - "7111:7111"   # Flashblocks
-      - "7090:7090"   # Metrics
+      - "${L2_BUILDER_HTTP_PORT}:${L2_BUILDER_HTTP_PORT}"           # HTTP RPC
+      - "${L2_BUILDER_WS_PORT}:${L2_BUILDER_WS_PORT}"               # WebSocket
+      - "${L2_BUILDER_AUTH_PORT}:${L2_BUILDER_AUTH_PORT}"           # Auth RPC (Engine API)
+      - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}"             # P2P
+      - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
+      - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
     volumes:
       - ./.devnet/l2/builder:/data
       - ./.devnet/l1/configs:/genesis:ro
@@ -172,31 +181,31 @@ services:
       - --datadir=/data
       - --http
       - --http.addr=0.0.0.0
-      - --http.port=7545
+      - --http.port=${L2_BUILDER_HTTP_PORT}
       - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
-      - --ws.port=7546
+      - --ws.port=${L2_BUILDER_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=7551
+      - --authrpc.port=${L2_BUILDER_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --port=7303
-      - --discovery.port=7303
-      - --p2p-secret-key-hex=2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
+      - --port=${L2_BUILDER_P2P_PORT}
+      - --discovery.port=${L2_BUILDER_P2P_PORT}
+      - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
       - --flashblocks.addr=0.0.0.0
-      - --flashblocks.port=7111
+      - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
       - --flashblocks.disable-state-root
       - --flashblocks.compute-state-root-on-finalize
       - --rollup.chain-block-time=2000
-      - --metrics=0.0.0.0:7090
+      - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --color=never
       - -vvv
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/7545"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_BUILDER_HTTP_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -210,21 +219,21 @@ services:
       base-builder:
         condition: service_healthy
     ports:
-      - "7549:7549"   # RPC
-      - "7003:7003"   # P2P TCP
-      - "7003:7003/udp" # P2P UDP
-      - "7300:7300"   # Metrics
+      - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
+      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
+      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}/udp"   # P2P UDP
+      - "${L2_BUILDER_CL_METRICS_PORT}:${L2_BUILDER_CL_METRICS_PORT}"  # Metrics
     volumes:
       - ./.devnet/l2/builder-cl:/data
       - ./.devnet/l1/configs:/genesis:ro
     command:
       - op-node
       - --l1
-      - http://l1-el:4545
+      - http://l1-el:${L1_HTTP_PORT}
       - --l1.beacon
-      - http://l1-cl:4052
+      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2
-      - http://base-builder:7551
+      - http://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2.jwt-secret
       - /genesis/jwt.hex
       - --rollup.config
@@ -234,30 +243,29 @@ services:
       - --rpc.addr
       - "0.0.0.0"
       - --rpc.port
-      - "7549"
+      - "${L2_BUILDER_CL_RPC_PORT}"
       - --p2p.listen.tcp
-      - "7003"
+      - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
-      - "7003"
+      - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"
       - --metrics.port
-      - "7300"
+      - "${L2_BUILDER_CL_METRICS_PORT}"
       - --sequencer.enabled
       - --sequencer.l1-confs
       - "0"
-      # Anvil Account 5: 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
       - --p2p.sequencer.key
-      - 8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
+      - ${SEQUENCER_KEY}
       - --p2p.scoring.peers
       - none
       - --p2p.ban.peers
       - "false"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7549"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:${L2_BUILDER_CL_RPC_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -271,20 +279,19 @@ services:
       base-builder-cl:
         condition: service_healthy
     ports:
-      - "6060:6060"   # Metrics
+      - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     volumes:
       - ./.devnet/l1/configs:/genesis:ro
     command:
       - op-batcher
       - --l1-eth-rpc
-      - http://l1-el:4545
+      - http://l1-el:${L1_HTTP_PORT}
       - --l2-eth-rpc
-      - http://base-builder:7545
+      - http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --rollup-rpc
-      - http://base-builder-cl:7549
-      # Anvil Account 6: 0x976EA74026E726554dB657fA54763abd0C3a0aa9
+      - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
-      - "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e"
+      - ${BATCHER_KEY}
       - --max-channel-duration
       - "2"
       - --poll-interval
@@ -297,7 +304,7 @@ services:
       - --metrics.addr
       - "0.0.0.0"
       - --metrics.port
-      - "6060"
+      - "${BATCHER_METRICS_PORT}"
     restart: unless-stopped
 
   base-client:
@@ -311,11 +318,11 @@ services:
       setup-l2:
         condition: service_completed_successfully
     ports:
-      - "8545:8545"   # HTTP RPC
-      - "8546:8546"   # WebSocket
-      - "8551:8551"   # Auth RPC (Engine API)
-      - "8303:8303"   # P2P
-      - "8090:8090"   # Metrics
+      - "${L2_CLIENT_HTTP_PORT}:${L2_CLIENT_HTTP_PORT}"     # HTTP RPC
+      - "${L2_CLIENT_WS_PORT}:${L2_CLIENT_WS_PORT}"         # WebSocket
+      - "${L2_CLIENT_AUTH_PORT}:${L2_CLIENT_AUTH_PORT}"     # Auth RPC (Engine API)
+      - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
+      - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
     volumes:
       - ./.devnet/l2/client:/data
       - ./.devnet/l1/configs:/genesis:ro
@@ -326,27 +333,27 @@ services:
       - --datadir=/data
       - --http
       - --http.addr=0.0.0.0
-      - --http.port=8545
+      - --http.port=${L2_CLIENT_HTTP_PORT}
       - --http.api=admin,eth,web3,net,rpc,debug,txpool
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
-      - --ws.port=8546
+      - --ws.port=${L2_CLIENT_WS_PORT}
       - --ws.api=eth,web3,net,txpool,debug
       - --ws.origins=*
-      - --authrpc.port=8551
+      - --authrpc.port=${L2_CLIENT_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
-      - --port=8303
-      - --discovery.port=8303
-      - --metrics=0.0.0.0:8090
-      - --flashblocks-url=ws://base-builder:7111
-      # Anvil Account 9 P2P key
-      - --trusted-peers=enode://8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5@base-builder:7303
+      - --port=${L2_CLIENT_P2P_PORT}
+      - --discovery.port=${L2_CLIENT_P2P_PORT}
+      - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
+      - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
+      - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
+      - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --color=never
       - -vvv
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8545"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CLIENT_HTTP_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -360,21 +367,21 @@ services:
       base-client:
         condition: service_healthy
     ports:
-      - "8549:8549"   # RPC
-      - "8003:8003"   # P2P TCP
-      - "8003:8003/udp" # P2P UDP
-      - "8300:8300"   # Metrics
+      - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # P2P UDP
+      - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
     volumes:
       - ./.devnet/l2/client-cl:/data
       - ./.devnet/l1/configs:/genesis:ro
     command:
       - op-node
       - --l1
-      - http://l1-el:4545
+      - http://l1-el:${L1_HTTP_PORT}
       - --l1.beacon
-      - http://l1-cl:4052
+      - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2
-      - http://base-client:8551
+      - http://base-client:${L2_CLIENT_AUTH_PORT}
       - --l2.jwt-secret
       - /genesis/jwt.hex
       - --rollup.config
@@ -384,24 +391,24 @@ services:
       - --rpc.addr
       - "0.0.0.0"
       - --rpc.port
-      - "8549"
+      - "${L2_CLIENT_CL_RPC_PORT}"
       - --p2p.listen.tcp
-      - "8003"
+      - "${L2_CLIENT_CL_P2P_PORT}"
       - --p2p.listen.udp
-      - "8003"
+      - "${L2_CLIENT_CL_P2P_PORT}"
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"
       - --metrics.port
-      - "8300"
+      - "${L2_CLIENT_CL_METRICS_PORT}"
       - --p2p.static
-      - /dns4/base-builder-cl/tcp/7003/p2p/16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12
+      - /dns4/base-builder-cl/tcp/${L2_BUILDER_CL_P2P_PORT}/p2p/${BUILDER_LIBP2P_PEER_ID}
       - --p2p.scoring.peers
       - none
       - --p2p.ban.peers
       - "false"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8549"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:${L2_CLIENT_CL_RPC_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240

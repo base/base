@@ -22,27 +22,15 @@ rm -rf "${L2_DATA_DIR:?}"/l2-builder-cl/*
 rm -rf "${L2_DATA_DIR:?}"/l2-client/*
 rm -rf "${L2_DATA_DIR:?}"/l2-client-cl/*
 
-# Anvil accounts
-ANVIL_ACCOUNTS=(
-  "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-  "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
-  "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
-  "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
-  "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
-  "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
-  "0x976EA74026E726554dB657fA54763abd0C3a0aa9"
-  "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"
-  "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f"
-  "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
-)
-
-# Key accounts from Anvil
-DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-DEPLOYER_ADDR="${ANVIL_ACCOUNTS[0]}"  # 0xf39F...2266
-SEQUENCER_ADDR="${ANVIL_ACCOUNTS[5]}" # 0x9965...0A4dc (Account 5)
-BATCHER_ADDR="${ANVIL_ACCOUNTS[6]}"   # 0x976E...9720 (Account 6)
-PROPOSER_ADDR="${ANVIL_ACCOUNTS[7]}"  # 0x14dC...9955 (Account 7)
-CHALLENGER_ADDR="${ANVIL_ACCOUNTS[8]}" # 0x2361...1E8f (Account 8)
+# Role accounts (from env vars or defaults)
+DEPLOYER_ADDR="${DEPLOYER_ADDR:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}"
+DEPLOYER_KEY="${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
+SEQUENCER_ADDR="${SEQUENCER_ADDR:-0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc}"
+BATCHER_ADDR="${BATCHER_ADDR:-0x976EA74026E726554dB657fA54763abd0C3a0aa9}"
+PROPOSER_ADDR="${PROPOSER_ADDR:-0x14dC79964da2C08b23698B3D3cc7Ca32193d9955}"
+CHALLENGER_ADDR="${CHALLENGER_ADDR:-0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f}"
+BUILDER_P2P_KEY="${BUILDER_P2P_KEY:-2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6}"
+BUILDER_ENODE_ID="${BUILDER_ENODE_ID:-8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5}"
 
 echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
@@ -182,13 +170,7 @@ fi
 echo ""
 echo "=== Generating P2P Keys ==="
 
-# Using Anvil Account 9's private key for P2P (for devnet only!)
-BUILDER_P2P_KEY="2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
 echo "$BUILDER_P2P_KEY" > "$L2_OUTPUT_DIR/builder-p2p-key.txt"
-
-# The enode ID is the uncompressed public key (64 bytes hex, no prefix)
-# Pre-computed public key for Anvil Account 9's P2P key
-BUILDER_ENODE_ID="8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5"
 echo "$BUILDER_ENODE_ID" > "$L2_OUTPUT_DIR/builder-enode-id.txt"
 
 echo "Builder P2P key written to $L2_OUTPUT_DIR/builder-p2p-key.txt"
@@ -207,8 +189,8 @@ echo "  L1 addresses: $L2_OUTPUT_DIR/l1-addresses.json"
 echo "  Builder P2P key: $L2_OUTPUT_DIR/builder-p2p-key.txt"
 echo ""
 echo "L2 Role assignments:"
-echo "  Deployer:   ${ANVIL_ACCOUNTS[0]}"
-echo "  Sequencer:  ${ANVIL_ACCOUNTS[5]}"
-echo "  Batcher:    ${ANVIL_ACCOUNTS[6]}"
-echo "  Proposer:   ${ANVIL_ACCOUNTS[7]}"
-echo "  Challenger: ${ANVIL_ACCOUNTS[8]}"
+echo "  Deployer:   $DEPLOYER_ADDR"
+echo "  Sequencer:  $SEQUENCER_ADDR"
+echo "  Batcher:    $BATCHER_ADDR"
+echo "  Proposer:   $PROPOSER_ADDR"
+echo "  Challenger: $CHALLENGER_ADDR"
