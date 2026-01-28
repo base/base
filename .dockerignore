@@ -1,6 +1,5 @@
 target/
 assets/
-devnet/
 .devnet/
 .git/
 .github/

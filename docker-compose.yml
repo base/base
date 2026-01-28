@@ -1,8 +1,8 @@
 services:
   setup-l1:
     build:
-      context: ./devnet
-      dockerfile: Dockerfile.setup
+      context: .
+      dockerfile: Dockerfile.devnet
     container_name: setup-l1
     volumes:
       - ./.devnet/l1/configs:/output
@@ -125,8 +125,8 @@ services:
 
   setup-l2:
     build:
-      context: ./devnet
-      dockerfile: Dockerfile.setup
+      context: .
+      dockerfile: Dockerfile.devnet
     container_name: setup-l2
     env_file: .env.devnet
     depends_on:
