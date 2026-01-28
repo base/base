@@ -12,8 +12,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Versions for benchmark dependencies
-  RBUILDER_VERSION: "23f42c8e78ba3abb45a8840df7037a27e196e601"
   BENCHMARK_REPO: "base/benchmark"
   BENCHMARK_REF: "main"
 
@@ -21,7 +19,7 @@ permissions:
   contents: read
 
 jobs:
-  # Build base-reth-node and rbuilder together, cached by source hash
+  # Build base-reth-node and base-builder together, cached by source hash
   build-binaries:
     name: Build binaries
     runs-on: ubuntu-latest
@@ -45,15 +43,7 @@ jobs:
         id: cache-binaries
         with:
           path: ~/bin
-          key: ${{ runner.os }}-binaries-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'bin/**') }}-${{ env.RBUILDER_VERSION }}
-
-      - name: Checkout rbuilder
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: base/op-rbuilder
-          ref: ${{ env.RBUILDER_VERSION }}
-          path: op-rbuilder
+          key: ${{ runner.os }}-binaries-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'bin/**') }}
 
       - name: Install native dependencies
         if: steps.cache-binaries.outputs.cache-hit != 'true'
@@ -72,7 +62,7 @@ jobs:
         with:
           cache-on-failure: true
           add-rust-environment-hash-key: "false"
-          key: benchmark-${{ hashFiles('Cargo.lock') }}-${{ env.RBUILDER_VERSION }}
+          key: benchmark-${{ hashFiles('Cargo.lock') }}
 
       - name: Install Foundry
         if: steps.cache-binaries.outputs.cache-hit != 'true'
@@ -87,12 +77,11 @@ jobs:
           mkdir -p ~/bin
           cp target/maxperf/base-reth-node ~/bin/
 
-      - name: Build rbuilder
+      - name: Build base-builder
         if: steps.cache-binaries.outputs.cache-hit != 'true'
-        working-directory: op-rbuilder
         run: |
-          cargo build -p op-rbuilder --bin op-rbuilder --release
-          cp target/release/op-rbuilder ~/bin/rbuilder
+          cargo build --bin base-builder --profile maxperf
+          cp target/maxperf/base-builder ~/bin/base-builder
 
       - name: Verify binaries exist
         run: |
@@ -160,10 +149,10 @@ jobs:
           go run benchmark/cmd/main.go \
             --log.level info \
             run \
-            --config ../node-reth/.github/benchmark/rbuilder.yml \
+            --config ../node-reth/.github/benchmark/transfer-only.yml \
             --root-dir ${{ runner.temp }}/data-dir \
             --output-dir ${{ runner.temp }}/output \
-            --rbuilder-bin ${{ runner.temp }}/bin/rbuilder \
+            --rbuilder-bin ${{ runner.temp }}/bin/base-builder \
             --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node
 
       - name: Setup Node.js
