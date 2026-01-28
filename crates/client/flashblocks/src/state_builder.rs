@@ -1,4 +1,4 @@
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{Arc, atomic::AtomicBool, mpsc::Sender};
 
 use alloy_consensus::{
     Block, Header, TxReceipt,
@@ -15,7 +15,9 @@ use reth_engine_tree::tree::{
     payload_processor::{
         ExecutionEnv, PayloadExecutionCache,
         executor::WorkloadExecutor,
-        prewarm::{PrewarmCacheTask, PrewarmContext, PrewarmMetrics, PrewarmMode},
+        prewarm::{
+            PrewarmCacheTask, PrewarmContext, PrewarmMetrics, PrewarmMode, PrewarmTaskEvent,
+        },
     },
     precompile_cache::PrecompileCacheMap,
 };
@@ -37,10 +39,6 @@ use revm::{
 use tracing::debug;
 
 use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
-
-use std::sync::mpsc::Sender;
-
-use reth_engine_tree::tree::payload_processor::prewarm::PrewarmTaskEvent;
 
 /// Default cache size in bytes (100MB).
 const DEFAULT_CACHE_SIZE: usize = 100_000_000;
@@ -67,10 +65,9 @@ impl PrewarmHandle {
         // With execution_outcome: None, the cache saving logic is skipped.
         let (_tx, rx) = std::sync::mpsc::channel();
 
-        let _ = self.sender.send(PrewarmTaskEvent::Terminate {
-            execution_outcome: None,
-            valid_block_rx: rx,
-        });
+        let _ = self
+            .sender
+            .send(PrewarmTaskEvent::Terminate { execution_outcome: None, valid_block_rx: rx });
     }
 }
 
@@ -184,14 +181,17 @@ where
         // Create a minimal ExecutionEnv (BAL prewarming doesn't use EVM fields)
         let execution_env = ExecutionEnv {
             evm_env: evm_config
-                .next_evm_env(parent_header, &OpNextBlockEnvAttributes {
-                    timestamp: 0,
-                    suggested_fee_recipient: Address::ZERO,
-                    prev_randao: B256::ZERO,
-                    gas_limit: 0,
-                    parent_beacon_block_root: None,
-                    extra_data: Default::default(),
-                })
+                .next_evm_env(
+                    parent_header,
+                    &OpNextBlockEnvAttributes {
+                        timestamp: 0,
+                        suggested_fee_recipient: Address::ZERO,
+                        prev_randao: B256::ZERO,
+                        gas_limit: 0,
+                        parent_beacon_block_root: None,
+                        extra_data: Default::default(),
+                    },
+                )
                 .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?,
             hash: B256::ZERO,
             parent_hash,
@@ -226,10 +226,8 @@ where
         // Spawn the prewarm task in background (non-blocking)
         let bal = Arc::new(bal);
         self.executor.spawn_blocking(move || {
-            prewarm_task.run(
-                PrewarmMode::<Recovered<OpTxEnvelope>>::BlockAccessList(bal),
-                actions_tx,
-            );
+            prewarm_task
+                .run(PrewarmMode::<Recovered<OpTxEnvelope>>::BlockAccessList(bal), actions_tx);
         });
 
         Ok(PrewarmHandle { sender: handle_sender })

@@ -67,8 +67,7 @@ impl FlashblocksState {
                                + Send
                                + Sync
                                + 'static,
-            >
-            + BlockReaderIdExt<Header = Header>
+            > + BlockReaderIdExt<Header = Header>
             + BlockReader
             + StateReader
             + Clone
