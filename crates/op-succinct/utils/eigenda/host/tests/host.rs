@@ -45,7 +45,6 @@ mod host {
         let expected_proxy = std::env::var("EIGENDA_PROXY_ADDRESS").ok();
         assert!(expected_proxy.is_some(), "EIGENDA_PROXY_ADDRESS must be set");
         assert_eq!(args.eigenda_proxy_address, expected_proxy);
-        assert_eq!(args.recency_window, 0);
         assert_eq!(args.verbose, 1);
 
         Ok(())

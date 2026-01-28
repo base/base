@@ -16,7 +16,6 @@ op-succinct-host-utils.workspace = true
 # kona
 kona-preimage.workspace = true
 kona-proof.workspace = true
-kona-rpc.workspace = true
 
 # hana
 hana-blobstream.workspace = true

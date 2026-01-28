@@ -7,6 +7,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::rpc_types::{OutputResponse, SafeHeadResponse};
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
@@ -19,7 +20,6 @@ use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
 use kona_protocol::L2BlockInfo;
 use kona_registry::L1_CONFIGS;
-use kona_rpc::{OutputResponse, SafeHeadResponse};
 use op_alloy_consensus::OpBlock;
 use op_alloy_network::{primitives::HeaderResponse, BlockResponse, Network, Optimism};
 use op_succinct_client_utils::boot::BootInfoStruct;
