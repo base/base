@@ -186,7 +186,7 @@ where
             .wrap_err("failed to create next evm env")?;
 
         Ok(OpPayloadBuilderCtx {
-            evm_config: self.evm_config.clone(),
+            evm_config,
             chain_spec,
             config,
             evm_env,
