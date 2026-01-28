@@ -58,6 +58,7 @@ impl BaseNodeRunner {
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(base_node.components())
             .with_add_ons(base_node.add_ons())
+            .with_wal_blocks_warning(BASE_WAL_BLOCKS_WARNING)
             .on_component_initialized(move |_ctx| Ok(()));
 
         let builder = extensions
@@ -76,8 +77,7 @@ impl BaseNodeRunner {
                     builder.task_executor().clone(),
                     builder.config().datadir(),
                     engine_tree_config,
-                )
-                .with_wal_blocks_warning(BASE_WAL_BLOCKS_WARNING);
+                );
 
                 builder.launch_with(launcher)
             })
