@@ -1,0 +1,252 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Versions for benchmark dependencies
+  RETH_VERSION: "27a8c0f5a6dfb27dea84c5751776ecabdd069646"
+  RBUILDER_VERSION: "23f42c8e78ba3abb45a8840df7037a27e196e601"
+  BENCHMARK_REPO: "base/benchmark"
+  BENCHMARK_REF: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  # Build base-reth-node from this repository
+  build-base-reth-node:
+    name: Build base-reth-node
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install native dependencies
+        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        with:
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
+          version: 1.0
+
+      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          cache-on-failure: true
+          add-rust-environment-hash-key: "false"
+          key: benchmark-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+        with:
+          version: stable
+
+      - name: Build base-reth-node
+        run: |
+          cargo build --bin base-reth-node --profile maxperf
+          mkdir -p ~/bin
+          cp target/maxperf/base-reth-node ~/bin/
+
+      - name: Upload base-reth-node artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: base-reth-node
+          path: ~/bin/base-reth-node
+          retention-days: 1
+
+  # Build reth binary for validator fallback
+  build-reth:
+    name: Build reth
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+
+      - name: Cache reth binary
+        uses: actions/cache@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        id: cache-reth
+        with:
+          path: ~/bin/reth
+          key: ${{ runner.os }}-reth-${{ env.RETH_VERSION }}
+
+      - name: Build reth
+        if: steps.cache-reth.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/bin
+          git clone https://github.com/paradigmxyz/reth.git reth-src
+          cd reth-src
+          git checkout ${{ env.RETH_VERSION }}
+          cargo build -p op-reth --bin op-reth --release
+          cp target/release/op-reth ~/bin/reth
+
+      - name: Upload reth artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: reth
+          path: ~/bin/reth
+          retention-days: 1
+
+  # Build rbuilder binary
+  build-rbuilder:
+    name: Build rbuilder
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+
+      - name: Cache rbuilder binary
+        uses: actions/cache@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        id: cache-rbuilder
+        with:
+          path: ~/bin/rbuilder
+          key: ${{ runner.os }}-rbuilder-${{ env.RBUILDER_VERSION }}
+
+      - name: Build rbuilder
+        if: steps.cache-rbuilder.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/bin
+          git clone https://github.com/base/op-rbuilder.git rbuilder-src
+          cd rbuilder-src
+          git checkout ${{ env.RBUILDER_VERSION }}
+          cargo build -p op-rbuilder --bin op-rbuilder --release
+          cp target/release/op-rbuilder ~/bin/rbuilder
+
+      - name: Upload rbuilder artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: rbuilder
+          path: ~/bin/rbuilder
+          retention-days: 1
+
+  # Run the benchmark
+  benchmark:
+    name: Run Benchmark
+    runs-on: ubuntu-latest
+    needs: [build-base-reth-node, build-reth, build-rbuilder]
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: node-reth
+
+      - name: Checkout benchmark repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark
+          submodules: true
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+
+      - name: Install Go dependencies
+        working-directory: benchmark
+        run: go mod download
+
+      - name: Download base-reth-node binary
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: base-reth-node
+          path: ${{ runner.temp }}/bin/
+
+      - name: Download reth binary
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: reth
+          path: ${{ runner.temp }}/bin/
+
+      - name: Download rbuilder binary
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: rbuilder
+          path: ${{ runner.temp }}/bin/
+
+      - name: Make binaries executable
+        run: |
+          chmod +x ${{ runner.temp }}/bin/*
+          echo "Downloaded binaries:"
+          ls -la ${{ runner.temp }}/bin
+
+      - name: Run Benchmark
+        working-directory: benchmark
+        run: |
+          mkdir -p ${{ runner.temp }}/data-dir
+          mkdir -p ${{ runner.temp }}/output
+
+          go run benchmark/cmd/main.go \
+            --log.level info \
+            run \
+            --config ../node-reth/.github/benchmark/rbuilder.yml \
+            --root-dir ${{ runner.temp }}/data-dir \
+            --output-dir ${{ runner.temp }}/output \
+            --reth-bin ${{ runner.temp }}/bin/reth \
+            --rbuilder-bin ${{ runner.temp }}/bin/rbuilder \
+            --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Build Report
+        working-directory: benchmark
+        run: |
+          cp -r ${{ runner.temp }}/output/ ./output/
+          pushd report
+          npm install
+          npm run build
+          popd
+
+      - name: Upload Output
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        if: always()
+        with:
+          name: benchmark-output
+          path: ${{ runner.temp }}/output/
+          retention-days: 7
+
+      - name: Upload Report
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: benchmark-report
+          path: benchmark/report/dist/
+          retention-days: 7
