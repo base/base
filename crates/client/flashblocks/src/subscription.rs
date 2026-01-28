@@ -71,21 +71,21 @@ where
                                     metrics.upstream_messages.increment(1);
 
                                     match msg {
-                                        Ok(Message::Binary(bytes)) => match Flashblock::try_decode_message(bytes) {
-                                            Ok(payload) => {
-                                                let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
-                                                    error!(message = "Failed to publish message to channel", error = %e);
-                                                });
+                                        Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
+                                            let bytes = msg.into_data();
+                                            match Flashblock::try_decode_message(bytes) {
+                                                Ok(payload) => {
+                                                    let _ = sender.send(ActorMessage::BestPayload { payload }).await.map_err(|e| {
+                                                        error!(message = "Failed to publish message to channel", error = %e);
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    error!(
+                                                        message = "error decoding flashblock message",
+                                                        error = %e
+                                                    );
+                                                }
                                             }
-                                            Err(e) => {
-                                                error!(
-                                                    message = "error decoding flashblock message",
-                                                    error = %e
-                                                );
-                                            }
-                                        },
-                                        Ok(Message::Text(_)) => {
-                                            error!("Received flashblock as plaintext, only compressed flashblocks supported. Set up websocket-proxy to use compressed flashblocks.");
                                         }
                                         Ok(Message::Close(_)) => {
                                             info!(message = "WebSocket connection closed by upstream");

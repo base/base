@@ -1,4 +1,5 @@
 set positional-arguments := true
+set dotenv-filename := ".env.devnet"
 
 alias t := test
 alias f := fix
@@ -102,7 +103,7 @@ check-udeps: build-contracts
 
 # Checks that shared crates don't depend on client crates
 check-crate-deps:
-    ./scripts/check-crate-deps.sh
+    ./scripts/ci/check-crate-deps.sh
 
 # Watches tests
 watch-test: build-contracts
@@ -120,6 +121,35 @@ benches:
 bench-flashblocks:
     cargo bench -p base-flashblocks --bench pending_state
 
-# Builds tester binary (requires testing feature)
-build-tester:
-    cargo build -p op-rbuilder --bin tester --features "testing"
+# Stops devnet, deletes data, and starts fresh
+devnet: devnet-down
+    docker compose up -d --build
+
+# Stops devnet and deletes all data
+devnet-down:
+    -docker compose down
+    rm -rf .devnet
+
+# Shows devnet block numbers and sync status
+devnet-status:
+    ./scripts/devnet/status.sh
+
+# Shows funded test accounts with live balances and nonces
+devnet-accounts:
+    ./scripts/devnet/accounts.sh
+
+# Sends test transactions to L1 and L2
+devnet-smoke:
+    ./scripts/devnet/smoke.sh
+
+# Runs full devnet checks (status + smoke tests)
+devnet-checks: devnet-status devnet-smoke
+
+# Stream FB's from the builder via websocket
+devnet-flashblocks:
+    go install github.com/danyalprout/flashblocks-websocket-client@latest
+    flashblocks-websocket-client ws://localhost:${L2_BUILDER_FLASHBLOCKS_PORT}
+
+# Stream logs from devnet containers (optionally specify container names)
+devnet-logs *containers:
+    docker compose logs -f {{containers}}

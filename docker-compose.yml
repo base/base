@@ -1,0 +1,420 @@
+services:
+  setup-l1:
+    build:
+      context: ./devnet
+      dockerfile: Dockerfile.setup
+    container_name: setup-l1
+    volumes:
+      - ./.devnet/l1/configs:/output
+      - ./.devnet/l1/reth:/data/l1-reth
+      - ./.devnet/l1/lighthouse:/data/l1-lighthouse
+    environment:
+      - CHAIN_ID=${L1_CHAIN_ID}
+      - SLOT_DURATION=4
+      - OUTPUT_DIR=/output
+      - SHARED_DIR=/output
+      - L1_DATA_DIR=/data
+    entrypoint: ["/usr/local/bin/setup-l1.sh"]
+
+  l1-el:
+    image: ghcr.io/paradigmxyz/reth:v1.10.2
+    container_name: l1-el
+    depends_on:
+      setup-l1:
+        condition: service_completed_successfully
+    ports:
+      - "${L1_HTTP_PORT}:${L1_HTTP_PORT}"   # HTTP RPC
+      - "${L1_WS_PORT}:${L1_WS_PORT}"       # WebSocket
+      - "${L1_AUTH_PORT}:${L1_AUTH_PORT}"   # Auth RPC (Engine API)
+      - "${L1_P2P_PORT}:${L1_P2P_PORT}"     # P2P
+    volumes:
+      - ./.devnet/l1/reth:/data
+      - ./.devnet/l1/configs:/genesis:ro
+    entrypoint: /usr/local/bin/reth
+    command:
+      - node
+      - --chain=/genesis/el/genesis.json
+      - --datadir=/data
+      - --color=never
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L1_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L1_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L1_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L1_P2P_PORT}
+      - --disable-discovery
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_HTTP_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  l1-cl:
+    image: sigp/lighthouse:v8.0.1
+    container_name: l1-cl
+    depends_on:
+      setup-l1:
+        condition: service_completed_successfully
+    ports:
+      - "${L1_CL_HTTP_PORT}:${L1_CL_HTTP_PORT}"     # Beacon API
+      - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}"       # P2P TCP
+      - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}/udp"   # P2P UDP
+    volumes:
+      - ./.devnet/l1/lighthouse:/data
+      - ./.devnet/l1/configs:/genesis:ro
+    command:
+      - lighthouse
+      - bn
+      - --testnet-dir=/genesis/cl
+      - --datadir=/data/beacon
+      - --enable-private-discovery
+      - --disable-peer-scoring
+      - --staking
+      - --enr-address=127.0.0.1
+      - --enr-udp-port=${L1_CL_P2P_PORT}
+      - --enr-tcp-port=${L1_CL_P2P_PORT}
+      - --port=${L1_CL_P2P_PORT}
+      - --http
+      - --http-address=0.0.0.0
+      - --http-port=${L1_CL_HTTP_PORT}
+      - --http-allow-origin=*
+      - --disable-packet-filter
+      - --target-peers=0
+      - --supernode
+      - --execution-endpoint=http://l1-el:${L1_AUTH_PORT}
+      - --execution-jwt=/genesis/jwt.hex
+      - --always-prepare-payload
+      - --prepare-payload-lookahead=8000
+      - --suggested-fee-recipient=${FEE_RECIPIENT}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L1_CL_HTTP_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  l1-vc:
+    image: sigp/lighthouse:v8.0.1
+    container_name: l1-vc
+    depends_on:
+      l1-cl:
+        condition: service_healthy
+    volumes:
+      - ./.devnet/l1/configs:/genesis
+    command:
+      - lighthouse
+      - vc
+      - --testnet-dir=/genesis/cl
+      - --datadir=/genesis/cl/validator_data
+      - --beacon-nodes=http://l1-cl:${L1_CL_HTTP_PORT}
+      - --init-slashing-protection
+      - --suggested-fee-recipient=${FEE_RECIPIENT}
+    restart: unless-stopped
+
+  setup-l2:
+    build:
+      context: ./devnet
+      dockerfile: Dockerfile.setup
+    container_name: setup-l2
+    env_file: .env.devnet
+    depends_on:
+      l1-el:
+        condition: service_healthy
+    volumes:
+      - ./.devnet:/devnet
+      - ./.devnet/l2/builder:/data/l2-builder
+      - ./.devnet/l2/builder-cl:/data/l2-builder-cl
+      - ./.devnet/l2/client:/data/l2-client
+      - ./.devnet/l2/client-cl:/data/l2-client-cl
+    environment:
+      - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - OUTPUT_DIR=/devnet/l2/configs
+      - L2_DATA_DIR=/data
+      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
+      - BATCHER_ADDR=${BATCHER_ADDR}
+      - PROPOSER_ADDR=${PROPOSER_ADDR}
+      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
+      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
+      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
+    entrypoint: ["/usr/local/bin/setup-l2.sh"]
+
+  base-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.builder
+      args:
+        - PROFILE=dev
+    container_name: base-builder
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+    ports:
+      - "${L2_BUILDER_HTTP_PORT}:${L2_BUILDER_HTTP_PORT}"           # HTTP RPC
+      - "${L2_BUILDER_WS_PORT}:${L2_BUILDER_WS_PORT}"               # WebSocket
+      - "${L2_BUILDER_AUTH_PORT}:${L2_BUILDER_AUTH_PORT}"           # Auth RPC (Engine API)
+      - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}"             # P2P
+      - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
+      - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
+    volumes:
+      - ./.devnet/l2/builder:/data
+      - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: /app/base-builder
+    command:
+      - node
+      - --chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_BUILDER_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L2_BUILDER_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L2_BUILDER_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L2_BUILDER_P2P_PORT}
+      - --discovery.port=${L2_BUILDER_P2P_PORT}
+      - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
+      - --flashblocks.addr=0.0.0.0
+      - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
+      - --flashblocks.block-time=200
+      - --flashblocks.disable-state-root
+      - --flashblocks.compute-state-root-on-finalize
+      - --rollup.chain-block-time=2000
+      - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
+      - --color=never
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_BUILDER_HTTP_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-builder-cl:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    container_name: base-builder-cl
+    depends_on:
+      base-builder:
+        condition: service_healthy
+    ports:
+      - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
+      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
+      - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}/udp"   # P2P UDP
+      - "${L2_BUILDER_CL_METRICS_PORT}:${L2_BUILDER_CL_METRICS_PORT}"  # Metrics
+    volumes:
+      - ./.devnet/l2/builder-cl:/data
+      - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - op-node
+      - --l1
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1.beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - --l2
+      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - --l2.jwt-secret
+      - /genesis/jwt.hex
+      - --rollup.config
+      - /genesis/l2/rollup.json
+      - --rollup.l1-chain-config
+      - /genesis/el/genesis.json
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "${L2_BUILDER_CL_RPC_PORT}"
+      - --p2p.listen.tcp
+      - "${L2_BUILDER_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_BUILDER_CL_P2P_PORT}"
+      - --p2p.priv.path
+      - /genesis/l2/builder-p2p-key.txt
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${L2_BUILDER_CL_METRICS_PORT}"
+      - --sequencer.enabled
+      - --sequencer.l1-confs
+      - "0"
+      - --p2p.sequencer.key
+      - ${SEQUENCER_KEY}
+      - --p2p.scoring.peers
+      - none
+      - --p2p.ban.peers
+      - "false"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:${L2_BUILDER_CL_RPC_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  op-batcher:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
+    container_name: op-batcher
+    depends_on:
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
+    volumes:
+      - ./.devnet/l1/configs:/genesis:ro
+    command:
+      - op-batcher
+      - --l1-eth-rpc
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l2-eth-rpc
+      - http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --rollup-rpc
+      - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
+      - --private-key
+      - ${BATCHER_KEY}
+      - --max-channel-duration
+      - "2"
+      - --poll-interval
+      - 1s
+      - --sub-safety-margin
+      - "4"
+      - --num-confirmations
+      - "1"
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${BATCHER_METRICS_PORT}"
+    restart: unless-stopped
+
+  base-client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+      args:
+        - PROFILE=dev
+    container_name: base-client
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+    ports:
+      - "${L2_CLIENT_HTTP_PORT}:${L2_CLIENT_HTTP_PORT}"     # HTTP RPC
+      - "${L2_CLIENT_WS_PORT}:${L2_CLIENT_WS_PORT}"         # WebSocket
+      - "${L2_CLIENT_AUTH_PORT}:${L2_CLIENT_AUTH_PORT}"     # Auth RPC (Engine API)
+      - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
+      - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
+    volumes:
+      - ./.devnet/l2/client:/data
+      - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: /app/base-client
+    command:
+      - node
+      - --chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_CLIENT_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L2_CLIENT_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L2_CLIENT_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L2_CLIENT_P2P_PORT}
+      - --discovery.port=${L2_CLIENT_P2P_PORT}
+      - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
+      - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
+      - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
+      - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --color=never
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CLIENT_HTTP_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
+
+  base-client-cl:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    container_name: base-client-cl
+    depends_on:
+      base-client:
+        condition: service_healthy
+    ports:
+      - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # P2P UDP
+      - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
+    volumes:
+      - ./.devnet/l2/client-cl:/data
+      - ./.devnet/l1/configs:/genesis:ro
+      - ./.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - op-node
+      - --l1
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1.beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - --l2
+      - http://base-client:${L2_CLIENT_AUTH_PORT}
+      - --l2.jwt-secret
+      - /genesis/jwt.hex
+      - --rollup.config
+      - /genesis/l2/rollup.json
+      - --rollup.l1-chain-config
+      - /genesis/el/genesis.json
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "${L2_CLIENT_CL_RPC_PORT}"
+      - --p2p.listen.tcp
+      - "${L2_CLIENT_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_CLIENT_CL_P2P_PORT}"
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${L2_CLIENT_CL_METRICS_PORT}"
+      - --p2p.static
+      - /dns4/base-builder-cl/tcp/${L2_BUILDER_CL_P2P_PORT}/p2p/${BUILDER_LIBP2P_PEER_ID}
+      - --p2p.scoring.peers
+      - none
+      - --p2p.ban.peers
+      - "false"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:${L2_CLIENT_CL_RPC_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    restart: unless-stopped
