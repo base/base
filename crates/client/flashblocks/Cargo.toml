@@ -16,6 +16,7 @@ workspace = true
 base-flashtypes.workspace = true
 
 # reth
+reth-engine-tree.workspace = true
 reth-evm.workspace = true
 reth-primitives.workspace = true
 reth-rpc.workspace = true

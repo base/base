@@ -33,7 +33,10 @@ mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 
 mod state_builder;
-pub use state_builder::{ExecutedPendingTransaction, PendingStateBuilder};
+pub use state_builder::{
+    BatchExecutionHandle, BatchExecutionResult, CachePrewarmer, CacheSetupResult,
+    ExecutedPendingTransaction, PendingStateBuilder, PrewarmHandle,
+};
 
 mod receipt_builder;
 pub use receipt_builder::{ReceiptBuildError, UnifiedReceiptBuilder};
