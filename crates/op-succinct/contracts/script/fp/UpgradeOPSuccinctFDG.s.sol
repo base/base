@@ -18,7 +18,7 @@ import {DisputeGameFactory} from "src/dispute/DisputeGameFactory.sol";
 import {AccessManager} from "../../src/fp/AccessManager.sol";
 
 contract UpgradeOPSuccinctFDG is Script {
-    function run() public {
+    function run() public returns (address gameImpl) {
         vm.startBroadcast();
 
         // Get the factory.
@@ -50,6 +50,8 @@ contract UpgradeOPSuccinctFDG is Script {
         console.log("New implementation set in factory: ", address(factory.gameImpls(gameType)));
 
         vm.stopBroadcast();
+
+        return address(newImpl);
     }
 
     function getUpgradeCalldata() public returns (bytes memory) {

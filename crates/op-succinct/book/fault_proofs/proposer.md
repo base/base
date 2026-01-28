@@ -246,6 +246,117 @@ Key components:
 - `resolve_games` / `claim_bonds`: Submit on-chain transactions for eligible games and trim settled entries from the cache.
 - `run`: Orchestrates the periodic loop, delegating work to the task scheduler.
 
+## Hardfork Transitions
+
+The proposer supports zero-downtime hardfork transitions through automatic vkey validation. When on-chain verification keys change (indicating a new game implementation), the old proposer gracefully stops creating new games while continuing to service its existing games until completion.
+
+### Proposer Identity
+
+At startup, the proposer computes its identity from three fields derived from the SP1 ELF programs and rollup configuration:
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `aggregation_vkey` | Aggregation program ELF | Identifies the aggregation circuit version |
+| `range_vkey_commitment` | Range program ELF | Identifies the range circuit version |
+| `rollup_config_hash` | Rollup config file | Identifies the chain configuration |
+
+These values are logged at startup for operator visibility:
+
+```
+INFO Proposer initialized version="3.4.1-ethereum" aggregation_vkey="0x1234abcd..." range_vkey_commitment="0x5678efgh..." rollup_config_hash="0x9abc..."
+```
+
+### Owned vs Foreign Games
+
+The proposer classifies each game in the dispute DAG as either **owned** or **foreign** based on whether the game's identity fields match the proposer's:
+
+| Classification | Condition | Proposer Actions |
+|---------------|-----------|------------------|
+| **Owned** | All 3 identity fields match | Create, defend, prove, resolve, claim bonds |
+| **Foreign** | Any identity field differs | Track in DAG for canonical head calculation only |
+
+Foreign games are still tracked because they affect the canonical head calculation—new games must be proposed on top of the current canonical head regardless of which proposer created it.
+
+### Hardfork Detection
+
+Before creating a new game, the proposer calls `on_chain_vkeys_match()` to compare its identity against the factory's current game implementation:
+
+1. Query the factory for the current game implementation address
+2. Read `aggregationVkey`, `rangeVkeyCommitment`, and `rollupConfigHash` from the implementation
+3. Compare all three values against the proposer's identity
+
+If any value differs, the proposer logs:
+```
+INFO Proposer vkeys mismatch with on-chain vkeys - skipping game creation (hardfork detected)
+```
+
+This check runs on every iteration of the proposer loop, so the transition is immediate once the on-chain implementation is upgraded.
+
+### Behavior During Hardfork
+
+When a hardfork is detected, the proposer's behavior changes:
+
+| Operation | Before Hardfork | After Hardfork |
+|-----------|-----------------|----------------|
+| **Game Creation** | Creates new games | Skips (vkey mismatch) |
+| **Game Defense** | Defends challenged games | Defends owned games only |
+| **Game Resolution** | Resolves eligible games | Resolves owned games only |
+| **Bond Claiming** | Claims from finalized games | Claims from owned games only |
+
+The proposer continues running and servicing owned games until all have been resolved and bonds claimed.
+
+### Zero-Downtime Transition Workflow
+
+To perform a hardfork with zero downtime:
+
+1. **Deploy new game implementation**
+   ```bash
+   just upgrade-game-impl
+   ```
+   This updates the factory to use the new implementation with updated vkeys.
+
+2. **Start new proposer**
+
+   Launch a new proposer instance with the updated ELF programs. It will immediately begin creating games using the new vkeys.
+
+3. **Keep old proposer running**
+
+   The old proposer detects the hardfork and stops creating games, but continues to:
+   - Defend any challenged owned games
+   - Resolve owned games once eligible
+   - Claim bonds from finalized owned games
+
+4. **Monitor transition**
+
+   Watch logs from both proposers. The old proposer will show:
+   ```
+   INFO Proposer vkeys mismatch with on-chain vkeys - skipping game creation (hardfork detected)
+   ```
+
+5. **Shutdown old proposer**
+
+   Once the old proposer has no remaining owned games (all resolved and bonds claimed), it can be safely shut down.
+
+**Timeline**: Games may take up to `MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION` to fully resolve after the hardfork. Plan for the old proposer to run for this duration.
+
+### Logging and Monitoring
+
+Key log messages to monitor during transitions:
+
+| Log Message | Meaning |
+|-------------|---------|
+| `Proposer initialized version=...` | Proposer started with specific identity |
+| `Proposer vkeys mismatch...hardfork detected` | Hardfork detected, game creation disabled |
+| `Game created successfully` | New game proposed (new proposer) |
+| `Game proven successfully` | Defense completed for owned game |
+| `Resolved game` | Game resolution transaction submitted |
+| `Claimed bond` | Bond recovered from finalized game |
+
+Recommended alerts:
+- Alert when hardfork detection message appears (transition in progress)
+- Alert if old proposer has owned games remaining after expected duration
+- Monitor both proposers' game counts during transition period
+
 ## Development
 
 When developing or modifying the proposer:

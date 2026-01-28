@@ -2,7 +2,7 @@ pub mod common;
 
 use std::path::PathBuf;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use fault_proof::{
     backup::{ProposerBackup, BACKUP_VERSION},
     contract::{GameStatus, ProposalStatus},
@@ -22,6 +22,9 @@ fn test_game(index: u64, parent_index: u32) -> Game {
         deadline: 0,
         should_attempt_to_resolve: false,
         should_attempt_to_claim_bond: false,
+        aggregation_vkey: B256::ZERO,
+        range_vkey_commitment: B256::ZERO,
+        rollup_config_hash: B256::ZERO,
     }
 }
 

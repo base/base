@@ -108,6 +108,15 @@ sol! {
         /// @notice Returns the challenger bond amount.
         function challengerBond() external view returns (uint256 challengerBond_);
 
+        /// @notice Returns the aggregation verification key.
+        function aggregationVkey() external view returns (bytes32 aggregationVkey_);
+
+        /// @notice Returns the range verification key commitment.
+        function rangeVkeyCommitment() external view returns (bytes32 rangeVkeyCommitment_);
+
+        /// @notice Returns the rollup config hash.
+        function rollupConfigHash() external view returns (bytes32 rollupConfigHash_);
+
         /// @notice Claim the credit belonging to the recipient address.
         function claimCredit(address _recipient) external;
 

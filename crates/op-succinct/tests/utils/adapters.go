@@ -350,8 +350,13 @@ func (asr *AsrClient) AnchorL2BlockNumber(ctx context.Context, gameType uint32) 
 
 var _ bind.ContractCaller = ethCaller{}
 
-// implements bind/v2.ContractCaller using apis.EthClient
+// ethCaller implements bind/v2.ContractCaller using apis.EthClient
 type ethCaller struct{ c apis.EthClient }
+
+// NewEthCaller creates a new ethCaller that wraps an apis.EthClient for use with contract bindings.
+func NewEthCaller(client apis.EthClient) bind.ContractCaller {
+	return ethCaller{c: client}
+}
 
 func (w ethCaller) toRPCBlockNumber(blockNumber *big.Int) (rpc.BlockNumber, error) {
 	if blockNumber == nil {
