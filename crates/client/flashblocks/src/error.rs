@@ -56,7 +56,7 @@ pub enum ExecutionError {
     SenderRecovery(String),
 
     /// Deposit transaction paired with a non-deposit receipt.
-    #[error("deposit receipt mismatch: deposit transaction must have a deposit receipt")]
+    #[error("deposit receipt mismatch: transaction must have a deposit receipt")]
     DepositReceiptMismatch,
 
     /// Cumulative gas used overflow.
@@ -182,7 +182,7 @@ mod tests {
     #[rstest]
     #[case::deposit_receipt_mismatch(
         ExecutionError::DepositReceiptMismatch,
-        "deposit receipt mismatch: deposit transaction must have a deposit receipt"
+        "deposit receipt mismatch: transaction must have a deposit receipt"
     )]
     #[case::gas_overflow(
         ExecutionError::GasOverflow,
