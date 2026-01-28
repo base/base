@@ -82,9 +82,9 @@ pub enum SignerArgsParseError {
     /// The local sequencer key and remote signer cannot be specified at the same time.
     #[error("A local sequencer key and a remote signer cannot be specified at the same time.")]
     LocalAndRemoteSigner,
-    /// Both sequencer key and sequencer key path cannot be specified at the same time.
+    /// Both sequencer key and key path cannot be specified at the same time.
     #[error(
-        "Both sequencer key and sequencer key path cannot be specified at the same time. Use either --p2p.sequencer.key or --p2p.sequencer.key.path."
+        "Both sequencer key and key path cannot be specified at the same time. Use either --p2p.sequencer.key or --p2p.sequencer.key.path."
     )]
     ConflictingSequencerKeyInputs,
     /// The sequencer key is invalid.
