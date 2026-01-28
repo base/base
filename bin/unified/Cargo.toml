@@ -1,0 +1,28 @@
+[package]
+name = "unified"
+description = "Unified Base Consensus and Execution Binary"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-cli-utils.workspace = true
+
+# CLI
+clap.workspace = true
+eyre.workspace = true
+
+# Metrics
+metrics.workspace = true
+
+[build-dependencies]
+vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
+vergen-git2.workspace = true
