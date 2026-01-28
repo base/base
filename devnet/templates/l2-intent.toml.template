@@ -1,0 +1,35 @@
+configType = "custom"
+l1ChainID = ${L1_CHAIN_ID}
+fundDevAccounts = false
+l1ContractsLocator = "embedded"
+l2ContractsLocator = "embedded"
+
+[superchainRoles]
+  SuperchainProxyAdminOwner = "${DEPLOYER_ADDR}"
+  SuperchainGuardian = "${DEPLOYER_ADDR}"
+  ProtocolVersionsOwner = "${DEPLOYER_ADDR}"
+  Challenger = "${CHALLENGER_ADDR}"
+
+[[chains]]
+  id = "${L2_CHAIN_ID_HEX}"
+  baseFeeVaultRecipient = "${DEPLOYER_ADDR}"
+  l1FeeVaultRecipient = "${DEPLOYER_ADDR}"
+  sequencerFeeVaultRecipient = "${DEPLOYER_ADDR}"
+  operatorFeeVaultRecipient = "${DEPLOYER_ADDR}"
+  eip1559DenominatorCanyon = 250
+  eip1559Denominator = 50
+  eip1559Elasticity = 6
+  gasLimit = 60000000
+  operatorFeeScalar = 0
+  operatorFeeConstant = 0
+  chainFeesRecipient = "${DEPLOYER_ADDR}"
+  minBaseFee = 1000000000
+  daFootprintGasScalar = 0
+  [chains.roles]
+    l1ProxyAdminOwner = "${DEPLOYER_ADDR}"
+    l2ProxyAdminOwner = "${DEPLOYER_ADDR}"
+    systemConfigOwner = "${DEPLOYER_ADDR}"
+    unsafeBlockSigner = "${SEQUENCER_ADDR}"
+    batcher = "${BATCHER_ADDR}"
+    proposer = "${PROPOSER_ADDR}"
+    challenger = "${CHALLENGER_ADDR}"

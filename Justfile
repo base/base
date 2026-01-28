@@ -122,7 +122,7 @@ bench-flashblocks:
 
 # Stops devnet, deletes data, and starts fresh
 devnet: devnet-down
-    docker compose up -d
+    docker compose up -d --build
 
 # Stops devnet and deletes all data
 devnet-down:

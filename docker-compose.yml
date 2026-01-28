@@ -7,7 +7,7 @@ services:
   setup-l1:
     build:
       context: ./devnet
-      dockerfile: Dockerfile.configs
+      dockerfile: Dockerfile.setup
     container_name: setup-l1
     volumes:
       - ./.devnet/l1/configs:/output
@@ -19,7 +19,7 @@ services:
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
-    entrypoint: ["/usr/local/bin/generate-l1-genesis.sh"]
+    entrypoint: ["/usr/local/bin/setup-l1.sh"]
 
   # L1 Execution Layer (Reth)
   l1-el:
@@ -139,7 +139,7 @@ services:
   setup-l2:
     build:
       context: ./devnet
-      dockerfile: Dockerfile.configs
+      dockerfile: Dockerfile.setup
     container_name: setup-l2
     depends_on:
       l1-el:
@@ -156,7 +156,7 @@ services:
       - L2_CHAIN_ID=84538453
       - OUTPUT_DIR=/output
       - L2_DATA_DIR=/data
-    entrypoint: ["/usr/local/bin/generate-l2-genesis.sh"]
+    entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   # =============================================================================
   # L2 Services (OP Stack)

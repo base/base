@@ -1,0 +1,57 @@
+{
+  "config": {
+    "chainId": ${CHAIN_ID},
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "arrowGlacierBlock": 0,
+    "grayGlacierBlock": 0,
+    "terminalTotalDifficulty": 0,
+    "shanghaiTime": 0,
+    "cancunTime": 0,
+    "pragueTime": 0,
+    "osakaTime": 0,
+    "blobSchedule": {
+      "cancun": { "target": 3, "max": 6, "baseFeeUpdateFraction": 3338477 },
+      "prague": { "target": 6, "max": 9, "baseFeeUpdateFraction": 5007716 },
+      "osaka": { "target": 9, "max": 12, "baseFeeUpdateFraction": 5007716 },
+      "bpo1": { "target": 10, "max": 15, "baseFeeUpdateFraction": 5007716 },
+      "bpo2": { "target": 14, "max": 21, "baseFeeUpdateFraction": 5007716 }
+    },
+    "bpo1Time": 0,
+    "bpo2Time": 0
+  },
+  "nonce": "0x0",
+  "timestamp": "${GENESIS_TIME_HEX}",
+  "extraData": "0x",
+  "gasLimit": "0x1c9c380",
+  "difficulty": "0x0",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "alloc": {
+    "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": {"balance": "${BALANCE}"},
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8": {"balance": "${BALANCE}"},
+    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC": {"balance": "${BALANCE}"},
+    "0x90F79bf6EB2c4f870365E785982E1f101E93b906": {"balance": "${BALANCE}"},
+    "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65": {"balance": "${BALANCE}"},
+    "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc": {"balance": "${BALANCE}"},
+    "0x976EA74026E726554dB657fA54763abd0C3a0aa9": {"balance": "${BALANCE}"},
+    "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955": {"balance": "${BALANCE}"},
+    "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f": {"balance": "${BALANCE}"},
+    "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720": {"balance": "${BALANCE}"},
+    "0x4e59b44847b379578588920cA78FbF26c0B4956C": {
+      "balance": "0x0",
+      "code": "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    }
+  },
+  "baseFeePerGas": "0x3b9aca00",
+  "blobGasUsed": "0x0",
+  "excessBlobGas": "0x0"
+}

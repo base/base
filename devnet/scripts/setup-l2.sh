@@ -6,6 +6,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 L2_CHAIN_ID="${L2_CHAIN_ID:-84538453}"
 L1_CHAIN_ID="${L1_CHAIN_ID:-1337}"
 L2_DATA_DIR="${L2_DATA_DIR:-/data}"
+TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 
 # Skip if L2 genesis already exists (for restarts)
 if [ -f "$OUTPUT_DIR/l2/genesis.json" ] && [ -f "$OUTPUT_DIR/l2/rollup.json" ]; then
@@ -93,52 +94,17 @@ op-deployer init \
   --intent-type custom \
   --workdir "$OP_DEPLOYER_WORKDIR"
 
-# Configure intent.toml for devnet
+# Configure intent.toml for devnet using template
 INTENT_FILE="$OP_DEPLOYER_WORKDIR/intent.toml"
 echo "Configuring intent.toml for devnet..."
 
 # Convert L2 chain ID to hex (0x prefixed, 32 bytes padded)
 L2_CHAIN_ID_HEX=$(printf "0x%064x" $L2_CHAIN_ID)
 
-# Overwrite intent.toml with correct format
-# Note: fundDevAccounts=false since L1 already has prefunded accounts
-cat > "$INTENT_FILE" << EOF
-configType = "custom"
-l1ChainID = $L1_CHAIN_ID
-fundDevAccounts = false
-l1ContractsLocator = "embedded"
-l2ContractsLocator = "embedded"
+# Export variables for envsubst
+export L1_CHAIN_ID L2_CHAIN_ID_HEX DEPLOYER_ADDR SEQUENCER_ADDR BATCHER_ADDR PROPOSER_ADDR CHALLENGER_ADDR
 
-[superchainRoles]
-  SuperchainProxyAdminOwner = "$DEPLOYER_ADDR"
-  SuperchainGuardian = "$DEPLOYER_ADDR"
-  ProtocolVersionsOwner = "$DEPLOYER_ADDR"
-  Challenger = "$CHALLENGER_ADDR"
-
-[[chains]]
-  id = "$L2_CHAIN_ID_HEX"
-  baseFeeVaultRecipient = "$DEPLOYER_ADDR"
-  l1FeeVaultRecipient = "$DEPLOYER_ADDR"
-  sequencerFeeVaultRecipient = "$DEPLOYER_ADDR"
-  operatorFeeVaultRecipient = "$DEPLOYER_ADDR"
-  eip1559DenominatorCanyon = 250
-  eip1559Denominator = 50
-  eip1559Elasticity = 6
-  gasLimit = 60000000
-  operatorFeeScalar = 0
-  operatorFeeConstant = 0
-  chainFeesRecipient = "$DEPLOYER_ADDR"
-  minBaseFee = 1000000000
-  daFootprintGasScalar = 0
-  [chains.roles]
-    l1ProxyAdminOwner = "$DEPLOYER_ADDR"
-    l2ProxyAdminOwner = "$DEPLOYER_ADDR"
-    systemConfigOwner = "$DEPLOYER_ADDR"
-    unsafeBlockSigner = "$SEQUENCER_ADDR"
-    batcher = "$BATCHER_ADDR"
-    proposer = "$PROPOSER_ADDR"
-    challenger = "$CHALLENGER_ADDR"
-EOF
+envsubst < "$TEMPLATE_DIR/l2-intent.toml.template" > "$INTENT_FILE"
 
 echo "Intent configured:"
 cat "$INTENT_FILE"

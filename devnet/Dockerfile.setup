@@ -28,7 +28,7 @@ RUN go build -o /go/bin/eth2-val-tools .
 
 FROM alpine:latest
 
-RUN apk add --no-cache bash jq openssl curl
+RUN apk add --no-cache bash jq openssl curl gettext
 
 # Copy the built binaries
 COPY --from=builder /go/bin/eth-genesis-state-generator /usr/local/bin/
@@ -36,9 +36,12 @@ COPY --from=builder /go/bin/eth2-val-tools /usr/local/bin/
 COPY --from=builder /go/bin/op-deployer /usr/local/bin/
 
 # Create working directories
-RUN mkdir -p /config /output /shared
+RUN mkdir -p /config /output /shared /templates
 
-# Copy genesis generation scripts
-COPY scripts/generate-l1-genesis.sh /usr/local/bin/
-COPY scripts/generate-l2-genesis.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/generate-l1-genesis.sh /usr/local/bin/generate-l2-genesis.sh
+# Copy templates
+COPY templates/ /templates/
+
+# Copy setup scripts
+COPY scripts/setup-l1.sh /usr/local/bin/
+COPY scripts/setup-l2.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/setup-l1.sh /usr/local/bin/setup-l2.sh
