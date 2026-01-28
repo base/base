@@ -17,7 +17,7 @@ base-flashtypes.workspace = true
 base-access-lists.workspace = true
 
 reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-optimism-chainspec.workspace = true
 reth-optimism-payload-builder.workspace = true
 reth-optimism-evm.workspace = true
@@ -35,7 +35,7 @@ reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-node-api.workspace = true
 reth-rpc-engine-api.workspace = true
-reth-node-core.workspace = true
+reth-node-core = { workspace = true, features = ["otlp"] }
 reth-basic-payload-builder.workspace = true
 reth-payload-builder.workspace = true
 reth-node-ethereum.workspace = true
@@ -194,5 +194,3 @@ testing = [
 	"reth-node-builder/test-utils",
 	"rlimit",
 ]
-
-otlp = [ "reth-node-core/otlp", "reth-optimism-cli/otlp" ]

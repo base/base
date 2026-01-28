@@ -22,7 +22,7 @@ base-txpool.workspace = true
 
 # reth
 reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-cli-util.workspace = true
 
 # misc
@@ -31,4 +31,3 @@ clap.workspace = true
 [features]
 default = [ "jemalloc" ]
 jemalloc = [ "reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc" ]
-otlp = [ "reth-optimism-cli/otlp" ]
