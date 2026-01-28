@@ -1,0 +1,34 @@
+[package]
+name = "base-proofs-extension"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Proofs extension for Base node"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace crates
+base-client-node.workspace = true
+
+# Reth dependencies
+reth-db.workspace = true
+reth-node-api.workspace = true
+reth-tasks.workspace = true
+
+# Optimism dependencies
+reth-optimism-exex = { workspace = true, features = ["metrics"] }
+reth-optimism-node.workspace = true
+reth-optimism-rpc.workspace = true
+reth-optimism-trie.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# Logging and error handling
+tracing.workspace = true
+eyre.workspace = true
