@@ -1,9 +1,4 @@
 services:
-  # =============================================================================
-  # L1 Setup and Infrastructure
-  # =============================================================================
-
-  # Setup L1 genesis configs (EL + CL genesis, validators)
   setup-l1:
     build:
       context: ./devnet
@@ -15,13 +10,12 @@ services:
       - ./.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - CHAIN_ID=1337
-      - SLOT_DURATION=12
+      - SLOT_DURATION=6
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
     entrypoint: ["/usr/local/bin/setup-l1.sh"]
 
-  # L1 Execution Layer (Reth)
   l1-el:
     image: ghcr.io/paradigmxyz/reth:v1.10.2
     container_name: l1-el
@@ -66,7 +60,6 @@ services:
       start_period: 1s
     restart: unless-stopped
 
-  # L1 Consensus Layer (Lighthouse beacon node)
   l1-cl:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-cl
@@ -112,7 +105,6 @@ services:
       start_period: 1s
     restart: unless-stopped
 
-  # L1 Validator Client (Lighthouse)
   l1-vc:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-vc
@@ -131,11 +123,6 @@ services:
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     restart: unless-stopped
 
-  # =============================================================================
-  # L2 Setup (deploys contracts to running L1)
-  # =============================================================================
-
-  # Setup L2 genesis by deploying OP contracts to L1 (live mode)
   setup-l2:
     build:
       context: ./devnet
@@ -158,11 +145,6 @@ services:
       - L2_DATA_DIR=/data
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
-  # =============================================================================
-  # L2 Services (OP Stack)
-  # =============================================================================
-
-  # L2 Builder (Sequencer Execution Layer)
   base-builder:
     build:
       context: .
@@ -221,7 +203,6 @@ services:
       start_period: 2s
     restart: unless-stopped
 
-  # L2 Builder CL (op-node sequencer)
   base-builder-cl:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     container_name: base-builder-cl
@@ -260,7 +241,6 @@ services:
       - "7003"
       - --p2p.listen.udp
       - "7003"
-      # Use persistent P2P key for stable peer ID
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
       - --metrics.enabled
@@ -271,7 +251,7 @@ services:
       - --sequencer.enabled
       - --sequencer.l1-confs
       - "0"
-      # Sequencer key (Account 5): 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
+      # Anvil Account 5: 0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc
       - --p2p.sequencer.key
       - 8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba
       - --p2p.scoring.peers
@@ -286,7 +266,6 @@ services:
       start_period: 2s
     restart: unless-stopped
 
-  # OP Batcher (submits batches to L1)
   op-batcher:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
     container_name: op-batcher
@@ -305,7 +284,7 @@ services:
       - http://base-builder:7545
       - --rollup-rpc
       - http://base-builder-cl:7549
-      # Batcher key (Account 6): 0x976EA74026E726554dB657fA54763abd0C3a0aa9
+      # Anvil Account 6: 0x976EA74026E726554dB657fA54763abd0C3a0aa9
       - --private-key
       - "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e"
       - --max-channel-duration
@@ -323,7 +302,6 @@ services:
       - "6060"
     restart: unless-stopped
 
-  # L2 Client (Validator Execution Layer)
   base-client:
     build:
       context: .
@@ -367,7 +345,7 @@ services:
       - --discovery.port=8303
       - --metrics=0.0.0.0:8090
       - --flashblocks-url=ws://base-builder:7111
-      # Builder enode ID from Anvil Account 9 P2P key
+      # Anvil Account 9 P2P key
       - --trusted-peers=enode://8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5@base-builder:7303
       - --color=never
       - -vvv
@@ -379,7 +357,6 @@ services:
       start_period: 2s
     restart: unless-stopped
 
-  # L2 Client CL (op-node follower)
   base-client-cl:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     container_name: base-client-cl
@@ -423,7 +400,6 @@ services:
       - "0.0.0.0"
       - --metrics.port
       - "8300"
-      # Connect to sequencer op-node for P2P gossip
       - --p2p.static
       - /dns4/base-builder-cl/tcp/7003/p2p/16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12
       - --p2p.scoring.peers
