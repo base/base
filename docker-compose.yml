@@ -10,7 +10,7 @@ services:
       - ./.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - CHAIN_ID=1337
-      - SLOT_DURATION=6
+      - SLOT_DURATION=4
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
@@ -54,18 +54,18 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/4545"]
-      interval: 1s
+      interval: 250ms
       timeout: 1s
-      retries: 60
-      start_period: 1s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   l1-cl:
     image: sigp/lighthouse:v8.0.1
     container_name: l1-cl
     depends_on:
-      l1-el:
-        condition: service_healthy
+      setup-l1:
+        condition: service_completed_successfully
     ports:
       - "4052:4052"   # Beacon API
       - "4900:4900"   # P2P TCP
@@ -99,10 +99,10 @@ services:
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/4052"]
-      interval: 1s
+      interval: 250ms
       timeout: 1s
-      retries: 60
-      start_period: 1s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   l1-vc:
@@ -155,10 +155,6 @@ services:
     depends_on:
       setup-l2:
         condition: service_completed_successfully
-      l1-el:
-        condition: service_healthy
-      l1-cl:
-        condition: service_healthy
     ports:
       - "7545:7545"   # HTTP RPC
       - "7546:7546"   # WebSocket
@@ -192,15 +188,19 @@ services:
       - --p2p-secret-key-hex=2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=7111
+      - --flashblocks.block-time=200
+      - --flashblocks.disable-state-root
+      - --flashblocks.compute-state-root-on-finalize
+      - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:7090
       - --color=never
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/7545"]
-      interval: 1s
+      interval: 250ms
       timeout: 1s
-      retries: 60
-      start_period: 2s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   base-builder-cl:
@@ -208,8 +208,6 @@ services:
     container_name: base-builder-cl
     depends_on:
       base-builder:
-        condition: service_healthy
-      l1-cl:
         condition: service_healthy
     ports:
       - "7549:7549"   # RPC
@@ -260,10 +258,10 @@ services:
       - "false"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:7549"]
-      interval: 1s
+      interval: 250ms
       timeout: 1s
-      retries: 60
-      start_period: 2s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   op-batcher:
@@ -310,10 +308,8 @@ services:
         - PROFILE=dev
     container_name: base-client
     depends_on:
-      base-builder:
-        condition: service_healthy
-      l1-cl:
-        condition: service_healthy
+      setup-l2:
+        condition: service_completed_successfully
     ports:
       - "8545:8545"   # HTTP RPC
       - "8546:8546"   # WebSocket
@@ -351,10 +347,10 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8545"]
-      interval: 1s
+      interval: 250ms
       timeout: 1s
-      retries: 60
-      start_period: 2s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   base-client-cl:
@@ -362,8 +358,6 @@ services:
     container_name: base-client-cl
     depends_on:
       base-client:
-        condition: service_healthy
-      base-builder-cl:
         condition: service_healthy
     ports:
       - "8549:8549"   # RPC
@@ -408,8 +402,8 @@ services:
       - "false"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8549"]
-      interval: 1s
+      interval: 250ms
       timeout: 1s
-      retries: 60
-      start_period: 2s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped

@@ -6,3 +6,6 @@ devnet/
 .github/
 .idea/
 docs/
+docker-compose.yml
+.claude/
+.config/

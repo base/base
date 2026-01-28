@@ -53,11 +53,17 @@ echo "Output directory: $OUTPUT_DIR"
 # Wait for L1 RPC to be available
 echo ""
 echo "=== Waiting for L1 RPC ==="
-until curl -s -X POST -H "Content-Type: application/json" \
+MAX_RETRIES=100
+RETRY_COUNT=0
+until curl -s --max-time 2 -X POST -H "Content-Type: application/json" \
   --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
   "$L1_RPC_URL" | jq -e '.result' >/dev/null 2>&1; do
-  echo "L1 RPC not ready, waiting..."
-  sleep 1
+  RETRY_COUNT=$((RETRY_COUNT + 1))
+  if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+    echo "ERROR: L1 RPC not ready after $MAX_RETRIES retries"
+    exit 1
+  fi
+  sleep 0.2
 done
 echo "L1 RPC is ready"
 
