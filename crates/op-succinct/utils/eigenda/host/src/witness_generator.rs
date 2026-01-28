@@ -139,6 +139,7 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
         let kzg_proofs = create_kzg_proofs_for_eigenda_preimage(&eigenda_preimage_data);
 
         // Generate canoe proofs using the reduced proof provider for proof aggregation
+        use alloy_rpc_client::RpcClient;
         use canoe_sp1_cc_host::CanoeSp1CCReducedProofProvider;
         let eth_rpc_url = std::env::var("L1_RPC")
             .map_err(|_| anyhow::anyhow!("L1_RPC environment variable not set"))?;
@@ -146,11 +147,14 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
             .unwrap_or("false".to_string())
             .parse::<bool>()
             .unwrap_or(false);
-        let canoe_provider = CanoeSp1CCReducedProofProvider { eth_rpc_url, mock_mode };
+        let eth_rpc_client = RpcClient::new_http(
+            eth_rpc_url.parse().map_err(|_| anyhow::anyhow!("Failed to parse L1_RPC as URL"))?,
+        );
+        let canoe_provider = CanoeSp1CCReducedProofProvider { eth_rpc_client, mock_mode };
         let maybe_canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
             &boot_info,
             &eigenda_preimage_data,
-            oracle.clone(),
+            oracle.as_ref(),
             canoe_provider,
             CanoeVerifierAddressFetcherDeployedByEigenLabs {},
         )

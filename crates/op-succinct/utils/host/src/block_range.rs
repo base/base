@@ -3,10 +3,10 @@ use std::{
     collections::HashSet,
 };
 
+use crate::rpc_types::{OutputResponse, SafeHeadResponse};
 use alloy_eips::BlockId;
 use anyhow::{bail, Result};
 use futures::StreamExt;
-use kona_rpc::{OutputResponse, SafeHeadResponse};
 use serde::{Deserialize, Serialize};
 
 use crate::{

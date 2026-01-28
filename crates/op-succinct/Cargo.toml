@@ -57,7 +57,7 @@ base64 = "0.22.1"
 tower-http = { version = "0.5.2", features = ["limit"] }
 lazy_static = "1.5.0"
 tracing = { version = "0.1.40", default-features = false }
-tracing-subscriber = { version = "0.3.20", features = ["fmt", "json"] }
+tracing-subscriber = { version = "0.3.22", features = ["fmt", "json"] }
 tracing-opentelemetry = "^0.24"
 opentelemetry = { version = "^0.23.0", features = ["trace"] }
 opentelemetry_sdk = { version = "^0.23.0", features = [
@@ -76,41 +76,47 @@ strum = "0.27.1"
 strum_macros = "0.27.1"
 tempfile = "3.10.1"
 
+# vergen - pin to exact versions for rollup-boost compatibility
+vergen = "=9.0.4"
+vergen-git2 = "=1.0.5"
+
 # kona
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2", default-features = false }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
 
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2" }
-kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2", default-features = false }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2", default-features = false }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2", default-features = false }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.2", default-features = false }
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+# Note: kona-rpc is NOT included to avoid rollup-boost -> reth-optimism-primitives dependency
+# which causes alloy version conflicts with hokulea v1.1.4. RPC types are defined locally in
+# utils/host/src/rpc_types.rs instead.
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
 
 # hana
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "v1.4.0-mocha" }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "v1.4.0-mocha" }
-hana-host = { git = "https://github.com/celestiaorg/hana", tag = "v1.4.0-mocha" }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v1.4.0-mocha" }
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+hana-host = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
 
 # hokulea
-hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-canoe-sp1-cc-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
-canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.2" }
+hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+canoe-sp1-cc-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -132,32 +138,33 @@ op-succinct-signer-gcp-utils = { path = "utils/signer-gcp" }
 op-succinct-range-utils = { path = "programs/range/utils" }
 op-succinct-bindings = { path = "bindings" }
 
-# Alloy (Network)
-alloy-signer-local = { version = "1.1.0" }
-alloy-provider = { version = "1.1.0" }
-alloy-transport = { version = "1.1.0" }
-alloy-transport-http = { version = "1.1.0" }
-alloy-contract = { version = "1.1.0" }
-alloy-network = { version = "1.1.0" }
+# Alloy (Network) - versions allow semver compatible upgrades for hokulea v1.1.4 (requires 1.4.3)
+alloy-signer-local = { version = "1.4" }
+alloy-provider = { version = "1.4" }
+alloy-transport = { version = "1.4" }
+alloy-transport-http = { version = "1.4" }
+alloy-contract = { version = "1.4" }
+alloy-network = { version = "1.4" }
 
-# Alloy
+# Alloy - versions allow semver compatible upgrades for hokulea v1.1.4
 alloy-rlp = { version = "0.3.12", default-features = false }
 alloy-trie = { version = "0.9.1", default-features = false, features = [
     "ethereum",
 ] }
-alloy-eips = { version = "1.1.0", default-features = false }
-alloy-serde = { version = "1.1.0", default-features = false }
-alloy-consensus = { version = "1.1.0", default-features = false }
-alloy-rpc-types = { version = "1.1.0", default-features = false }
-alloy-rpc-client = { version = "1.1.0", default-features = false }
-alloy-node-bindings = { version = "1.1.0", default-features = false }
-alloy-rpc-types-engine = { version = "1.1.0", default-features = false }
-alloy-rpc-types-beacon = { version = "1.1.0", default-features = false }
-alloy-rpc-types-eth = { version = "1.1.0", default-features = false }
-alloy-rpc-types-trace = { version = "1.1.0", default-features = false }
-alloy-signer = { version = "1.1.0", default-features = false }
-alloy-signer-gcp = { version = "1.1.0", default-features = false }
-alloy = { version = "1.1.0", features = [
+alloy-eips = { version = "1.4", default-features = false }
+alloy-serde = { version = "1.4", default-features = false }
+alloy-consensus = { version = "1.4", default-features = false }
+alloy-tx-macros = { version = "1.4", default-features = false }
+alloy-rpc-types = { version = "1.4", default-features = false }
+alloy-rpc-client = { version = "1.4", default-features = false }
+alloy-node-bindings = { version = "1.4", default-features = false }
+alloy-rpc-types-engine = { version = "1.4", default-features = false }
+alloy-rpc-types-beacon = { version = "1.4", default-features = false }
+alloy-rpc-types-eth = { version = "1.4", default-features = false }
+alloy-rpc-types-trace = { version = "1.4", default-features = false }
+alloy-signer = { version = "1.4", default-features = false }
+alloy-signer-gcp = { version = "1.4", default-features = false }
+alloy = { version = "1.4", features = [
     "reqwest",
     "network",
     "providers",
@@ -166,28 +173,30 @@ alloy = { version = "1.1.0", features = [
 ] }
 
 # Keccak with the SHA3 patch is more efficient than the default Keccak.
-alloy-primitives = { version = "1.3.1", default-features = false, features = [
+# Note: alloy-primitives/sol-types are at 1.4.x to match kona dependencies
+alloy-primitives = { version = "1.4.1", default-features = false, features = [
     "sha3-keccak",
 ] }
-alloy-sol-types = { version = "1.3.1", default-features = false }
-alloy-sol-macro = { version = "1.3.1", default-features = false }
-alloy-chains = { version = "0.2.7", default-features = false }
+alloy-sol-types = { version = "1.4.1", default-features = false }
+alloy-sol-macro = { version = "1.4.1", default-features = false }
+alloy-chains = { version = "0.2.22", default-features = false }
 
 # OP Alloy
-op-alloy-consensus = { version = "0.22.0", default-features = false }
-op-alloy-rpc-types = { version = "0.22.0", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.22.0", default-features = false }
-op-alloy-network = { version = "0.22.0", default-features = false }
+op-alloy-consensus = { version = "0.22.4", default-features = false }
+op-alloy-rpc-types = { version = "0.22.4", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.22.4", default-features = false }
+op-alloy-network = { version = "0.22.4", default-features = false }
 
 # Execution
-alloy-evm = { version = "0.22.6", default-features = false }
-alloy-op-evm = { version = "0.22.6", default-features = false }
+alloy-evm = { version = "0.24.2", default-features = false }
+alloy-op-evm = { version = "0.24.2", default-features = false }
 # Use kzg-rs and substrate-bn for the zkVM.
-revm = { version = "30.2.0", default-features = false, features = [
+# Versions aligned with kona v1.2.7
+revm = { version = "33.1.0", default-features = false, features = [
     "bn",
 ] }
-revm-precompile = { version = "28.1.1", default-features = false }
-op-revm = { version = "11.3.0", default-features = false }
+revm-precompile = { version = "31.0.0", default-features = false }
+op-revm = { version = "14.1.0", default-features = false }
 
 # SP1
 sp1-sdk = { version = "=5.2.4", default-features = false, features = ["network"] }
@@ -217,3 +226,37 @@ substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-s
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
 p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-5.0.0" }
 k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-5.0.0" }
+
+# Note: alloy-tx-macros crates.io version must match alloy-consensus version
+# Both are now at 1.4.x for hokulea v1.1.4 compatibility
+
+
+# Note: vergen-lib conflict fixed by pinning vergen=9.0.4, vergen-git2=1.0.5 in Cargo.lock
+
+# Patch reth crates to fix PartialEq bug in reth-transaction-pool (PR #21336)
+# Using succinctlabs fork to enable HTTPS patching in CI (Cargo requires different source URL)
+# v1.9.3-kona branch contains the backported fix from paradigmxyz/reth
+[patch."https://github.com/paradigmxyz/reth"]
+reth-chainspec = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-chain-state = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-consensus = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-errors = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-ethereum-forks = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-ethereum-primitives = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-execution-errors = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-execution-types = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-chainspec = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-consensus = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-evm = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-forks = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-payload-builder = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-primitives = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-optimism-txpool = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-primitives = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-primitives-traits = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-revm = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-storage-api = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-storage-errors = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-transaction-pool = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-trie = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
+reth-trie-common = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }

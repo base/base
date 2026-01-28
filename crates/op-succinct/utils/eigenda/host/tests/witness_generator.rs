@@ -38,12 +38,8 @@ fn test_get_sp1_stdin_rejects_malformed_eigenda_data() {
 fn test_get_sp1_stdin_with_eigenda_data_but_no_canoe_proof() {
     let generator = EigenDAWitnessGenerator {};
 
-    let eigenda_witness = EigenDAWitness {
-        recencies: vec![],
-        validities: vec![],
-        encoded_payloads: vec![],
-        canoe_proof_bytes: None,
-    };
+    let eigenda_witness =
+        EigenDAWitness { validities: vec![], encoded_payloads: vec![], canoe_proof_bytes: None };
 
     let eigenda_data = serde_cbor::to_vec(&eigenda_witness).expect("serialization should work");
 
@@ -64,7 +60,6 @@ fn test_get_sp1_stdin_rejects_invalid_canoe_proof_bytes() {
 
     // Create a valid EigenDAWitness with garbage in canoe_proof_bytes
     let eigenda_witness = EigenDAWitness {
-        recencies: vec![],
         validities: vec![],
         encoded_payloads: vec![],
         canoe_proof_bytes: Some(vec![0xFF, 0xFF, 0xFF, 0xFF]), // Invalid proof bytes

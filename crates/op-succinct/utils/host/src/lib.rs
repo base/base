@@ -4,6 +4,7 @@ mod contract;
 pub mod fetcher;
 pub mod host;
 mod proof;
+pub mod rpc_types;
 pub mod stats;
 pub use constants::*;
 pub use contract::*;
