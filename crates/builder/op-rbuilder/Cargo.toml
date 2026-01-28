@@ -193,3 +193,5 @@ testing = [
 	"reth-node-builder/test-utils",
 	"rlimit",
 ]
+
+otlp = [ "reth-node-core/otlp", "reth-optimism-cli/otlp" ]
