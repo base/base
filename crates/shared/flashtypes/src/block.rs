@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// A flashblock containing partial block data.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Flashblock {
     /// Unique payload identifier.
     pub payload_id: PayloadId,

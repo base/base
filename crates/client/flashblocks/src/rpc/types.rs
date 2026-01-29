@@ -1,4 +1,4 @@
-//! Subscription types for the `eth_` PubSub RPC extension
+//! Subscription types for the `eth_` `PubSub` RPC extension
 
 use alloy_rpc_types_eth::pubsub::SubscriptionKind;
 use serde::{Deserialize, Serialize};

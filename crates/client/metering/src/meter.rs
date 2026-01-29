@@ -144,7 +144,7 @@ where
     let attributes = OpNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
-        prev_randao: header.mix_hash().unwrap_or(B256::random()),
+        prev_randao: header.mix_hash().unwrap_or_else(B256::random),
         gas_limit: header.gas_limit(),
         parent_beacon_block_root: parent_beacon_block_root
             .or_else(|| header.parent_beacon_block_root()),

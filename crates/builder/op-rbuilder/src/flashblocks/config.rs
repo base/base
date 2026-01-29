@@ -23,10 +23,10 @@ pub struct FlashblocksConfig {
     /// How much time would be deducted from block build time to account for latencies in
     /// milliseconds.
     ///
-    /// If dynamic_adjustment is false this value would be deducted from first flashblock and
+    /// If `dynamic_adjustment` is false this value would be deducted from first flashblock and
     /// it shouldn't be more than interval
     ///
-    /// If dynamic_adjustment is true this value would be deducted from first flashblock and
+    /// If `dynamic_adjustment` is true this value would be deducted from first flashblock and
     /// it shouldn't be more than interval
     pub leeway_time: Duration,
 
@@ -36,9 +36,9 @@ pub struct FlashblocksConfig {
     /// Should we disable state root calculation for each flashblock
     pub disable_state_root: bool,
 
-    /// Whether to compute state root only when get_payload is called (finalization).
+    /// Whether to compute state root only when `get_payload` is called (finalization).
     /// When enabled, flashblocks are built without state root, but the final payload
-    /// returned by get_payload will have the state root computed.
+    /// returned by `get_payload` will have the state root computed.
     pub compute_state_root_on_finalize: bool,
 }
 

@@ -1,4 +1,4 @@
-//! `eth_` PubSub RPC extension for flashblocks and standard subscriptions
+//! `eth_` `PubSub` RPC extension for flashblocks and standard subscriptions
 //!
 //! This module provides an extended `eth_subscribe` implementation that supports both
 //! standard Ethereum subscription types (newHeads, logs, newPendingTransactions, syncing)
@@ -59,7 +59,7 @@ pub trait EthPubSubApi {
 /// and Base-specific flashblocks subscriptions.
 #[derive(Clone, Debug)]
 pub struct EthPubSub<Eth, FB> {
-    /// Reth's standard EthPubSub for handling standard subscription types
+    /// Reth's standard `EthPubSub` for handling standard subscription types
     inner: RethEthPubSub<Eth>,
     /// Flashblocks state for accessing pending blocks stream
     flashblocks_state: Arc<FB>,

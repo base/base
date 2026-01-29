@@ -59,7 +59,7 @@ where
             for span in scope.from_root() {
                 write!(writer, " {}={{", span.name())?;
                 if let Some(fields) = span.extensions().get::<FormattedFields<N>>() {
-                    write!(writer, "{}", fields)?;
+                    write!(writer, "{fields}")?;
                 }
                 write!(writer, "}}")?;
             }

@@ -315,16 +315,14 @@ where
                 receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
                     if let Some(receipt) = receipt {
                         return Ok(receipt);
-                    } else {
-                        continue
                     }
+                    continue
                 }
                 receipt = self.wait_for_canonical_receipt(tx_hash) => {
                         if let Some(receipt) = receipt {
                             return Ok(receipt);
-                        } else {
-                            continue
                         }
+                        continue
                     }
                 _ = time::sleep(timeout) => {
                     return Err(EthApiError::TransactionConfirmationTimeout {

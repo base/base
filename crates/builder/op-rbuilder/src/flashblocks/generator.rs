@@ -69,7 +69,7 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     _config: BasicPayloadJobGeneratorConfig,
     /// The type responsible for building payloads.
     ///
-    /// See [PayloadBuilder]
+    /// See [`PayloadBuilder`]
     builder: Builder,
     /// Whether to ensure only one payload is being processed at a time
     ensure_only_one_payload: bool,
@@ -79,15 +79,15 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     extra_block_deadline: std::time::Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
-    /// Whether to compute state root only on finalization (when get_payload is called).
+    /// Whether to compute state root only on finalization (when `get_payload` is called).
     compute_state_root_on_finalize: bool,
 }
 
 // === impl BlockPayloadJobGenerator ===
 
 impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
-    /// Creates a new [BlockPayloadJobGenerator] with the given config and custom
-    /// [PayloadBuilder]
+    /// Creates a new [`BlockPayloadJobGenerator`] with the given config and custom
+    /// [`PayloadBuilder`]
     pub(super) fn with_builder(
         client: Client,
         executor: Tasks,
@@ -240,7 +240,7 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A [PayloadJob] that builds empty blocks.
+/// A [`PayloadJob`] that builds empty blocks.
 pub(super) struct BlockPayloadJob<Tasks, Builder>
 where
     Builder: PayloadBuilder,
@@ -251,13 +251,13 @@ where
     pub(crate) executor: Tasks,
     /// The type responsible for building payloads.
     ///
-    /// See [PayloadBuilder]
+    /// See [`PayloadBuilder`]
     pub(crate) builder: Builder,
     /// The cell that holds the built payload (intermediate flashblocks, may not have state root).
     pub(crate) cell: BlockCell<Builder::BuiltPayload>,
     /// The cell that holds the finalized payload with state root computed.
     pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
-    /// Whether to compute state root only on finalization (when get_payload is called).
+    /// Whether to compute state root only on finalization (when `get_payload` is called).
     pub(crate) compute_state_root_on_finalize: bool,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
@@ -324,11 +324,11 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub publish_guard: Arc<Mutex<()>>,
     /// Cell to store the finalized payload with state root.
     pub finalized_cell: BlockCell<Payload>,
-    /// Whether to compute state root only on finalization (when get_payload is called).
+    /// Whether to compute state root only on finalization (when `get_payload` is called).
     pub compute_state_root_on_finalize: bool,
 }
 
-/// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
+/// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
 impl<Tasks, Builder> BlockPayloadJob<Tasks, Builder>
 where
     Tasks: TaskSpawner + Clone + 'static,
@@ -364,7 +364,7 @@ where
     }
 }
 
-/// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
+/// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
 impl<Tasks, Builder> Future for BlockPayloadJob<Tasks, Builder>
 where
     Tasks: TaskSpawner + Clone + 'static,

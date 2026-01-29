@@ -8,7 +8,7 @@ use reth_primitives_traits::Account;
 use tracing::warn;
 
 /// Errors that can occur when validating a transaction.
-#[derive(Debug, PartialEq, Display)]
+#[derive(Debug, PartialEq, Eq, Display)]
 pub enum TxValidationError {
     /// Interop transactions are not supported
     #[display("Interop transactions are not supported")]

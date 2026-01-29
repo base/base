@@ -3,8 +3,8 @@ use alloy_primitives::{B256, keccak256};
 use alloy_rlp::{Encodable, RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Default, Deserialize, Serialize, RlpEncodable, RlpDecodable)]
-/// FlashblockAccessList represents the access list for a single flashblock
+#[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize, Serialize, RlpEncodable, RlpDecodable)]
+/// `FlashblockAccessList` represents the access list for a single flashblock
 pub struct FlashblockAccessList {
     /// All the account changes in this access list
     pub account_changes: Vec<AccountChanges>,
@@ -17,7 +17,7 @@ pub struct FlashblockAccessList {
 }
 
 impl FlashblockAccessList {
-    /// Builds a new FlashblockAccessList from the given account changes
+    /// Builds a new `FlashblockAccessList` from the given account changes
     pub fn build(
         account_changes: Vec<AccountChanges>,
         min_tx_index: u64,
