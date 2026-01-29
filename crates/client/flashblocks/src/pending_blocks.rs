@@ -38,8 +38,26 @@ pub struct PendingBlocksBuilder {
     bundle_state: BundleState,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+impl Default for PendingBlocksBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PendingBlocksBuilder {
+    /// Creates a new empty builder.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new() -> Self {
+        Self::new_internal()
+    }
+
+    #[cfg(not(any(test, feature = "test-utils")))]
     pub(crate) fn new() -> Self {
+        Self::new_internal()
+    }
+
+    fn new_internal() -> Self {
         Self {
             flashblocks: Vec::new(),
             headers: Vec::new(),
@@ -55,8 +73,23 @@ impl PendingBlocksBuilder {
         }
     }
 
+    /// Adds flashblocks to the builder.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    pub fn with_flashblocks(&mut self, flashblocks: impl IntoIterator<Item = Flashblock>) -> &Self {
+        self.with_flashblocks_internal(flashblocks)
+    }
+
+    #[cfg(not(any(test, feature = "test-utils")))]
     #[inline]
     pub(crate) fn with_flashblocks(
+        &mut self,
+        flashblocks: impl IntoIterator<Item = Flashblock>,
+    ) -> &Self {
+        self.with_flashblocks_internal(flashblocks)
+    }
+
+    fn with_flashblocks_internal(
         &mut self,
         flashblocks: impl IntoIterator<Item = Flashblock>,
     ) -> &Self {
@@ -64,8 +97,20 @@ impl PendingBlocksBuilder {
         self
     }
 
+    /// Adds a header to the builder.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    pub fn with_header(&mut self, header: Sealed<Header>) -> &Self {
+        self.with_header_internal(header)
+    }
+
+    #[cfg(not(any(test, feature = "test-utils")))]
     #[inline]
     pub(crate) fn with_header(&mut self, header: Sealed<Header>) -> &Self {
+        self.with_header_internal(header)
+    }
+
+    fn with_header_internal(&mut self, header: Sealed<Header>) -> &Self {
         self.headers.push(header);
         self
     }
@@ -122,7 +167,18 @@ impl PendingBlocksBuilder {
         self
     }
 
+    /// Builds the pending blocks.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
+        self.build_internal()
+    }
+
+    #[cfg(not(any(test, feature = "test-utils")))]
     pub(crate) fn build(self) -> Result<PendingBlocks, StateProcessorError> {
+        self.build_internal()
+    }
+
+    fn build_internal(self) -> Result<PendingBlocks, StateProcessorError> {
         if self.headers.is_empty() {
             return Err(BuildError::MissingHeaders.into());
         }

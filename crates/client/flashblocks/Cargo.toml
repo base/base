@@ -11,6 +11,10 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+test-utils = []
+
 [dependencies]
 # workspace
 base-flashtypes.workspace = true
