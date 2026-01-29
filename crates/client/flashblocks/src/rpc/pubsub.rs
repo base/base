@@ -91,9 +91,11 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         })
     }
 
-    /// Returns a stream that yields individual logs from pending flashblocks matching the filter.
+    /// Returns a stream that yields individual logs from only the latest flashblock matching the
+    /// filter.
     ///
     /// Each matching log is emitted as a separate stream item (one log per WebSocket message).
+    /// Only logs from the most recent flashblock are emitted to avoid duplicates.
     fn pending_logs_stream(flashblocks_state: Arc<FB>, filter: Filter) -> impl Stream<Item = Log>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
@@ -112,7 +114,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                             return None;
                         }
                     };
-                    let logs = pending_blocks.get_pending_logs(&filter);
+                    let logs = pending_blocks.get_latest_flashblock_logs(&filter);
                     if logs.is_empty() { None } else { Some(logs) }
                 },
             ),
@@ -120,11 +122,12 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         )
     }
 
-    /// Returns a stream that yields individual full transactions with logs from pending
-    /// flashblocks.
+    /// Returns a stream that yields individual full transactions with logs from only the latest
+    /// flashblock.
     ///
     /// Each transaction (with its associated logs) is emitted as a separate stream item
-    /// (one transaction per WebSocket message).
+    /// (one transaction per WebSocket message). Only transactions from the most recent
+    /// flashblock are emitted to avoid duplicates.
     fn new_flashblock_transactions_full_stream(
         flashblocks_state: Arc<FB>,
     ) -> impl Stream<Item = TransactionWithLogs>
@@ -145,7 +148,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                             return None;
                         }
                     };
-                    let txs = pending_blocks.get_pending_transactions_with_logs();
+                    let txs = pending_blocks.get_latest_flashblock_transactions_with_logs();
                     if txs.is_empty() { None } else { Some(txs) }
                 },
             ),
@@ -153,9 +156,10 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         )
     }
 
-    /// Returns a stream that yields individual transaction hashes from pending flashblocks.
+    /// Returns a stream that yields individual transaction hashes from only the latest flashblock.
     ///
     /// Each hash is emitted as a separate stream item (one hash per WebSocket message).
+    /// Only hashes from the most recent flashblock are emitted to avoid duplicates.
     fn new_flashblock_transactions_hash_stream(
         flashblocks_state: Arc<FB>,
     ) -> impl Stream<Item = B256>
@@ -176,7 +180,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                             return None;
                         }
                     };
-                    let hashes = pending_blocks.get_pending_transaction_hashes();
+                    let hashes = pending_blocks.get_latest_flashblock_transaction_hashes();
                     if hashes.is_empty() { None } else { Some(hashes) }
                 },
             ),
