@@ -16,6 +16,7 @@ workspace = true
 # Workspace
 base-cli-utils.workspace = true
 base-client-cli.workspace = true
+base-node-service = { workspace = true, features = ["metrics"] }
 
 # Kona
 kona-disc = { workspace = true, features = ["metrics"] }

@@ -1914,6 +1914,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "base-cli-utils",
  "base-client-cli",
+ "base-node-service",
  "clap",
  "eyre",
  "kona-derive",
@@ -2124,6 +2125,34 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "base-node-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-engine",
+ "alloy-transport-http",
+ "async-trait",
+ "http-body-util",
+ "kona-derive",
+ "kona-engine",
+ "kona-genesis",
+ "kona-node-service",
+ "kona-protocol",
+ "kona-providers-alloy",
+ "kona-rpc",
+ "op-alloy-network",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tower 0.5.3",
+ "tracing",
+ "url",
 ]
 
 [[package]]
