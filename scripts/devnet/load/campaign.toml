@@ -9,6 +9,7 @@ scenarios = [
 [spam]
 mode = "tps"
 rate = 10
+duration = 300
 seed = 1
 
 [[spam.stage]]
