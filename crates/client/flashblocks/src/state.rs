@@ -67,9 +67,9 @@ impl FlashblocksState {
     {
         let state_processor = StateProcessor::new(
             client,
-            self.pending_blocks.clone(),
+            Arc::clone(&self.pending_blocks),
             self.max_pending_blocks_depth,
-            self.rx.clone(),
+            Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
         );
 

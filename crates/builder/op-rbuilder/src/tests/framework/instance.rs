@@ -335,7 +335,7 @@ impl FlashblocksListener {
         let flashblocks = Arc::new(Mutex::new(Vec::new()));
         let cancellation_token = CancellationToken::new();
 
-        let flashblocks_clone = flashblocks.clone();
+        let flashblocks_clone = Arc::clone(&flashblocks);
         let cancellation_token_clone = cancellation_token.clone();
 
         let handle = tokio::spawn(async move {
