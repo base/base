@@ -1,7 +1,7 @@
 //! Engine API integration for canonical block production.
 //!
 //! This module provides a typed, type-safe Engine API client based on
-//! reth's OpEngineApiClient trait instead of raw string-based RPC calls.
+//! reth's `OpEngineApiClient` trait instead of raw string-based RPC calls.
 
 use std::{fmt, marker::PhantomData, time::Duration};
 

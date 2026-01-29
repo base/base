@@ -510,11 +510,11 @@ async fn test_duplicate_flashblock_ignored() {
     assert_eq!(block, block_two);
 }
 
-/// Verifies that eth_call targeting pending block sees flashblock state changes.
+/// Verifies that `eth_call` targeting pending block sees flashblock state changes.
 ///
 /// This test catches database layering bugs where pending state from flashblocks
 /// isn't visible to RPC callers. After a flashblock transfers ETH to Bob, an
-/// eth_call simulating a transfer FROM Bob should succeed because Bob now has
+/// `eth_call` simulating a transfer FROM Bob should succeed because Bob now has
 /// more funds from the flashblock.
 #[tokio::test]
 async fn test_eth_call_sees_flashblock_state_changes() {

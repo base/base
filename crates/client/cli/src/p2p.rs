@@ -531,7 +531,7 @@ mod tests {
 
     use super::*;
 
-    /// A mock command that uses the P2PArgs.
+    /// A mock command that uses the `P2PArgs`.
     #[derive(Parser, Debug, Clone)]
     #[command(about = "Mock command")]
     struct MockCommand {

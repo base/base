@@ -57,7 +57,7 @@ impl BenchSetup {
             .map(|count| {
                 let txs = sample_transactions(&provider, *count);
                 let blocks = build_flashblocks(&canonical_block, &txs);
-                (format!("pending_state_{}_txs", count), blocks)
+                (format!("pending_state_{count}_txs"), blocks)
             })
             .collect();
 
@@ -137,7 +137,7 @@ fn init_bench_tracing() {
         let mut filter =
             EnvFilter::builder().with_default_directive(default_level.into()).from_env_lossy();
 
-        for directive in ["reth_tasks=off", "reth_node_builder::launch::common=off"].into_iter() {
+        for directive in ["reth_tasks=off", "reth_node_builder::launch::common=off"] {
             if let Ok(directive) = directive.parse() {
                 filter = filter.add_directive(directive);
             }

@@ -61,7 +61,7 @@ async fn block_fill() -> eyre::Result<()> {
     let block = driver.build_new_block().await?;
 
     for (i, tx_hash) in tx_hashes.iter().enumerate() {
-        assert!(block.includes(tx_hash), "tx i={} hash={} should be in block", i, tx_hash);
+        assert!(block.includes(tx_hash), "tx i={i} hash={tx_hash} should be in block");
     }
     assert!(!block.includes(unfit_tx.tx_hash()), "unfit tx should not be in block");
 

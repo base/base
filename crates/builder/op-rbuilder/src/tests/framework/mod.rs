@@ -18,14 +18,14 @@ pub use txs::*;
 pub use utils::*;
 
 /// Sets up a test instance with default flashblocks configuration.
-/// This is the simplified replacement for the rb_test macro.
+/// This is the simplified replacement for the `rb_test` macro.
 pub async fn setup_test_instance() -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
     LocalInstance::flashblocks().await
 }
 
-/// Sets up a test instance with custom OpRbuilderArgs.
-/// The flashblocks_port will be automatically set to an available port.
+/// Sets up a test instance with custom `OpRbuilderArgs`.
+/// The `flashblocks_port` will be automatically set to an available port.
 pub async fn setup_test_instance_with_args(
     mut args: OpRbuilderArgs,
 ) -> eyre::Result<LocalInstance> {
@@ -34,8 +34,8 @@ pub async fn setup_test_instance_with_args(
     LocalInstance::new(args).await
 }
 
-/// Sets up a test instance with custom OpRbuilderArgs and NodeConfig.
-/// The flashblocks_port will be automatically set to an available port.
+/// Sets up a test instance with custom `OpRbuilderArgs` and `NodeConfig`.
+/// The `flashblocks_port` will be automatically set to an available port.
 pub async fn setup_test_instance_with_config(
     mut args: OpRbuilderArgs,
     config: NodeConfig<OpChainSpec>,
@@ -75,7 +75,6 @@ fn init_tests() {
     use tracing_subscriber::{filter::filter_fn, prelude::*};
     if let Ok(v) = std::env::var("TEST_TRACE") {
         let level = match v.as_str() {
-            "false" | "off" => return,
             "true" | "debug" | "on" => tracing::Level::DEBUG,
             "trace" => tracing::Level::TRACE,
             "info" => tracing::Level::INFO,

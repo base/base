@@ -532,7 +532,7 @@ mod tests {
         Ok(())
     }
 
-    /// Test that state_root_time_us is always <= total_time_us
+    /// Test that `state_root_time_us` is always <= `total_time_us`
     #[tokio::test]
     async fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
@@ -586,7 +586,7 @@ mod tests {
         Ok(())
     }
 
-    /// Integration test: verifies meter_bundle uses flashblocks state correctly.
+    /// Integration test: verifies `meter_bundle` uses flashblocks state correctly.
     ///
     /// A transaction using nonce=1 should fail without flashblocks state (since
     /// canonical nonce is 0), but succeed when flashblocks state indicates nonce=1.

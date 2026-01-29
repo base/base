@@ -394,8 +394,7 @@ mod tests {
         let err_str = err.to_string();
         assert!(
             err_str.contains("Parent header not found") || err_str.contains("not found"),
-            "error should indicate parent header not found: {}",
-            err_str
+            "error should indicate parent header not found: {err_str}"
         );
 
         Ok(())
@@ -435,8 +434,7 @@ mod tests {
         let err_str = err.to_string();
         assert!(
             err_str.contains("recover signer") || err_str.contains("signature"),
-            "error should indicate signer recovery failure: {}",
-            err_str
+            "error should indicate signer recovery failure: {err_str}"
         );
 
         Ok(())
