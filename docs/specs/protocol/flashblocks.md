@@ -573,25 +573,25 @@ expectations, and economic models.
 
 A common heuristic for gas allocation defines the gas limit for flashblock $i$ (where $i \in [1, F]$) as:
 
-```math
+$$
 \text{flashblock\_gas\_limit}(i) = (i / F) \times \text{block\_gas\_limit}
-```
+$$
 
 This linear increase means cumulative gas usage for flashblock $i$ is bounded by:
 
-```math
+$$
 \text{cumulative\_gas\_limit}(i) = \frac {\text{block\_gas\_limit}} F \cdot \frac {i(i+1)} 2
-```
+$$
 
 When optimally filling each flashblock's gas allocation, the block gas limit is reached at flashblock index $i_{max}$
 and incidentally the theoretical maximum transaction gas limit $tx_{max}$ that can be included is:
 
-```math
+$$
 \begin{align}
 i_{max}  &= \left\lceil \frac {-1 + \sqrt{1 + 8F}} {2} \right\rceil \\
 tx_{max} &= \left\lfloor \frac {-1 + \sqrt{1 + 8F}} 2 \right\rfloor/F \cdot \text{block\_gas\_limit}
 \end{align}
-```
+$$
 
 For example, with $F = 10$ flashblocks we have $i_{max} = 4$.
 This means that if each flashblock is optimally filled, the block gas limit is reached by flashblock 4.
