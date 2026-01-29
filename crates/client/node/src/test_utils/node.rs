@@ -87,7 +87,7 @@ impl LocalNode {
 
         let (db, db_path) = Self::create_test_database()?;
 
-        let mut node_config = NodeConfig::new(chain_spec.clone())
+        let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
             .with_rpc(rpc_args)
             .with_unused_ports();

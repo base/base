@@ -341,7 +341,7 @@ where
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
-        let publish_guard = self.publish_guard.clone();
+        let publish_guard = Arc::clone(&self.publish_guard);
         let finalized_cell = self.finalized_cell.clone();
         let compute_state_root_on_finalize = self.compute_state_root_on_finalize;
 

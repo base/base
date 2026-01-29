@@ -57,7 +57,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 }
             };
             let mdbx = Arc::new(mdbx);
-            let storage: OpProofsStorage<Arc<MdbxProofsStorage>> = mdbx.clone().into();
+            let storage: OpProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
 
             let storage_exec = storage.clone();
 

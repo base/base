@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn test_unified_receipt_builder_creation() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
-        let builder = UnifiedReceiptBuilder::new(chain_spec.clone());
+        let builder = UnifiedReceiptBuilder::new(Arc::clone(&chain_spec));
         assert!(Arc::ptr_eq(builder.chain_spec(), &chain_spec));
     }
 
@@ -258,7 +258,7 @@ mod tests {
     fn test_build_legacy_receipt() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
-        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+        let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
@@ -277,7 +277,7 @@ mod tests {
     fn test_build_deposit_receipt() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
-        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+        let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_deposit_tx();
@@ -297,7 +297,7 @@ mod tests {
         // Canyon activates deposit_receipt_version
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
-        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+        let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_deposit_tx();
@@ -320,7 +320,7 @@ mod tests {
     fn test_build_failed_transaction_receipt() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
-        let mut evm = create_test_evm(chain_spec.clone(), &mut db);
+        let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
