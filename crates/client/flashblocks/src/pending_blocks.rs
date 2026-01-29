@@ -18,7 +18,7 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::state::EvmState;
 
-use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError};
+use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -296,6 +296,22 @@ impl PendingBlocks {
     /// Returns all pending transactions from flashblocks.
     pub fn get_pending_transactions(&self) -> Vec<Transaction> {
         self.transactions.clone()
+    }
+
+    /// Returns all pending transactions with their associated logs from flashblocks.
+    pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
+        self.transactions
+            .iter()
+            .map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let logs = self
+                    .transaction_receipts
+                    .get(&tx_hash)
+                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .unwrap_or_default();
+                TransactionWithLogs { transaction: tx.clone(), logs }
+            })
+            .collect()
     }
 
     /// Returns the hashes of all pending transactions from flashblocks.
