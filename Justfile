@@ -123,11 +123,11 @@ bench-flashblocks:
 
 # Stops devnet, deletes data, and starts fresh
 devnet: devnet-down
-    docker compose up -d --build
+    docker compose --env-file .env.devnet -f docker/docker-compose.yml up -d --build
 
 # Stops devnet and deletes all data
 devnet-down:
-    -docker compose down
+    -docker compose --env-file .env.devnet -f docker/docker-compose.yml down
     rm -rf .devnet
 
 # Shows devnet block numbers and sync status
@@ -152,4 +152,4 @@ devnet-flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
-    docker compose logs -f {{containers}}
+    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{containers}}
