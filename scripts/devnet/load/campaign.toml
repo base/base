@@ -7,10 +7,10 @@ scenarios = [
 ]
 
 [spam]
-mode = "tps"         # or "tpb"
-rate = 20            # default rate if a stage omits one (TPS or TPB via mode)
-duration = 3000      # default duration (seconds if tps, blocks if tpb)
-seed = 42            # optional; falls back to CLI --seed or seed file
+mode = "tps"
+rate = 10
+duration = 3000
+seed = 1
 
 [[spam.stage]]
 name = "steady"

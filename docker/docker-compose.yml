@@ -426,16 +426,16 @@ services:
       base-builder:
         condition: service_healthy
     volumes:
-      - ./scenarios:/scenarios:ro
+      - ./scripts/devnet/load/:/load:ro
       - ./.devnet/contender:/root/.contender
-    entrypoint: /bin/sh
     command:
-      - -c
-      - |
-        echo "Starting contender with continuous load generation..."
-        while true; do
-          echo "Running campaign at $$(date)"
-          contender campaign /scripts/devnet/load/campaign.toml -r http://base-builder:${L2_BUILDER_HTTP_PORT} -p ${ANVIL_ACCOUNT_2_KEY} --timeout 0 --min-balance 1234000000000000000 || echo "Campaign ended, restarting..."
-          sleep 1
-        done
+      - campaign
+      - /load/campaign.toml
+      - -r
+      - http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - -p
+      - ${ANVIL_ACCOUNT_9_KEY}
+      - --min-balance
+      - "1234000000000000000"
+      - --forever
     restart: unless-stopped
