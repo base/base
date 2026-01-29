@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
+use futures_util::stream;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, async_trait},
@@ -91,76 +92,98 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         })
     }
 
-    /// Returns a stream that yields logs from pending flashblocks matching the filter
+    /// Returns a stream that yields individual logs from pending flashblocks matching the filter.
+    ///
+    /// Each matching log is emitted as a separate stream item (one log per WebSocket message).
     fn pending_logs_stream(
         flashblocks_state: Arc<FB>,
         filter: Filter,
-    ) -> impl Stream<Item = Vec<Log>>
+    ) -> impl Stream<Item = Log>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(
-            move |result| {
-                let pending_blocks = match result {
-                    Ok(blocks) => blocks,
-                    Err(err) => {
-                        error!(
-                            message = "Error in flashblocks stream for pending logs",
-                            error = %err
-                        );
-                        return None;
-                    }
-                };
-                let logs = pending_blocks.get_pending_logs(&filter);
-                if logs.is_empty() { None } else { Some(logs) }
-            },
+        futures_util::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                move |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for pending logs",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let logs = pending_blocks.get_pending_logs(&filter);
+                    if logs.is_empty() { None } else { Some(logs) }
+                },
+            ),
+            stream::iter,
         )
     }
 
-    /// Returns a stream that yields full transactions from pending flashblocks
+    /// Returns a stream that yields individual full transactions from pending flashblocks.
+    ///
+    /// Each transaction is emitted as a separate stream item (one transaction per WebSocket message).
     fn new_flashblock_transactions_full_stream(
         flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = Vec<Transaction>>
+    ) -> impl Stream<Item = Transaction>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
-            let pending_blocks = match result {
-                Ok(blocks) => blocks,
-                Err(err) => {
-                    error!(
-                        message = "Error in flashblocks stream for transactions",
-                        error = %err
-                    );
-                    return None;
-                }
-            };
-            let txs = pending_blocks.get_pending_transactions();
-            if txs.is_empty() { None } else { Some(txs) }
-        })
+        futures_util::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for transactions",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let txs = pending_blocks.get_pending_transactions();
+                    if txs.is_empty() { None } else { Some(txs) }
+                },
+            ),
+            stream::iter,
+        )
     }
 
-    /// Returns a stream that yields transaction hashes from pending flashblocks
+    /// Returns a stream that yields individual transaction hashes from pending flashblocks.
+    ///
+    /// Each hash is emitted as a separate stream item (one hash per WebSocket message).
     fn new_flashblock_transactions_hash_stream(
         flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = Vec<B256>>
+    ) -> impl Stream<Item = B256>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
-            let pending_blocks = match result {
-                Ok(blocks) => blocks,
-                Err(err) => {
-                    error!(
-                        message = "Error in flashblocks stream for transaction hashes",
-                        error = %err
-                    );
-                    return None;
-                }
-            };
-            let hashes = pending_blocks.get_pending_transaction_hashes();
-            if hashes.is_empty() { None } else { Some(hashes) }
-        })
+        futures_util::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for transaction hashes",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let hashes = pending_blocks.get_pending_transaction_hashes();
+                    if hashes.is_empty() { None } else { Some(hashes) }
+                },
+            ),
+            stream::iter,
+        )
     }
 }
 
