@@ -1106,19 +1106,19 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
     let tx_hash = &notif["params"]["result"];
     assert!(tx_hash.is_string(), "Expected hash string, got: {:?}", tx_hash);
 
-    // Send second flashblock with 9 more transactions (10 total cumulative)
+    // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
 
-    // Receive 10 separate messages (one per transaction)
+    // Receive 9 separate messages (one per transaction in the delta)
     let mut received_hashes = Vec::new();
-    for _ in 0..10 {
+    for _ in 0..9 {
         let notification = ws_stream.next().await.unwrap()?;
         let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
         assert_eq!(notif["params"]["subscription"], subscription_id);
         let tx_hash = notif["params"]["result"].as_str().expect("expected hash string");
         received_hashes.push(tx_hash.to_string());
     }
-    assert_eq!(received_hashes.len(), 10);
+    assert_eq!(received_hashes.len(), 9);
 
     Ok(())
 }
@@ -1166,12 +1166,12 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     assert!(tx["blockNumber"].is_string(), "Expected full tx with blockNumber field");
     assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
 
-    // Send second flashblock with 9 more transactions (10 total cumulative)
+    // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
 
-    // Receive 10 separate messages (one per transaction)
+    // Receive 9 separate messages (one per transaction in the delta)
     let mut received_count = 0;
-    for _ in 0..10 {
+    for _ in 0..9 {
         let notification = ws_stream.next().await.unwrap()?;
         let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
         assert_eq!(notif["params"]["subscription"], subscription_id);
@@ -1180,7 +1180,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
         assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
         received_count += 1;
     }
-    assert_eq!(received_count, 10);
+    assert_eq!(received_count, 9);
 
     Ok(())
 }
