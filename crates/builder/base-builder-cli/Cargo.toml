@@ -17,5 +17,5 @@ clap.workspace = true
 clap_builder.workspace = true
 
 # reth
-reth-optimism-cli.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-optimism-node.workspace = true

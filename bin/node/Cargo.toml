@@ -23,7 +23,7 @@ base-proofs-extension.workspace = true
 
 # reth
 reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-cli-util.workspace = true
 
 # misc
