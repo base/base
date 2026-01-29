@@ -123,7 +123,7 @@ bench-flashblocks:
 
 # Stops devnet, deletes data, and starts fresh
 devnet: devnet-down
-    docker compose --env-file .env.devnet -f docker/docker-compose.yml up -d --build
+    docker compose --env-file .env.devnet -f docker/docker-compose.yml up -d --build --scale contender=0
 
 # Stops devnet and deletes all data
 devnet-down:
@@ -144,6 +144,10 @@ devnet-smoke:
 
 # Runs full devnet checks (status + smoke tests)
 devnet-checks: devnet-status devnet-smoke
+
+# Starts the contender load generator
+devnet-load:
+    docker compose up -d contender
 
 # Stream FB's from the builder via websocket
 devnet-flashblocks:

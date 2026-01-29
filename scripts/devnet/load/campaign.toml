@@ -9,12 +9,11 @@ scenarios = [
 [spam]
 mode = "tps"
 rate = 10
-duration = 3000
 seed = 1
 
 [[spam.stage]]
 name = "steady"
-duration_secs = 600
+duration_secs = 300
   [[spam.stage.mix]]
   scenario  = "scenario:simple.toml"
   share_pct = 100.0
