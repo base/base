@@ -1,10 +1,11 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
+use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
 };
@@ -141,14 +142,14 @@ where
         let cancel_token = if self.ensure_only_one_payload {
             // Cancel existing payload
             {
-                let last_payload = self.last_payload.lock().unwrap();
+                let last_payload = self.last_payload.lock();
                 last_payload.cancel();
             }
 
             // Create and set new cancellation token with a fresh lock
             let cancel_token = CancellationToken::new();
             {
-                let mut last_payload = self.last_payload.lock().unwrap();
+                let mut last_payload = self.last_payload.lock();
                 *last_payload = cancel_token.clone();
             }
             cancel_token
@@ -299,7 +300,7 @@ where
 
         // Acquire mutex before cancelling to synchronize with payload publishing.
         {
-            let _guard = self.publish_guard.lock().unwrap();
+            let _guard = self.publish_guard.lock();
             self.cancel.cancel();
         }
 
@@ -429,13 +430,13 @@ impl<T: Clone> BlockCell<T> {
     }
 
     pub(super) fn set(&self, value: T) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         *inner = Some(value);
         self.notify.notify_one();
     }
 
     pub(super) fn get(&self) -> Option<T> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         inner.clone()
     }
 
@@ -584,12 +585,12 @@ mod tests {
         }
 
         fn new_event(&self, event: BlockEvent) {
-            let mut events = self.events.lock().unwrap();
+            let mut events = self.events.lock();
             events.push(event);
         }
 
         fn get_events(&self) -> Vec<BlockEvent> {
-            let mut events = self.events.lock().unwrap();
+            let mut events = self.events.lock();
             std::mem::take(&mut *events)
         }
     }
