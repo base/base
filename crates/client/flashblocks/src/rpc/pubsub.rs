@@ -91,7 +91,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         })
     }
 
-    /// Returns a stream that yields logs from pending flashblocks matching the filter
+    /// Returns a stream that yields logs from the latest flashblock only, matching the filter
     fn pending_logs_stream(
         flashblocks_state: Arc<FB>,
         filter: Filter,
@@ -111,13 +111,13 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                         return None;
                     }
                 };
-                let logs = pending_blocks.get_pending_logs(&filter);
+                let logs = pending_blocks.get_latest_logs(&filter);
                 if logs.is_empty() { None } else { Some(logs) }
             },
         )
     }
 
-    /// Returns a stream that yields full transactions from pending flashblocks
+    /// Returns a stream that yields full transactions from the latest flashblock only
     fn new_flashblock_transactions_full_stream(
         flashblocks_state: Arc<FB>,
     ) -> impl Stream<Item = Vec<Transaction>>
@@ -135,12 +135,12 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                     return None;
                 }
             };
-            let txs = pending_blocks.get_pending_transactions();
+            let txs = pending_blocks.get_latest_transactions();
             if txs.is_empty() { None } else { Some(txs) }
         })
     }
 
-    /// Returns a stream that yields transaction hashes from pending flashblocks
+    /// Returns a stream that yields transaction hashes from the latest flashblock only
     fn new_flashblock_transactions_hash_stream(
         flashblocks_state: Arc<FB>,
     ) -> impl Stream<Item = Vec<B256>>
@@ -158,7 +158,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                     return None;
                 }
             };
-            let hashes = pending_blocks.get_pending_transaction_hashes();
+            let hashes = pending_blocks.get_latest_transaction_hashes();
             if hashes.is_empty() { None } else { Some(hashes) }
         })
     }

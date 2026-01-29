@@ -36,6 +36,9 @@ pub struct PendingBlocksBuilder {
     state_overrides: Option<StateOverride>,
 
     bundle_state: BundleState,
+
+    /// Transaction hashes from the latest flashblock only (for delta emissions).
+    latest_tx_hashes: Vec<B256>,
 }
 
 impl PendingBlocksBuilder {
@@ -52,6 +55,7 @@ impl PendingBlocksBuilder {
             transaction_senders: HashMap::new(),
             state_overrides: None,
             bundle_state: BundleState::default(),
+            latest_tx_hashes: Vec::new(),
         }
     }
 
@@ -122,6 +126,12 @@ impl PendingBlocksBuilder {
         self
     }
 
+    #[inline]
+    pub(crate) fn set_latest_tx_hashes(&mut self, hashes: Vec<B256>) -> &mut Self {
+        self.latest_tx_hashes = hashes;
+        self
+    }
+
     pub(crate) fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         if self.headers.is_empty() {
             return Err(BuildError::MissingHeaders.into());
@@ -143,6 +153,7 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
+            latest_tx_hashes: self.latest_tx_hashes,
         })
     }
 }
@@ -163,6 +174,9 @@ pub struct PendingBlocks {
     state_overrides: Option<StateOverride>,
 
     bundle_state: BundleState,
+
+    /// Transaction hashes from the latest flashblock only (for delta emissions).
+    latest_tx_hashes: Vec<B256>,
 }
 
 impl PendingBlocks {
@@ -301,6 +315,34 @@ impl PendingBlocks {
     /// Returns the hashes of all pending transactions from flashblocks.
     pub fn get_pending_transaction_hashes(&self) -> Vec<B256> {
         self.transactions.iter().map(|tx| tx.tx_hash()).collect()
+    }
+
+    /// Returns transactions from the latest flashblock only.
+    pub fn get_latest_transactions(&self) -> Vec<Transaction> {
+        self.latest_tx_hashes
+            .iter()
+            .filter_map(|hash| self.transactions_by_hash.get(hash).cloned())
+            .collect()
+    }
+
+    /// Returns transaction hashes from the latest flashblock only.
+    pub fn get_latest_transaction_hashes(&self) -> Vec<B256> {
+        self.latest_tx_hashes.clone()
+    }
+
+    /// Returns logs from the latest flashblock only, matching the filter.
+    pub fn get_latest_logs(&self, filter: &Filter) -> Vec<Log> {
+        let mut logs = Vec::new();
+        for hash in &self.latest_tx_hashes {
+            if let Some(receipt) = self.transaction_receipts.get(hash) {
+                for log in receipt.inner.logs() {
+                    if filter.matches(&log.inner) {
+                        logs.push(log.clone());
+                    }
+                }
+            }
+        }
+        logs
     }
 }
 

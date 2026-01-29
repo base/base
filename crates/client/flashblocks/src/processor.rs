@@ -6,7 +6,7 @@ use alloy_consensus::{
     Header,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{BlockNumberOrTag, eip2718::Decodable2718};
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
@@ -407,6 +407,19 @@ where
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
+
+        // Extract tx hashes from the latest flashblock for delta emissions
+        if let Some(latest_flashblock) = flashblocks.last() {
+            let latest_tx_hashes = latest_flashblock
+                .diff
+                .transactions
+                .iter()
+                .filter_map(|tx_bytes| {
+                    OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref()).ok().map(|tx| tx.tx_hash())
+                })
+                .collect();
+            pending_blocks_builder.set_latest_tx_hashes(latest_tx_hashes);
+        }
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }

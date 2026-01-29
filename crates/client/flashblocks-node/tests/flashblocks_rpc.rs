@@ -1112,7 +1112,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
     let notification2 = ws_stream.next().await.unwrap()?;
     let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
     let txs2 = notif2["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
+    assert_eq!(txs2.len(), 9); // Only 9 from second flashblock (delta, not accumulated)
     assert!(txs2.iter().all(|tx| tx.is_string()));
 
     Ok(())
@@ -1166,7 +1166,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     let notification2 = ws_stream.next().await.unwrap()?;
     let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
     let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
+    assert_eq!(txs2.len(), 9); // Only 9 from second flashblock (delta, not accumulated)
     assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
 
     Ok(())
