@@ -1159,11 +1159,12 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Result should be a single full transaction object, not an array
+    // Result should be a single full transaction object with logs, not an array
     let tx = &notif["params"]["result"];
     assert!(tx.is_object(), "Expected transaction object, got: {:?}", tx);
     assert!(tx["hash"].is_string(), "Expected full tx with hash field");
     assert!(tx["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+    assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
 
     // Send second flashblock with 9 more transactions (10 total cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
@@ -1176,6 +1177,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
         assert_eq!(notif["params"]["subscription"], subscription_id);
         let tx = &notif["params"]["result"];
         assert!(tx["hash"].is_string() && tx["blockNumber"].is_string());
+        assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
         received_count += 1;
     }
     assert_eq!(received_count, 10);
