@@ -151,6 +151,9 @@ extern "C" fn print_stack_trace(_: libc::c_int) {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn min_sigstack_size() -> usize {
     const AT_MINSIGSTKSZ: core::ffi::c_ulong = 51;
+    // SAFETY: `getauxval` is a standard libc function that retrieves values from
+    // the auxiliary vector. AT_MINSIGSTKSZ is a valid key, and the function
+    // returns 0 if the key is not found, which is handled below.
     let dynamic_sigstksz = unsafe { libc::getauxval(AT_MINSIGSTKSZ) };
     // If getauxval couldn't find the entry, it returns 0,
     // so take the higher of the "constant" and auxval.
