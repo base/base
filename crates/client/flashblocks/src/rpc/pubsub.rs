@@ -16,7 +16,6 @@ use jsonrpsee::{
     server::SubscriptionMessage,
 };
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
@@ -27,7 +26,7 @@ use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
 use crate::{
-    FlashblocksAPI,
+    FlashblocksAPI, TransactionWithLogs,
     rpc::types::{BaseSubscriptionKind, ExtendedSubscriptionKind},
 };
 
@@ -95,10 +94,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
     /// Returns a stream that yields individual logs from pending flashblocks matching the filter.
     ///
     /// Each matching log is emitted as a separate stream item (one log per WebSocket message).
-    fn pending_logs_stream(
-        flashblocks_state: Arc<FB>,
-        filter: Filter,
-    ) -> impl Stream<Item = Log>
+    fn pending_logs_stream(flashblocks_state: Arc<FB>, filter: Filter) -> impl Stream<Item = Log>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
@@ -124,12 +120,14 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         )
     }
 
-    /// Returns a stream that yields individual full transactions from pending flashblocks.
+    /// Returns a stream that yields individual full transactions with logs from pending
+    /// flashblocks.
     ///
-    /// Each transaction is emitted as a separate stream item (one transaction per WebSocket message).
+    /// Each transaction (with its associated logs) is emitted as a separate stream item
+    /// (one transaction per WebSocket message).
     fn new_flashblock_transactions_full_stream(
         flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = Transaction>
+    ) -> impl Stream<Item = TransactionWithLogs>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
@@ -147,7 +145,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                             return None;
                         }
                     };
-                    let txs = pending_blocks.get_pending_transactions();
+                    let txs = pending_blocks.get_pending_transactions_with_logs();
                     if txs.is_empty() { None } else { Some(txs) }
                 },
             ),

@@ -1,7 +1,22 @@
 //! Subscription types for the `eth_` PubSub RPC extension
 
-use alloy_rpc_types_eth::pubsub::SubscriptionKind;
+use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
+use op_alloy_rpc_types::Transaction;
 use serde::{Deserialize, Serialize};
+
+/// A full transaction object with its associated logs.
+///
+/// This is returned by `newFlashblockTransactions` subscription when `full = true`,
+/// providing both the transaction details and logs emitted by its execution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionWithLogs {
+    /// The full transaction object.
+    #[serde(flatten)]
+    pub transaction: Transaction,
+    /// Logs emitted by this transaction.
+    pub logs: Vec<Log>,
+}
 
 /// Extended subscription kind that includes both standard Ethereum subscription types
 /// and flashblocks-specific types.
@@ -48,7 +63,8 @@ pub enum BaseSubscriptionKind {
     /// Flashblock transactions have been included by the sequencer and are effectively preconfirmed.
     ///
     /// Accepts an optional boolean parameter:
-    /// - `true`: Returns full transaction objects
+    /// - `true`: Returns full transaction objects with their associated logs (as
+    ///   [`TransactionWithLogs`])
     /// - `false` (default): Returns only transaction hashes
     NewFlashblockTransactions,
 }
