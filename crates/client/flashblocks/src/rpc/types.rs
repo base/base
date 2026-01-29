@@ -1,7 +1,35 @@
 //! Subscription types for the `eth_` PubSub RPC extension
 
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::pubsub::SubscriptionKind;
+use op_alloy_rpc_types::Transaction;
 use serde::{Deserialize, Serialize};
+
+/// Simplified log data for transaction subscriptions.
+/// Excludes redundant fields (block_number, block_hash, transaction_hash, transaction_index)
+/// since those are already available from the parent transaction.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionLog {
+    /// Address of the contract that emitted the log.
+    pub address: Address,
+    /// Indexed topics of the log.
+    pub topics: Vec<B256>,
+    /// Non-indexed data of the log.
+    pub data: Bytes,
+    /// Log index within the transaction.
+    pub log_index: u64,
+}
+
+/// A transaction with its associated logs, used for full transaction subscriptions.
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionWithLogs {
+    /// The full transaction object (flattened to top level).
+    #[serde(flatten)]
+    pub transaction: Transaction,
+    /// Simplified logs emitted by this transaction.
+    pub logs: Vec<TransactionLog>,
+}
 
 /// Extended subscription kind that includes both standard Ethereum subscription types
 /// and flashblocks-specific types.

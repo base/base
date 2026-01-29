@@ -1153,12 +1153,14 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Result should be an array of full transaction objects
+    // Result should be an array of full transaction objects with logs
     let txs = notif["params"]["result"].as_array().expect("expected array of transactions");
     assert_eq!(txs.len(), 1);
     // Full transaction objects have fields like "hash", "from", "to", etc.
     assert!(txs[0]["hash"].is_string(), "Expected full tx with hash field");
     assert!(txs[0]["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+    // Must have a logs field (array)
+    assert!(txs[0]["logs"].is_array(), "Expected full tx with logs field as array");
 
     // Send second flashblock with more transactions
     setup.send_flashblock(setup.create_second_payload()).await?;
@@ -1168,6 +1170,24 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
     assert_eq!(txs2.len(), 9); // Only 9 from second flashblock (delta, not accumulated)
     assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
+    // All transactions must have logs field
+    assert!(txs2.iter().all(|tx| tx["logs"].is_array()), "All transactions must have logs array");
+
+    // Verify the log trigger transaction has actual logs
+    let log_trigger_tx = txs2
+        .iter()
+        .find(|tx| {
+            tx["hash"].as_str() == Some(&format!("{:?}", setup.txn_details.log_trigger_hash))
+        })
+        .expect("log trigger tx should be in the result");
+    let logs = log_trigger_tx["logs"].as_array().expect("logs should be an array");
+    assert_eq!(logs.len(), 2, "log trigger tx should have 2 logs");
+
+    // Verify log structure
+    assert!(logs[0]["address"].is_string(), "log should have address");
+    assert!(logs[0]["topics"].is_array(), "log should have topics array");
+    assert!(logs[0]["data"].is_string(), "log should have data");
+    assert!(logs[0]["logIndex"].is_number(), "log should have logIndex");
 
     Ok(())
 }

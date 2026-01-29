@@ -15,7 +15,6 @@ use jsonrpsee::{
     server::SubscriptionMessage,
 };
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
@@ -29,6 +28,8 @@ use crate::{
     FlashblocksAPI,
     rpc::types::{BaseSubscriptionKind, ExtendedSubscriptionKind},
 };
+
+use super::types::TransactionWithLogs;
 
 /// Eth pub-sub RPC extension for flashblocks and standard subscriptions.
 ///
@@ -117,10 +118,10 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         )
     }
 
-    /// Returns a stream that yields full transactions from the latest flashblock only
+    /// Returns a stream that yields full transactions with logs from the latest flashblock only
     fn new_flashblock_transactions_full_stream(
         flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = Vec<Transaction>>
+    ) -> impl Stream<Item = Vec<TransactionWithLogs>>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
@@ -135,8 +136,12 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                     return None;
                 }
             };
-            let txs = pending_blocks.get_latest_transactions();
-            if txs.is_empty() { None } else { Some(txs) }
+            let txs_with_logs: Vec<TransactionWithLogs> = pending_blocks
+                .get_latest_transactions_with_logs()
+                .into_iter()
+                .map(|(transaction, logs)| TransactionWithLogs { transaction, logs })
+                .collect();
+            if txs_with_logs.is_empty() { None } else { Some(txs_with_logs) }
         })
     }
 

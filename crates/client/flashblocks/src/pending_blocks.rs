@@ -18,7 +18,7 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::state::EvmState;
 
-use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError};
+use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, rpc::TransactionLog};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -328,6 +328,36 @@ impl PendingBlocks {
     /// Returns transaction hashes from the latest flashblock only.
     pub fn get_latest_transaction_hashes(&self) -> Vec<B256> {
         self.latest_tx_hashes.clone()
+    }
+
+    /// Returns transactions with their simplified logs from the latest flashblock only.
+    /// Logs are simplified to exclude redundant transaction/block metadata.
+    pub fn get_latest_transactions_with_logs(&self) -> Vec<(Transaction, Vec<TransactionLog>)> {
+        self.latest_tx_hashes
+            .iter()
+            .filter_map(|hash| {
+                let tx = self.transactions_by_hash.get(hash).cloned()?;
+                let logs = self
+                    .transaction_receipts
+                    .get(hash)
+                    .map(|receipt| {
+                        receipt
+                            .inner
+                            .logs()
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, log)| TransactionLog {
+                                address: log.address(),
+                                topics: log.topics().to_vec(),
+                                data: log.data().data.clone(),
+                                log_index: idx as u64,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some((tx, logs))
+            })
+            .collect()
     }
 
     /// Returns logs from the latest flashblock only, matching the filter.
