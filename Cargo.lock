@@ -1969,6 +1969,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types",
+ "op-alloy-rpc-types-engine",
  "rayon",
  "reth-chainspec",
  "reth-evm",

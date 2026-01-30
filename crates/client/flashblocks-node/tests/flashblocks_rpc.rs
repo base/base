@@ -3,8 +3,8 @@
 use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
-use alloy_consensus::Transaction;
-use alloy_eips::BlockNumberOrTag;
+use alloy_consensus::{Transaction, constants::EMPTY_WITHDRAWALS};
+use alloy_eips::{BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
@@ -268,7 +268,7 @@ impl TestSetup {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::default(),
+                parent_beacon_block_root: TEST_PARENT_BEACON_BLOCK_ROOT,
                 parent_hash: B256::default(),
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::default(),
@@ -281,6 +281,7 @@ impl TestSetup {
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 blob_gas_used: Some(0),
                 transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
+                withdrawals_root: EMPTY_WITHDRAWALS,
                 ..Default::default()
             },
             metadata: Metadata { block_number: 1 },
@@ -313,7 +314,7 @@ impl TestSetup {
                 ],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
-                withdrawals_root: Default::default(),
+                withdrawals_root: EMPTY_WITHDRAWALS,
             },
             metadata: Metadata { block_number: 1 },
         }
@@ -378,6 +379,10 @@ const TEST_LOG_TOPIC_0: B256 =
     b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"); // Transfer event
 const TEST_LOG_TOPIC_1: B256 =
     b256!("0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"); // From address
+
+// Test parent beacon block root for flashblock tests
+const TEST_PARENT_BEACON_BLOCK_ROOT: B256 =
+    b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
 
 #[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
@@ -1203,6 +1208,51 @@ async fn test_get_block_transaction_count_by_number_pending() -> Result<()> {
     let count: Option<U256> =
         client.request("eth_getBlockTransactionCountByNumber", ("latest",)).await?;
     assert_eq!(count, Some(U256::from(0)));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pending_block_header_fields() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+
+    // Send flashblocks to create pending state
+    setup.send_test_payloads().await?;
+
+    // Query pending block
+    let pending_block = provider
+        .get_block_by_number(BlockNumberOrTag::Pending)
+        .await?
+        .expect("pending block expected");
+
+    // Verify withdrawals is empty array (not null)
+    assert_eq!(
+        pending_block.withdrawals,
+        Some(vec![].into()),
+        "withdrawals should be an empty array"
+    );
+
+    // Verify parent_beacon_block_root matches the test value
+    assert_eq!(
+        pending_block.header.parent_beacon_block_root,
+        Some(TEST_PARENT_BEACON_BLOCK_ROOT),
+        "parent_beacon_block_root should match test value"
+    );
+
+    // Verify withdrawals_root is the empty withdrawals hash
+    assert_eq!(
+        pending_block.header.withdrawals_root,
+        Some(EMPTY_WITHDRAWALS),
+        "withdrawals_root should be EMPTY_WITHDRAWALS"
+    );
+
+    // Verify requests_hash is EMPTY_REQUESTS_HASH
+    assert_eq!(
+        pending_block.header.requests_hash,
+        Some(EMPTY_REQUESTS_HASH),
+        "requests_hash should be EMPTY_REQUESTS_HASH"
+    );
 
     Ok(())
 }

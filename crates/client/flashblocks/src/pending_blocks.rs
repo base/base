@@ -7,7 +7,7 @@ use alloy_primitives::{
     map::foldhash::{HashMap, HashMapExt},
 };
 use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types::{BlockTransactions, state::StateOverride};
+use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_flashtypes::Flashblock;
@@ -231,6 +231,11 @@ impl PendingBlocks {
             .collect()
     }
 
+    /// Returns all withdrawals collected from flashblocks.
+    fn get_withdrawals(&self) -> Vec<Withdrawal> {
+        self.flashblocks.iter().flat_map(|fb| fb.diff.withdrawals.clone()).collect()
+    }
+
     /// Returns the latest block, optionally with full transaction details.
     pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
         let header = self.latest_header();
@@ -248,7 +253,7 @@ impl PendingBlocks {
             header: RPCHeader::from_consensus(header, None, None),
             transactions,
             uncles: Vec::new(),
-            withdrawals: None,
+            withdrawals: Some(self.get_withdrawals().into()),
         }
     }
 
