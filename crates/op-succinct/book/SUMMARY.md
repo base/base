@@ -43,7 +43,7 @@
     - [EigenDA DA](./fault_proofs/experimental/eigenda.md)
 
 - [Advanced](./advanced/intro.md)
-  - [Cost Estimator](./advanced/cost-estimator.md)
+  - [Cost Estimation Tools](./advanced/cost-estimation-tools.md)
   - [Reproduce Binaries](./advanced/verify-binaries.md)
   - [Node Setup](./advanced/node-setup.md)
   - [FAQ](./faq.md)

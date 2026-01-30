@@ -10,6 +10,7 @@ use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
     host::OPSuccinctHost,
     stats::ExecutionStats,
+    witness_cache::{load_stdin_from_cache, save_stdin_to_cache},
     witness_generation::WitnessGenerator,
 };
 use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
@@ -26,14 +27,18 @@ use std::{
 
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
 /// each block range to a CSV file after each execution completes (not guaranteed to be in order).
-async fn execute_blocks_and_write_stats_csv<H: OPSuccinctHost>(
+async fn execute_blocks_and_write_stats_csv<H>(
     host: Arc<H>,
     host_args: &[H::Args],
     ranges: Vec<SpanBatchRange>,
     l2_chain_id: u64,
     start: u64,
     end: u64,
-) -> Result<()> {
+    cache_enabled: bool,
+) -> Result<()>
+where
+    H: OPSuccinctHost,
+{
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     // Fetch all of the execution stats block ranges in parallel.
@@ -67,12 +72,38 @@ async fn execute_blocks_and_write_stats_csv<H: OPSuccinctHost>(
     let prover = ProverClient::builder().cpu().build();
 
     // Run the host tasks in parallel using join_all
-    let handles = host_args.iter().map(|host_args| {
+    let handles = host_args.iter().zip(ranges.iter()).map(|(host_args, range)| {
         let host_args = host_args.clone();
         let host = host.clone();
+        let start = range.start;
+        let end = range.end;
         tokio::spawn(async move {
+            // Try loading SP1Stdin from cache
+            if cache_enabled {
+                match load_stdin_from_cache(l2_chain_id, start, end) {
+                    Ok(Some(stdin)) => {
+                        info!("Loaded stdin from cache for range {}-{}", start, end);
+                        return stdin;
+                    }
+                    Ok(None) => {} // No cache, generate below
+                    Err(e) => {
+                        log::warn!("Failed to load stdin cache for range {}-{}: {e}", start, end);
+                    }
+                }
+            }
+
+            // Generate witness and convert to SP1Stdin
             let witness_data = host.run(&host_args).await.unwrap();
-            host.witness_generator().get_sp1_stdin(witness_data).unwrap()
+            let stdin = host.witness_generator().get_sp1_stdin(witness_data).unwrap();
+
+            // Save SP1Stdin to cache
+            if cache_enabled {
+                if let Ok(cache_path) = save_stdin_to_cache(l2_chain_id, start, end, &stdin) {
+                    info!("Saved stdin to cache: {}", cache_path.display());
+                }
+            }
+
+            stdin
         })
     });
 
@@ -238,6 +269,7 @@ async fn main() -> Result<()> {
         l2_chain_id,
         l2_start_block,
         l2_end_block,
+        args.cache,
     )
     .await?;
 

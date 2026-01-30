@@ -50,6 +50,7 @@ alloy-sol-types.workspace = true
 # general
 anyhow.workspace = true
 async-trait.workspace = true
+bincode.workspace = true
 cfg-if.workspace = true
 c-kzg.workspace = true
 futures.workspace = true

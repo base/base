@@ -12,5 +12,6 @@ pub use proof::*;
 pub mod logger;
 pub mod metrics;
 pub mod network;
+pub mod witness_cache;
 pub mod witness_generation;
 pub use logger::setup_logger;

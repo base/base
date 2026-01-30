@@ -7389,6 +7389,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "async-trait",
+ "bincode",
  "c-kzg",
  "cargo_metadata",
  "cfg-if",
