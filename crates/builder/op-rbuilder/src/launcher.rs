@@ -32,7 +32,7 @@ pub fn launch(cli: Cli) -> Result<()> {
 
     // Only setup telemetry if an OTLP endpoint is provided
     if telemetry_args.otlp_endpoint.is_some() {
-        let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
+        let telemetry_layer = telemetry_args.setup()?;
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
 
