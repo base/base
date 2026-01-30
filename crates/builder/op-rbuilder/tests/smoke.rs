@@ -8,6 +8,8 @@ use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
 use base_builder_cli::OpRbuilderArgs;
+#[cfg(target_os = "linux")]
+use op_rbuilder::test_utils::ExternalNode;
 use op_rbuilder::test_utils::{
     TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args,
 };
