@@ -149,6 +149,9 @@ devnet-checks: devnet-status devnet-smoke
 devnet-load:
     docker compose -f docker/docker-compose.yml up -d --no-deps contender
 
+devnet-load-down:
+    docker compose -f docker/docker-compose.yml down contender
+
 # Stream FB's from the builder via websocket
 devnet-flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest

@@ -3,20 +3,44 @@ description = "Continuous baseline load generation"
 
 [spam]
 mode = "tps"
-rate = 10         # default rate if a stage omits one
+rate = 100        # default rate if a stage omits one
 duration = 10     # default duration per stage (seconds)
 seed = 1
 
+# This load attempts to mimic the `Simulator.sol` contract in `base/benchmark`
+#
+# The main components of the contract include initializing storage/accounts,
+# load/update/delete/create storage slots and accounts, and precompiles.
+#
+# By default, the number of accounts created will be equivalent to the rate specified.
 [[spam.stage]]
-name = "warmup"
-rate = 10
-duration = 10
-[[spam.stage.mix]]
-scenario = "transfers"
-share_pct = 50.0
-[[spam.stage.mix]]
-scenario = "/load/scenarios/create_slots.toml"
-share_pct = 25.0
-[[spam.stage.mix]]
-scenario = "/load/scenarios/precompiles.toml"
-share_pct = 25.0
+name = "simulator-load"
+rate = 18
+duration_secs = 10
+  [[spam.stage.mix]]
+  scenario  = "erc20"
+  share_pct = 50.0
+  [[spam.stage.mix]]
+  scenario  = "/load/scenarios/create_slots.toml"
+  share_pct = 25.0
+  [[spam.stage.mix]]
+  scenario  = "/load/scenarios/precompiles.toml"
+  share_pct = 25.0
+  [[spam.stage.mix]]
+  scenario  = "/load/scenarios/precompiles.toml"
+  share_pct = 25.0
+  
+
+[[spam.stage]]
+name = "trading-load"
+rate = 200
+duration_secs = 10
+  [[spam.stage.mix]]
+  scenario  = "erc20"
+  share_pct = 50.0
+  [[spam.stage.mix]]
+  scenario  = "/load/scenarios/create_slots.toml"
+  share_pct = 25.0
+  [[spam.stage.mix]]
+  scenario  = "/load/scenarios/precompiles.toml"
+  share_pct = 25.0 
