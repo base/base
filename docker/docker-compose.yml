@@ -437,4 +437,5 @@ services:
       - ${ANVIL_ACCOUNT_9_KEY}
       - --min-balance
       - "1234000000000000000"
+      - --optimistic-nonces
     restart: unless-stopped

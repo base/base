@@ -1,20 +1,22 @@
 name = "load"
 description = "Continuous baseline load generation"
 
-[setup]
-scenarios = [
-  "scenario:simple.toml",
-]
-
 [spam]
 mode = "tps"
-rate = 10
-duration = 300
+rate = 10         # default rate if a stage omits one
+duration = 10     # default duration per stage (seconds)
 seed = 1
 
 [[spam.stage]]
-name = "steady"
-duration_secs = 300
-  [[spam.stage.mix]]
-  scenario  = "scenario:simple.toml"
-  share_pct = 100.0
+name = "warmup"
+rate = 10
+duration = 10
+[[spam.stage.mix]]
+scenario = "transfers"
+share_pct = 50.0
+[[spam.stage.mix]]
+scenario = "/load/scenarios/create_slots.toml"
+share_pct = 25.0
+[[spam.stage.mix]]
+scenario = "/load/scenarios/precompiles.toml"
+share_pct = 25.0
