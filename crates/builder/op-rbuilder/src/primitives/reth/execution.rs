@@ -26,13 +26,16 @@ pub struct ResourceLimits {
     /// Maximum execution time per transaction in microseconds (optional).
     pub tx_execution_time_limit_us: Option<u128>,
     /// Maximum execution time budget for the current flashblock in microseconds (optional).
-    /// This is a "use it or lose it" budget - unused time does not carry over.
+    ///
+    /// This is a "use it or lose it" budget - unused time does not carry over between
+    /// flashblocks. The budget resets at the start of each flashblock.
     pub flashblock_execution_time_limit_us: Option<u128>,
     /// Maximum state root calculation time per transaction in microseconds (optional).
     pub tx_state_root_time_limit_us: Option<u128>,
     /// Maximum cumulative state root calculation time for the block in microseconds (optional).
-    /// Unlike execution time, state root time is cumulative across the block since state root
-    /// is calculated once at the end.
+    ///
+    /// Unlike execution time, state root time is cumulative across the entire block because
+    /// state root is calculated once at the end of the block, not per-flashblock.
     pub block_state_root_time_limit_us: Option<u128>,
 }
 
@@ -52,23 +55,34 @@ pub struct TxResources {
     pub state_root_time_us: Option<u128>,
 }
 
+/// Resource metering limits that are optionally enforced for performance/business goals.
+/// These are out-of-protocol limits that can operate in dry-run or enforcement mode.
+#[derive(Debug, Display)]
+pub enum ResourceMeteringLimitExceeded {
+    #[display("TransactionExecutionTimeExceeded: tx_time_us={_0} limit_us={_1}")]
+    TransactionExecutionTime(u128, u128),
+    #[display(
+        "FlashblockExecutionTimeExceeded: flashblock_used_us={_0} tx_time_us={_1} limit_us={_2}"
+    )]
+    FlashblockExecutionTime(u128, u128, u128),
+    #[display("TransactionStateRootTimeExceeded: tx_time_us={_0} limit_us={_1}")]
+    TransactionStateRootTime(u128, u128),
+    #[display("BlockStateRootTimeExceeded: cumulative_us={_0} tx_time_us={_1} block_limit_us={_2}")]
+    BlockStateRootTime(u128, u128, u128),
+}
+
 #[derive(Debug, Display)]
 pub enum TxnExecutionResult {
+    // Protocol-enforced limits (always rejected)
     TransactionDALimitExceeded,
     #[display("BlockDALimitExceeded: total_da_used={_0} tx_da_size={_1} block_da_limit={_2}")]
     BlockDALimitExceeded(u64, u64, u64),
     #[display("TransactionGasLimitExceeded: total_gas_used={_0} tx_gas_limit={_1}")]
     TransactionGasLimitExceeded(u64, u64, u64),
-    #[display("TransactionExecutionTimeExceeded: tx_time_us={_0} limit_us={_1}")]
-    TransactionExecutionTimeExceeded(u128, u128),
-    #[display(
-        "FlashblockExecutionTimeExceeded: flashblock_used_us={_0} tx_time_us={_1} limit_us={_2}"
-    )]
-    FlashblockExecutionTimeExceeded(u128, u128, u128),
-    #[display("TransactionStateRootTimeExceeded: tx_time_us={_0} limit_us={_1}")]
-    TransactionStateRootTimeExceeded(u128, u128),
-    #[display("BlockStateRootTimeExceeded: cumulative_us={_0} tx_time_us={_1} block_limit_us={_2}")]
-    BlockStateRootTimeExceeded(u128, u128, u128),
+    // Resource metering limits (optionally enforced)
+    #[display("{_0}")]
+    ResourceMeteringLimitExceeded(ResourceMeteringLimitExceeded),
+    // Transaction status
     SequencerTransaction,
     NonceTooLow,
     InteropFailed,
@@ -79,6 +93,12 @@ pub enum TxnExecutionResult {
     Reverted,
     RevertedAndExcluded,
     MaxGasUsageExceeded,
+}
+
+impl From<ResourceMeteringLimitExceeded> for TxnExecutionResult {
+    fn from(err: ResourceMeteringLimitExceeded) -> Self {
+        Self::ResourceMeteringLimitExceeded(err)
+    }
 }
 
 #[derive(Default, Debug)]
@@ -94,11 +114,10 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
     /// Execution time used in the current flashblock in microseconds.
-    /// This is a "use it or lose it" resource - reset at the start of each flashblock.
+    /// Reset at the start of each flashblock (see [`ResourceLimits::flashblock_execution_time_limit_us`]).
     pub flashblock_execution_time_us: u128,
-    /// Cumulative state root calculation time in microseconds.
-    /// Unlike execution time, this is cumulative across the block since state root
-    /// is calculated once at the end.
+    /// Cumulative state root calculation time in microseconds across the block
+    /// (see [`ResourceLimits::block_state_root_time_limit_us`]).
     pub cumulative_state_root_time_us: u128,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
@@ -126,8 +145,6 @@ impl<T: Debug + Default> ExecutionInfo<T> {
     }
 
     /// Reset the flashblock-scoped execution time budget for a new flashblock.
-    /// Called at the start of each flashblock to reset the "use it or lose it" resource.
-    /// Note: State root time is NOT reset here since it's cumulative across the block.
     pub const fn reset_flashblock_execution_time(&mut self) {
         self.flashblock_execution_time_us = 0;
     }
@@ -147,6 +164,8 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         tx: &TxResources,
         limits: &ResourceLimits,
     ) -> Result<(), TxnExecutionResult> {
+        use ResourceMeteringLimitExceeded::*;
+
         // Check per-transaction DA limit
         if limits.tx_data_limit.is_some_and(|da_limit| tx.da_size > da_limit) {
             return Err(TxnExecutionResult::TransactionDALimitExceeded);
@@ -185,51 +204,47 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         }
 
         // Check execution time limits (if metering data is available)
-        // Execution time is a "use it or lose it" resource per flashblock
         if let Some(tx_time) = tx.execution_time_us {
             // Check per-transaction execution time limit
             if let Some(tx_limit) = limits.tx_execution_time_limit_us
                 && tx_time > tx_limit
             {
-                return Err(TxnExecutionResult::TransactionExecutionTimeExceeded(
-                    tx_time, tx_limit,
-                ));
+                return Err(TransactionExecutionTime(tx_time, tx_limit).into());
             }
 
             // Check flashblock execution time limit
             if let Some(flashblock_limit) = limits.flashblock_execution_time_limit_us {
                 let total_time = self.flashblock_execution_time_us.saturating_add(tx_time);
                 if total_time > flashblock_limit {
-                    return Err(TxnExecutionResult::FlashblockExecutionTimeExceeded(
+                    return Err(FlashblockExecutionTime(
                         self.flashblock_execution_time_us,
                         tx_time,
                         flashblock_limit,
-                    ));
+                    )
+                    .into());
                 }
             }
         }
 
         // Check state root time limits (if metering data is available)
-        // State root time is a "use it or lose it" resource per flashblock
         if let Some(tx_time) = tx.state_root_time_us {
             // Check per-transaction state root time limit
             if let Some(tx_limit) = limits.tx_state_root_time_limit_us
                 && tx_time > tx_limit
             {
-                return Err(TxnExecutionResult::TransactionStateRootTimeExceeded(
-                    tx_time, tx_limit,
-                ));
+                return Err(TransactionStateRootTime(tx_time, tx_limit).into());
             }
 
-            // Check block state root time limit (cumulative across the block)
+            // Check block state root time limit
             if let Some(block_limit) = limits.block_state_root_time_limit_us {
                 let total_time = self.cumulative_state_root_time_us.saturating_add(tx_time);
                 if total_time > block_limit {
-                    return Err(TxnExecutionResult::BlockStateRootTimeExceeded(
+                    return Err(BlockStateRootTime(
                         self.cumulative_state_root_time_us,
                         tx_time,
                         block_limit,
-                    ));
+                    )
+                    .into());
                 }
             }
         }
@@ -344,7 +359,9 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionResult::TransactionExecutionTimeExceeded(1_500_000, 1_000_000))
+            Err(TxnExecutionResult::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000)
+            ))
         ));
     }
 
@@ -366,8 +383,10 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionResult::FlashblockExecutionTimeExceeded(
-                4_000_000, 2_000_000, 5_000_000
+            Err(TxnExecutionResult::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::FlashblockExecutionTime(
+                    4_000_000, 2_000_000, 5_000_000
+                )
             ))
         ));
     }
@@ -421,7 +440,9 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionResult::TransactionStateRootTimeExceeded(600_000, 500_000))
+            Err(TxnExecutionResult::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::TransactionStateRootTime(600_000, 500_000)
+            ))
         ));
     }
 
@@ -443,7 +464,9 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionResult::BlockStateRootTimeExceeded(8_000_000, 3_000_000, 10_000_000))
+            Err(TxnExecutionResult::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::BlockStateRootTime(8_000_000, 3_000_000, 10_000_000)
+            ))
         ));
     }
 
@@ -548,7 +571,12 @@ mod tests {
         };
 
         let result = info.is_tx_over_limits(&tx, &limits);
-        assert!(matches!(result, Err(TxnExecutionResult::BlockStateRootTimeExceeded(_, _, _))));
+        assert!(matches!(
+            result,
+            Err(TxnExecutionResult::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::BlockStateRootTime(_, _, _)
+            ))
+        ));
     }
 
     // ==================== Combined Resource Tests ====================

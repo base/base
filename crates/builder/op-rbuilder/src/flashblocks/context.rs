@@ -520,39 +520,33 @@ impl OpPayloadBuilderCtx {
 
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(&tx_resources, &limits) {
-                // Check if this is a time-based limit violation
-                let is_time_limit = matches!(
-                    &result,
-                    TxnExecutionResult::TransactionExecutionTimeExceeded(_, _)
-                        | TxnExecutionResult::FlashblockExecutionTimeExceeded(_, _, _)
-                        | TxnExecutionResult::TransactionStateRootTimeExceeded(_, _)
-                        | TxnExecutionResult::BlockStateRootTimeExceeded(_, _, _)
-                );
+                // Check if this is a resource metering limit (optionally enforced)
+                // vs a protocol limit (always enforced)
+                if let TxnExecutionResult::ResourceMeteringLimitExceeded(metering_err) = &result {
+                    use crate::primitives::reth::ResourceMeteringLimitExceeded::*;
 
-                if is_time_limit {
                     // Record which specific limit was exceeded
                     self.metrics.resource_limit_would_reject_total.increment(1);
-                    match &result {
-                        TxnExecutionResult::TransactionExecutionTimeExceeded(_, _) => {
+                    match metering_err {
+                        TransactionExecutionTime(_, _) => {
                             self.metrics.tx_execution_time_exceeded_total.increment(1);
                         }
-                        TxnExecutionResult::FlashblockExecutionTimeExceeded(_, _, _) => {
+                        FlashblockExecutionTime(_, _, _) => {
                             self.metrics.flashblock_execution_time_exceeded_total.increment(1);
                         }
-                        TxnExecutionResult::TransactionStateRootTimeExceeded(_, _) => {
+                        TransactionStateRootTime(_, _) => {
                             self.metrics.tx_state_root_time_exceeded_total.increment(1);
                         }
-                        TxnExecutionResult::BlockStateRootTimeExceeded(_, _, _) => {
+                        BlockStateRootTime(_, _, _) => {
                             self.metrics.block_state_root_time_exceeded_total.increment(1);
                         }
-                        _ => {}
                     }
 
                     if self.resource_metering_mode.is_dry_run() {
                         // In dry-run mode, log but don't reject
                         warn!(
                             target: "payload_builder",
-                            message = "Transaction would exceed time limits (dry-run mode)",
+                            message = "Transaction would exceed resource metering limits (dry-run mode)",
                             tx_hash = ?tx_hash,
                             result = %result,
                             predicted_exec_us = ?predicted_execution_time_us,
@@ -566,7 +560,7 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
                 } else {
-                    // Non-time limits (gas, DA) always enforce
+                    // Protocol limits (gas, DA) - always enforce
                     log_txn(result);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
