@@ -56,7 +56,7 @@ reth-node-builder.workspace = true
 reth-storage-api.workspace = true
 reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
-reth-optimism-rpc.workspace = true
+reth-optimism-rpc = { workspace = true, features = ["client"] }
 reth-tasks.workspace = true
 reth-tracing-otlp.workspace = true
 
