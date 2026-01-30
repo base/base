@@ -11,41 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-test-utils = [
-	"base-primitives/test-utils",
-	"dep:alloy-eips",
-	"dep:alloy-genesis",
-	"dep:alloy-primitives",
-	"dep:alloy-provider",
-	"dep:alloy-rpc-client",
-	"dep:alloy-rpc-types",
-	"dep:alloy-rpc-types-engine",
-	"dep:alloy-signer",
-	"dep:base-primitives",
-	"dep:chrono",
-	"dep:jsonrpsee",
-	"dep:op-alloy-network",
-	"dep:op-alloy-rpc-types-engine",
-	"dep:reth-chainspec",
-	"dep:reth-ipc",
-	"dep:reth-node-core",
-	"dep:reth-primitives-traits",
-	"dep:reth-rpc-layer",
-	"dep:reth-tasks",
-	"dep:tower",
-	"dep:tracing-subscriber",
-	"dep:url",
-	"reth-chainspec/test-utils",
-	"reth-db/test-utils",
-	"reth-evm/test-utils",
-	"reth-node-builder/test-utils",
-	"reth-optimism-node/test-utils",
-	"reth-primitives-traits?/test-utils",
-	"reth-provider/test-utils",
-	"reth-transaction-pool/test-utils",
-]
-
 [dependencies]
 # Project
 base-client-engine.workspace = true
@@ -108,4 +73,39 @@ url = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 
 # tower for middleware
-tower = { version = "0.5", optional = true }
+tower = { workspace = true, optional = true }
+
+[features]
+test-utils = [
+	"base-primitives/test-utils",
+	"dep:alloy-eips",
+	"dep:alloy-genesis",
+	"dep:alloy-primitives",
+	"dep:alloy-provider",
+	"dep:alloy-rpc-client",
+	"dep:alloy-rpc-types",
+	"dep:alloy-rpc-types-engine",
+	"dep:alloy-signer",
+	"dep:base-primitives",
+	"dep:chrono",
+	"dep:jsonrpsee",
+	"dep:op-alloy-network",
+	"dep:op-alloy-rpc-types-engine",
+	"dep:reth-chainspec",
+	"dep:reth-ipc",
+	"dep:reth-node-core",
+	"dep:reth-primitives-traits",
+	"dep:reth-rpc-layer",
+	"dep:reth-tasks",
+	"dep:tower",
+	"dep:tracing-subscriber",
+	"dep:url",
+	"reth-chainspec/test-utils",
+	"reth-db/test-utils",
+	"reth-evm/test-utils",
+	"reth-node-builder/test-utils",
+	"reth-optimism-node/test-utils",
+	"reth-primitives-traits?/test-utils",
+	"reth-provider/test-utils",
+	"reth-transaction-pool/test-utils",
+]

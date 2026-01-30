@@ -43,10 +43,11 @@ impl Args {
     }
 }
 
-impl From<Args> for Option<FlashblocksConfig> {
-    fn from(args: Args) -> Self {
+impl From<&Args> for Option<FlashblocksConfig> {
+    fn from(args: &Args) -> Self {
         args.rollup_args
             .flashblocks_url
+            .clone()
             .map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
     }
 }

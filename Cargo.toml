@@ -261,6 +261,7 @@ metrics-process = { version = "2.4.2", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 
 # misc
+criterion = "0.5"
 hex = "0.4"
 tar = "0.4"
 http = "1.0"

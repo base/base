@@ -28,7 +28,7 @@ fn main() {
         let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering
-        let flashblocks_config: Option<FlashblocksConfig> = args.clone().into();
+        let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
