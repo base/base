@@ -41,7 +41,7 @@ pub use validation::{
 mod rpc;
 pub use rpc::{
     BaseSubscriptionKind, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
-    ExtendedSubscriptionKind,
+    ExtendedSubscriptionKind, TransactionWithLogs,
 };
 
 mod extension;

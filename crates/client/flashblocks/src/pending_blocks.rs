@@ -18,7 +18,7 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::state::EvmState;
 
-use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError};
+use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -298,9 +298,92 @@ impl PendingBlocks {
         self.transactions.clone()
     }
 
+    /// Returns all pending transactions with their associated logs from flashblocks.
+    pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
+        self.transactions
+            .iter()
+            .map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let logs = self
+                    .transaction_receipts
+                    .get(&tx_hash)
+                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .unwrap_or_default();
+                TransactionWithLogs { transaction: tx.clone(), logs }
+            })
+            .collect()
+    }
+
     /// Returns the hashes of all pending transactions from flashblocks.
     pub fn get_pending_transaction_hashes(&self) -> Vec<B256> {
         self.transactions.iter().map(|tx| tx.tx_hash()).collect()
+    }
+
+    /// Returns the number of transactions in all flashblocks except the latest one.
+    /// This is used to compute the delta (transactions only in the latest flashblock).
+    fn previous_flashblocks_tx_count(&self) -> usize {
+        if self.flashblocks.len() <= 1 {
+            return 0;
+        }
+        self.flashblocks[..self.flashblocks.len() - 1]
+            .iter()
+            .map(|fb| fb.diff.transactions.len())
+            .sum()
+    }
+
+    /// Returns logs matching the filter from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_logs`, this returns only logs from transactions
+    /// that were added in the most recent flashblock, avoiding duplicates
+    /// when streaming via WebSocket subscriptions.
+    pub fn get_latest_flashblock_logs(&self, filter: &Filter) -> Vec<Log> {
+        let prev_count = self.previous_flashblocks_tx_count();
+        let mut logs = Vec::new();
+
+        for tx in self.transactions.iter().skip(prev_count) {
+            if let Some(receipt) = self.transaction_receipts.get(&tx.tx_hash()) {
+                for log in receipt.inner.logs() {
+                    if filter.matches(&log.inner) {
+                        logs.push(log.clone());
+                    }
+                }
+            }
+        }
+
+        logs
+    }
+
+    /// Returns transactions with their associated logs from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_transactions_with_logs`, this returns only transactions
+    /// that were added in the most recent flashblock, avoiding duplicates
+    /// when streaming via WebSocket subscriptions.
+    pub fn get_latest_flashblock_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
+        let prev_count = self.previous_flashblocks_tx_count();
+
+        self.transactions
+            .iter()
+            .skip(prev_count)
+            .map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let logs = self
+                    .transaction_receipts
+                    .get(&tx_hash)
+                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .unwrap_or_default();
+                TransactionWithLogs { transaction: tx.clone(), logs }
+            })
+            .collect()
+    }
+
+    /// Returns the hashes of transactions from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_transaction_hashes`, this returns only hashes
+    /// of transactions that were added in the most recent flashblock,
+    /// avoiding duplicates when streaming via WebSocket subscriptions.
+    pub fn get_latest_flashblock_transaction_hashes(&self) -> Vec<B256> {
+        let prev_count = self.previous_flashblocks_tx_count();
+        self.transactions.iter().skip(prev_count).map(|tx| tx.tx_hash()).collect()
     }
 }
 

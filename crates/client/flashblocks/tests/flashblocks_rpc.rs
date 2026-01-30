@@ -1099,24 +1099,29 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
     // Send first flashblock with L1 deposit tx
     setup.send_flashblock(setup.create_first_payload()).await?;
 
+    // Each transaction is now sent as a separate message (one tx per message)
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Result should be an array of transaction hashes (strings)
-    let txs = notif["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs.len(), 1);
-    assert!(txs[0].is_string(), "Expected hash string, got: {:?}", txs[0]);
+    // Result should be a single transaction hash (string), not an array
+    let tx_hash = &notif["params"]["result"];
+    assert!(tx_hash.is_string(), "Expected hash string, got: {:?}", tx_hash);
 
-    // Send second flashblock with more transactions
+    // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
 
-    let notification2 = ws_stream.next().await.unwrap()?;
-    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
-    let txs2 = notif2["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
-    assert!(txs2.iter().all(|tx| tx.is_string()));
+    // Receive 9 separate messages (one per transaction in the delta)
+    let mut received_hashes = Vec::new();
+    for _ in 0..9 {
+        let notification = ws_stream.next().await.unwrap()?;
+        let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+        assert_eq!(notif["params"]["subscription"], subscription_id);
+        let tx_hash = notif["params"]["result"].as_str().expect("expected hash string");
+        received_hashes.push(tx_hash.to_string());
+    }
+    assert_eq!(received_hashes.len(), 9);
 
     Ok(())
 }
@@ -1151,26 +1156,34 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     // Send flashblocks
     setup.send_flashblock(setup.create_first_payload()).await?;
 
+    // Each transaction is now sent as a separate message (one tx per message)
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Result should be an array of full transaction objects
-    let txs = notif["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs.len(), 1);
-    // Full transaction objects have fields like "hash", "from", "to", etc.
-    assert!(txs[0]["hash"].is_string(), "Expected full tx with hash field");
-    assert!(txs[0]["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+    // Result should be a single full transaction object with logs, not an array
+    let tx = &notif["params"]["result"];
+    assert!(tx.is_object(), "Expected transaction object, got: {:?}", tx);
+    assert!(tx["hash"].is_string(), "Expected full tx with hash field");
+    assert!(tx["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+    assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
 
-    // Send second flashblock with more transactions
+    // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
 
-    let notification2 = ws_stream.next().await.unwrap()?;
-    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
-    let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
-    assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
+    // Receive 9 separate messages (one per transaction in the delta)
+    let mut received_count = 0;
+    for _ in 0..9 {
+        let notification = ws_stream.next().await.unwrap()?;
+        let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+        assert_eq!(notif["params"]["subscription"], subscription_id);
+        let tx = &notif["params"]["result"];
+        assert!(tx["hash"].is_string() && tx["blockNumber"].is_string());
+        assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
+        received_count += 1;
+    }
+    assert_eq!(received_count, 9);
 
     Ok(())
 }
