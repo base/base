@@ -440,4 +440,5 @@ services:
       - --optimistic-nonces
       - --accounts-per-agent
       - ${CONTENDER_ACCOUNTS_PER_AGENT}
-    restart: unless-stopped
+      - ${CONTENDER_GEN_REPORT:+--gen-report} 
+    restart: no
