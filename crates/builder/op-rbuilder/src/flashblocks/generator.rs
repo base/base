@@ -474,13 +474,13 @@ impl<T: Clone> Default for BlockCell<T> {
 }
 
 fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
-    let unix_now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|e| {
-            warn!(error = %e, "System clock went backward, using zero duration");
-            Duration::ZERO
-        })
-        .as_secs();
+    let unix_now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs(),
+        Err(e) => {
+            warn!(error = %e, "System clock went backward, returning zero deadline");
+            return Duration::ZERO;
+        }
+    };
 
     // Safe subtraction that handles the case where timestamp is in the past
     let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
