@@ -166,7 +166,7 @@ impl TxDataStore {
             };
             entry
                 .backrun_bundles
-                .sort_by(|a, b| b.total_priority_fee.cmp(&a.total_priority_fee));
+                .sort_by_key(|b| std::cmp::Reverse(b.total_priority_fee));
             replaced
         };
 
