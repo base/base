@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
-    PendingStateBuilder, ProviderError, Result,
+    PendingStateBuilder, ProtocolError, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -132,7 +132,7 @@ where
         let num_flashblocks_for_canon =
             flashblocks.iter().filter(|fb| fb.metadata.block_number == block.number).count();
         self.metrics.flashblocks_in_block.record(num_flashblocks_for_canon as f64);
-        self.metrics.pending_snapshot_height.set(pending_blocks.latest_block_number() as f64);
+        self.metrics.pending_snapshot_height.set(pending_blocks.latest_block_number()? as f64);
 
         // Check for reorg by comparing transaction sets
         let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
@@ -144,8 +144,8 @@ where
 
         // Determine the reconciliation strategy
         let strategy = CanonicalBlockReconciler::reconcile(
-            Some(pending_blocks.earliest_block_number()),
-            Some(pending_blocks.latest_block_number()),
+            Some(pending_blocks.earliest_block_number()?),
+            Some(pending_blocks.latest_block_number()?),
             block.number,
             self.max_depth,
             reorg_detected,
@@ -155,13 +155,13 @@ where
             ReconciliationStrategy::CatchUp => {
                 debug!(
                     message = "pending snapshot cleared because canonical caught up",
-                    latest_pending_block = pending_blocks.latest_block_number(),
+                    latest_pending_block = pending_blocks.latest_block_number()?,
                     canonical_block = block.number,
                 );
                 self.metrics.pending_clear_catchup.increment(1);
                 self.metrics
                     .pending_snapshot_fb_index
-                    .set(pending_blocks.latest_flashblock_index() as f64);
+                    .set(pending_blocks.latest_flashblock_index()? as f64);
                 Ok(None)
             }
             ReconciliationStrategy::HandleReorg => {
@@ -189,8 +189,8 @@ where
             ReconciliationStrategy::Continue => {
                 debug!(
                     message = "canonical block behind latest pending block, continuing with existing pending state",
-                    latest_pending_block = pending_blocks.latest_block_number(),
-                    earliest_pending_block = pending_blocks.earliest_block_number(),
+                    latest_pending_block = pending_blocks.latest_block_number()?,
+                    earliest_pending_block = pending_blocks.earliest_block_number()?,
                     canonical_block = block.number,
                     pending_txns_for_block = ?tracked_txn_hashes.len(),
                     canonical_txns_for_block = ?block_txn_hashes.len(),
@@ -224,8 +224,8 @@ where
         };
 
         let validation_result = FlashblockSequenceValidator::validate(
-            pending_blocks.latest_block_number(),
-            pending_blocks.latest_flashblock_index(),
+            pending_blocks.latest_block_number()?,
+            pending_blocks.latest_flashblock_index()?,
             flashblock.metadata.block_number,
             flashblock.index,
         );
@@ -244,7 +244,7 @@ where
                 self.metrics.unexpected_block_order.increment(1);
                 warn!(
                     message = "Received duplicate Flashblock for current block, ignoring",
-                    curr_block = %pending_blocks.latest_block_number(),
+                    curr_block = %pending_blocks.latest_block_number()?,
                     flashblock_index = %flashblock.index,
                 );
                 Ok(prev_pending_blocks)
@@ -254,7 +254,7 @@ where
                 self.metrics.unexpected_block_order.increment(1);
                 error!(
                     message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
-                    curr_block = %pending_blocks.latest_block_number(),
+                    curr_block = %pending_blocks.latest_block_number()?,
                     new_block = %block_number,
                 );
                 Ok(None)
@@ -264,7 +264,7 @@ where
                 self.metrics.unexpected_block_order.increment(1);
                 error!(
                     message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
-                    curr_block = %pending_blocks.latest_block_number(),
+                    curr_block = %pending_blocks.latest_block_number()?,
                     new_block = %flashblock.metadata.block_number,
                 );
                 Ok(None)
@@ -277,6 +277,11 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
+        // Early return if no flashblocks to process
+        if flashblocks.is_empty() {
+            return Err(ProtocolError::EmptyFlashblocks.into());
+        }
+
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
@@ -286,7 +291,8 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
+        let earliest_block_number =
+            flashblocks_per_block.keys().min().ok_or(ProtocolError::EmptyFlashblocks)?;
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
             .client

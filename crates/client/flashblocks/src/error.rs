@@ -108,6 +108,12 @@ pub enum BuildError {
     NoFlashblocks,
 }
 
+impl From<BuildError> for jsonrpsee_types::ErrorObjectOwned {
+    fn from(err: BuildError) -> Self {
+        Self::owned(jsonrpsee_types::ErrorCode::InternalError.code(), err.to_string(), None::<()>)
+    }
+}
+
 /// Errors that can occur during flashblock state processing.
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum StateProcessorError {

@@ -174,28 +174,51 @@ pub struct PendingBlocks {
 
 impl PendingBlocks {
     /// Returns the latest block number in the pending state.
-    pub fn latest_block_number(&self) -> BlockNumber {
-        self.headers.last().unwrap().number
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
+    pub fn latest_block_number(&self) -> Result<BlockNumber, BuildError> {
+        self.headers.last().map(|h| h.number).ok_or(BuildError::MissingHeaders)
     }
 
     /// Returns the canonical block number (the block before pending).
-    pub fn canonical_block_number(&self) -> BlockNumberOrTag {
-        BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
+    pub fn canonical_block_number(&self) -> Result<BlockNumberOrTag, BuildError> {
+        self.headers
+            .first()
+            .map(|h| BlockNumberOrTag::Number(h.number - 1))
+            .ok_or(BuildError::MissingHeaders)
     }
 
     /// Returns the earliest block number in the pending state.
-    pub fn earliest_block_number(&self) -> BlockNumber {
-        self.headers.first().unwrap().number
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
+    pub fn earliest_block_number(&self) -> Result<BlockNumber, BuildError> {
+        self.headers.first().map(|h| h.number).ok_or(BuildError::MissingHeaders)
     }
 
     /// Returns the index of the latest flashblock.
-    pub fn latest_flashblock_index(&self) -> u64 {
-        self.flashblocks.last().unwrap().index
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::NoFlashblocks`] if there are no flashblocks.
+    pub fn latest_flashblock_index(&self) -> Result<u64, BuildError> {
+        self.flashblocks.last().map(|fb| fb.index).ok_or(BuildError::NoFlashblocks)
     }
 
     /// Returns the latest header.
-    pub fn latest_header(&self) -> Sealed<Header> {
-        self.headers.last().unwrap().clone()
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
+    pub fn latest_header(&self) -> Result<Sealed<Header>, BuildError> {
+        self.headers.last().cloned().ok_or(BuildError::MissingHeaders)
     }
 
     /// Returns all flashblocks.
@@ -244,8 +267,12 @@ impl PendingBlocks {
     }
 
     /// Returns the latest block, optionally with full transaction details.
-    pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
-        let header = self.latest_header();
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
+    pub fn get_latest_block(&self, full: bool) -> Result<RpcBlock<Optimism>, BuildError> {
+        let header = self.latest_header()?;
         let block_number = header.number;
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
@@ -256,12 +283,12 @@ impl PendingBlocks {
             BlockTransactions::Hashes(tx_hashes)
         };
 
-        RpcBlock::<Optimism> {
+        Ok(RpcBlock::<Optimism> {
             header: RPCHeader::from_consensus(header, None, None),
             transactions,
             uncles: Vec::new(),
             withdrawals: Some(self.get_withdrawals().into()),
-        }
+        })
     }
 
     /// Returns the receipt for a transaction.
@@ -401,7 +428,9 @@ impl PendingBlocks {
 
 impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
+        self.as_ref()
+            .and_then(|pb| pb.canonical_block_number().ok())
+            .unwrap_or(BlockNumberOrTag::Latest)
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
@@ -409,7 +438,7 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     }
 
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.as_ref().map(|pb| pb.get_latest_block(full))
+        self.as_ref().and_then(|pb| pb.get_latest_block(full).ok())
     }
 
     fn get_transaction_receipt(
