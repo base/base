@@ -3,10 +3,17 @@
 //! This module provides the [`BlockAssembler`] which reconstructs blocks from flashblocks.
 
 use alloy_consensus::{Header, Sealed};
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types::Withdrawal;
-use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{
+    CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
+    PraguePayloadFields,
+};
 use base_flashtypes::{ExecutionPayloadBaseV1, Flashblock};
+use op_alloy_rpc_types_engine::{
+    OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
+};
 use reth_evm::op_revm::L1BlockInfo;
 use reth_optimism_primitives::OpBlock;
 
@@ -76,37 +83,49 @@ impl BlockAssembler {
         let withdrawals: Vec<Withdrawal> =
             flashblocks.iter().flat_map(|flashblock| flashblock.diff.withdrawals.clone()).collect();
 
-        let execution_payload = ExecutionPayloadV3 {
-            blob_gas_used: 0,
-            excess_blob_gas: 0,
-            payload_inner: ExecutionPayloadV2 {
-                withdrawals,
-                payload_inner: ExecutionPayloadV1 {
-                    parent_hash: base.parent_hash,
-                    fee_recipient: base.fee_recipient,
-                    state_root: latest_flashblock.diff.state_root,
-                    receipts_root: latest_flashblock.diff.receipts_root,
-                    logs_bloom: latest_flashblock.diff.logs_bloom,
-                    prev_randao: base.prev_randao,
-                    block_number: base.block_number,
-                    gas_limit: base.gas_limit,
-                    gas_used: latest_flashblock.diff.gas_used,
-                    timestamp: base.timestamp,
-                    extra_data: base.extra_data.clone(),
-                    base_fee_per_gas: base.base_fee_per_gas,
-                    block_hash: latest_flashblock.diff.block_hash,
-                    transactions,
+        // OpExecutionPayloadV4 sets withdrawals_root directly instead of computing from list.
+        let execution_payload = OpExecutionPayloadV4 {
+            payload_inner: ExecutionPayloadV3 {
+                blob_gas_used: 0,
+                excess_blob_gas: 0,
+                payload_inner: ExecutionPayloadV2 {
+                    withdrawals,
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: base.parent_hash,
+                        fee_recipient: base.fee_recipient,
+                        state_root: latest_flashblock.diff.state_root,
+                        receipts_root: latest_flashblock.diff.receipts_root,
+                        logs_bloom: latest_flashblock.diff.logs_bloom,
+                        prev_randao: base.prev_randao,
+                        block_number: base.block_number,
+                        gas_limit: base.gas_limit,
+                        gas_used: latest_flashblock.diff.gas_used,
+                        timestamp: base.timestamp,
+                        extra_data: base.extra_data.clone(),
+                        base_fee_per_gas: base.base_fee_per_gas,
+                        block_hash: latest_flashblock.diff.block_hash,
+                        transactions,
+                    },
                 },
             },
+            withdrawals_root: latest_flashblock.diff.withdrawals_root,
         };
 
-        let block: OpBlock = execution_payload
-            .try_into_block()
+        // Create sidecar with fields passed separately to Engine API
+        let sidecar = OpExecutionPayloadSidecar::v4(
+            CancunPayloadFields {
+                parent_beacon_block_root: base.parent_beacon_block_root,
+                versioned_hashes: vec![],
+            },
+            PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+        );
+
+        let block: OpBlock = OpExecutionPayload::V4(execution_payload)
+            .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
 
-        let block_header = block.header.clone();
         // Zero block hash for flashblocks since the final hash isn't known yet
-        let sealed_header = block_header.seal(B256::ZERO);
+        let sealed_header = block.header.clone().seal(B256::ZERO);
 
         Ok(AssembledBlock { block, base, flashblocks: flashblocks.to_vec(), header: sealed_header })
     }
