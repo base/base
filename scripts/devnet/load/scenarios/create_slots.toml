@@ -3,7 +3,7 @@
 
 [env]                                                                                           
 numStorageSlots = "100"
-numIteration = "1"
+numIteration = "10"
                                                                                           
 [[create]]                
 name = "FillStorageSlots"

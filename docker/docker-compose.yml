@@ -436,6 +436,8 @@ services:
       - -p
       - ${ANVIL_ACCOUNT_9_KEY}
       - --min-balance
-      - "1234000000000000000"
+      - ${CONTENDER_MIN_BALANCE}
       - --optimistic-nonces
+      - --accounts-per-agent
+      - ${CONTENDER_ACCOUNTS_PER_AGENT}
     restart: unless-stopped

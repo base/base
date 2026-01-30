@@ -1,24 +1,22 @@
 name = "load"
-description = "Continuous baseline load generation"
+description = "Sequential load generation based on different workloads"
 
 [spam]
 mode = "tps"
-rate = 100        # default rate if a stage omits one
-duration = 10     # default duration per stage (seconds)
+rate = 200        # default rate if a stage omits one
+duration = 60     # default duration per stage (seconds)
 seed = 1
 
 # This load attempts to mimic the `Simulator.sol` contract in `base/benchmark`
 #
 # The main components of the contract include initializing storage/accounts,
 # load/update/delete/create storage slots and accounts, and precompiles.
-#
-# By default, the number of accounts created will be equivalent to the rate specified.
 [[spam.stage]]
 name = "simulator-load"
 
-# 100 * 0.25 = 25 TPS per scenario over 10s
-rate = 100
-duration_secs = 10
+# 200 * 0.25 = 50 TPS per scenario over 10s
+rate = 200
+duration = 60
   [[spam.stage.mix]]
   scenario  = "erc20"
   share_pct = 25.0
@@ -38,7 +36,7 @@ duration_secs = 10
 [[spam.stage]]
 name = "trading-load"
 rate = 200
-duration_secs = 10
+duration = 60
   [[spam.stage.mix]]
   scenario  = "erc20"
   share_pct = 25.0
@@ -52,3 +50,16 @@ duration_secs = 10
   scenario  = "scenario:mempool.toml"
   share_pct = 25.0 
   
+
+# This load is just a pure spam (i.e., XEN). It also uses the provided "stress" scenario 
+# to add regular, but heavy load on top of this spam.
+[[spam.stage]]
+name = "spam-load"
+rate = 200
+duration = 60
+  [[spam.stage.mix]]
+  scenario  = "scenario:stress.toml"
+  share_pct = 50.0
+  [[spam.stage.mix]]
+  scenario  = "scenario:xen.toml"
+  share_pct = 50.0
