@@ -1911,7 +1911,6 @@ dependencies = [
 name = "base-consensus"
 version = "0.0.0"
 dependencies = [
- "alloy-rpc-types-engine",
  "base-cli-utils",
  "base-client-cli",
  "base-node-service",
@@ -1925,10 +1924,8 @@ dependencies = [
  "kona-node-service",
  "kona-providers-alloy",
  "metrics",
- "rollup-boost",
  "strum 0.27.2",
  "tracing",
- "url",
  "vergen",
  "vergen-git2",
 ]
@@ -2147,6 +2144,7 @@ dependencies = [
  "kona-providers-alloy",
  "kona-rpc",
  "op-alloy-network",
+ "rollup-boost",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",

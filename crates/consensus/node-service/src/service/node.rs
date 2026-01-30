@@ -6,15 +6,16 @@ use std::{ops::Not as _, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
+use alloy_rpc_types_engine::JwtSecret;
 use kona_derive::StatefulAttributesBuilder;
-use kona_engine::{Engine, EngineState, OpEngineClient};
+use kona_engine::{Engine, EngineClientBuilder, EngineState, OpEngineClient, RollupBoostServerArgs};
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_node_service::{
     BlockStream, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRpcProcessor, InteropMode, L1OriginSelector,
-    L1WatcherActor, NetworkActor, NetworkBuilder, NetworkConfig, NetworkInboundData, NodeActor,
-    NodeMode, QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    EngineProcessor, EngineRpcProcessor, InteropMode, L1OriginSelector, L1WatcherActor,
+    NetworkActor, NetworkBuilder, NetworkConfig, NetworkInboundData, NodeActor, NodeMode,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RollupBoostAdminApiClient,
     RollupBoostHealthRpcClient, RpcActor, RpcContext, SequencerActor, SequencerConfig,
@@ -26,9 +27,13 @@ use kona_providers_alloy::{
 };
 use kona_rpc::RpcBuilder;
 use op_alloy_network::Optimism;
+use rollup_boost::ExecutionMode;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::error;
+use url::Url;
+
+use crate::service::engine::BaseEngineConfig;
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
@@ -61,8 +66,8 @@ pub struct BaseNode {
     pub(crate) l2_provider: RootProvider<Optimism>,
     /// Whether to trust the L2 RPC.
     pub(crate) l2_trust_rpc: bool,
-    /// The [`EngineConfig`] for the node.
-    pub(crate) engine_config: EngineConfig,
+    /// The [`BaseEngineConfig`] for the node.
+    pub(crate) engine_config: BaseEngineConfig,
     /// The [`RpcBuilder`] for the node.
     pub(crate) rpc_builder: Option<RpcBuilder>,
     /// The P2P [`NetworkConfig`] for the node.
@@ -115,9 +120,9 @@ impl BaseNode {
         NetworkBuilder::from(self.p2p_config.clone())
     }
 
-    /// Returns an engine builder for the node.
-    fn engine_config(&self) -> EngineConfig {
-        self.engine_config.clone()
+    /// Returns a reference to the engine config for the node.
+    const fn engine_config(&self) -> &BaseEngineConfig {
+        &self.engine_config
     }
 
     /// Returns an rpc builder for the node.
@@ -207,10 +212,35 @@ impl BaseNode {
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
-        let engine_client = Arc::new(self.engine_config().build_engine_client().map_err(|e| {
-            error!(target: "base_node", error = ?e, "engine client build failed");
-            format!("Engine client build failed: {e:?}")
-        })?);
+        let cfg = self.engine_config();
+        let engine_client = Arc::new(
+            EngineClientBuilder {
+                // Builder fields are unused but required by kona's EngineClientBuilder.
+                // These are effectively disabled since rollup_boost uses ExecutionMode::Disabled.
+                builder: Url::parse("http://localhost:8552").expect("valid url"),
+                builder_jwt: JwtSecret::random(),
+                builder_timeout: Duration::from_millis(30),
+                // Actual L2 engine configuration
+                l2: cfg.l2_url.clone(),
+                l2_jwt: cfg.l2_jwt_secret,
+                l2_timeout: cfg.l2_timeout(),
+                l1_rpc: cfg.l1_url.clone(),
+                cfg: cfg.config.clone(),
+                // Rollup boost is disabled for Base nodes
+                rollup_boost: RollupBoostServerArgs {
+                    initial_execution_mode: ExecutionMode::Disabled,
+                    block_selection_policy: None,
+                    external_state_root: false,
+                    ignore_unhealthy_builders: false,
+                    flashblocks: None,
+                },
+            }
+            .build()
+            .map_err(|e| {
+                error!(target: "base_node", error = ?e, "engine client build failed");
+                format!("Engine client build failed: {e:?}")
+            })?,
+        );
 
         let engine_processor = EngineProcessor::new(
             engine_client.clone(),

@@ -3,9 +3,11 @@
 //! [`NodeActor`]: kona_node_service::NodeActor
 
 pub(crate) mod builder;
+pub(crate) mod engine;
 pub(crate) mod node;
 
 pub use builder::{BaseNodeBuilder, L1ConfigBuilder};
+pub use engine::BaseEngineConfig;
 pub use node::{BaseNode, L1Config};
 
 pub(crate) mod util;

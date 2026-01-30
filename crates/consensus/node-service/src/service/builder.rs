@@ -12,7 +12,7 @@ use alloy_transport_http::{
 use http_body_util::Full;
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_node_service::{
-    DerivationDelegateClient, DerivationDelegateConfig, EngineConfig, InteropMode, NetworkConfig,
+    DerivationDelegateClient, DerivationDelegateConfig, InteropMode, NetworkConfig,
     SequencerConfig,
 };
 use kona_providers_alloy::OnlineBeaconClient;
@@ -21,6 +21,7 @@ use op_alloy_network::Optimism;
 use tower::ServiceBuilder;
 use url::Url;
 
+use crate::service::engine::BaseEngineConfig;
 use crate::service::node::{BaseNode, L1Config};
 
 /// The [`L1ConfigBuilder`] is used to construct a [`L1Config`].
@@ -48,8 +49,8 @@ pub struct BaseNodeBuilder {
     pub l1_config_builder: L1ConfigBuilder,
     /// Whether to trust the L2 RPC.
     pub l2_trust_rpc: bool,
-    /// Engine builder configuration.
-    pub engine_config: EngineConfig,
+    /// Engine configuration.
+    pub engine_config: BaseEngineConfig,
     /// The [`NetworkConfig`].
     pub p2p_config: NetworkConfig,
     /// An RPC Configuration.
@@ -69,7 +70,7 @@ impl BaseNodeBuilder {
         config: RollupConfig,
         l1_config_builder: L1ConfigBuilder,
         l2_trust_rpc: bool,
-        engine_config: EngineConfig,
+        engine_config: BaseEngineConfig,
         p2p_config: NetworkConfig,
         rpc_config: Option<RpcBuilder>,
     ) -> Self {
@@ -86,8 +87,8 @@ impl BaseNodeBuilder {
         }
     }
 
-    /// Sets the [`EngineConfig`] on the [`BaseNodeBuilder`].
-    pub fn with_engine_config(self, engine_config: EngineConfig) -> Self {
+    /// Sets the [`BaseEngineConfig`] on the [`BaseNodeBuilder`].
+    pub fn with_engine_config(self, engine_config: BaseEngineConfig) -> Self {
         Self { engine_config, ..self }
     }
 
@@ -135,10 +136,9 @@ impl BaseNodeBuilder {
             engine_provider: RootProvider::new_http(self.l1_config_builder.rpc_url.clone()),
         };
 
-        let jwt_secret = self.engine_config.l2_jwt_secret;
         let hyper_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
 
-        let auth_layer = AuthLayer::new(jwt_secret);
+        let auth_layer = AuthLayer::new(self.engine_config.l2_jwt_secret);
         let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
 
         let layer_transport = HyperClient::with_service(service);

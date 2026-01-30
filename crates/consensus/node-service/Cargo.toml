@@ -39,6 +39,9 @@ tokio.workspace = true
 tokio-util.workspace = true
 tower.workspace = true
 
+# rollup-boost (for ExecutionMode)
+rollup-boost.workspace = true
+
 # Misc
 thiserror.workspace = true
 tracing.workspace = true

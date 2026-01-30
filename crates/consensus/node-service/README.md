@@ -15,7 +15,7 @@ base-node-service = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
-use base_node_service::{BaseNodeBuilder, L1ConfigBuilder, EngineConfig};
+use base_node_service::{BaseNodeBuilder, L1ConfigBuilder, BaseEngineConfig};
 
 let l1_config = L1ConfigBuilder {
     chain_config: l1_chain_config,
@@ -81,14 +81,10 @@ This crate re-exports the following types:
 - [`L1ConfigBuilder`] - Builder for L1 configuration
 
 **From kona-node-service:**
-- [`EngineConfig`] - Engine configuration
 - [`NodeMode`] - Node operation mode (Validator, Sequencer)
 - [`NetworkConfig`] - P2P network configuration
 - [`SequencerConfig`] - Sequencer configuration
 - [`InteropMode`] - Interop mode configuration
-
-**From kona-engine:**
-- [`RollupBoostServerArgs`] - Rollup boost server arguments
 
 **From kona-genesis:**
 - [`RollupConfig`] - Rollup configuration
