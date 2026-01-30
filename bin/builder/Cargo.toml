@@ -14,15 +14,15 @@ workspace = true
 
 [dependencies]
 # Workspace
+base-builder-cli.workspace = true
 base-cli-utils.workspace = true
 op-rbuilder.workspace = true
 
+# CLI
+dirs-next.workspace = true
+
 # reth
 reth-cli-util.workspace = true
-
-[build-dependencies]
-vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
-vergen-git2.workspace = true
 
 [features]
 default = [ "jemalloc" ]

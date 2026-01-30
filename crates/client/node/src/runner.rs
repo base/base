@@ -55,7 +55,11 @@ impl BaseNodeRunner {
 
         let builder = extensions
             .into_iter()
-            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
+            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder))
+            .add_node_started_hook(|_| {
+                base_cli_utils::register_version_metrics!();
+                Ok(())
+            });
 
         builder
             .launch_with_fn(|builder| {

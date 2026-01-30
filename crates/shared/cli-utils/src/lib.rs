@@ -29,8 +29,11 @@ pub use logging::{
 mod tracing;
 pub use tracing::{LogfmtFormatter, init_test_tracing};
 
-mod version;
-pub use version::Version;
+pub mod version;
+
+mod cli;
 
 mod runtime;
+// Re-export clap for use in parse_cli! macro
+pub use clap;
 pub use runtime::RuntimeManager;
