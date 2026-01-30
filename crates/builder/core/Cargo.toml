@@ -157,6 +157,7 @@ tempfile.workspace = true
 nanoid.workspace = true
 reth-ipc.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
+reth-optimism-rpc = { workspace = true, features = ["client"] }
 ctor.workspace = true
 rlimit.workspace = true
 hyper.workspace = true
