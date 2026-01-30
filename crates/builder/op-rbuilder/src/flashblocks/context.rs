@@ -44,23 +44,6 @@ use crate::{
     tx_data_store::{TxData, TxDataStore},
 };
 
-/// Represents the result of attempting to execute a transaction.
-enum TxnResult {
-    /// Transaction execution error.
-    Err(TxnExecutionError),
-    /// Transaction execution outcome (success or revert).
-    Ok(TxnOutcome),
-}
-
-impl std::fmt::Display for TxnResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Err(e) => write!(f, "{e}"),
-            Self::Ok(o) => write!(f, "{o}"),
-        }
-    }
-}
-
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
     let r = match reason {
@@ -477,13 +460,17 @@ impl OpPayloadBuilderCtx {
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
 
-            let log_txn = |result: TxnResult| {
+            let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
+                let result_str = match &result {
+                    Ok(outcome) => outcome.to_string(),
+                    Err(err) => err.to_string(),
+                };
                 info!(
                     target: "payload_builder",
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
                     tx_da_size = ?tx_da_size,
-                    result = %result,
+                    result = %result_str,
                 );
             };
 
@@ -508,14 +495,14 @@ impl OpPayloadBuilderCtx {
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
 
-                log_txn(TxnResult::Err(err));
+                log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
-                log_txn(TxnResult::Err(TxnExecutionError::SequencerTransaction));
+                log_txn(Err(TxnExecutionError::SequencerTransaction));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
@@ -532,12 +519,12 @@ impl OpPayloadBuilderCtx {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
-                            log_txn(TxnResult::Err(TxnExecutionError::NonceTooLow));
+                            log_txn(Err(TxnExecutionError::NonceTooLow));
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            log_txn(TxnResult::Err(TxnExecutionError::InternalError(err.clone())));
+                            log_txn(Err(TxnExecutionError::InternalError(err.clone())));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
                         }
@@ -545,7 +532,7 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
                     // this is an error that we should treat as fatal for this attempt
-                    log_txn(TxnResult::Err(TxnExecutionError::EvmError));
+                    log_txn(Err(TxnExecutionError::EvmError));
                     return Err(PayloadBuilderError::evm(err));
                 }
             };
@@ -557,11 +544,11 @@ impl OpPayloadBuilderCtx {
             let gas_used = result.gas_used();
             let is_success = result.is_success();
             if is_success {
-                log_txn(TxnResult::Ok(TxnOutcome::Success));
+                log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
             } else {
-                log_txn(TxnResult::Ok(TxnOutcome::Reverted));
+                log_txn(Ok(TxnOutcome::Reverted));
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used as i32;
                 self.metrics.reverted_tx_gas_used.record(gas_used as f64);
@@ -572,7 +559,7 @@ impl OpPayloadBuilderCtx {
             if let Some(max_gas_per_txn) = self.max_gas_per_txn
                 && gas_used > max_gas_per_txn
             {
-                log_txn(TxnResult::Err(TxnExecutionError::MaxGasUsageExceeded));
+                log_txn(Err(TxnExecutionError::MaxGasUsageExceeded));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }

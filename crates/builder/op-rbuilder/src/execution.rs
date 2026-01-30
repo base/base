@@ -5,6 +5,7 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, U256};
+use derive_more::Display;
 use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use thiserror::Error;
@@ -70,7 +71,7 @@ pub enum TxnExecutionError {
 }
 
 /// Outcome of transaction execution for logging purposes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Display, Clone, Copy)]
 pub enum TxnOutcome {
     /// Transaction executed successfully.
     Success,
@@ -78,16 +79,6 @@ pub enum TxnOutcome {
     Reverted,
     /// Transaction reverted and was excluded from the block.
     RevertedAndExcluded,
-}
-
-impl std::fmt::Display for TxnOutcome {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Success => write!(f, "Success"),
-            Self::Reverted => write!(f, "Reverted"),
-            Self::RevertedAndExcluded => write!(f, "RevertedAndExcluded"),
-        }
-    }
 }
 
 #[derive(Default, Debug)]
