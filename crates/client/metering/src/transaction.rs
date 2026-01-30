@@ -317,14 +317,15 @@ mod tests {
         let mut l1_block_info = create_l1_block_info();
         l1_block_info.tx_l1_cost = Some(U256::from(1000000u128));
 
-        let max_fee = tx.max_fee_per_gas().saturating_mul(tx.gas_limit() as u128);
-        let txn_cost = tx.value().saturating_add(U256::from(max_fee));
-        let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(tx.input(), OpSpecId::ISTHMUS);
-        let l1_cost = txn_cost.saturating_add(l1_cost_addition);
-
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
         let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
+
+        let max_fee = recovered_tx.max_fee_per_gas().saturating_mul(recovered_tx.gas_limit() as u128);
+        let txn_cost = recovered_tx.value().saturating_add(U256::from(max_fee));
+        let data = recovered_tx.encoded_2718();
+        let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(&data, OpSpecId::ISTHMUS);
+        let l1_cost = txn_cost.saturating_add(l1_cost_addition);
 
         assert_eq!(
             validate_tx(account, &recovered_tx, &mut l1_block_info),
