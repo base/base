@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::fetcher::BlockInfo;
 use num_format::{Locale, ToFormattedString};
+use op_succinct_client_utils::precompiles::cycle_tracker::keys;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ExecutionReport;
 
@@ -109,12 +110,12 @@ impl ExecutionStats {
             oracle_verify_instruction_count: get_cycles("oracle-verify"),
             derivation_instruction_count: get_cycles("payload-derivation"),
             blob_verification_instruction_count: get_cycles("blob-verification"),
-            bn_add_cycles: get_cycles("precompile-bn-add"),
-            bn_mul_cycles: get_cycles("precompile-bn-mul"),
-            bn_pair_cycles: get_cycles("precompile-bn-pair"),
-            kzg_eval_cycles: get_cycles("precompile-kzg-eval"),
-            ec_recover_cycles: get_cycles("precompile-ec-recover"),
-            p256_verify_cycles: get_cycles("precompile-p256-verify"),
+            bn_add_cycles: get_cycles(keys::BN_ADD),
+            bn_mul_cycles: get_cycles(keys::BN_MUL),
+            bn_pair_cycles: get_cycles(keys::BN_PAIR),
+            kzg_eval_cycles: get_cycles(keys::KZG_EVAL),
+            ec_recover_cycles: get_cycles(keys::EC_RECOVER),
+            p256_verify_cycles: get_cycles(keys::P256_VERIFY),
             nb_transactions,
             eth_gas_used: block_data.iter().map(|b| b.gas_used).sum(),
             l1_fees: block_data.iter().map(|b| b.total_l1_fees).sum(),
