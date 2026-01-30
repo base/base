@@ -1869,7 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "base-access-lists"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -1890,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "base-bundles"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives 1.5.2",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "base-cli-utils"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-chains",
  "alloy-primitives 1.5.2",
@@ -1929,7 +1929,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-node"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -1970,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "base-consensus"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base-cli-utils",
  "clap",
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashblocks"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2051,7 +2051,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashtypes"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-primitives 1.5.2",
  "alloy-rpc-types-engine",
@@ -2067,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "base-metering"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2104,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "base-primitives"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2123,7 +2123,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-node"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base-cli-utils",
  "base-client-node",
@@ -2138,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-rpc-types"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "reth-optimism-evm",
  "reth-rpc-eth-types",
@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "base-txpool"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-primitives 1.5.2",
  "base-client-node",
@@ -7169,7 +7169,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -7480,7 +7480,7 @@ dependencies = [
 
 [[package]]
 name = "p2p"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "derive_more",
  "eyre",
