@@ -313,9 +313,7 @@ where
             ctx.da_config.max_da_block_size().map(|da_limit| da_limit / flashblocks_per_block);
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
-        // Execution time is per-flashblock (use it or lose it)
         let execution_time_per_batch_us = ctx.flashblock_execution_time_budget_us;
-        // State root time is cumulative across the block, so we divide the block budget
         let state_root_time_per_batch_us = ctx
             .block_state_root_time_budget_us
             .map(|budget| budget / flashblocks_per_block as u128);
@@ -479,9 +477,7 @@ where
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
         let mut target_state_root_time_for_batch_us = ctx.extra.target_state_root_time_for_batch_us;
-        // Execution time is "use it or lose it" per flashblock
         let flashblock_execution_time_limit_us = ctx.extra.execution_time_per_batch_us;
-        // State root time is cumulative, so we use the current target
         let block_state_root_time_limit_us = target_state_root_time_for_batch_us;
 
         info!(
@@ -500,8 +496,6 @@ where
         );
         let flashblock_build_start_time = Instant::now();
 
-        // Reset flashblock-scoped execution time (use it or lose it)
-        // Note: state root time is NOT reset since it's cumulative across the block
         info.reset_flashblock_execution_time();
 
         let best_txs_start_time = Instant::now();
@@ -619,8 +613,6 @@ where
                     *footprint += da_footprint_limit;
                 }
 
-                // Note: execution time is NOT cumulative (use it or lose it per flashblock).
-                // State root time IS cumulative since state root is calculated once at the end.
                 if let (Some(time), Some(time_per_batch)) = (
                     target_state_root_time_for_batch_us.as_mut(),
                     ctx.extra.state_root_time_per_batch_us,

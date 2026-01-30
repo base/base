@@ -53,12 +53,9 @@ pub struct BuilderConfig {
     pub max_state_root_time_per_tx_us: Option<u128>,
 
     /// Flashblock-level execution time budget in microseconds.
-    /// This is a "use it or lose it" budget per flashblock.
     pub flashblock_execution_time_budget_us: Option<u128>,
 
     /// Block-level state root calculation time budget in microseconds.
-    /// Unlike execution time, this is cumulative across the block since state root
-    /// is calculated once at the end.
     pub block_state_root_time_budget_us: Option<u128>,
 
     /// Resource metering mode: off, dry-run, or enforce.

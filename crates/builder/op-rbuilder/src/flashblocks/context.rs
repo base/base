@@ -51,11 +51,11 @@ pub struct FlashblocksExtraCtx {
     pub flashblock_index: u64,
     /// Target flashblock count per block
     pub target_flashblock_count: u64,
-    /// Total gas left for the current flashblock (cumulative target)
+    /// Cumulative gas target for the current flashblock
     pub target_gas_for_batch: u64,
-    /// Total DA bytes left for the current flashblock (cumulative target)
+    /// Cumulative DA bytes target for the current flashblock
     pub target_da_for_batch: Option<u64>,
-    /// Total DA footprint left for the current flashblock (cumulative target)
+    /// Cumulative DA footprint target for the current flashblock
     pub target_da_footprint_for_batch: Option<u64>,
     /// Gas limit per flashblock
     pub gas_per_batch: u64,
@@ -63,9 +63,9 @@ pub struct FlashblocksExtraCtx {
     pub da_per_batch: Option<u64>,
     /// DA footprint limit per flashblock
     pub da_footprint_per_batch: Option<u64>,
-    /// Execution time budget per flashblock in microseconds (use it or lose it)
+    /// Execution time budget per flashblock in microseconds.
     pub execution_time_per_batch_us: Option<u128>,
-    /// State root time limit per flashblock for cumulative tracking
+    /// State root time budget per flashblock in microseconds for cumulative tracking.
     pub state_root_time_per_batch_us: Option<u128>,
     /// Cumulative state root time target for the current flashblock
     pub target_state_root_time_for_batch_us: Option<u128>,
@@ -445,7 +445,6 @@ impl OpPayloadBuilderCtx {
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         // Build resource limits struct for limit checking
-        // Note: execution and state root times are "use it or lose it" per flashblock
         let limits = ResourceLimits {
             block_gas_limit,
             tx_data_limit: tx_da_limit,
@@ -488,13 +487,11 @@ impl OpPayloadBuilderCtx {
             let TxData { metering: resource_usage, backrun_bundles } =
                 self.tx_data_store.get(&tx_hash);
 
-            // Extract predicted times from metering data
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
             let predicted_state_root_time_us =
                 resource_usage.as_ref().map(|m| m.state_root_time_us);
 
-            // Build tx resources struct
             let tx_resources = TxResources {
                 da_size: tx_da_size,
                 gas_limit: tx.gas_limit(),
@@ -502,7 +499,6 @@ impl OpPayloadBuilderCtx {
                 state_root_time_us: predicted_state_root_time_us,
             };
 
-            // Record predicted times for metered transactions (observation metrics)
             if let Some(predicted_exec) = predicted_execution_time_us {
                 self.metrics.tx_predicted_execution_time_us.record(predicted_exec as f64);
             }
@@ -646,7 +642,6 @@ impl OpPayloadBuilderCtx {
             // record execution time (use actual measured time if metering data not available)
             info.flashblock_execution_time_us +=
                 predicted_execution_time_us.unwrap_or(actual_execution_time_us);
-            // record state root time if available from metering data (cumulative across block)
             if let Some(state_root_time) = predicted_state_root_time_us {
                 info.cumulative_state_root_time_us += state_root_time;
             }
@@ -710,7 +705,8 @@ impl OpPayloadBuilderCtx {
                     let total_backrun_da_size: u64 =
                         stored_bundle.backrun_txs.iter().map(|tx| tx.estimated_da_size()).sum();
 
-                    // Backrun bundles don't have metering data, so we don't predict execution/state root time
+                    // Backrun bundle metering data is not stored, so we can't predict execution/state root time
+                    // TODO: Re-evaluate whether we should store and use metering data for backrun bundles
                     let backrun_resources = TxResources {
                         da_size: total_backrun_da_size,
                         gas_limit: total_backrun_gas,
