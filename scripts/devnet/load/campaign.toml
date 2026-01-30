@@ -14,9 +14,9 @@ seed = 1
 [[spam.stage]]
 name = "simulator-load"
 
-# 200 * 0.25 = 50 TPS per scenario over 10s
-rate = 200
-duration = 60
+# 100 * 0.25 = 25 TPS per scenario over 10s
+rate = 100
+duration = 20
   [[spam.stage.mix]]
   scenario  = "erc20"
   share_pct = 25.0
@@ -35,8 +35,8 @@ duration = 60
 # with Uniswap pools, transferring tokens, and interacting with the mempool
 [[spam.stage]]
 name = "trading-load"
-rate = 200
-duration = 60
+rate = 100
+duration = 20
   [[spam.stage.mix]]
   scenario  = "erc20"
   share_pct = 25.0
@@ -55,8 +55,8 @@ duration = 60
 # to add regular, but heavy load on top of this spam.
 [[spam.stage]]
 name = "spam-load"
-rate = 200
-duration = 60
+rate = 100
+duration = 20
   [[spam.stage.mix]]
   scenario  = "scenario:stress.toml"
   share_pct = 50.0
