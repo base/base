@@ -663,10 +663,7 @@ mod tests {
     #[tokio::test]
     async fn test_job_deadline() {
         // Test future deadline
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_else(|e| {
-            warn!(error = %e, "System clock went backward, using zero duration");
-            Duration::ZERO
-        });
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let future_timestamp = now + Duration::from_secs(2);
         // 2 seconds from now
         let deadline = job_deadline(future_timestamp.as_secs());

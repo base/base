@@ -76,10 +76,7 @@ impl LocalNode {
             "/tmp/reth_engine_api_{}_{}_{:?}.ipc",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "System clock went backward, using zero duration");
-                    Duration::ZERO
-                })
+                .unwrap()
                 .as_nanos(),
             std::process::id(),
             std::thread::current().id()
