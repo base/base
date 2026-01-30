@@ -126,7 +126,6 @@ impl FlashblocksAPI for FlashblocksState {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 impl FlashblocksState {
     /// Sets the pending blocks directly for testing purposes.
     ///

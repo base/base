@@ -53,7 +53,7 @@ derive_more.workspace = true
 
 [dev-dependencies]
 base-client-node = { workspace = true, features = ["test-utils"] }
-base-flashblocks = { workspace = true, features = ["test-utils"] }
+base-flashblocks.workspace = true
 reth-db = { workspace = true, features = ["op", "test-utils"] }
 reth-db-common.workspace = true
 reth-optimism-node.workspace = true
