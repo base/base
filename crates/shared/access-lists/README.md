@@ -1,6 +1,6 @@
 # `base-fbal`
 
-A library to build and process Flashblock-level Access Lists (FBALs).
+A library to build and process Flashblock-level Access Lists (FALs).
 
 See the [spec](../../../docs/specs/access-lists.md) for more details.
 
