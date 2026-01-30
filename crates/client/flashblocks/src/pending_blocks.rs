@@ -130,17 +130,17 @@ impl PendingBlocksBuilder {
 
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
-        if self.headers.is_empty() {
-            return Err(BuildError::MissingHeaders.into());
-        }
+        let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
+        let latest_header = self.headers.last().cloned().ok_or(BuildError::MissingHeaders)?;
 
-        if self.flashblocks.is_empty() {
-            return Err(BuildError::NoFlashblocks.into());
-        }
+        let latest_flashblock_index =
+            self.flashblocks.last().map(|fb| fb.index).ok_or(BuildError::NoFlashblocks)?;
 
         Ok(PendingBlocks {
+            earliest_header,
+            latest_header,
+            latest_flashblock_index,
             flashblocks: self.flashblocks,
-            headers: self.headers,
             transactions: self.transactions,
             account_balances: self.account_balances,
             transaction_count: self.transaction_count,
@@ -157,8 +157,10 @@ impl PendingBlocksBuilder {
 /// Aggregated pending block state from flashblocks.
 #[derive(Debug, Clone)]
 pub struct PendingBlocks {
+    earliest_header: Sealed<Header>,
+    latest_header: Sealed<Header>,
+    latest_flashblock_index: u64,
     flashblocks: Vec<Flashblock>,
-    headers: Vec<Sealed<Header>>,
     transactions: Vec<Transaction>,
 
     account_balances: HashMap<Address, U256>,
@@ -174,51 +176,33 @@ pub struct PendingBlocks {
 
 impl PendingBlocks {
     /// Returns the latest block number in the pending state.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
-    pub fn latest_block_number(&self) -> Result<BlockNumber, BuildError> {
-        self.headers.last().map(|h| h.number).ok_or(BuildError::MissingHeaders)
+    #[inline]
+    pub fn latest_block_number(&self) -> BlockNumber {
+        self.latest_header.number
     }
 
     /// Returns the canonical block number (the block before pending).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
-    pub fn canonical_block_number(&self) -> Result<BlockNumberOrTag, BuildError> {
-        self.headers
-            .first()
-            .map(|h| BlockNumberOrTag::Number(h.number - 1))
-            .ok_or(BuildError::MissingHeaders)
+    #[inline]
+    pub fn canonical_block_number(&self) -> BlockNumberOrTag {
+        BlockNumberOrTag::Number(self.earliest_header.number - 1)
     }
 
     /// Returns the earliest block number in the pending state.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
-    pub fn earliest_block_number(&self) -> Result<BlockNumber, BuildError> {
-        self.headers.first().map(|h| h.number).ok_or(BuildError::MissingHeaders)
+    #[inline]
+    pub fn earliest_block_number(&self) -> BlockNumber {
+        self.earliest_header.number
     }
 
     /// Returns the index of the latest flashblock.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError::NoFlashblocks`] if there are no flashblocks.
-    pub fn latest_flashblock_index(&self) -> Result<u64, BuildError> {
-        self.flashblocks.last().map(|fb| fb.index).ok_or(BuildError::NoFlashblocks)
+    #[inline]
+    pub const fn latest_flashblock_index(&self) -> u64 {
+        self.latest_flashblock_index
     }
 
     /// Returns the latest header.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
-    pub fn latest_header(&self) -> Result<Sealed<Header>, BuildError> {
-        self.headers.last().cloned().ok_or(BuildError::MissingHeaders)
+    #[inline]
+    pub fn latest_header(&self) -> Sealed<Header> {
+        self.latest_header.clone()
     }
 
     /// Returns all flashblocks.
@@ -267,12 +251,8 @@ impl PendingBlocks {
     }
 
     /// Returns the latest block, optionally with full transaction details.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BuildError::MissingHeaders`] if there are no headers.
-    pub fn get_latest_block(&self, full: bool) -> Result<RpcBlock<Optimism>, BuildError> {
-        let header = self.latest_header()?;
+    pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
+        let header = self.latest_header();
         let block_number = header.number;
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
@@ -283,12 +263,12 @@ impl PendingBlocks {
             BlockTransactions::Hashes(tx_hashes)
         };
 
-        Ok(RpcBlock::<Optimism> {
+        RpcBlock::<Optimism> {
             header: RPCHeader::from_consensus(header, None, None),
             transactions,
             uncles: Vec::new(),
             withdrawals: Some(self.get_withdrawals().into()),
-        })
+        }
     }
 
     /// Returns the receipt for a transaction.
@@ -428,9 +408,7 @@ impl PendingBlocks {
 
 impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref()
-            .and_then(|pb| pb.canonical_block_number().ok())
-            .unwrap_or(BlockNumberOrTag::Latest)
+        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
@@ -438,7 +416,7 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     }
 
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.as_ref().and_then(|pb| pb.get_latest_block(full).ok())
+        self.as_ref().map(|pb| pb.get_latest_block(full))
     }
 
     fn get_transaction_receipt(

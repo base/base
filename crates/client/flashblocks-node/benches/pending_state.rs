@@ -156,8 +156,8 @@ async fn wait_for_pending_state(
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         if let Some(pending) = state.get_pending_blocks().as_ref()
-            && pending.latest_block_number().is_ok_and(|n| n == target_block)
-            && pending.latest_flashblock_index().is_ok_and(|i| i == expected_index)
+            && pending.latest_block_number() == target_block
+            && pending.latest_flashblock_index() == expected_index
         {
             return;
         }

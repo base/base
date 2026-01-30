@@ -77,9 +77,9 @@ where
         // If no pending blocks exist, fall back to latest canonical block
         let (header, flashblock_index, canonical_block_number) =
             if let Some(pb) = pending_blocks.as_ref() {
-                let latest_header = pb.latest_header()?;
-                let flashblock_index = pb.latest_flashblock_index()?;
-                let canonical_block_number = pb.canonical_block_number()?;
+                let latest_header = pb.latest_header();
+                let flashblock_index = pb.latest_flashblock_index();
+                let canonical_block_number = pb.canonical_block_number();
 
                 info!(
                     latest_block = latest_header.number,

@@ -87,7 +87,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                     return None;
                 }
             };
-            pending_blocks.get_latest_block(true).ok()
+            Some(pending_blocks.get_latest_block(true))
         })
     }
 
