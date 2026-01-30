@@ -1104,7 +1104,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
 
     // Result should be a single transaction hash (string), not an array
     let tx_hash = &notif["params"]["result"];
-    assert!(tx_hash.is_string(), "Expected hash string, got: {:?}", tx_hash);
+    assert!(tx_hash.is_string(), "Expected hash string, got: {tx_hash:?}");
 
     // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
@@ -1161,7 +1161,7 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
 
     // Result should be a single full transaction object with logs, not an array
     let tx = &notif["params"]["result"];
-    assert!(tx.is_object(), "Expected transaction object, got: {:?}", tx);
+    assert!(tx.is_object(), "Expected transaction object, got: {tx:?}");
     assert!(tx["hash"].is_string(), "Expected full tx with hash field");
     assert!(tx["blockNumber"].is_string(), "Expected full tx with blockNumber field");
     assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
