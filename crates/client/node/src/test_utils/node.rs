@@ -1,6 +1,6 @@
 //! Local node setup with Base Sepolia chainspec
 
-use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
@@ -74,10 +74,7 @@ impl LocalNode {
 
         let unique_ipc_path = format!(
             "/tmp/reth_engine_api_{}_{}_{:?}.ipc",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
             std::process::id(),
             std::thread::current().id()
         );
