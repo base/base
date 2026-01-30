@@ -15,14 +15,11 @@ use reth_db::{
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 
-use super::{FUNDED_PRIVATE_KEY, TransactionBuilder};
-use crate::{
-    tests::{
-        BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, Protocol,
-        flashblocks_number_contract::FlashblocksNumber, framework::driver::ChainDriver,
-    },
-    tx_signer::Signer,
+use super::{
+    BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FUNDED_PRIVATE_KEY, Protocol, TransactionBuilder,
+    driver::ChainDriver, flashblocks_number_contract::FlashblocksNumber,
 };
+use crate::tx_signer::Signer;
 
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;

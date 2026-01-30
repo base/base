@@ -154,6 +154,7 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
   "txpool-api",
 ] }
+op-rbuilder = { path = ".", features = ["test-utils"] }
 tempfile.workspace = true
 nanoid.workspace = true
 reth-ipc.workspace = true
@@ -184,7 +185,7 @@ min-info-logs = [ "tracing/release_max_level_info" ]
 min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 
-testing = [
+test-utils = [
 	"ctor",
 	"http-body-util",
 	"hyper",
@@ -192,5 +193,20 @@ testing = [
 	"nanoid",
 	"reth-ipc",
 	"reth-node-builder/test-utils",
+	"reth-optimism-rpc/client",
 	"rlimit",
+	"base-bundles/test-utils",
+	"reth-chain-state/test-utils",
+	"reth-chainspec/test-utils",
+	"reth-db/test-utils",
+	"reth-evm/test-utils",
+	"reth-node-ethereum/test-utils",
+	"reth-optimism-node/test-utils",
+	"reth-payload-builder/test-utils",
+	"reth-primitives/test-utils",
+	"reth-primitives-traits/test-utils",
+	"reth-provider/test-utils",
+	"reth-revm/test-utils",
+	"reth-transaction-pool/test-utils",
+	"reth-trie/test-utils"
 ]
