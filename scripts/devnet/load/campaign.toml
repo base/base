@@ -15,11 +15,13 @@ seed = 1
 # By default, the number of accounts created will be equivalent to the rate specified.
 [[spam.stage]]
 name = "simulator-load"
-rate = 18
+
+# 100 * 0.25 = 25 TPS per scenario over 10s
+rate = 100
 duration_secs = 10
   [[spam.stage.mix]]
   scenario  = "erc20"
-  share_pct = 50.0
+  share_pct = 25.0
   [[spam.stage.mix]]
   scenario  = "/load/scenarios/create_slots.toml"
   share_pct = 25.0
@@ -27,20 +29,26 @@ duration_secs = 10
   scenario  = "/load/scenarios/precompiles.toml"
   share_pct = 25.0
   [[spam.stage.mix]]
-  scenario  = "/load/scenarios/precompiles.toml"
+  scenario  = "/load/scenarios/slot_contention.toml"
   share_pct = 25.0
-  
 
+
+# This load attempts to mimic what a trading volume would look like by interacting
+# with Uniswap pools, transferring tokens, and interacting with the mempool
 [[spam.stage]]
 name = "trading-load"
 rate = 200
 duration_secs = 10
   [[spam.stage.mix]]
   scenario  = "erc20"
-  share_pct = 50.0
-  [[spam.stage.mix]]
-  scenario  = "/load/scenarios/create_slots.toml"
   share_pct = 25.0
   [[spam.stage.mix]]
-  scenario  = "/load/scenarios/precompiles.toml"
+  scenario  = "scenario:uniV2.toml"
+  share_pct = 25.0
+  [[spam.stage.mix]]
+  scenario  = "scenario:uniV3.toml"
   share_pct = 25.0 
+  [[spam.stage.mix]]
+  scenario  = "scenario:mempool.toml"
+  share_pct = 25.0 
+  
