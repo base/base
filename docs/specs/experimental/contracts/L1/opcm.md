@@ -43,6 +43,8 @@
     - [Impact](#impact-8)
   - [i01-010: PermissionedDisputeGame Fallback Preservation](#i01-010-permissioneddisputegame-fallback-preservation)
     - [Impact](#impact-9)
+  - [i01-011: Upgrade Availability While Paused](#i01-011-upgrade-availability-while-paused)
+    - [Impact](#impact-10)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -298,3 +300,15 @@ disable or remove the PermissionedDisputeGame from such systems.
 If violated, the system would lose its safe fallback mechanism. The PermissionedDisputeGame
 provides a trusted dispute resolution path that can be used if issues are discovered with the
 permissionless FaultDisputeGame, ensuring the system can continue operating safely.
+
+### i01-011: Upgrade Availability While Paused
+
+The standard upgrade path via the `upgrade()` method must always succeed regardless of whether
+the system is paused. The ability to upgrade contracts must not be blocked by the pause state.
+
+#### Impact
+
+**Severity: Low**
+
+If violated, upgrading via OPCM would not be possible while paused. Manual upgrades can typically
+still be executed as a workaround, but this adds operational complexity during incident response.
