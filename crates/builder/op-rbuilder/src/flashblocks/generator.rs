@@ -23,7 +23,7 @@ use tokio::{
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 /// A trait for building payloads that encapsulate Ethereum transactions.
 ///
@@ -474,7 +474,13 @@ impl<T: Clone> Default for BlockCell<T> {
 }
 
 fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
-    let unix_now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let unix_now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|e| {
+            warn!(error = %e, "System clock went backward, using zero duration");
+            Duration::ZERO
+        })
+        .as_secs();
 
     // Safe subtraction that handles the case where timestamp is in the past
     let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
@@ -657,7 +663,10 @@ mod tests {
     #[tokio::test]
     async fn test_job_deadline() {
         // Test future deadline
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_else(|e| {
+            warn!(error = %e, "System clock went backward, using zero duration");
+            Duration::ZERO
+        });
         let future_timestamp = now + Duration::from_secs(2);
         // 2 seconds from now
         let deadline = job_deadline(future_timestamp.as_secs());
