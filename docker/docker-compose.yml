@@ -426,8 +426,8 @@ services:
       base-builder:
         condition: service_healthy
     volumes:
-      - ./scripts/devnet/load/:/load:ro
-      - ./.devnet/contender:/root/.contender
+      - ../scripts/devnet/load/:/load:ro
+      - ../.devnet/contender:/root/.contender
     command:
       - campaign
       - /load/campaign.toml
@@ -437,5 +437,4 @@ services:
       - ${ANVIL_ACCOUNT_9_KEY}
       - --min-balance
       - "1234000000000000000"
-      - --forever
     restart: unless-stopped

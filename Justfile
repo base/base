@@ -147,7 +147,7 @@ devnet-checks: devnet-status devnet-smoke
 
 # Starts the contender load generator
 devnet-load:
-    docker compose up -d --no-deps contender
+    docker compose -f docker/docker-compose.yml up -d --no-deps contender
 
 # Stream FB's from the builder via websocket
 devnet-flashblocks:
