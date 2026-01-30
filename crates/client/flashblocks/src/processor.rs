@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
-    PendingStateBuilder, ProtocolError, ProviderError, Result,
+    PendingStateBuilder, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -277,11 +277,6 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
-        // Early return if no flashblocks to process
-        if flashblocks.is_empty() {
-            return Err(ProtocolError::EmptyFlashblocks.into());
-        }
-
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
@@ -291,8 +286,7 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number =
-            flashblocks_per_block.keys().min().ok_or(ProtocolError::EmptyFlashblocks)?;
+        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
             .client

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{BlockHeader, Header};
+use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
@@ -77,7 +77,7 @@ where
         // If no pending blocks exist, fall back to latest canonical block
         let (header, flashblock_index, canonical_block_number) =
             if let Some(pb) = pending_blocks.as_ref() {
-                let latest_header = pb.latest_header();
+                let latest_header: Sealed<Header> = pb.latest_header();
                 let flashblock_index = pb.latest_flashblock_index();
                 let canonical_block_number = pb.canonical_block_number();
 
@@ -91,7 +91,7 @@ where
                 // Convert Sealed<Header> to SealedHeader
                 let sealed_header =
                     SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
-                (sealed_header, Some(flashblock_index), canonical_block_number)
+                (sealed_header, flashblock_index, canonical_block_number)
             } else {
                 // No pending blocks, use latest canonical block
                 let canonical_block_number = pending_blocks.get_canonical_block_number();
@@ -118,7 +118,7 @@ where
                     "No flashblocks available, using canonical block state for metering"
                 );
 
-                (header, None, canonical_block_number)
+                (header, 0, canonical_block_number)
             };
 
         let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
@@ -140,6 +140,9 @@ where
                 )
             })?;
 
+        // Get the flashblock index if we have pending blocks
+        let state_flashblock_index = pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index());
+
         // If we have pending blocks, extract the pending state for metering
         let pending_state = if let Some(pb) = pending_blocks.as_ref() {
             let bundle_state = pb.get_bundle_state();
@@ -148,8 +151,7 @@ where
             let temp_state = PendingState { bundle_state: bundle_state.clone(), trie_input: None };
 
             // Ensure the pending trie input is cached for reuse across bundle simulations
-            // flashblock_index is Some when we have pending blocks
-            let fb_index = flashblock_index.unwrap();
+            let fb_index = state_flashblock_index.unwrap();
             let trie_input = self
                 .pending_trie_cache
                 .ensure_cached(header.hash(), fb_index, &temp_state, &*state_provider)
@@ -219,7 +221,7 @@ where
             total_gas_used = output.total_gas_used,
             total_time_us = output.total_time_us,
             state_block_number = header.number,
-            flashblock_index = ?flashblock_index,
+            flashblock_index = flashblock_index,
             "Bundle metering completed successfully"
         );
 
@@ -231,7 +233,7 @@ where
             gas_fees: output.total_gas_fees,
             results: output.results,
             state_block_number: header.number,
-            state_flashblock_index: flashblock_index,
+            state_flashblock_index,
             total_gas_used: output.total_gas_used,
             total_execution_time_us: output.total_time_us,
             state_root_time_us: output.state_root_time_us,
