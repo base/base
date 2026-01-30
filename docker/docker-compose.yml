@@ -418,3 +418,23 @@ services:
       retries: 240
       start_period: 250ms
     restart: unless-stopped
+
+  contender:
+    image: flashbots/contender:latest
+    container_name: contender
+    depends_on:
+      base-builder:
+        condition: service_healthy
+    volumes:
+      - ../scripts/devnet/load/:/load:ro
+      - ../.devnet/contender:/root/.contender
+    command:
+      - campaign
+      - /load/campaign.toml
+      - -r
+      - http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - -p
+      - ${ANVIL_ACCOUNT_9_KEY}
+      - --min-balance
+      - "1234000000000000000"
+    restart: unless-stopped

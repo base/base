@@ -1,0 +1,20 @@
+name = "load"
+description = "Continuous baseline load generation"
+
+[setup]
+scenarios = [
+  "scenario:simple.toml",
+]
+
+[spam]
+mode = "tps"
+rate = 10
+duration = 300
+seed = 1
+
+[[spam.stage]]
+name = "steady"
+duration_secs = 300
+  [[spam.stage.mix]]
+  scenario  = "scenario:simple.toml"
+  share_pct = 100.0
