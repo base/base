@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_builder_cli::{Cli, CliExt, CliVersionInfo, OpRbuilderArgs};
+use base_builder_cli::{Cli, OpRbuilderArgs};
 use eyre::Result;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -16,26 +16,11 @@ use reth_optimism_txpool::OpPooledTransaction;
 
 use crate::{
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    metrics::{LONG_VERSION, SHORT_VERSION, VERSION},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    primitives::{reth::engine_api_builder::OpEngineApiBuilder, telemetry::setup_telemetry_layer},
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
-pub fn launch() -> Result<()> {
-    let logs_dir =
-        dirs_next::cache_dir().map(|root| root.join("op-rbuilder/logs")).unwrap().into_os_string();
-
-    let version_info = CliVersionInfo {
-        short_version: SHORT_VERSION,
-        long_version: LONG_VERSION,
-        about: "Block builder designed for the Optimism stack",
-        author: "Flashbots",
-        name: "op-rbuilder",
-        logs_dir,
-    };
-
-    let cli = Cli::parsed(version_info);
-
+pub fn launch(cli: Cli) -> Result<()> {
     let telemetry_args = match &cli.command {
         reth_optimism_cli::commands::Commands::Node(node_command) => {
             node_command.ext.telemetry.clone()
@@ -47,7 +32,6 @@ pub fn launch() -> Result<()> {
 
     // Only setup telemetry if an OTLP endpoint is provided
     if telemetry_args.otlp_endpoint.is_some() {
-        use crate::primitives::telemetry::setup_telemetry_layer;
         let telemetry_layer = setup_telemetry_layer(&telemetry_args)?;
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
@@ -122,7 +106,7 @@ impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
                 Ok(())
             })
             .on_node_started(move |_ctx| {
-                VERSION.register_version_metrics();
+                base_cli_utils::register_version_metrics!();
                 Ok(())
             })
             .launch()

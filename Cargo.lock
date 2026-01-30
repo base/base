@@ -1721,11 +1721,11 @@ dependencies = [
 name = "base-builder"
 version = "0.0.0"
 dependencies = [
+ "base-builder-cli",
  "base-cli-utils",
+ "dirs-next",
  "op-rbuilder",
  "reth-cli-util",
- "vergen",
- "vergen-git2",
 ]
 
 [[package]]
@@ -1733,7 +1733,6 @@ name = "base-builder-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
- "clap_builder",
  "reth-optimism-cli",
  "reth-optimism-node",
 ]
@@ -1765,6 +1764,7 @@ dependencies = [
  "eyre",
  "kona-registry",
  "libc",
+ "metrics",
  "metrics-exporter-prometheus 0.18.1",
  "metrics-process",
  "reth-node-core",
@@ -1866,6 +1866,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-signer",
+ "base-cli-utils",
  "base-client-engine",
  "base-primitives",
  "chrono",
@@ -1928,8 +1929,6 @@ dependencies = [
  "strum 0.27.2",
  "tracing",
  "url",
- "vergen",
- "vergen-git2",
 ]
 
 [[package]]
@@ -7496,6 +7495,7 @@ dependencies = [
  "base-access-lists",
  "base-builder-cli",
  "base-bundles",
+ "base-cli-utils",
  "base-flashtypes",
  "chrono",
  "clap",
@@ -7598,8 +7598,6 @@ dependencies = [
  "tracing-subscriber 0.3.22",
  "url",
  "uuid",
- "vergen",
- "vergen-git2",
 ]
 
 [[package]]
