@@ -93,7 +93,7 @@ impl TransactionBuilder {
     }
 
     pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
-        let signer = self.signer.unwrap_or(funded_signer());
+        let signer = self.signer.unwrap_or_else(funded_signer);
 
         let nonce = match self.nonce {
             Some(nonce) => nonce,
@@ -205,8 +205,7 @@ impl TransactionPoolObserver {
                                 tracing::debug!("Transaction invalid: {hash}");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Invalid);
                             },
-                            Some(FullTransactionEvent::Propagated(_)) => {},
-                            None => {},
+                            Some(FullTransactionEvent::Propagated(_)) | None => {},
                         }
                     }
                 }

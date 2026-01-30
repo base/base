@@ -18,11 +18,11 @@ pub use runner::BaseNodeRunner;
 mod types;
 pub use types::{BaseNodeBuilder, OpBuilder, OpProvider};
 
-#[cfg(feature = "test-utils")]
-pub mod test_utils;
-
-pub mod node;
+mod node;
 pub use node::BaseNode;
 
 mod add_ons;
 pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;

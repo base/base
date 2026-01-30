@@ -5,6 +5,6 @@ assets/
 .github/
 .idea/
 docs/
-docker-compose.yml
+docker/docker-compose.yml
 .claude/
 .config/

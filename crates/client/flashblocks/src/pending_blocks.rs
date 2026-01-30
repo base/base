@@ -7,7 +7,7 @@ use alloy_primitives::{
     map::foldhash::{HashMap, HashMapExt},
 };
 use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types::{BlockTransactions, state::StateOverride};
+use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_flashtypes::Flashblock;
@@ -18,7 +18,7 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::state::EvmState;
 
-use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError};
+use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -203,12 +203,12 @@ impl PendingBlocks {
 
     /// Returns the sender of a transaction.
     pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
-        self.transaction_senders.get(tx_hash).cloned()
+        self.transaction_senders.get(tx_hash).copied()
     }
 
     /// Returns a clone of the bundle state.
     ///
-    /// NOTE: This clones the entire BundleState, which contains a HashMap of all touched
+    /// NOTE: This clones the entire `BundleState`, which contains a `HashMap` of all touched
     /// accounts and their storage slots. The cost scales with the number of accounts and
     /// storage slots modified in the flashblock. Monitor `bundle_state_clone_duration` and
     /// `bundle_state_clone_size` metrics to track if this becomes a bottleneck.
@@ -231,6 +231,11 @@ impl PendingBlocks {
             .collect()
     }
 
+    /// Returns all withdrawals collected from flashblocks.
+    fn get_withdrawals(&self) -> Vec<Withdrawal> {
+        self.flashblocks.iter().flat_map(|fb| fb.diff.withdrawals.clone()).collect()
+    }
+
     /// Returns the latest block, optionally with full transaction details.
     pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
         let header = self.latest_header();
@@ -248,7 +253,7 @@ impl PendingBlocks {
             header: RPCHeader::from_consensus(header, None, None),
             transactions,
             uncles: Vec::new(),
-            withdrawals: None,
+            withdrawals: Some(self.get_withdrawals().into()),
         }
     }
 
@@ -264,12 +269,12 @@ impl PendingBlocks {
 
     /// Returns the transaction count for an address in pending state.
     pub fn get_transaction_count(&self, address: Address) -> U256 {
-        self.transaction_count.get(&address).cloned().unwrap_or(U256::from(0))
+        self.transaction_count.get(&address).copied().unwrap_or_else(|| U256::from(0))
     }
 
     /// Returns the balance for an address in pending state.
     pub fn get_balance(&self, address: Address) -> Option<U256> {
-        self.account_balances.get(&address).cloned()
+        self.account_balances.get(&address).copied()
     }
 
     /// Returns the state overrides for the pending state.
@@ -298,9 +303,92 @@ impl PendingBlocks {
         self.transactions.clone()
     }
 
+    /// Returns all pending transactions with their associated logs from flashblocks.
+    pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
+        self.transactions
+            .iter()
+            .map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let logs = self
+                    .transaction_receipts
+                    .get(&tx_hash)
+                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .unwrap_or_default();
+                TransactionWithLogs { transaction: tx.clone(), logs }
+            })
+            .collect()
+    }
+
     /// Returns the hashes of all pending transactions from flashblocks.
     pub fn get_pending_transaction_hashes(&self) -> Vec<B256> {
         self.transactions.iter().map(|tx| tx.tx_hash()).collect()
+    }
+
+    /// Returns the number of transactions in all flashblocks except the latest one.
+    /// This is used to compute the delta (transactions only in the latest flashblock).
+    fn previous_flashblocks_tx_count(&self) -> usize {
+        if self.flashblocks.len() <= 1 {
+            return 0;
+        }
+        self.flashblocks[..self.flashblocks.len() - 1]
+            .iter()
+            .map(|fb| fb.diff.transactions.len())
+            .sum()
+    }
+
+    /// Returns logs matching the filter from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_logs`, this returns only logs from transactions
+    /// that were added in the most recent flashblock, avoiding duplicates
+    /// when streaming via WebSocket subscriptions.
+    pub fn get_latest_flashblock_logs(&self, filter: &Filter) -> Vec<Log> {
+        let prev_count = self.previous_flashblocks_tx_count();
+        let mut logs = Vec::new();
+
+        for tx in self.transactions.iter().skip(prev_count) {
+            if let Some(receipt) = self.transaction_receipts.get(&tx.tx_hash()) {
+                for log in receipt.inner.logs() {
+                    if filter.matches(&log.inner) {
+                        logs.push(log.clone());
+                    }
+                }
+            }
+        }
+
+        logs
+    }
+
+    /// Returns transactions with their associated logs from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_transactions_with_logs`, this returns only transactions
+    /// that were added in the most recent flashblock, avoiding duplicates
+    /// when streaming via WebSocket subscriptions.
+    pub fn get_latest_flashblock_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
+        let prev_count = self.previous_flashblocks_tx_count();
+
+        self.transactions
+            .iter()
+            .skip(prev_count)
+            .map(|tx| {
+                let tx_hash = tx.tx_hash();
+                let logs = self
+                    .transaction_receipts
+                    .get(&tx_hash)
+                    .map(|receipt| receipt.inner.logs().to_vec())
+                    .unwrap_or_default();
+                TransactionWithLogs { transaction: tx.clone(), logs }
+            })
+            .collect()
+    }
+
+    /// Returns the hashes of transactions from only the latest flashblock (delta).
+    ///
+    /// Unlike `get_pending_transaction_hashes`, this returns only hashes
+    /// of transactions that were added in the most recent flashblock,
+    /// avoiding duplicates when streaming via WebSocket subscriptions.
+    pub fn get_latest_flashblock_transaction_hashes(&self) -> Vec<B256> {
+        let prev_count = self.previous_flashblocks_tx_count();
+        self.transactions.iter().skip(prev_count).map(|tx| tx.tx_hash()).collect()
     }
 }
 

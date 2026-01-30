@@ -217,10 +217,9 @@ where
             None => {
                 if flashblock.index == 0 {
                     return self.build_pending_state(None, &[flashblock]);
-                } else {
-                    info!(message = "waiting for first Flashblock");
-                    return Ok(None);
                 }
+                info!(message = "waiting for first Flashblock");
+                return Ok(None);
             }
         };
 
@@ -388,7 +387,7 @@ where
                 let executed_transaction =
                     pending_state_builder.execute_transaction(idx, recovered_transaction)?;
 
-                for (address, account) in executed_transaction.state.iter() {
+                for (address, account) in &executed_transaction.state {
                     if account.is_touched() {
                         pending_blocks_builder.with_account_balance(*address, account.info.balance);
                     }

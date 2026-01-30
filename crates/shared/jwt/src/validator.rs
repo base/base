@@ -47,7 +47,7 @@ impl JwtValidator {
         false
     }
 
-    /// Helper to check JWT signature error from eyre::Error (for retry condition).
+    /// Helper to check JWT signature error from `eyre::Error` (for retry condition).
     #[cfg(feature = "engine-validation")]
     pub fn is_jwt_signature_error_from_eyre(error: &eyre::Error) -> bool {
         Self::is_jwt_signature_error(error.as_ref() as &dyn std::error::Error)
@@ -164,8 +164,7 @@ impl JwtValidator {
                 Ok(url)
             }
             scheme => Err(JwtValidationError::CapabilityExchange(format!(
-                "Unsupported URL scheme '{}'. Expected http, https, ws, or wss",
-                scheme
+                "Unsupported URL scheme '{scheme}'. Expected http, https, ws, or wss"
             ))),
         }
     }

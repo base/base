@@ -172,7 +172,8 @@ where
                     existing_override.nonce = Some(acc.info.nonce);
                     existing_override.code = acc.info.code.clone().map(|code| code.bytes());
 
-                    let existing = existing_override.state_diff.get_or_insert(Default::default());
+                    let existing =
+                        existing_override.state_diff.get_or_insert_with(Default::default);
                     let changed_slots = acc
                         .storage
                         .iter()
@@ -253,7 +254,7 @@ where
             Err(e) => Err(ExecutionError::TransactionFailed {
                 tx_hash,
                 sender: transaction.signer(),
-                reason: format!("{:?}", e),
+                reason: format!("{e:?}"),
             }
             .into()),
         }

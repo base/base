@@ -74,14 +74,14 @@ mod tests {
     #[test]
     fn test_bundle_hash_debug() {
         let hash = BundleHash { bundle_hash: B256::default() };
-        let debug = format!("{:?}", hash);
+        let debug = format!("{hash:?}");
         assert!(debug.contains("BundleHash"));
     }
 
     #[test]
     fn test_cancel_bundle_debug() {
         let cancel = CancelBundle { replacement_uuid: "test".to_string() };
-        let debug = format!("{:?}", cancel);
+        let debug = format!("{cancel:?}");
         assert!(debug.contains("CancelBundle"));
         assert!(debug.contains("test"));
     }

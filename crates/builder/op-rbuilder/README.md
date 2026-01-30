@@ -23,7 +23,7 @@ Optimism block builder for Base. Provides payload building infrastructure with s
 
 - `jemalloc`: Use jemalloc allocator (default).
 - `testing`: Enable testing utilities and framework.
-- `telemetry`: Enable OpenTelemetry integration.
+- `telemetry`: Enable `OpenTelemetry` integration.
 - `interop`: Enable interoperability features.
 - `custom-engine-api`: Enable custom engine API extensions.
 

@@ -34,11 +34,11 @@ fn load_chain_spec() -> Arc<OpChainSpec> {
     Arc::new(OpChainSpec::from_genesis(build_test_genesis()))
 }
 
-/// Executes a list of transactions and builds a FlashblockAccessList tracking all
+/// Executes a list of transactions and builds a `FlashblockAccessList` tracking all
 /// account and storage changes across all transactions.
 ///
-/// Uses a single FBALBuilderDb instance that wraps the underlying InMemoryDB,
-/// calling set_index() before each transaction to track which txn caused which change.
+/// Uses a single `FBALBuilderDb` instance that wraps the underlying `InMemoryDB`,
+/// calling `set_index()` before each transaction to track which txn caused which change.
 pub fn execute_txns_build_access_list(
     txs: Vec<OpTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,

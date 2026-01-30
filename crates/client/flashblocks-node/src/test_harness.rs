@@ -552,7 +552,7 @@ impl<'a> FlashblockBuilder<'a> {
         self.transactions.clear();
 
         let mut cumulative_gas_used = 0;
-        for txn in transactions.iter() {
+        for txn in &transactions {
             cumulative_gas_used += txn.gas_limit();
             self.transactions.push(txn.encoded_2718().into());
             if let Some(ref mut receipts) = self.receipts {

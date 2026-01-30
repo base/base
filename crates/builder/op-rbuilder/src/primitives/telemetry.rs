@@ -16,6 +16,8 @@ pub fn setup_telemetry_layer(
     // Otlp uses evn vars inside
 
     if let Some(headers) = &args.otlp_headers {
+        // SAFETY: This is called early during initialization before spawning async tasks.
+        // The OTLP library reads this environment variable during setup.
         unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", headers) };
     }
 

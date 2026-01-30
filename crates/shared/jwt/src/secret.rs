@@ -19,7 +19,7 @@ pub fn read_jwt_secret(path: impl AsRef<Path>) -> Result<JwtSecret, JwtError> {
 /// Creates a new random secret if the file doesn't exist.
 ///
 /// # Arguments
-/// * `file_name` - The name of the JWT file (e.g., "jwt.hex", "l2_jwt.hex")
+/// * `file_name` - The name of the JWT file (e.g., "jwt.hex", "`l2_jwt.hex`")
 pub fn default_jwt_secret(file_name: &str) -> Result<JwtSecret, JwtError> {
     let cur_dir = std::env::current_dir()
         .map_err(|e| JwtError::IoError(format!("Failed to get current directory: {e}")))?;
@@ -48,7 +48,7 @@ pub fn default_jwt_secret(file_name: &str) -> Result<JwtSecret, JwtError> {
 ///
 /// # Arguments
 /// * `file_path` - Optional path to a JWT file
-/// * `encoded` - Optional pre-parsed JwtSecret
+/// * `encoded` - Optional pre-parsed `JwtSecret`
 /// * `default_file` - Fallback file name in current directory
 pub fn resolve_jwt_secret(
     file_path: Option<&Path>,

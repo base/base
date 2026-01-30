@@ -478,7 +478,7 @@ where
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
         best_payload: &BlockCell<OpBuiltPayload>,
-        publish_guard: &std::sync::Mutex<()>,
+        publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
@@ -571,7 +571,7 @@ where
                 // 1. Cancel before we acquire the lock → we see cancelled and return early
                 // 2. Wait for us to release the lock → we publish, then it cancels (correct behavior)
                 let (cancelled, flashblock_byte_size) = {
-                    let _guard = publish_guard.lock().unwrap();
+                    let _guard = publish_guard.lock();
                     if block_cancel.is_cancelled() {
                         (true, 0)
                     } else {

@@ -1,10 +1,11 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
+use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
 };
@@ -69,7 +70,7 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     _config: BasicPayloadJobGeneratorConfig,
     /// The type responsible for building payloads.
     ///
-    /// See [PayloadBuilder]
+    /// See [`PayloadBuilder`]
     builder: Builder,
     /// Whether to ensure only one payload is being processed at a time
     ensure_only_one_payload: bool,
@@ -79,15 +80,15 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     extra_block_deadline: std::time::Duration,
     /// Stored `cached_reads` for new payload jobs.
     pre_cached: Option<PrecachedState>,
-    /// Whether to compute state root only on finalization (when get_payload is called).
+    /// Whether to compute state root only on finalization (when `get_payload` is called).
     compute_state_root_on_finalize: bool,
 }
 
 // === impl BlockPayloadJobGenerator ===
 
 impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
-    /// Creates a new [BlockPayloadJobGenerator] with the given config and custom
-    /// [PayloadBuilder]
+    /// Creates a new [`BlockPayloadJobGenerator`] with the given config and custom
+    /// [`PayloadBuilder`]
     pub(super) fn with_builder(
         client: Client,
         executor: Tasks,
@@ -141,14 +142,14 @@ where
         let cancel_token = if self.ensure_only_one_payload {
             // Cancel existing payload
             {
-                let last_payload = self.last_payload.lock().unwrap();
+                let last_payload = self.last_payload.lock();
                 last_payload.cancel();
             }
 
             // Create and set new cancellation token with a fresh lock
             let cancel_token = CancellationToken::new();
             {
-                let mut last_payload = self.last_payload.lock().unwrap();
+                let mut last_payload = self.last_payload.lock();
                 *last_payload = cancel_token.clone();
             }
             cancel_token
@@ -240,7 +241,7 @@ use std::{
     task::{Context, Poll},
 };
 
-/// A [PayloadJob] that builds empty blocks.
+/// A [`PayloadJob`] that builds empty blocks.
 pub(super) struct BlockPayloadJob<Tasks, Builder>
 where
     Builder: PayloadBuilder,
@@ -251,13 +252,13 @@ where
     pub(crate) executor: Tasks,
     /// The type responsible for building payloads.
     ///
-    /// See [PayloadBuilder]
+    /// See [`PayloadBuilder`]
     pub(crate) builder: Builder,
     /// The cell that holds the built payload (intermediate flashblocks, may not have state root).
     pub(crate) cell: BlockCell<Builder::BuiltPayload>,
     /// The cell that holds the finalized payload with state root computed.
     pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
-    /// Whether to compute state root only on finalization (when get_payload is called).
+    /// Whether to compute state root only on finalization (when `get_payload` is called).
     pub(crate) compute_state_root_on_finalize: bool,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
@@ -299,7 +300,7 @@ where
 
         // Acquire mutex before cancelling to synchronize with payload publishing.
         {
-            let _guard = self.publish_guard.lock().unwrap();
+            let _guard = self.publish_guard.lock();
             self.cancel.cancel();
         }
 
@@ -324,11 +325,11 @@ pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub publish_guard: Arc<Mutex<()>>,
     /// Cell to store the finalized payload with state root.
     pub finalized_cell: BlockCell<Payload>,
-    /// Whether to compute state root only on finalization (when get_payload is called).
+    /// Whether to compute state root only on finalization (when `get_payload` is called).
     pub compute_state_root_on_finalize: bool,
 }
 
-/// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
+/// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
 impl<Tasks, Builder> BlockPayloadJob<Tasks, Builder>
 where
     Tasks: TaskSpawner + Clone + 'static,
@@ -364,7 +365,7 @@ where
     }
 }
 
-/// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
+/// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
 impl<Tasks, Builder> Future for BlockPayloadJob<Tasks, Builder>
 where
     Tasks: TaskSpawner + Clone + 'static,
@@ -429,13 +430,13 @@ impl<T: Clone> BlockCell<T> {
     }
 
     pub(super) fn set(&self, value: T) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         *inner = Some(value);
         self.notify.notify_one();
     }
 
     pub(super) fn get(&self) -> Option<T> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         inner.clone()
     }
 
@@ -584,12 +585,12 @@ mod tests {
         }
 
         fn new_event(&self, event: BlockEvent) {
-            let mut events = self.events.lock().unwrap();
+            let mut events = self.events.lock();
             events.push(event);
         }
 
         fn get_events(&self) -> Vec<BlockEvent> {
-            let mut events = self.events.lock().unwrap();
+            let mut events = self.events.lock();
             std::mem::take(&mut *events)
         }
     }

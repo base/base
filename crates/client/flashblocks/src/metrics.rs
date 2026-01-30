@@ -62,23 +62,23 @@ pub struct Metrics {
     pub reconnect_attempts: Counter,
 
     // RPC metrics
-    /// Count of times flashblocks get_transaction_count is called.
+    /// Count of times flashblocks `get_transaction_count` is called.
     #[metric(describe = "Count of times flashblocks get_transaction_count is called")]
     pub rpc_get_transaction_count: Counter,
 
-    /// Count of times flashblocks get_transaction_receipt is called.
+    /// Count of times flashblocks `get_transaction_receipt` is called.
     #[metric(describe = "Count of times flashblocks get_transaction_receipt is called")]
     pub rpc_get_transaction_receipt: Counter,
 
-    /// Count of times flashblocks get_transaction_by_hash is called.
+    /// Count of times flashblocks `get_transaction_by_hash` is called.
     #[metric(describe = "Count of times flashblocks get_transaction_by_hash is called")]
     pub rpc_get_transaction_by_hash: Counter,
 
-    /// Count of times flashblocks get_balance is called.
+    /// Count of times flashblocks `get_balance` is called.
     #[metric(describe = "Count of times flashblocks get_balance is called")]
     pub rpc_get_balance: Counter,
 
-    /// Count of times flashblocks get_block_by_number is called.
+    /// Count of times flashblocks `get_block_by_number` is called.
     #[metric(describe = "Count of times flashblocks get_block_by_number is called")]
     pub rpc_get_block_by_number: Counter,
 
@@ -86,19 +86,19 @@ pub struct Metrics {
     #[metric(describe = "Count of times flashblocks call is called")]
     pub rpc_call: Counter,
 
-    /// Count of times flashblocks estimate_gas is called.
+    /// Count of times flashblocks `estimate_gas` is called.
     #[metric(describe = "Count of times flashblocks estimate_gas is called")]
     pub rpc_estimate_gas: Counter,
 
-    /// Count of times flashblocks simulate_v1 is called.
+    /// Count of times flashblocks `simulate_v1` is called.
     #[metric(describe = "Count of times flashblocks simulate_v1 is called")]
     pub rpc_simulate_v1: Counter,
 
-    /// Count of times flashblocks get_logs is called.
+    /// Count of times flashblocks `get_logs` is called.
     #[metric(describe = "Count of times flashblocks get_logs is called")]
     pub rpc_get_logs: Counter,
 
-    /// Count of times flashblocks get_block_transaction_count_by_number is called.
+    /// Count of times flashblocks `get_block_transaction_count_by_number` is called.
     #[metric(
         describe = "Count of times flashblocks get_block_transaction_count_by_number is called"
     )]

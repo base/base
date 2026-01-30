@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// The status of a transaction.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub enum Status {
     /// Transaction is not known to the node.
     Unknown,
@@ -22,7 +22,7 @@ pub enum Status {
 }
 
 /// Response containing the status of a transaction.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct TransactionStatusResponse {
     /// The status of the queried transaction.
     pub status: Status,

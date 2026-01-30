@@ -3,7 +3,7 @@
 //! Benchmark for sender recovery performance.
 //!
 //! Compares sequential vs parallel ECDSA sender recovery
-//! as requested in https://github.com/base/base/issues/282
+//! as requested in <https://github.com/base/base/issues/282>
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, B256};

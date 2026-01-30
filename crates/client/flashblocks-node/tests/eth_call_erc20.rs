@@ -2,14 +2,14 @@
 //!
 //! Tests cover:
 //! - Basic ERC-20 functionality (transfer, mint, burn, approve, transferFrom)
-//! - TransparentUpgradeableProxy with ERC-20 (USDC-style delegatecall patterns)
+//! - `TransparentUpgradeableProxy` with ERC-20 (USDC-style delegatecall patterns)
 //!
-//! These tests use FlashblocksHarness with manually constructed flashblock payloads
-//! to properly test eth_call against contract state.
+//! These tests use `FlashblocksHarness` with manually constructed flashblock payloads
+//! to properly test `eth_call` against contract state.
 //!
 //! Contract sources:
-//! - MockERC20: Solmate's MockERC20 (lib/solmate)
-//! - TransparentUpgradeableProxy: OpenZeppelin's proxy (lib/openzeppelin-contracts)
+//! - `MockERC20`: Solmate's `MockERC20` (lib/solmate)
+//! - `TransparentUpgradeableProxy`: `OpenZeppelin`'s proxy (lib/openzeppelin-contracts)
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -181,7 +181,7 @@ async fn test_erc20_deployment() -> Result<()> {
     Ok(())
 }
 
-/// Test ERC-20 token deployment with TransparentUpgradeableProxy
+/// Test ERC-20 token deployment with `TransparentUpgradeableProxy`
 #[tokio::test]
 async fn test_proxy_erc20_deployment() -> Result<()> {
     let setup = Erc20TestSetup::new(true).await?;
@@ -243,7 +243,7 @@ async fn test_erc20_mint() -> Result<()> {
     Ok(())
 }
 
-/// Test ERC-20 mint through TransparentUpgradeableProxy
+/// Test ERC-20 mint through `TransparentUpgradeableProxy`
 #[tokio::test]
 async fn test_proxy_erc20_mint() -> Result<()> {
     let setup = Erc20TestSetup::new(true).await?;

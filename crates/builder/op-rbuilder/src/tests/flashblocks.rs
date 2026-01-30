@@ -6,8 +6,8 @@ use base_builder_cli::{FlashblocksArgs, OpRbuilderArgs};
 use crate::tests::{TransactionBuilderExt, setup_test_instance_with_args};
 
 /// Test that when `compute_state_root_on_finalize` is enabled:
-/// 1. Flashblocks are built without state root (state_root = ZERO in intermediate blocks)
-/// 2. The final payload returned by get_payload has a valid state root (non-zero)
+/// 1. Flashblocks are built without state root (`state_root` = ZERO in intermediate blocks)
+/// 2. The final payload returned by `get_payload` has a valid state root (non-zero)
 #[tokio::test]
 async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
     let args = OpRbuilderArgs {

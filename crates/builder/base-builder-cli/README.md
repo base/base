@@ -8,7 +8,7 @@ This crate provides reusable CLI argument types for configuring the OP builder:
 
 - **`OpRbuilderArgs`**: Main builder configuration including rollup, flashblocks, and telemetry settings
 - **`FlashblocksArgs`**: Flashblocks-specific configuration (ports, timing, state root)
-- **`TelemetryArgs`**: OpenTelemetry configuration for tracing
+- **`TelemetryArgs`**: `OpenTelemetry` configuration for tracing
 
 ## Usage
 

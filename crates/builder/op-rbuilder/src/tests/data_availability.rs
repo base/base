@@ -91,7 +91,7 @@ async fn block_fill() -> eyre::Result<()> {
 
 /// This test ensures that the DA footprint limit (Jovian) is respected and the block fills
 /// to the DA footprint limit. The DA footprint is calculated as:
-/// total_da_bytes_used * da_footprint_gas_scalar (stored in blob_gas_used).
+/// `total_da_bytes_used` * `da_footprint_gas_scalar` (stored in `blob_gas_used`).
 /// This must not exceed the block gas limit.
 #[tokio::test]
 async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
@@ -144,15 +144,13 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
     // The DA footprint must not exceed the block gas limit
     assert!(
         blob_gas == gas_limit,
-        "DA footprint (blob_gas_used={}) must not exceed block gas limit ({})",
-        blob_gas,
-        gas_limit
+        "DA footprint (blob_gas_used={blob_gas}) must not exceed block gas limit ({gas_limit})"
     );
 
     // Verify the block fills up to the DA footprint limit (flashblocks mode)
     // With more capacity now (no builder tx), more txs can fit
     for (i, tx_hash) in tx_hashes.iter().enumerate().take(9) {
-        assert!(block.includes(tx_hash), "tx {} should be included in the block", i);
+        assert!(block.includes(tx_hash), "tx {i} should be included in the block");
     }
 
     // Verify some txs don't fit due to DA footprint limit

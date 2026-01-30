@@ -3,8 +3,8 @@
 use std::str::FromStr;
 
 use DoubleCounter::DoubleCounterInstance;
-use alloy_consensus::Transaction;
-use alloy_eips::BlockNumberOrTag;
+use alloy_consensus::{Transaction, constants::EMPTY_WITHDRAWALS};
+use alloy_eips::{BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
@@ -70,7 +70,7 @@ const LOG_EMITTER_B_RUNTIME: &str = concat!(
 //   STOP
 fn log_emitter_a_runtime(log_emitter_b_addr: Address) -> String {
     // Convert address to hex without 0x prefix
-    let addr_hex = format!("{:040x}", log_emitter_b_addr);
+    let addr_hex = format!("{log_emitter_b_addr:040x}");
     format!(
         concat!(
             "7f",
@@ -268,7 +268,7 @@ impl TestSetup {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
-                parent_beacon_block_root: B256::default(),
+                parent_beacon_block_root: TEST_PARENT_BEACON_BLOCK_ROOT,
                 parent_hash: B256::default(),
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::default(),
@@ -281,6 +281,7 @@ impl TestSetup {
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 blob_gas_used: Some(0),
                 transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
+                withdrawals_root: EMPTY_WITHDRAWALS,
                 ..Default::default()
             },
             metadata: Metadata { block_number: 1 },
@@ -313,7 +314,7 @@ impl TestSetup {
                 ],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
-                withdrawals_root: Default::default(),
+                withdrawals_root: EMPTY_WITHDRAWALS,
             },
             metadata: Metadata { block_number: 1 },
         }
@@ -378,6 +379,10 @@ const TEST_LOG_TOPIC_0: B256 =
     b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"); // Transfer event
 const TEST_LOG_TOPIC_1: B256 =
     b256!("0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"); // From address
+
+// Test parent beacon block root for flashblock tests
+const TEST_PARENT_BEACON_BLOCK_ROOT: B256 =
+    b256!("0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef");
 
 #[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
@@ -683,7 +688,7 @@ async fn test_send_raw_transaction_sync_timeout() {
         .await;
 
     let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
-    assert!(receipt_result.err().unwrap().to_string().contains(format!("{}", error_code).as_str()));
+    assert!(receipt_result.err().unwrap().to_string().contains(format!("{error_code}").as_str()));
 }
 
 #[tokio::test]
@@ -1034,7 +1039,7 @@ async fn test_eth_subscribe_multiple_clients() -> eyre::Result<()> {
 }
 
 /// Test that standard subscription types (newHeads) work correctly.
-/// This verifies that our ExtendedSubscriptionKind properly proxies to reth's implementation.
+/// This verifies that our `ExtendedSubscriptionKind` properly proxies to reth's implementation.
 #[tokio::test]
 async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
@@ -1061,7 +1066,7 @@ async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
     assert_eq!(sub["jsonrpc"], "2.0");
     assert_eq!(sub["id"], 1);
     // Should return a subscription ID, confirming the subscription was accepted
-    assert!(sub["result"].is_string(), "Expected subscription ID, got: {:?}", sub);
+    assert!(sub["result"].is_string(), "Expected subscription ID, got: {sub:?}");
 
     Ok(())
 }
@@ -1096,24 +1101,29 @@ async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result
     // Send first flashblock with L1 deposit tx
     setup.send_flashblock(setup.create_first_payload()).await?;
 
+    // Each transaction is now sent as a separate message (one tx per message)
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Result should be an array of transaction hashes (strings)
-    let txs = notif["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs.len(), 1);
-    assert!(txs[0].is_string(), "Expected hash string, got: {:?}", txs[0]);
+    // Result should be a single transaction hash (string), not an array
+    let tx_hash = &notif["params"]["result"];
+    assert!(tx_hash.is_string(), "Expected hash string, got: {tx_hash:?}");
 
-    // Send second flashblock with more transactions
+    // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
 
-    let notification2 = ws_stream.next().await.unwrap()?;
-    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
-    let txs2 = notif2["params"]["result"].as_array().expect("expected array of tx hashes");
-    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
-    assert!(txs2.iter().all(|tx| tx.is_string()));
+    // Receive 9 separate messages (one per transaction in the delta)
+    let mut received_hashes = Vec::new();
+    for _ in 0..9 {
+        let notification = ws_stream.next().await.unwrap()?;
+        let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+        assert_eq!(notif["params"]["subscription"], subscription_id);
+        let tx_hash = notif["params"]["result"].as_str().expect("expected hash string");
+        received_hashes.push(tx_hash.to_string());
+    }
+    assert_eq!(received_hashes.len(), 9);
 
     Ok(())
 }
@@ -1148,26 +1158,34 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     // Send flashblocks
     setup.send_flashblock(setup.create_first_payload()).await?;
 
+    // Each transaction is now sent as a separate message (one tx per message)
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
     assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
-    // Result should be an array of full transaction objects
-    let txs = notif["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs.len(), 1);
-    // Full transaction objects have fields like "hash", "from", "to", etc.
-    assert!(txs[0]["hash"].is_string(), "Expected full tx with hash field");
-    assert!(txs[0]["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+    // Result should be a single full transaction object with logs, not an array
+    let tx = &notif["params"]["result"];
+    assert!(tx.is_object(), "Expected transaction object, got: {tx:?}");
+    assert!(tx["hash"].is_string(), "Expected full tx with hash field");
+    assert!(tx["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+    assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
 
-    // Send second flashblock with more transactions
+    // Send second flashblock with 9 more transactions (delta only, not cumulative)
     setup.send_flashblock(setup.create_second_payload()).await?;
 
-    let notification2 = ws_stream.next().await.unwrap()?;
-    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
-    let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
-    assert_eq!(txs2.len(), 10); // 1 from first flashblock + 9 from second = 10 total
-    assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
+    // Receive 9 separate messages (one per transaction in the delta)
+    let mut received_count = 0;
+    for _ in 0..9 {
+        let notification = ws_stream.next().await.unwrap()?;
+        let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+        assert_eq!(notif["params"]["subscription"], subscription_id);
+        let tx = &notif["params"]["result"];
+        assert!(tx["hash"].is_string() && tx["blockNumber"].is_string());
+        assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
+        received_count += 1;
+    }
+    assert_eq!(received_count, 9);
 
     Ok(())
 }
@@ -1203,6 +1221,51 @@ async fn test_get_block_transaction_count_by_number_pending() -> Result<()> {
     let count: Option<U256> =
         client.request("eth_getBlockTransactionCountByNumber", ("latest",)).await?;
     assert_eq!(count, Some(U256::from(0)));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pending_block_header_fields() -> Result<()> {
+    let setup = TestSetup::new().await?;
+    let provider = setup.harness.provider();
+
+    // Send flashblocks to create pending state
+    setup.send_test_payloads().await?;
+
+    // Query pending block
+    let pending_block = provider
+        .get_block_by_number(BlockNumberOrTag::Pending)
+        .await?
+        .expect("pending block expected");
+
+    // Verify withdrawals is empty array (not null)
+    assert_eq!(
+        pending_block.withdrawals,
+        Some(vec![].into()),
+        "withdrawals should be an empty array"
+    );
+
+    // Verify parent_beacon_block_root matches the test value
+    assert_eq!(
+        pending_block.header.parent_beacon_block_root,
+        Some(TEST_PARENT_BEACON_BLOCK_ROOT),
+        "parent_beacon_block_root should match test value"
+    );
+
+    // Verify withdrawals_root is the empty withdrawals hash
+    assert_eq!(
+        pending_block.header.withdrawals_root,
+        Some(EMPTY_WITHDRAWALS),
+        "withdrawals_root should be EMPTY_WITHDRAWALS"
+    );
+
+    // Verify requests_hash is EMPTY_REQUESTS_HASH
+    assert_eq!(
+        pending_block.header.requests_hash,
+        Some(EMPTY_REQUESTS_HASH),
+        "requests_hash should be EMPTY_REQUESTS_HASH"
+    );
 
     Ok(())
 }

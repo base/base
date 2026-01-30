@@ -5,11 +5,11 @@ use clap::Args;
 /// Parameters for telemetry configuration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Args)]
 pub struct TelemetryArgs {
-    /// OpenTelemetry endpoint for traces
+    /// `OpenTelemetry` endpoint for traces
     #[arg(long = "telemetry.otlp-endpoint", env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
     pub otlp_endpoint: Option<String>,
 
-    /// OpenTelemetry headers for authentication
+    /// `OpenTelemetry` headers for authentication
     #[arg(long = "telemetry.otlp-headers", env = "OTEL_EXPORTER_OTLP_HEADERS")]
     pub otlp_headers: Option<String>,
 

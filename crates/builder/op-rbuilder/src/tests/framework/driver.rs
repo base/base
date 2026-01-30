@@ -20,7 +20,7 @@ use crate::{
     tx_signer::Signer,
 };
 
-/// The ChainDriver is a type that allows driving the op builder node to build new blocks manually
+/// The `ChainDriver` is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
 #[derive(Debug)]
@@ -37,7 +37,7 @@ pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     const MIN_BLOCK_TIME: Duration = Duration::from_secs(1);
 
-    /// Creates a new ChainDriver instance for a local instance of RBuilder running in-process
+    /// Creates a new `ChainDriver` instance for a local instance of `RBuilder` running in-process
     /// communicating over IPC.
     pub async fn local(instance: &LocalInstance) -> eyre::Result<ChainDriver<Ipc>> {
         Ok(ChainDriver::<Ipc> {
@@ -50,7 +50,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         })
     }
 
-    /// Creates a new ChainDriver for some EL node instance.
+    /// Creates a new `ChainDriver` for some EL node instance.
     pub fn remote(provider: RootProvider<Optimism>, engine_api: EngineApi<RpcProtocol>) -> Self {
         Self {
             engine_api,
@@ -70,7 +70,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 
     /// Specifies a custom gas limit for blocks being built, otherwise the limit is
-    /// set to a default value of 10_000_000.
+    /// set to a default value of `10_000_000`.
     pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
@@ -101,7 +101,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         self.build_new_block_with_txs(vec![]).await
     }
 
-    /// Builds a new block with block_timestamp calculated as block time right before sending FCU
+    /// Builds a new block with `block_timestamp` calculated as block time right before sending FCU
     pub async fn build_new_block_with_current_timestamp(
         &self,
         timestamp_jitter: Option<Duration>,

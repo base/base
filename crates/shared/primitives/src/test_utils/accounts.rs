@@ -54,7 +54,7 @@ impl Account {
         [Self::Alice, Self::Bob, Self::Charlie, Self::Deployer]
     }
 
-    /// Constructs and returns a PrivateKeySigner for this account.
+    /// Constructs and returns a `PrivateKeySigner` for this account.
     pub fn signer(&self) -> PrivateKeySigner {
         let key_bytes =
             hex::decode(self.private_key()).expect("should be able to decode private key");
@@ -63,7 +63,7 @@ impl Account {
             .expect("should be able to build the PrivateKeySigner")
     }
 
-    /// Returns the private key as a B256 for use with TransactionBuilder.
+    /// Returns the private key as a B256 for use with `TransactionBuilder`.
     pub fn signer_b256(&self) -> B256 {
         let key_bytes =
             hex::decode(self.private_key()).expect("should be able to decode private key");
@@ -96,7 +96,7 @@ impl Account {
         Ok((signed_tx_bytes, contract_address, *signed_tx.hash()))
     }
 
-    /// Sign a TransactionRequest and return the signed bytes.
+    /// Sign a `TransactionRequest` and return the signed bytes.
     pub fn sign_txn_request(&self, tx_request: OpTransactionRequest) -> Result<(Bytes, TxHash)> {
         let tx_request = tx_request
             .from(self.address())

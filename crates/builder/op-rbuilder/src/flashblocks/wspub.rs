@@ -23,7 +23,7 @@ use tracing::{debug, warn};
 
 use crate::metrics::OpRBuilderMetrics;
 
-/// A WebSockets publisher that accepts connections from client websockets and broadcasts to them
+/// A `WebSockets` publisher that accepts connections from client websockets and broadcasts to them
 /// updates about new flashblocks. It maintains a count of sent messages and active subscriptions.
 ///
 /// This is modelled as a `futures::Sink` that can be used to send `FlashblocksPayloadV1` messages.

@@ -23,7 +23,7 @@ This enables latency reduction from ~1-5ms (HTTP) to ~1μs (channel).
 The `InProcessEngineClient` requires a `ConsensusEngineHandle` and `PayloadStore`,
 which can be extracted from a fully-launched reth node.
 
-### Extracting from FullNode
+### Extracting from `FullNode`
 
 When using `NodeBuilder::with_add_ons`, you can access the engine handle from
 the `AddOnsContext`:
@@ -38,7 +38,7 @@ let payload_store = PayloadStore::new(full_node.payload_builder_handle.clone());
 let client = InProcessEngineClient::new(engine_handle, payload_store);
 ```
 
-### Using with node_started_hook
+### Using with `node_started_hook`
 
 For unified binaries, use the `add_node_started_hook` to extract components
 after the node is fully launched:

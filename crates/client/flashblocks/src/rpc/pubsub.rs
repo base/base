@@ -1,4 +1,4 @@
-//! `eth_` PubSub RPC extension for flashblocks and standard subscriptions
+//! `eth_` `PubSub` RPC extension for flashblocks and standard subscriptions
 //!
 //! This module provides an extended `eth_subscribe` implementation that supports both
 //! standard Ethereum subscription types (newHeads, logs, newPendingTransactions, syncing)
@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
+use futures_util::stream;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, async_trait},
@@ -15,7 +16,6 @@ use jsonrpsee::{
     server::SubscriptionMessage,
 };
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
@@ -26,7 +26,7 @@ use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
 use crate::{
-    FlashblocksAPI,
+    FlashblocksAPI, TransactionWithLogs,
     rpc::types::{BaseSubscriptionKind, ExtendedSubscriptionKind},
 };
 
@@ -59,7 +59,7 @@ pub trait EthPubSubApi {
 /// and Base-specific flashblocks subscriptions.
 #[derive(Clone, Debug)]
 pub struct EthPubSub<Eth, FB> {
-    /// Reth's standard EthPubSub for handling standard subscription types
+    /// Reth's standard `EthPubSub` for handling standard subscription types
     inner: RethEthPubSub<Eth>,
     /// Flashblocks state for accessing pending blocks stream
     flashblocks_state: Arc<FB>,
@@ -91,76 +91,101 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         })
     }
 
-    /// Returns a stream that yields logs from pending flashblocks matching the filter
-    fn pending_logs_stream(
-        flashblocks_state: Arc<FB>,
-        filter: Filter,
-    ) -> impl Stream<Item = Vec<Log>>
+    /// Returns a stream that yields individual logs from only the latest flashblock matching the
+    /// filter.
+    ///
+    /// Each matching log is emitted as a separate stream item (one log per WebSocket message).
+    /// Only logs from the most recent flashblock are emitted to avoid duplicates.
+    fn pending_logs_stream(flashblocks_state: Arc<FB>, filter: Filter) -> impl Stream<Item = Log>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(
-            move |result| {
-                let pending_blocks = match result {
-                    Ok(blocks) => blocks,
-                    Err(err) => {
-                        error!(
-                            message = "Error in flashblocks stream for pending logs",
-                            error = %err
-                        );
-                        return None;
-                    }
-                };
-                let logs = pending_blocks.get_pending_logs(&filter);
-                if logs.is_empty() { None } else { Some(logs) }
-            },
+        futures_util::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                move |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for pending logs",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let logs = pending_blocks.get_latest_flashblock_logs(&filter);
+                    if logs.is_empty() { None } else { Some(logs) }
+                },
+            ),
+            stream::iter,
         )
     }
 
-    /// Returns a stream that yields full transactions from pending flashblocks
+    /// Returns a stream that yields individual full transactions with logs from only the latest
+    /// flashblock.
+    ///
+    /// Each transaction (with its associated logs) is emitted as a separate stream item
+    /// (one transaction per WebSocket message). Only transactions from the most recent
+    /// flashblock are emitted to avoid duplicates.
     fn new_flashblock_transactions_full_stream(
         flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = Vec<Transaction>>
+    ) -> impl Stream<Item = TransactionWithLogs>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
-            let pending_blocks = match result {
-                Ok(blocks) => blocks,
-                Err(err) => {
-                    error!(
-                        message = "Error in flashblocks stream for transactions",
-                        error = %err
-                    );
-                    return None;
-                }
-            };
-            let txs = pending_blocks.get_pending_transactions();
-            if txs.is_empty() { None } else { Some(txs) }
-        })
+        futures_util::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for transactions",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let txs = pending_blocks.get_latest_flashblock_transactions_with_logs();
+                    if txs.is_empty() { None } else { Some(txs) }
+                },
+            ),
+            stream::iter,
+        )
     }
 
-    /// Returns a stream that yields transaction hashes from pending flashblocks
+    /// Returns a stream that yields individual transaction hashes from only the latest flashblock.
+    ///
+    /// Each hash is emitted as a separate stream item (one hash per WebSocket message).
+    /// Only hashes from the most recent flashblock are emitted to avoid duplicates.
     fn new_flashblock_transactions_hash_stream(
         flashblocks_state: Arc<FB>,
-    ) -> impl Stream<Item = Vec<B256>>
+    ) -> impl Stream<Item = B256>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
-            let pending_blocks = match result {
-                Ok(blocks) => blocks,
-                Err(err) => {
-                    error!(
-                        message = "Error in flashblocks stream for transaction hashes",
-                        error = %err
-                    );
-                    return None;
-                }
-            };
-            let hashes = pending_blocks.get_pending_transaction_hashes();
-            if hashes.is_empty() { None } else { Some(hashes) }
-        })
+        futures_util::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for transaction hashes",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let hashes = pending_blocks.get_latest_flashblock_transaction_hashes();
+                    if hashes.is_empty() { None } else { Some(hashes) }
+                },
+            ),
+            stream::iter,
+        )
     }
 }
 
