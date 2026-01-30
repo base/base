@@ -203,12 +203,12 @@ impl PendingBlocks {
 
     /// Returns the sender of a transaction.
     pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
-        self.transaction_senders.get(tx_hash).cloned()
+        self.transaction_senders.get(tx_hash).copied()
     }
 
     /// Returns a clone of the bundle state.
     ///
-    /// NOTE: This clones the entire BundleState, which contains a HashMap of all touched
+    /// NOTE: This clones the entire `BundleState`, which contains a `HashMap` of all touched
     /// accounts and their storage slots. The cost scales with the number of accounts and
     /// storage slots modified in the flashblock. Monitor `bundle_state_clone_duration` and
     /// `bundle_state_clone_size` metrics to track if this becomes a bottleneck.
@@ -264,12 +264,12 @@ impl PendingBlocks {
 
     /// Returns the transaction count for an address in pending state.
     pub fn get_transaction_count(&self, address: Address) -> U256 {
-        self.transaction_count.get(&address).cloned().unwrap_or(U256::from(0))
+        self.transaction_count.get(&address).copied().unwrap_or_else(|| U256::from(0))
     }
 
     /// Returns the balance for an address in pending state.
     pub fn get_balance(&self, address: Address) -> Option<U256> {
-        self.account_balances.get(&address).cloned()
+        self.account_balances.get(&address).copied()
     }
 
     /// Returns the state overrides for the pending state.

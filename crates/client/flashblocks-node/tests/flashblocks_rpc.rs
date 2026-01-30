@@ -70,7 +70,7 @@ const LOG_EMITTER_B_RUNTIME: &str = concat!(
 //   STOP
 fn log_emitter_a_runtime(log_emitter_b_addr: Address) -> String {
     // Convert address to hex without 0x prefix
-    let addr_hex = format!("{:040x}", log_emitter_b_addr);
+    let addr_hex = format!("{log_emitter_b_addr:040x}");
     format!(
         concat!(
             "7f",
@@ -683,7 +683,7 @@ async fn test_send_raw_transaction_sync_timeout() {
         .await;
 
     let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
-    assert!(receipt_result.err().unwrap().to_string().contains(format!("{}", error_code).as_str()));
+    assert!(receipt_result.err().unwrap().to_string().contains(format!("{error_code}").as_str()));
 }
 
 #[tokio::test]
@@ -1034,7 +1034,7 @@ async fn test_eth_subscribe_multiple_clients() -> eyre::Result<()> {
 }
 
 /// Test that standard subscription types (newHeads) work correctly.
-/// This verifies that our ExtendedSubscriptionKind properly proxies to reth's implementation.
+/// This verifies that our `ExtendedSubscriptionKind` properly proxies to reth's implementation.
 #[tokio::test]
 async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
@@ -1061,7 +1061,7 @@ async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
     assert_eq!(sub["jsonrpc"], "2.0");
     assert_eq!(sub["id"], 1);
     // Should return a subscription ID, confirming the subscription was accepted
-    assert!(sub["result"].is_string(), "Expected subscription ID, got: {:?}", sub);
+    assert!(sub["result"].is_string(), "Expected subscription ID, got: {sub:?}");
 
     Ok(())
 }

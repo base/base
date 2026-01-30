@@ -144,7 +144,7 @@ where
     let attributes = OpNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
-        prev_randao: header.mix_hash().unwrap_or(B256::random()),
+        prev_randao: header.mix_hash().unwrap_or_else(B256::random),
         gas_limit: header.gas_limit(),
         parent_beacon_block_root: parent_beacon_block_root
             .or_else(|| header.parent_beacon_block_root()),
@@ -532,7 +532,7 @@ mod tests {
         Ok(())
     }
 
-    /// Test that state_root_time_us is always <= total_time_us
+    /// Test that `state_root_time_us` is always <= `total_time_us`
     #[tokio::test]
     async fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
@@ -586,7 +586,7 @@ mod tests {
         Ok(())
     }
 
-    /// Integration test: verifies meter_bundle uses flashblocks state correctly.
+    /// Integration test: verifies `meter_bundle` uses flashblocks state correctly.
     ///
     /// A transaction using nonce=1 should fail without flashblocks state (since
     /// canonical nonce is 0), but succeed when flashblocks state indicates nonce=1.

@@ -14,7 +14,7 @@ use url::Url;
 #[derive(Parser, Clone, Debug, PartialEq, Eq)]
 pub struct SequencerArgs {
     /// Initialize the sequencer in a stopped state. The sequencer can be started using the
-    /// admin_startSequencer RPC.
+    /// `admin_startSequencer` RPC.
     #[arg(
         long = "sequencer.stopped",
         default_value = "false",

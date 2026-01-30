@@ -4,7 +4,7 @@ Proofs history extension for Base node. Enables on-disk storage and retrieval of
 
 ## Overview
 
-This extension provides the infrastructure for maintaining a historical record of Merkle proofs, allowing clients to verify the state of the blockchain at any point within the configured retention window. It extends the node with an Execution Extension (ExEx) and additional RPC methods for proof retrieval.
+This extension provides the infrastructure for maintaining a historical record of Merkle proofs, allowing clients to verify the state of the blockchain at any point within the configured retention window. It extends the node with an Execution Extension (`ExEx`) and additional RPC methods for proof retrieval.
 
 ## Features
 

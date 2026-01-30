@@ -63,7 +63,7 @@ where
     let attributes = OpNextBlockEnvAttributes {
         timestamp: block.header().timestamp(),
         suggested_fee_recipient: block.header().beneficiary(),
-        prev_randao: block.header().mix_hash().unwrap_or(B256::random()),
+        prev_randao: block.header().mix_hash().unwrap_or_else(B256::random),
         gas_limit: block.header().gas_limit(),
         parent_beacon_block_root: block.header().parent_beacon_block_root(),
         extra_data: block.header().extra_data().clone(),
@@ -394,8 +394,7 @@ mod tests {
         let err_str = err.to_string();
         assert!(
             err_str.contains("Parent header not found") || err_str.contains("not found"),
-            "error should indicate parent header not found: {}",
-            err_str
+            "error should indicate parent header not found: {err_str}"
         );
 
         Ok(())
@@ -435,8 +434,7 @@ mod tests {
         let err_str = err.to_string();
         assert!(
             err_str.contains("recover signer") || err_str.contains("signature"),
-            "error should indicate signer recovery failure: {}",
-            err_str
+            "error should indicate signer recovery failure: {err_str}"
         );
 
         Ok(())

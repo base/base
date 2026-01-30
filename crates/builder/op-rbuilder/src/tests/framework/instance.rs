@@ -330,7 +330,7 @@ pub struct FlashblocksListener {
 impl FlashblocksListener {
     /// Create a new flashblocks listener that connects to the given WebSocket URL.
     ///
-    /// The listener will automatically parse incoming messages as FlashblocksPayloadV1.
+    /// The listener will automatically parse incoming messages as `FlashblocksPayloadV1`.
     fn new(flashblocks_ws_url: String) -> Self {
         let flashblocks = Arc::new(Mutex::new(Vec::new()));
         let cancellation_token = CancellationToken::new();

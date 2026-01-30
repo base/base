@@ -66,8 +66,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         for tx_hash in tx_hashes {
             assert!(
                 txs.hashes().any(|hash| hash == tx_hash),
-                "Transaction {} should be included in the block",
-                tx_hash
+                "Transaction {tx_hash} should be included in the block"
             );
         }
     }

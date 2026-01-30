@@ -250,7 +250,7 @@ mod tests {
     #[case::execution(StateProcessorError::from(ExecutionError::GasOverflow))]
     #[case::build(StateProcessorError::from(BuildError::MissingHeaders))]
     fn test_state_processor_error_from_variants(#[case] error: StateProcessorError) {
-        let debug_str = format!("{:?}", error);
+        let debug_str = format!("{error:?}");
         assert!(!debug_str.is_empty());
         let display_str = error.to_string();
         assert!(!display_str.is_empty());

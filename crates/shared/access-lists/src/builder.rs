@@ -24,7 +24,7 @@ impl FlashblockAccessListBuilder {
 
     /// Merges another [`FlashblockAccessListBuilder`] with this one
     pub fn merge(&mut self, other: Self) {
-        for (address, changes) in other.changes.into_iter() {
+        for (address, changes) in other.changes {
             self.changes
                 .entry(address)
                 .and_modify(|prev| prev.merge(changes.clone()))

@@ -34,7 +34,7 @@ mod tests {
     #[case::decompress(FlashblockDecodeError::Decompress(std::io::Error::other("test")))]
     #[case::utf8(FlashblockDecodeError::Utf8(String::from_utf8(vec![0xff, 0xfe]).unwrap_err()))]
     fn test_flashblock_decode_error_display(#[case] error: FlashblockDecodeError) {
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(!display.is_empty());
     }
 }

@@ -18,6 +18,9 @@ impl SigsegvHandler {
     ///
     /// When SIGSEGV is delivered to the process, print a stack trace and then exit.
     pub fn install() {
+        // SAFETY: We allocate a fresh stack for the signal handler and configure
+        // sigaction with valid parameters. The signal handler only writes to stderr
+        // and does not access any shared mutable state.
         unsafe {
             let alt_stack_size: usize = min_sigstack_size() + 64 * 1024;
             let mut alt_stack: libc::stack_t = mem::zeroed();
@@ -40,6 +43,9 @@ unsafe extern "C" {
 
 fn backtrace_stderr(buffer: &[*mut libc::c_void]) {
     let size = buffer.len().try_into().unwrap_or_default();
+    // SAFETY: backtrace_symbols_fd is a standard libc function that writes symbol
+    // information to the given file descriptor. The buffer contains valid pointers
+    // from libc::backtrace, and STDERR_FILENO is always valid.
     unsafe { backtrace_symbols_fd(buffer.as_ptr(), size, libc::STDERR_FILENO) };
 }
 
@@ -50,6 +56,8 @@ struct RawStderr(());
 
 impl fmt::Write for RawStderr {
     fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
+        // SAFETY: libc::write is a standard syscall. STDERR_FILENO is always valid,
+        // and we pass a valid pointer and length from the string slice.
         let ret = unsafe { libc::write(libc::STDERR_FILENO, s.as_ptr().cast(), s.len()) };
         if ret == -1 { Err(fmt::Error) } else { Ok(()) }
     }
@@ -68,6 +76,8 @@ macro_rules! raw_errln {
 extern "C" fn print_stack_trace(_: libc::c_int) {
     const MAX_FRAMES: usize = 256;
     let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
+    // SAFETY: libc::backtrace fills the provided buffer with return addresses
+    // from the call stack. The buffer is valid and properly sized.
     let stack = unsafe {
         // Collect return addresses
         let depth = libc::backtrace(stack_trace.as_mut_ptr(), MAX_FRAMES as i32);
@@ -141,6 +151,9 @@ extern "C" fn print_stack_trace(_: libc::c_int) {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn min_sigstack_size() -> usize {
     const AT_MINSIGSTKSZ: core::ffi::c_ulong = 51;
+    // SAFETY: `getauxval` is a standard libc function that retrieves values from
+    // the auxiliary vector. AT_MINSIGSTKSZ is a valid key, and the function
+    // returns 0 if the key is not found, which is handled below.
     let dynamic_sigstksz = unsafe { libc::getauxval(AT_MINSIGSTKSZ) };
     // If getauxval couldn't find the entry, it returns 0,
     // so take the higher of the "constant" and auxval.

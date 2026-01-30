@@ -1,6 +1,6 @@
 //! Additional Node command arguments for the OP builder.
 //!
-//! Copied from OptimismNode to allow easy extension.
+//! Copied from `OptimismNode` to allow easy extension.
 
 use reth_optimism_node::args::RollupArgs;
 
