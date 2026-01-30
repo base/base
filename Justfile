@@ -149,6 +149,7 @@ devnet-checks: devnet-status devnet-smoke
 devnet-load:
     docker compose -f docker/docker-compose.yml up -d --no-deps contender
 
+# Stops the contender load generator
 devnet-load-down:
     docker compose -f docker/docker-compose.yml down contender
 
