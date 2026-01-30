@@ -350,7 +350,7 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {:?}", block_id),
+                    format!("Block not found: {block_id:?}"),
                     None::<()>,
                 )
             })?
@@ -360,7 +360,7 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block has no transactions: {:?}", block_id),
+                    format!("Block has no transactions: {block_id:?}"),
                     None::<()>,
                 )
             })?
@@ -751,11 +751,11 @@ mod tests {
         Ok(())
     }
 
-    /// Test that meter_bundle works when flashblocks are present with a zero-hash header.
+    /// Test that `meter_bundle` works when flashblocks are present with a zero-hash header.
     ///
     /// This test verifies the fix for an issue where `get_l1_block_info` would fail when
     /// flashblocks were present because it was looking up the block by the flashblock
-    /// header's hash (which is always B256::ZERO for flashblocks) instead of using the
+    /// header's hash (which is always `B256::ZERO` for flashblocks) instead of using the
     /// canonical block number.
     ///
     /// Without the fix, this test would fail with:
@@ -773,7 +773,7 @@ mod tests {
         // Create a shared flashblocks state that we can inject pending blocks into
         let flashblocks_config =
             FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10);
-        let flashblocks_state = flashblocks_config.state.clone();
+        let flashblocks_state = Arc::clone(&flashblocks_config.state);
 
         // Setup harness with flashblocks-enabled metering
         let harness = TestHarness::builder()
