@@ -38,8 +38,15 @@ pub struct PendingBlocksBuilder {
     bundle_state: BundleState,
 }
 
+impl Default for PendingBlocksBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PendingBlocksBuilder {
-    pub(crate) fn new() -> Self {
+    /// Creates a new empty builder.
+    pub fn new() -> Self {
         Self {
             flashblocks: Vec::new(),
             headers: Vec::new(),
@@ -55,17 +62,16 @@ impl PendingBlocksBuilder {
         }
     }
 
+    /// Adds flashblocks to the builder.
     #[inline]
-    pub(crate) fn with_flashblocks(
-        &mut self,
-        flashblocks: impl IntoIterator<Item = Flashblock>,
-    ) -> &Self {
+    pub fn with_flashblocks(&mut self, flashblocks: impl IntoIterator<Item = Flashblock>) -> &Self {
         self.flashblocks.extend(flashblocks);
         self
     }
 
+    /// Adds a header to the builder.
     #[inline]
-    pub(crate) fn with_header(&mut self, header: Sealed<Header>) -> &Self {
+    pub fn with_header(&mut self, header: Sealed<Header>) -> &Self {
         self.headers.push(header);
         self
     }
@@ -122,7 +128,8 @@ impl PendingBlocksBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> Result<PendingBlocks, StateProcessorError> {
+    /// Builds the pending blocks.
+    pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         if self.headers.is_empty() {
             return Err(BuildError::MissingHeaders.into());
         }
