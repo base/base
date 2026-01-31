@@ -16,10 +16,10 @@ use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConf
 use reth_optimism_chainspec::OpChainSpec;
 
 use super::{
-    BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FUNDED_PRIVATE_KEY, Protocol, TransactionBuilder,
-    driver::ChainDriver, flashblocks_number_contract::FlashblocksNumber,
+    BUILDER_PRIVATE_KEY, FLASHBLOCKS_DEPLOY_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, Protocol,
+    TransactionBuilder, driver::ChainDriver, flashblocks_number_contract::FlashblocksNumber,
+    sign_op_tx,
 };
-use crate::tx_signer::Signer;
 
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;
@@ -60,8 +60,12 @@ impl TransactionBuilderExt for TransactionBuilder {
         let owner = flashblocks_number_signer();
 
         let init_data = FlashblocksNumber::initializeCall {
-            _owner: owner.address,
-            _initialBuilders: if register_builder { vec![builder_signer.address] } else { vec![] },
+            _owner: owner.address(),
+            _initialBuilders: if register_builder {
+                vec![builder_signer.address()]
+            } else {
+                vec![]
+            },
         }
         .abi_encode();
 
@@ -88,10 +92,10 @@ pub trait ChainDriverExt {
         &self,
         count: usize,
         amount: u128,
-    ) -> impl Future<Output = eyre::Result<Vec<Signer>>> {
+    ) -> impl Future<Output = eyre::Result<Vec<PrivateKeySigner>>> {
         async move {
-            let accounts = (0..count).map(|_| Signer::random()).collect::<Vec<_>>();
-            self.fund_many(accounts.iter().map(|a| a.address).collect(), amount).await?;
+            let accounts = (0..count).map(|_| PrivateKeySigner::random()).collect::<Vec<_>>();
+            self.fund_many(accounts.iter().map(|a| a.address()).collect(), amount).await?;
             Ok(accounts)
         }
     }
@@ -121,8 +125,8 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
                 input: Default::default(), // No input data for the deposit
             };
 
-            let signer = Signer::random();
-            let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit))?;
+            let signer = PrivateKeySigner::random();
+            let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit))?;
             let signed_tx_rlp = signed_tx.encoded_2718();
             txs.push(signed_tx_rlp.into());
         }
@@ -142,8 +146,8 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
             input: Default::default(), // No input data for the deposit
         };
 
-        let signer = Signer::random();
-        let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit))?;
+        let signer = PrivateKeySigner::random();
+        let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
         Ok(self.build_new_block_with_txs(vec![signed_tx_rlp.into()]).await?.header.hash)
     }
@@ -239,25 +243,16 @@ pub fn get_available_port() -> u16 {
         .port()
 }
 
-pub fn builder_signer() -> Signer {
-    Signer::try_from_secret(
-        BUILDER_PRIVATE_KEY.parse().expect("invalid hardcoded builder private key"),
-    )
-    .expect("Failed to create signer from hardcoded builder private key")
+pub fn builder_signer() -> PrivateKeySigner {
+    BUILDER_PRIVATE_KEY.parse().expect("invalid hardcoded builder private key")
 }
 
-pub fn funded_signer() -> Signer {
-    Signer::try_from_secret(
-        FUNDED_PRIVATE_KEY.parse().expect("invalid hardcoded funded private key"),
-    )
-    .expect("Failed to create signer from hardcoded funded private key")
+pub fn funded_signer() -> PrivateKeySigner {
+    FUNDED_PRIVATE_KEY.parse().expect("invalid hardcoded funded private key")
 }
 
-pub fn flashblocks_number_signer() -> Signer {
-    Signer::try_from_secret(
-        FLASHBLOCKS_DEPLOY_KEY
-            .parse()
-            .expect("invalid hardcoded flashblocks number deployer private key"),
-    )
-    .expect("Failed to create signer from hardcoded flashblocks number deployer private key")
+pub fn flashblocks_number_signer() -> PrivateKeySigner {
+    FLASHBLOCKS_DEPLOY_KEY
+        .parse()
+        .expect("invalid hardcoded flashblocks number deployer private key")
 }

@@ -15,13 +15,12 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use super::funded_signer;
-use crate::tx_signer::Signer;
+use super::{PrivateKeySigner, funded_signer, sign_op_tx};
 
 #[derive(Clone, Debug)]
 pub struct TransactionBuilder {
     provider: RootProvider<Optimism>,
-    signer: Option<Signer>,
+    signer: Option<PrivateKeySigner>,
     nonce: Option<u64>,
     base_fee: Option<u128>,
     tx: TxEip1559,
@@ -53,7 +52,7 @@ impl TransactionBuilder {
         self
     }
 
-    pub fn with_signer(mut self, signer: &Signer) -> Self {
+    pub fn with_signer(mut self, signer: &PrivateKeySigner) -> Self {
         self.signer = Some(signer.clone());
         self
     }
@@ -100,7 +99,7 @@ impl TransactionBuilder {
             Some(nonce) => nonce,
             None => self
                 .provider
-                .get_transaction_count(signer.address)
+                .get_transaction_count(signer.address())
                 .pending()
                 .await
                 .expect("Failed to get transaction count"),
@@ -129,7 +128,8 @@ impl TransactionBuilder {
             self.tx.max_fee_per_gas = base_fee + self.tx.max_priority_fee_per_gas;
         }
 
-        signer.sign_tx(OpTypedTransaction::Eip1559(self.tx)).expect("Failed to sign transaction")
+        sign_op_tx(&signer, OpTypedTransaction::Eip1559(self.tx))
+            .expect("Failed to sign transaction")
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
