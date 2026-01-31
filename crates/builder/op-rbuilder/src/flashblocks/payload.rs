@@ -126,7 +126,9 @@ where
         &self,
         _args: reth_basic_payload_builder::BuildArguments<Self::Attributes, Self::BuiltPayload>,
     ) -> Result<BuildOutcome<Self::BuiltPayload>, PayloadBuilderError> {
-        unimplemented!()
+        Err(PayloadBuilderError::Other(Box::new(std::io::Error::other(
+            "try_build is not supported in flashblocks context",
+        ))))
     }
 
     fn build_empty_payload(
@@ -136,7 +138,9 @@ where
             reth_basic_payload_builder::HeaderForPayload<Self::BuiltPayload>,
         >,
     ) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        unimplemented!()
+        Err(PayloadBuilderError::Other(Box::new(std::io::Error::other(
+            "build_empty_payload is not supported in flashblocks context",
+        ))))
     }
 }
 

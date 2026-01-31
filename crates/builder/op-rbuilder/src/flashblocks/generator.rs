@@ -285,7 +285,7 @@ where
     type BuiltPayload = Builder::BuiltPayload;
 
     fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        unimplemented!()
+        self.cell.get().ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
 
     fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
@@ -596,18 +596,22 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default)]
-    struct MockPayload;
+    struct MockPayload {
+        block: SealedBlock<<OpPrimitives as NodePrimitives>::Block>,
+        fees: U256,
+        requests: Option<Requests>,
+    }
 
     impl BuiltPayload for MockPayload {
         type Primitives = OpPrimitives;
 
         fn block(&self) -> &SealedBlock<<Self::Primitives as NodePrimitives>::Block> {
-            unimplemented!()
+            &self.block
         }
 
         /// Returns the fees collected for the built block
         fn fees(&self) -> U256 {
-            unimplemented!()
+            self.fees
         }
 
         /// Returns the entire execution data for the built block, if available.
@@ -617,7 +621,7 @@ mod tests {
 
         /// Returns the EIP-7865 requests for the payload if any.
         fn requests(&self) -> Option<Requests> {
-            unimplemented!()
+            self.requests.clone()
         }
     }
 
