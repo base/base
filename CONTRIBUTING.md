@@ -67,7 +67,7 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 
 ## Submitting a Bug Report
 
-When filing a new bug report in the issue tracker, please include:
+When filing a new bug report in the issue tracker, please include the following:
 
 - The Base version you are on (and that it is up to date)
 - Relevant logs and error messages
