@@ -23,7 +23,7 @@ use testcontainers::bollard::{
 use tokio::signal;
 use tracing::{debug, warn};
 
-use crate::tests::{EngineApi, Ipc};
+use super::{EngineApi, Ipc};
 
 const AUTH_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/auth.ipc";
 const RPC_CONTAINER_IPC_PATH: &str = "/home/op-reth-shared/rpc.ipc";

@@ -11,14 +11,11 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use reth_optimism_node::OpPayloadAttributes;
 
-use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
-use crate::{
-    tests::{
-        DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, ExternalNode, Protocol,
-        framework::DEFAULT_GAS_LIMIT,
-    },
-    tx_signer::Signer,
+use super::{
+    DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
+    LocalInstance, Protocol, TransactionBuilder,
 };
+use crate::tx_signer::Signer;
 
 /// The `ChainDriver` is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node

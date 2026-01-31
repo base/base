@@ -15,7 +15,8 @@ use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, Transac
 use tokio::sync::watch;
 use tracing::debug;
 
-use crate::{tests::funded_signer, tx_signer::Signer};
+use super::funded_signer;
+use crate::tx_signer::Signer;
 
 #[derive(Clone, Debug)]
 pub struct TransactionBuilder {

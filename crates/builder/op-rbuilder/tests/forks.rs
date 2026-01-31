@@ -1,9 +1,10 @@
+#![allow(missing_docs)]
+
 use std::time::Duration;
 
 use alloy_eips::{BlockNumberOrTag::Latest, Encodable2718, eip1559::MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::bytes;
-
-use crate::tests::{BlockTransactionsExt, setup_test_instance};
+use op_rbuilder::test_utils::{BlockTransactionsExt, setup_test_instance};
 
 #[tokio::test]
 async fn jovian_block_parameters_set() -> eyre::Result<()> {

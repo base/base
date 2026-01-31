@@ -1,12 +1,13 @@
-use base_builder_cli::OpRbuilderArgs;
-use reth_node_builder::NodeConfig;
-use reth_node_core::args::TxPoolArgs;
-use reth_optimism_chainspec::OpChainSpec;
+#![allow(missing_docs)]
 
-use crate::tests::{
+use base_builder_cli::OpRbuilderArgs;
+use op_rbuilder::test_utils::{
     BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
     setup_test_instance_with_config,
 };
+use reth_node_builder::NodeConfig;
+use reth_node_core::args::TxPoolArgs;
+use reth_optimism_chainspec::OpChainSpec;
 
 /// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
 #[tokio::test]

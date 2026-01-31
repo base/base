@@ -1,10 +1,11 @@
+#![allow(missing_docs)]
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{TxHash, U256};
 use alloy_provider::Provider;
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
+use op_rbuilder::test_utils::{ChainDriverExt, ONE_ETH, setup_test_instance};
 use uuid::Uuid;
-
-use crate::tests::{ChainDriverExt, framework::ONE_ETH, setup_test_instance};
 
 /// Tests that backrun bundles are all-or-nothing:
 /// - If any backrun tx in a bundle reverts, the entire bundle is excluded

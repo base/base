@@ -10,7 +10,7 @@ use jsonrpsee::{
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
-use reth_optimism_rpc::engine::OpEngineApiClient;
+use reth_optimism_rpc::OpEngineApiClient;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;

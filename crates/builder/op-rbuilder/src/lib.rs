@@ -12,5 +12,5 @@ pub mod traits;
 pub mod tx_data_store;
 pub mod tx_signer;
 
-#[cfg(any(test, feature = "testing"))]
-pub mod tests;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;

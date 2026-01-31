@@ -39,9 +39,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    tests::{
-        EngineApi, Ipc, TransactionPoolObserver, create_test_db, framework::driver::ChainDriver,
-    },
+    test_utils::{EngineApi, Ipc, TransactionPoolObserver, create_test_db, driver::ChainDriver},
     tx_data_store::TxDataStore,
 };
 
