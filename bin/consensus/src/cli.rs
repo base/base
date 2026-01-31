@@ -7,9 +7,10 @@ use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
+use base_node_service::{
+    BaseNodeBuilder, EngineConfig, L1ConfigBuilder, NodeMode, RollupBoostServerArgs,
+};
 use clap::Parser;
-use kona_engine::RollupBoostServerArgs;
-use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
 use rollup_boost::ExecutionMode;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
@@ -98,12 +99,12 @@ impl Cli {
         let cfg = self.l2_config.load(&args.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
 
         info!(
-            target: "rollup_node",
+            target: "base_node",
             chain_id = cfg.l2_chain_id.id(),
-            "Starting rollup node services"
+            "Starting Base node services"
         );
         for hf in cfg.hardforks.to_string().lines() {
-            info!(target: "rollup_node", "{hf}");
+            info!(target: "base_node", "{hf}");
         }
 
         let l1_chain_config =
@@ -136,7 +137,7 @@ impl Cli {
         let rpc_config = self.rpc_flags.clone().into();
 
         // TODO: Remove hardcoded builder and rollup_boost config once we have our own
-        // RollupNodeBuilder implementation. These are required by kona's EngineConfig
+        // BaseNodeBuilder implementation. These are required by kona's EngineConfig
         // but are effectively disabled (execution_mode = Disabled, flashblocks = None).
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
@@ -157,7 +158,7 @@ impl Cli {
             },
         };
 
-        RollupNodeBuilder::new(
+        BaseNodeBuilder::new(
             cfg,
             l1_config,
             self.l2_client_args.l2_trust_rpc,
@@ -170,7 +171,7 @@ impl Cli {
         .start()
         .await
         .map_err(|e| {
-            error!(target: "rollup_node", "Failed to start rollup node service: {e}");
+            error!(target: "base_node", "Failed to start Base node service: {e}");
             eyre::eyre!("{e}")
         })?;
 

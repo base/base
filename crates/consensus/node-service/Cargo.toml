@@ -1,0 +1,55 @@
+[package]
+name = "base-node-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Base rollup node service wrapping kona-node-service"
+
+[lints]
+workspace = true
+
+[dependencies]
+# kona
+kona-derive.workspace = true
+kona-engine.workspace = true
+kona-genesis.workspace = true
+kona-node-service = { workspace = true, features = ["metrics"] }
+kona-protocol.workspace = true
+kona-providers-alloy.workspace = true
+kona-rpc.workspace = true
+
+# Alloy
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-client.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-transport-http.workspace = true
+
+# op-alloy
+op-alloy-network.workspace = true
+
+# async
+async-trait.workspace = true
+http-body-util.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower.workspace = true
+
+# Misc
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[features]
+default = []
+metrics = [
+	"kona-derive/metrics",
+	"kona-engine/metrics",
+	"kona-node-service/metrics",
+	"kona-providers-alloy/metrics",
+	"kona-rpc/metrics",
+]
