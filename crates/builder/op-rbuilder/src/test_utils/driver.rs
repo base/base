@@ -13,9 +13,8 @@ use reth_optimism_node::OpPayloadAttributes;
 
 use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
-    LocalInstance, Protocol, TransactionBuilder,
+    LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_op_tx,
 };
-use crate::tx_signer::Signer;
 
 /// The `ChainDriver` is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
@@ -24,7 +23,7 @@ use crate::tx_signer::Signer;
 pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     engine_api: EngineApi<RpcProtocol>,
     provider: RootProvider<Optimism>,
-    signer: Option<Signer>,
+    signer: Option<PrivateKeySigner>,
     gas_limit: Option<u64>,
     args: OpRbuilderArgs,
     validation_nodes: Vec<ExternalNode>,
@@ -61,7 +60,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
     /// Specifies the signer used to sign transactions.
     /// If not specified, a random signer will be used.
-    pub fn with_signer(mut self, signer: &Signer) -> Self {
+    pub fn with_signer(mut self, signer: &PrivateKeySigner) -> Self {
         self.signer = Some(signer.clone());
         self
     }
@@ -138,8 +137,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             };
 
             // Create a temporary signer for the deposit
-            let signer = self.signer.clone().unwrap_or_else(Signer::random);
-            let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit_tx))?;
+            let signer = self.signer.clone().unwrap_or_else(PrivateKeySigner::random);
+            let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit_tx))?;
             signed_tx.encoded_2718().into()
         };
 
