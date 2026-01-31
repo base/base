@@ -12,12 +12,17 @@ pub(crate) mod generator;
 pub(crate) mod payload;
 pub(crate) mod payload_handler;
 pub(crate) mod service;
+pub(crate) mod state_root_task;
 pub(crate) mod wspub;
 
 pub use config::FlashblocksConfig;
 pub use context::{FlashblocksExtraCtx, OpPayloadBuilderCtx};
 pub use payload::FlashblocksExecutionInfo;
 pub use service::FlashblocksServiceBuilder;
+pub use state_root_task::{
+    StateRootError, StateRootMessage, StateRootResult, StateRootTask, StateRootTaskBuilder,
+    StateRootTaskConfig, StateRootTaskHandle,
+};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]

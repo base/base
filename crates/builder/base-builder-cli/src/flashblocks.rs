@@ -53,6 +53,18 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_COMPUTE_STATE_ROOT_ON_FINALIZE"
     )]
     pub flashblocks_compute_state_root_on_finalize: bool,
+
+    /// Whether to use streaming state root calculation.
+    /// When enabled, state updates are streamed to a background task during transaction
+    /// execution, reducing finalization latency by pre-fetching trie nodes and building
+    /// a sparse trie incrementally. This is most effective when combined with
+    /// --flashblocks.compute-state-root-on-finalize.
+    #[arg(
+        long = "flashblocks.streaming-state-root",
+        default_value = "false",
+        env = "FLASHBLOCKS_STREAMING_STATE_ROOT"
+    )]
+    pub flashblocks_streaming_state_root: bool,
 }
 
 impl Default for FlashblocksArgs {
@@ -65,6 +77,7 @@ impl Default for FlashblocksArgs {
             flashblocks_leeway_time: 75,
             flashblocks_disable_state_root: false,
             flashblocks_compute_state_root_on_finalize: false,
+            flashblocks_streaming_state_root: false,
         }
     }
 }
