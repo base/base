@@ -6,16 +6,44 @@ mod instance;
 mod txs;
 mod utils;
 
+use alloy_network::TxSignerSync;
+use alloy_primitives::B256;
+pub use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
 use base_builder_cli::OpRbuilderArgs;
 pub use contracts::*;
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
+use k256::sha2::{Digest, Sha256};
+use op_alloy_consensus::OpTypedTransaction;
 use reth_node_builder::NodeConfig;
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_primitives::OpTransactionSigned;
+use reth_primitives::Recovered;
 pub use txs::*;
 pub use utils::*;
+
+/// Signs an OP transaction and returns the recovered signed transaction.
+pub fn sign_op_tx(
+    signer: &PrivateKeySigner,
+    mut tx: OpTypedTransaction,
+) -> eyre::Result<Recovered<OpTransactionSigned>> {
+    let signature = signer
+        .sign_transaction_sync(&mut tx)
+        .map_err(|e| eyre::eyre!("failed to sign transaction: {e}"))?;
+    let signed = OpTransactionSigned::new_unhashed(tx, signature);
+    Ok(Recovered::new_unchecked(signed, signer.address()))
+}
+
+/// Generates a signer deterministically from a seed (for testing only).
+pub fn generate_signer_from_seed(seed: &str) -> PrivateKeySigner {
+    let mut hasher = Sha256::new();
+    hasher.update(seed.as_bytes());
+    let hash = hasher.finalize();
+    PrivateKeySigner::from_bytes(&B256::from_slice(&hash))
+        .expect("Failed to create signer from seed")
+}
 
 /// Sets up a test instance with default flashblocks configuration.
 /// This is the simplified replacement for the `rb_test` macro.

@@ -10,7 +10,6 @@ pub mod metrics;
 pub mod primitives;
 pub mod traits;
 pub mod tx_data_store;
-pub mod tx_signer;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
