@@ -52,9 +52,17 @@ test: build-contracts
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
 
 # Runs system tests (requires Docker)
-system-tests: build-contracts
+system-tests: system-tests-pull-images
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
     cargo nextest run -p system_tests
+
+# Pre-pulls Docker images needed for system tests
+system-tests-pull-images:
+    docker build -t devnet-setup:local -f docker/Dockerfile.devnet .
+    docker pull ghcr.io/paradigmxyz/reth:v1.10.2
+    docker pull sigp/lighthouse:v8.0.1
+    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
 
 # Runs cargo hack against the workspace
 hack:
