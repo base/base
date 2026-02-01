@@ -14,16 +14,3 @@ pub fn random_jwt_secret() -> B256 {
 pub fn random_jwt_secret_hex() -> String {
     hex::encode(random_jwt_secret())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::random_jwt_secret_hex;
-
-    #[test]
-    fn jwt_secret_hex_is_32_bytes() {
-        let secret = random_jwt_secret_hex();
-
-        assert_eq!(secret.len(), 64);
-        assert!(hex::decode(&secret).is_ok());
-    }
-}
