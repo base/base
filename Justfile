@@ -52,7 +52,7 @@ test: build-contracts
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
 
 # Runs system tests (requires Docker)
-system-tests: system-tests-pull-images
+system-tests: build-contracts
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
     cargo nextest run -p system_tests
 

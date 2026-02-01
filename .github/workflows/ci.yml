@@ -285,5 +285,8 @@ jobs:
         with:
           version: stable
 
+      - name: Pre-pull docker images
+        run: just system-tests-pull-images
+
       - name: Run system tests
         run: just system-tests
