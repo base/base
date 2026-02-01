@@ -52,7 +52,7 @@ test: build-contracts
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
 
 # Runs system tests (requires Docker)
-system-tests:
+system-tests: build-contracts
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
     cargo nextest run -p system_tests
 
@@ -165,4 +165,4 @@ devnet-flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
-    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{containers}}
+    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{ containers }}
