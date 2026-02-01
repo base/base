@@ -2,8 +2,12 @@
 //!
 //! The batcher submits L2 transaction batches to L1 for data availability.
 
+use std::time::Duration;
+
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::WaitFor, runners::AsyncRunner};
+
+const CONTAINER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     containers::L2_BATCHER_NAME,
@@ -52,6 +56,7 @@ impl BatcherContainer {
             .with_container_name(&name)
             .with_network(network_name())
             .with_cmd(batcher_args(&config))
+            .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()
             .await
             .wrap_err("Failed to start batcher container")?;
