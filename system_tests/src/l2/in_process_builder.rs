@@ -13,6 +13,7 @@ use nanoid::nanoid;
 use op_rbuilder::{
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    test_utils::get_available_port,
 };
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -36,7 +37,6 @@ use reth_tasks::TaskManager;
 use url::Url;
 
 use crate::setup::{BUILDER_ENODE_ID, BUILDER_P2P_KEY};
-use op_rbuilder::test_utils::get_available_port;
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug, Clone)]
@@ -47,7 +47,7 @@ pub struct InProcessBuilderConfig {
     pub jwt_secret_hex: Vec<u8>,
 }
 
-/// An in-process builder node that replaces Docker-based BuilderContainer.
+/// An in-process builder node that replaces Docker-based `BuilderContainer`.
 ///
 /// This spawns a real builder node within the current process, binding to dynamic ports.
 /// Docker containers (like op-node) can connect via `host.docker.internal`.
@@ -189,7 +189,7 @@ impl InProcessBuilder {
         })
     }
 
-    /// Returns the HTTP RPC URL (localhost:actual_port).
+    /// Returns the HTTP RPC URL (`localhost:actual_port`).
     pub fn rpc_url(&self) -> Result<Url> {
         Url::parse(&format!("http://{}", self.http_api_addr)).wrap_err("Failed to parse RPC URL")
     }

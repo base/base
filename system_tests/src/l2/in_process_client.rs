@@ -1,6 +1,6 @@
 //! In-process Base client node.
 //!
-//! Replaces Docker-based ClientContainer with an in-process node for faster tests.
+//! Replaces Docker-based `ClientContainer` with an in-process node for faster tests.
 
 use std::{any::Any, io::Write, net::SocketAddr, path::PathBuf, sync::Arc};
 
@@ -43,7 +43,7 @@ pub struct InProcessClientConfig {
 
 /// In-process Base client node that syncs from a builder.
 ///
-/// This replaces the Docker-based ClientContainer for faster test execution.
+/// This replaces the Docker-based `ClientContainer` for faster test execution.
 pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
@@ -115,7 +115,7 @@ impl InProcessClient {
 
         let op_node = BaseNode::new(rollup_args.clone());
 
-        let mut node_config = NodeConfig::new(chain_spec.clone())
+        let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
             .with_rpc(rpc_args)
             .with_unused_ports();

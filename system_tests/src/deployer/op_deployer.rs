@@ -181,9 +181,9 @@ fn deploy_script() -> String {
     format!(
         r#"set -e
 
-WORKDIR=\"{workdir}\"
-OUTPUT_DIR=\"{output_dir}\"
-INTENT_PATH=\"{intent_path}\"
+WORKDIR=\"{WORKDIR}\"
+OUTPUT_DIR=\"{OUTPUT_DIR}\"
+INTENT_PATH=\"{INTENT_PATH}\"
 
 mkdir -p \"$WORKDIR\" \"$OUTPUT_DIR\"
 
@@ -221,9 +221,6 @@ op-deployer inspect l1 \
   \"$L2_CHAIN_ID\" \
   > \"$OUTPUT_DIR/l1-addresses.json\"
 "#,
-        workdir = WORKDIR,
-        output_dir = OUTPUT_DIR,
-        intent_path = INTENT_PATH,
     )
 }
 

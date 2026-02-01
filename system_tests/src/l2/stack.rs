@@ -10,13 +10,12 @@
 use eyre::{Result, WrapErr};
 use url::Url;
 
-use crate::setup::BUILDER_LIBP2P_PEER_ID;
-
 use super::{
     BatcherConfig, BatcherContainer, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
     InProcessClientConfig, OpNodeConfig, OpNodeContainer, OpNodeFollowerConfig,
     OpNodeFollowerContainer,
 };
+use crate::setup::BUILDER_LIBP2P_PEER_ID;
 
 /// Configuration for the L2 stack.
 #[derive(Debug, Clone)]

@@ -163,12 +163,11 @@ impl DevnetBuilder {
         let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
 
         let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
-        let l2_deployment = tokio::task::spawn_blocking(move || {
-            setup.deploy_l2_contracts(&l1_internal_rpc_url)
-        })
-        .await
-        .wrap_err("L2 deployment task panicked")?
-        .wrap_err("Failed to deploy L2 contracts")?;
+        let l2_deployment =
+            tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
+                .await
+                .wrap_err("L2 deployment task panicked")?
+                .wrap_err("Failed to deploy L2 contracts")?;
 
         let jwt_secret = config::random_jwt_secret_hex();
 
