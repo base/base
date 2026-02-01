@@ -1,0 +1,75 @@
+[package]
+name = "system_tests"
+description = "System/E2E tests for Base node infrastructure"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
+
+# Container orchestration
+testcontainers = { workspace = true, features = ["blocking"] }
+
+# Ethereum/Alloy
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+
+# Serialization
+serde_json.workspace = true
+
+# Error handling
+eyre.workspace = true
+
+# Utilities
+hex.workspace = true
+rand.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+url.workspace = true
+nanoid.workspace = true
+
+# Reth node dependencies (for in-process builder)
+reth-node-builder = { workspace = true, features = ["test-utils"] }
+reth-node-core.workspace = true
+reth-tasks.workspace = true
+reth-db = { workspace = true, features = ["op"] }
+reth-optimism-chainspec.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-rpc.workspace = true
+reth-optimism-txpool.workspace = true
+
+# op-rbuilder (for FlashblocksServiceBuilder)
+op-rbuilder = { workspace = true, features = ["test-utils"] }
+base-builder-cli.workspace = true
+
+# Base client node (for in-process client)
+base-client-node = { workspace = true, features = ["test-utils"] }
+base-flashblocks.workspace = true
+base-flashblocks-node.workspace = true
+base-txpool.workspace = true
+reth-provider.workspace = true
+alloy-genesis.workspace = true
+
+[dev-dependencies]
+# Test-only Alloy dependencies
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-rpc-client.workspace = true
+alloy-signer.workspace = true
+
+# Test-only OP types
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
+
+

@@ -13689,6 +13689,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "system_tests"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-signer",
+ "alloy-signer-local",
+ "base-builder-cli",
+ "base-client-node",
+ "base-flashblocks",
+ "base-flashblocks-node",
+ "base-txpool",
+ "eyre",
+ "hex",
+ "nanoid",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
+ "op-rbuilder",
+ "rand 0.9.2",
+ "reth-db",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-optimism-chainspec",
+ "reth-optimism-node",
+ "reth-optimism-rpc",
+ "reth-optimism-txpool",
+ "reth-provider",
+ "reth-tasks",
+ "serde_json",
+ "tempfile",
+ "testcontainers",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "tabwriter"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

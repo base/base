@@ -14,7 +14,8 @@ members = [
     "crates/client/*",
     "crates/consensus/*",
     "crates/shared/*",
-    "crates/builder/*"
+    "crates/builder/*",
+    "system_tests"
 ]
 default-members = ["bin/node", "bin/consensus", "bin/builder"]
 
