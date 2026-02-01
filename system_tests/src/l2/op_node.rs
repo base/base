@@ -1,5 +1,7 @@
 //! op-node container for L2 consensus.
 
+use std::time::Duration;
+
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
@@ -7,6 +9,8 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use url::Url;
+
+const CONTAINER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     containers::{
@@ -98,6 +102,7 @@ impl OpNodeContainer {
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
             .with_copy_to(JWT_PATH, config.jwt_secret_hex)
             .with_copy_to(P2P_KEY_PATH, config.p2p_key)
+            .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()
             .await
             .wrap_err("Failed to start op-node container")?;
@@ -171,6 +176,7 @@ impl OpNodeFollowerContainer {
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
             .with_copy_to(JWT_PATH, config.jwt_secret_hex)
+            .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()
             .await
             .wrap_err("Failed to start follower op-node container")?;
