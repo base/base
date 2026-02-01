@@ -3,9 +3,8 @@
 use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::Ethereum;
-use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
@@ -35,9 +34,9 @@ async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
     let l2_builder_rpc_url = devnet.l2_rpc_url()?;
     let l2_client_rpc_url = devnet.l2_client_rpc_url()?;
 
-    verify_l1_block_production(&l1_rpc_url.to_string()).await?;
-    verify_l2_block_production(&l2_builder_rpc_url.to_string()).await?;
-    send_l2_transaction_via_client(&l2_client_rpc_url.to_string(), &l2_builder_rpc_url.to_string())
+    verify_l1_block_production(l1_rpc_url.as_ref()).await?;
+    verify_l2_block_production(l2_builder_rpc_url.as_ref()).await?;
+    send_l2_transaction_via_client(l2_client_rpc_url.as_ref(), l2_builder_rpc_url.as_ref())
         .await?;
 
     Ok(())
@@ -171,8 +170,8 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
     let l2_builder_rpc_url = devnet.l2_rpc_url()?;
     let l2_client_rpc_url = devnet.l2_client_rpc_url()?;
 
-    let builder_provider = http_provider(&l2_builder_rpc_url.to_string())?;
-    let client_provider = http_provider(&l2_client_rpc_url.to_string())?;
+    let builder_provider = http_provider(l2_builder_rpc_url.as_ref())?;
+    let client_provider = http_provider(l2_client_rpc_url.as_ref())?;
 
     timeout(BLOCK_PRODUCTION_TIMEOUT, async {
         loop {
@@ -214,8 +213,8 @@ async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
     let l2_builder_rpc_url = devnet.l2_rpc_url()?;
     let l2_client_rpc_url = devnet.l2_client_rpc_url()?;
 
-    let builder_provider = http_provider(&l2_builder_rpc_url.to_string())?;
-    let client_provider = http_provider(&l2_client_rpc_url.to_string())?;
+    let builder_provider = http_provider(l2_builder_rpc_url.as_ref())?;
+    let client_provider = http_provider(l2_client_rpc_url.as_ref())?;
 
     timeout(BLOCK_PRODUCTION_TIMEOUT, async {
         loop {

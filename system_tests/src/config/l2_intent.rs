@@ -50,13 +50,6 @@ l2ContractsLocator = "embedded"
     proposer = "{proposer}"
     challenger = "{challenger}"
 "#,
-        batcher = batcher,
-        challenger = challenger,
-        deployer = deployer,
-        l1_chain_id = l1_chain_id,
-        l2_chain_id_hex = l2_chain_id_hex,
-        proposer = proposer,
-        sequencer = sequencer,
     )
 }
 

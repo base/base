@@ -9,7 +9,9 @@ use testcontainers::{
 use url::Url;
 
 use crate::{
-    containers::{L2_CLIENT_OP_NODE_NAME, L2_OP_NODE_NAME, L2_OP_NODE_P2P_PORT, L2_OP_NODE_RPC_PORT},
+    containers::{
+        L2_CLIENT_OP_NODE_NAME, L2_OP_NODE_NAME, L2_OP_NODE_P2P_PORT, L2_OP_NODE_RPC_PORT,
+    },
     images::OP_NODE_IMAGE,
     network::{ensure_network_exists, network_name},
     unique_name,
@@ -125,10 +127,7 @@ impl OpNodeContainer {
 
     /// Returns the internal P2P multiaddr for inter-container communication.
     pub fn internal_p2p_addr(&self) -> String {
-        format!(
-            "/dns4/{}/tcp/{}/p2p/{}",
-            self.name, L2_OP_NODE_P2P_PORT, self.libp2p_peer_id
-        )
+        format!("/dns4/{}/tcp/{}/p2p/{}", self.name, L2_OP_NODE_P2P_PORT, self.libp2p_peer_id)
     }
 
     /// Returns the libp2p peer ID of this op-node.

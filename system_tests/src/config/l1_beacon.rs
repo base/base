@@ -102,8 +102,5 @@ MAX_BLOBS_PER_BLOCK_FULU: 21
 BLOB_SIDECAR_SUBNET_COUNT_FULU: 21
 MAX_REQUEST_BLOB_SIDECARS_FULU: 2688
 "#,
-        chain_id = chain_id,
-        genesis_time = genesis_time,
-        slot_duration = slot_duration,
     )
 }
