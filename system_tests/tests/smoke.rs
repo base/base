@@ -36,8 +36,7 @@ async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
 
     verify_l1_block_production(l1_rpc_url.as_ref()).await?;
     verify_l2_block_production(l2_builder_rpc_url.as_ref()).await?;
-    send_l2_transaction_via_client(l2_client_rpc_url.as_ref(), l2_builder_rpc_url.as_ref())
-        .await?;
+    send_l2_transaction_via_client(l2_client_rpc_url.as_ref(), l2_builder_rpc_url.as_ref()).await?;
 
     Ok(())
 }
