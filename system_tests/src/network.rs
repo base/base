@@ -11,19 +11,18 @@ pub const fn network_name() -> &'static str {
 
 /// Ensures that the Docker network exists.
 pub fn ensure_network_exists() -> Result<()> {
-    let exists = Command::new("docker")
-        .args(["network", "inspect", NETWORK_NAME])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let output = Command::new("docker").args(["network", "create", NETWORK_NAME]).output()?;
 
-    if exists {
+    if output.status.success() {
         return Ok(());
     }
 
-    let status = Command::new("docker").args(["network", "create", NETWORK_NAME]).status()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("already exists") {
+        return Ok(());
+    }
 
-    ensure!(status.success(), "Failed to create Docker network");
+    ensure!(output.status.success(), "Failed to create Docker network: {}", stderr);
 
     Ok(())
 }
