@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*"]
+members = ["bin/*", "crates/client/*", "crates/shared/*", "crates/builder/*", "system_tests"]
 default-members = ["bin/node", "bin/consensus", "bin/builder"]
 
 [workspace.metadata.cargo-udeps.ignore]
