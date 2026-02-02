@@ -9,9 +9,10 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 
+use super::config::L1ContainerConfig;
 use crate::{
     containers::{L1_BEACON_HTTP_PORT, L1_BEACON_NAME, L1_VALIDATOR_NAME},
-    network::{ensure_network_exists, network_name},
+    network::{ensure_network_exists, ensure_network_exists_with_name, network_name},
     unique_name,
 };
 
@@ -36,27 +37,44 @@ impl LighthouseBeaconContainer {
         testnet_dir: impl AsRef<Path>,
         jwt_path: impl AsRef<Path>,
         execution_endpoint: impl AsRef<str>,
+        config: Option<L1ContainerConfig>,
     ) -> Result<Self> {
-        ensure_network_exists()?;
+        let config = config.unwrap_or_default();
+
+        if let Some(ref net) = config.network_name {
+            ensure_network_exists_with_name(net)?;
+        } else {
+            ensure_network_exists()?;
+        }
 
         let command = beacon_command(execution_endpoint.as_ref());
         let image = lighthouse_image()
             .with_exposed_port(LIGHTHOUSE_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("HTTP API started"));
 
-        let name = unique_name(L1_BEACON_NAME);
+        let name = if config.use_stable_names {
+            L1_BEACON_NAME.to_string()
+        } else {
+            unique_name(L1_BEACON_NAME)
+        };
+        let network = config.network_name.unwrap_or_else(|| network_name().to_string());
 
-        let container = image
+        let mut container_builder = image
             .with_container_name(&name)
-            .with_network(network_name())
+            .with_network(&network)
             .with_mount(Mount::bind_mount(
                 path_for_mount(testnet_dir.as_ref()),
                 LIGHTHOUSE_TESTNET_DIR,
             ))
             .with_mount(Mount::bind_mount(path_for_mount(jwt_path.as_ref()), LIGHTHOUSE_JWT_PATH))
-            .with_cmd(command)
-            .start()
-            .await?;
+            .with_cmd(command);
+
+        if let Some(port) = config.beacon_http_port {
+            container_builder =
+                container_builder.with_mapped_port(port, LIGHTHOUSE_HTTP_PORT.tcp());
+        }
+
+        let container = container_builder.start().await?;
 
         Ok(Self { container, name })
     }
@@ -89,17 +107,29 @@ impl LighthouseValidatorContainer {
         testnet_dir: impl AsRef<Path>,
         validator_keystores: impl AsRef<Path>,
         beacon_endpoint: impl AsRef<str>,
+        config: Option<L1ContainerConfig>,
     ) -> Result<Self> {
-        ensure_network_exists()?;
+        let config = config.unwrap_or_default();
+
+        if let Some(ref net) = config.network_name {
+            ensure_network_exists_with_name(net)?;
+        } else {
+            ensure_network_exists()?;
+        }
 
         let command = validator_command(beacon_endpoint.as_ref());
         let image = lighthouse_image();
 
-        let name = unique_name(L1_VALIDATOR_NAME);
+        let name = if config.use_stable_names {
+            L1_VALIDATOR_NAME.to_string()
+        } else {
+            unique_name(L1_VALIDATOR_NAME)
+        };
+        let network = config.network_name.unwrap_or_else(|| network_name().to_string());
 
         let container = image
             .with_container_name(&name)
-            .with_network(network_name())
+            .with_network(&network)
             .with_mount(Mount::bind_mount(
                 path_for_mount(testnet_dir.as_ref()),
                 LIGHTHOUSE_TESTNET_DIR,

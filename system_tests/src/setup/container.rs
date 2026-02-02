@@ -114,6 +114,7 @@ pub struct SetupContainer {
     chain_id: u64,
     l2_chain_id: u64,
     slot_duration: u64,
+    network_name: Option<String>,
 }
 
 impl SetupContainer {
@@ -124,6 +125,7 @@ impl SetupContainer {
             chain_id: 1337,
             l2_chain_id: 84538453,
             slot_duration: 2,
+            network_name: None,
         }
     }
 
@@ -145,16 +147,27 @@ impl SetupContainer {
         self
     }
 
+    /// Sets the Docker network name.
+    pub fn with_network_name(mut self, network_name: impl Into<String>) -> Self {
+        self.network_name = Some(network_name.into());
+        self
+    }
+
     /// Generates the L1 genesis files.
     pub fn generate_l1_genesis(&self) -> Result<L1GenesisOutput> {
         std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output dir")?;
-        std::fs::create_dir_all(self.output_dir.join("shared"))
-            .wrap_err("Failed to create shared dir")?;
+        let shared_dir = self.output_dir.join("shared");
+        std::fs::create_dir_all(&shared_dir).wrap_err("Failed to create shared dir")?;
 
         self.ensure_setup_image_built()?;
 
-        let output_mount = self.output_dir.to_string_lossy().to_string();
-        let shared_mount = self.output_dir.join("shared").to_string_lossy().to_string();
+        let output_dir =
+            self.output_dir.canonicalize().wrap_err("Failed to canonicalize output dir path")?;
+        let shared_dir =
+            shared_dir.canonicalize().wrap_err("Failed to canonicalize shared dir path")?;
+
+        let output_mount = output_dir.to_string_lossy().to_string();
+        let shared_mount = shared_dir.to_string_lossy().to_string();
 
         let _container = GenericImage::new("devnet-setup", "local")
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
@@ -177,7 +190,13 @@ impl SetupContainer {
     /// Deploys L2 contracts.
     pub fn deploy_l2_contracts(&self, l1_internal_rpc_url: &str) -> Result<L2DeploymentOutput> {
         self.ensure_setup_image_built()?;
-        ensure_network_exists()?;
+
+        let net = self.network_name.as_deref().unwrap_or_else(|| network_name());
+        if self.network_name.is_some() {
+            crate::network::ensure_network_exists_with_name(net)?;
+        } else {
+            ensure_network_exists()?;
+        }
 
         std::fs::create_dir_all(self.output_dir.join("l2"))
             .wrap_err("Failed to create l2 output dir")?;
@@ -191,7 +210,7 @@ impl SetupContainer {
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
 
         let _container = image
-            .with_network(network_name())
+            .with_network(net)
             .with_startup_timeout(Duration::from_secs(DEPLOY_TIMEOUT_SECS))
             .with_env_var("OUTPUT_DIR", "/output/l2")
             .with_env_var("SHARED_DIR", "/shared")

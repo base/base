@@ -5,10 +5,12 @@ use std::path::PathBuf;
 use eyre::{Result, WrapErr};
 use url::Url;
 
-use super::{LighthouseBeaconContainer, LighthouseValidatorContainer, RethContainer};
+use super::{
+    L1ContainerConfig, LighthouseBeaconContainer, LighthouseValidatorContainer, RethContainer,
+};
 
-#[derive(Debug)]
 /// Configuration for the L1 stack.
+#[derive(Debug, Default)]
 pub struct L1StackConfig {
     /// JSON content for the EL genesis.
     pub el_genesis_json: String,
@@ -16,6 +18,8 @@ pub struct L1StackConfig {
     pub jwt_secret_hex: String,
     /// Path to the testnet directory.
     pub testnet_dir: PathBuf,
+    /// Optional stable container configuration.
+    pub container_config: Option<L1ContainerConfig>,
 }
 
 #[derive(Debug)]
@@ -39,23 +43,29 @@ impl L1Stack {
                 .wrap_err("Failed to write JWT secret")?;
         }
 
-        let reth = RethContainer::start(&config.el_genesis_json, &config.jwt_secret_hex)
-            .await
-            .wrap_err("Failed to start Reth container")?;
+        let reth_config = config.container_config.clone();
+        let reth =
+            RethContainer::start(&config.el_genesis_json, &config.jwt_secret_hex, reth_config)
+                .await
+                .wrap_err("Failed to start Reth container")?;
 
+        let beacon_config = config.container_config.clone();
         let beacon = LighthouseBeaconContainer::start(
             &config.testnet_dir,
             &jwt_path,
             reth.internal_engine_url(),
+            beacon_config,
         )
         .await
         .wrap_err("Failed to start Lighthouse beacon container")?;
 
         let validator_data_dir = config.testnet_dir.join("validator_data");
+        let validator_config = config.container_config.clone();
         let validator = LighthouseValidatorContainer::start(
             &config.testnet_dir,
             &validator_data_dir,
             beacon.internal_beacon_url(),
+            validator_config,
         )
         .await
         .wrap_err("Failed to start Lighthouse validator container")?;

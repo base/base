@@ -3,11 +3,17 @@
 //! The batcher submits L2 transaction batches to L1 for data availability.
 
 use eyre::{Result, WrapErr, eyre};
-use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::WaitFor, runners::AsyncRunner};
+use testcontainers::{
+    ContainerAsync, GenericImage, ImageExt,
+    core::{IntoContainerPort, WaitFor},
+    runners::AsyncRunner,
+};
 
 use crate::{
     containers::L2_BATCHER_NAME,
+    host::with_host_port_if_needed,
     images::OP_BATCHER_IMAGE,
+    l2::L2ContainerConfig,
     network::{ensure_network_exists, network_name},
     unique_name,
 };
@@ -35,9 +41,14 @@ pub struct BatcherContainer {
     name: String,
 }
 
+const METRICS_PORT: u16 = 7300;
+
 impl BatcherContainer {
     /// Starts a batcher container with the provided configuration.
-    pub async fn start(config: BatcherConfig) -> Result<Self> {
+    pub async fn start(
+        config: BatcherConfig,
+        container_config: Option<&L2ContainerConfig>,
+    ) -> Result<Self> {
         ensure_network_exists()?;
 
         let (image_name, image_tag) = OP_BATCHER_IMAGE
@@ -48,16 +59,28 @@ impl BatcherContainer {
             .with_entrypoint("op-batcher")
             .with_wait_for(WaitFor::message_on_stdout("Batch Submitter started"));
 
-        let name = unique_name(L2_BATCHER_NAME);
+        let name = if container_config.is_some_and(|c| c.use_stable_names) {
+            L2_BATCHER_NAME.to_string()
+        } else {
+            unique_name(L2_BATCHER_NAME)
+        };
 
-        let container = image
-            .with_container_name(&name)
-            .with_network(network_name())
-            .with_exposed_host_port(config.l2_rpc_port)
-            .with_cmd(batcher_args(&config))
-            .start()
-            .await
-            .wrap_err("Failed to start batcher container")?;
+        let network = container_config
+            .and_then(|c| c.network_name.clone())
+            .unwrap_or_else(|| network_name().to_string());
+
+        let base_container =
+            image.with_container_name(&name).with_network(&network).with_cmd(batcher_args(&config));
+
+        let mut container_builder = with_host_port_if_needed(base_container, config.l2_rpc_port);
+
+        if let Some(metrics_port) = container_config.and_then(|c| c.batcher_metrics_port) {
+            container_builder =
+                container_builder.with_mapped_port(metrics_port, METRICS_PORT.tcp());
+        }
+
+        let container =
+            container_builder.start().await.wrap_err("Failed to start batcher container")?;
 
         Ok(Self { container, name })
     }

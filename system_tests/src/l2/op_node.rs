@@ -12,7 +12,9 @@ use crate::{
     containers::{
         L2_CLIENT_OP_NODE_NAME, L2_OP_NODE_NAME, L2_OP_NODE_P2P_PORT, L2_OP_NODE_RPC_PORT,
     },
+    host::with_host_port_if_needed,
     images::OP_NODE_IMAGE,
+    l2::L2ContainerConfig,
     network::{ensure_network_exists, network_name},
     unique_name,
 };
@@ -80,7 +82,10 @@ pub struct OpNodeContainer {
 
 impl OpNodeContainer {
     /// Starts a sequencer op-node container with the provided configuration.
-    pub async fn start(config: OpNodeConfig) -> Result<Self> {
+    pub async fn start(
+        config: OpNodeConfig,
+        container_config: Option<&L2ContainerConfig>,
+    ) -> Result<Self> {
         ensure_network_exists()?;
 
         let (image_name, image_tag) =
@@ -92,20 +97,36 @@ impl OpNodeContainer {
             .with_exposed_port(P2P_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("Starting JSON-RPC server"));
 
-        let name = unique_name(L2_OP_NODE_NAME);
+        let name = if container_config.is_some_and(|c| c.use_stable_names) {
+            L2_OP_NODE_NAME.to_string()
+        } else {
+            unique_name(L2_OP_NODE_NAME)
+        };
 
-        let container = image
+        let network = container_config
+            .and_then(|c| c.network_name.clone())
+            .unwrap_or_else(|| network_name().to_string());
+
+        let base_container = image
             .with_container_name(&name)
-            .with_network(network_name())
-            .with_exposed_host_port(config.l2_engine_port)
+            .with_network(&network)
             .with_cmd(sequencer_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
             .with_copy_to(JWT_PATH, config.jwt_secret_hex)
-            .with_copy_to(P2P_KEY_PATH, config.p2p_key)
-            .start()
-            .await
-            .wrap_err("Failed to start op-node container")?;
+            .with_copy_to(P2P_KEY_PATH, config.p2p_key);
+
+        let mut container_builder = with_host_port_if_needed(base_container, config.l2_engine_port);
+
+        if let Some(rpc_port) = container_config.and_then(|c| c.op_node_rpc_port) {
+            container_builder = container_builder.with_mapped_port(rpc_port, RPC_PORT.tcp());
+        }
+        if let Some(p2p_port) = container_config.and_then(|c| c.op_node_p2p_port) {
+            container_builder = container_builder.with_mapped_port(p2p_port, P2P_PORT.tcp());
+        }
+
+        let container =
+            container_builder.start().await.wrap_err("Failed to start op-node container")?;
 
         let libp2p_peer_id = derive_libp2p_peer_id()?;
 
@@ -156,7 +177,10 @@ pub struct OpNodeFollowerContainer {
 
 impl OpNodeFollowerContainer {
     /// Starts a follower op-node container with the provided configuration.
-    pub async fn start(config: OpNodeFollowerConfig) -> Result<Self> {
+    pub async fn start(
+        config: OpNodeFollowerConfig,
+        container_config: Option<&L2ContainerConfig>,
+    ) -> Result<Self> {
         ensure_network_exists()?;
 
         let (image_name, image_tag) =
@@ -167,16 +191,31 @@ impl OpNodeFollowerContainer {
             .with_exposed_port(RPC_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("Starting JSON-RPC server"));
 
-        let name = unique_name(L2_CLIENT_OP_NODE_NAME);
+        let name = if container_config.is_some_and(|c| c.use_stable_names) {
+            L2_CLIENT_OP_NODE_NAME.to_string()
+        } else {
+            unique_name(L2_CLIENT_OP_NODE_NAME)
+        };
 
-        let container = image
+        let network = container_config
+            .and_then(|c| c.network_name.clone())
+            .unwrap_or_else(|| network_name().to_string());
+
+        let base_container = image
             .with_container_name(&name)
-            .with_network(network_name())
-            .with_exposed_host_port(config.l2_engine_port)
+            .with_network(&network)
             .with_cmd(follower_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
-            .with_copy_to(JWT_PATH, config.jwt_secret_hex)
+            .with_copy_to(JWT_PATH, config.jwt_secret_hex);
+
+        let mut container_builder = with_host_port_if_needed(base_container, config.l2_engine_port);
+
+        if let Some(rpc_port) = container_config.and_then(|c| c.op_node_follower_rpc_port) {
+            container_builder = container_builder.with_mapped_port(rpc_port, RPC_PORT.tcp());
+        }
+
+        let container = container_builder
             .start()
             .await
             .wrap_err("Failed to start follower op-node container")?;

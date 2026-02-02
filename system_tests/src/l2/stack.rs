@@ -12,7 +12,7 @@ use url::Url;
 
 use super::{
     BatcherConfig, BatcherContainer, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
-    InProcessClientConfig, OpNodeConfig, OpNodeContainer, OpNodeFollowerConfig,
+    InProcessClientConfig, L2ContainerConfig, OpNodeConfig, OpNodeContainer, OpNodeFollowerConfig,
     OpNodeFollowerContainer,
 };
 use crate::setup::BUILDER_LIBP2P_PEER_ID;
@@ -38,6 +38,8 @@ pub struct L2StackConfig {
     pub l1_rpc_url: String,
     /// L1 beacon API endpoint URL.
     pub l1_beacon_url: String,
+    /// Optional container configuration for stable naming and port binding.
+    pub container_config: Option<L2ContainerConfig>,
 }
 
 /// A complete L2 network stack composed of Builder + op-node + Batcher.
@@ -99,9 +101,15 @@ impl L2Stack {
     ///
     /// Returns an error if any component fails to start.
     pub async fn start(config: L2StackConfig) -> Result<Self> {
+        let container_config = config.container_config.as_ref();
         let builder_config = InProcessBuilderConfig {
             genesis_json: config.l2_genesis.clone(),
             jwt_secret_hex: config.jwt_secret_hex.clone(),
+            http_port: container_config.and_then(|c| c.builder_http_port),
+            ws_port: container_config.and_then(|c| c.builder_ws_port),
+            auth_port: container_config.and_then(|c| c.builder_auth_port),
+            p2p_port: container_config.and_then(|c| c.builder_p2p_port),
+            flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -118,8 +126,9 @@ impl L2Stack {
             l2_engine_url: builder.host_engine_url(),
             l2_engine_port: builder.engine_port(),
         };
-        let op_node =
-            OpNodeContainer::start(op_node_config).await.wrap_err("Failed to start op-node")?;
+        let op_node = OpNodeContainer::start(op_node_config, config.container_config.as_ref())
+            .await
+            .wrap_err("Failed to start op-node")?;
 
         let batcher_config = BatcherConfig {
             l1_rpc_url: config.l1_rpc_url.clone(),
@@ -128,8 +137,9 @@ impl L2Stack {
             rollup_rpc_url: op_node.internal_rpc_url(),
             batcher_key: config.batcher_key,
         };
-        let batcher =
-            BatcherContainer::start(batcher_config).await.wrap_err("Failed to start batcher")?;
+        let batcher = BatcherContainer::start(batcher_config, config.container_config.as_ref())
+            .await
+            .wrap_err("Failed to start batcher")?;
 
         let client_config = InProcessClientConfig {
             genesis_json: config.l2_genesis.clone(),
@@ -137,6 +147,10 @@ impl L2Stack {
             builder_rpc_url: builder.rpc_url()?.to_string(),
             builder_flashblocks_url: builder.flashblocks_url(),
             builder_p2p_enode: builder.p2p_enode(),
+            http_port: container_config.and_then(|c| c.client_http_port),
+            ws_port: container_config.and_then(|c| c.client_ws_port),
+            auth_port: container_config.and_then(|c| c.client_auth_port),
+            p2p_port: container_config.and_then(|c| c.client_p2p_port),
         };
         let client = InProcessClient::start(client_config)
             .await
@@ -153,9 +167,10 @@ impl L2Stack {
             builder_op_node_name: op_node.name().to_string(),
             builder_op_node_peer_id: BUILDER_LIBP2P_PEER_ID.to_string(),
         };
-        let client_op_node = OpNodeFollowerContainer::start(client_op_node_config)
-            .await
-            .wrap_err("Failed to start client op-node follower")?;
+        let client_op_node =
+            OpNodeFollowerContainer::start(client_op_node_config, config.container_config.as_ref())
+                .await
+                .wrap_err("Failed to start client op-node follower")?;
 
         Ok(Self { builder, op_node, batcher, client, client_op_node })
     }

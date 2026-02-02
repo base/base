@@ -39,12 +39,22 @@ use url::Url;
 use crate::setup::{BUILDER_ENODE_ID, BUILDER_P2P_KEY};
 
 /// Configuration for starting an in-process builder.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InProcessBuilderConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
     /// JWT secret hex for Engine API authentication.
     pub jwt_secret_hex: Vec<u8>,
+    /// Optional fixed HTTP RPC port (uses random if None).
+    pub http_port: Option<u16>,
+    /// Optional fixed WebSocket port (uses random if None).
+    pub ws_port: Option<u16>,
+    /// Optional fixed Auth RPC port (uses random if None).
+    pub auth_port: Option<u16>,
+    /// Optional fixed P2P port (uses random if None).
+    pub p2p_port: Option<u16>,
+    /// Optional fixed Flashblocks port (uses random if None).
+    pub flashblocks_port: Option<u16>,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -101,7 +111,7 @@ impl InProcessBuilder {
 
         let chain_spec = parse_genesis(&config.genesis_json)?;
 
-        let args = default_args();
+        let args = default_args(&config);
 
         let builder_config = BuilderConfig::try_from(args.clone())
             .wrap_err("Failed to convert args to builder config")?;
@@ -126,7 +136,7 @@ impl InProcessBuilder {
 
         let (db, db_path) = create_test_db(&data_path)?;
 
-        let node_config = create_node_config(chain_spec, &data_path, &jwt_path)?;
+        let node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         let p2p_port = node_config.network.port;
 
         let node_builder = NodeBuilder::new(node_config.clone())
@@ -216,7 +226,7 @@ impl InProcessBuilder {
 
     /// Returns the Engine URL for Docker containers using testcontainers host port exposure.
     pub fn host_engine_url(&self) -> String {
-        format!("http://host.testcontainers.internal:{}", self.engine_addr.port())
+        format!("http://{}:{}", crate::host::host_address(), self.engine_addr.port())
     }
 
     /// Returns the engine port for host port exposure.
@@ -226,7 +236,7 @@ impl InProcessBuilder {
 
     /// Returns the HTTP RPC URL for Docker containers using testcontainers host port exposure.
     pub fn host_rpc_url(&self) -> String {
-        format!("http://host.testcontainers.internal:{}", self.http_api_addr.port())
+        format!("http://{}:{}", crate::host::host_address(), self.http_api_addr.port())
     }
 
     /// Returns the HTTP RPC port for host port exposure.
@@ -236,12 +246,12 @@ impl InProcessBuilder {
 
     /// Returns the P2P enode URL for Docker containers using testcontainers host port exposure.
     pub fn host_p2p_enode(&self) -> String {
-        format!("enode://{BUILDER_ENODE_ID}@host.testcontainers.internal:{}", self.p2p_port)
+        format!("enode://{BUILDER_ENODE_ID}@{}:{}", crate::host::host_address(), self.p2p_port)
     }
 
     /// Returns the Flashblocks URL for Docker containers using testcontainers host port exposure.
     pub fn host_flashblocks_url(&self) -> String {
-        format!("ws://host.testcontainers.internal:{}/", self.flashblocks_port)
+        format!("ws://{}:{}/", crate::host::host_address(), self.flashblocks_port)
     }
 }
 
@@ -266,13 +276,10 @@ fn parse_genesis(genesis_json: &[u8]) -> Result<Arc<OpChainSpec>> {
     Ok(Arc::new(OpChainSpec::from_genesis(genesis)))
 }
 
-fn default_args() -> OpRbuilderArgs {
+fn default_args(config: &InProcessBuilderConfig) -> OpRbuilderArgs {
     let mut args = OpRbuilderArgs::default();
 
-    // Use a real available port instead of 0 so we can pass it to the client.
-    // Port 0 causes the OS to assign a dynamic port, but we read the configured
-    // port (0) instead of the actual bound port, breaking client connections.
-    args.flashblocks.flashblocks_port = get_available_port();
+    args.flashblocks.flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
     args.flashblocks.flashblocks_block_time = 200;
     args.flashblocks.flashblocks_disable_state_root = true;
     args.flashblocks.flashblocks_compute_state_root_on_finalize = true;
@@ -285,12 +292,28 @@ fn create_node_config(
     chain_spec: Arc<OpChainSpec>,
     data_path: &std::path::Path,
     jwt_path: &std::path::Path,
+    config: &InProcessBuilderConfig,
 ) -> Result<NodeConfig<OpChainSpec>> {
-    let mut rpc = RpcServerArgs::default().with_unused_ports().with_http().with_ws();
+    let mut rpc =
+        if config.http_port.is_some() || config.ws_port.is_some() || config.auth_port.is_some() {
+            RpcServerArgs::default().with_http().with_ws()
+        } else {
+            RpcServerArgs::default().with_unused_ports().with_http().with_ws()
+        };
 
     rpc.http_addr = Ipv4Addr::LOCALHOST.into();
     rpc.ws_addr = Ipv4Addr::LOCALHOST.into();
     rpc.auth_jwtsecret = Some(jwt_path.to_path_buf());
+
+    if let Some(port) = config.http_port {
+        rpc.http_port = port;
+    }
+    if let Some(port) = config.ws_port {
+        rpc.ws_port = port;
+    }
+    if let Some(port) = config.auth_port {
+        rpc.auth_port = port;
+    }
 
     rpc.http_api = Some(
         "admin,eth,web3,net,rpc,debug,txpool,miner"
@@ -303,9 +326,16 @@ fn create_node_config(
             .wrap_err("Failed to parse WS API modules")?,
     );
 
-    let mut network = NetworkArgs::default().with_unused_ports();
+    let mut network = if config.p2p_port.is_some() {
+        NetworkArgs::default()
+    } else {
+        NetworkArgs::default().with_unused_ports()
+    };
     network.p2p_secret_key_hex = Some(BUILDER_P2P_KEY.parse().expect("valid P2P key"));
     network.discovery.disable_discovery = true;
+    if let Some(port) = config.p2p_port {
+        network.port = port;
+    }
 
     let datadir = DatadirArgs {
         datadir: MaybePlatformPath::<DataDirPath>::from(data_path.to_path_buf()),
@@ -314,11 +344,20 @@ fn create_node_config(
         pprof_dumps_path: None,
     };
 
-    Ok(NodeConfig::<OpChainSpec>::new(chain_spec)
+    let mut node_config = NodeConfig::<OpChainSpec>::new(chain_spec)
         .with_datadir_args(datadir)
         .with_rpc(rpc)
-        .with_network(network)
-        .with_unused_ports())
+        .with_network(network);
+
+    if config.http_port.is_none()
+        && config.ws_port.is_none()
+        && config.auth_port.is_none()
+        && config.p2p_port.is_none()
+    {
+        node_config = node_config.with_unused_ports();
+    }
+
+    Ok(node_config)
 }
 
 fn create_test_db(
