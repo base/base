@@ -202,7 +202,7 @@ impl InProcessClient {
     }
 
     /// Returns the engine port for host port exposure.
-    pub fn engine_port(&self) -> u16 {
+    pub const fn engine_port(&self) -> u16 {
         self.engine_addr.port()
     }
 
