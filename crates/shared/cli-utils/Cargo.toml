@@ -17,6 +17,7 @@ eyre.workspace = true
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
+dirs-next.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
