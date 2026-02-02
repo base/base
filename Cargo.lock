@@ -2211,6 +2211,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-rpc"
+version = "0.0.0"
+dependencies = [
+ "base-protocol",
+ "jsonrpsee",
+]
+
+[[package]]
 name = "base-txpool"
 version = "0.0.0"
 dependencies = [

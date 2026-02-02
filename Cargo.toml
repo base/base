@@ -90,6 +90,10 @@ lto = "fat"
 codegen-units = 1
 
 [workspace.dependencies]
+# Consensus
+base-protocol = { path = "crates/consensus/protocol" }
+base-rpc = { path = "crates/consensus/rpc" }
+
 # Shared
 base-jwt = { path = "crates/shared/jwt" }
 base-bundles = { path = "crates/shared/bundles" }
