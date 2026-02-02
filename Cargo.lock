@@ -1724,7 +1724,6 @@ dependencies = [
  "base-builder-cli",
  "base-cli-utils",
  "clap",
- "dirs-next",
  "op-rbuilder",
  "reth-cli-util",
 ]
@@ -1762,6 +1761,7 @@ dependencies = [
  "alloy-chains",
  "alloy-primitives",
  "clap",
+ "dirs-next",
  "eyre",
  "kona-registry",
  "libc",

@@ -32,6 +32,9 @@ pub use tracing::{LogfmtFormatter, init_test_tracing};
 mod version;
 pub use version::Version;
 
+mod logs_dir;
+pub use logs_dir::LogsDir;
+
 mod cli;
 
 mod runtime;
