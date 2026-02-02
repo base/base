@@ -16,7 +16,7 @@ use reth_optimism_txpool::OpPooledTransaction;
 
 use crate::{
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    primitives::{reth::engine_api_builder::OpEngineApiBuilder, telemetry::setup_telemetry_layer},
+    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
