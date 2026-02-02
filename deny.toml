@@ -106,7 +106,6 @@ skip = [
     "linux-raw-sys",
     "socket2",
     "bitflags",
-    "redox_syscall",
     "redox_users",
 
     # Network crates
@@ -122,12 +121,17 @@ skip = [
     "toml",
 
     # Other common duplicates from upstream
+    "axum",
+    "axum-core",
     "base64",
     "bindgen",
     "cargo_metadata",
     "cargo-platform",
     "core-foundation",
     "crossterm",
+    "generic-array",
+    "matchit",
+    "nix",
     "gloo-timers",
     "indexmap",
     "miniz_oxide",

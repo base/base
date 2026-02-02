@@ -1,6 +1,6 @@
 //! Lighthouse beacon and validator containers.
 
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use eyre::Result;
 use testcontainers::{
@@ -8,8 +8,6 @@ use testcontainers::{
     core::{IntoContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
 };
-
-const CONTAINER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     containers::{L1_BEACON_HTTP_PORT, L1_BEACON_NAME, L1_VALIDATOR_NAME},
@@ -57,7 +55,6 @@ impl LighthouseBeaconContainer {
             ))
             .with_mount(Mount::bind_mount(path_for_mount(jwt_path.as_ref()), LIGHTHOUSE_JWT_PATH))
             .with_cmd(command)
-            .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()
             .await?;
 
@@ -112,7 +109,6 @@ impl LighthouseValidatorContainer {
                 LIGHTHOUSE_VALIDATOR_DATA_DIR,
             ))
             .with_cmd(command)
-            .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()
             .await?;
 
