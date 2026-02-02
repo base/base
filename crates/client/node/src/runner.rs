@@ -1,7 +1,7 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
 use eyre::Result;
-use reth_node_builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig};
+use reth_node_builder::{Node, NodeHandleFor};
 use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
@@ -61,22 +61,6 @@ impl BaseNodeRunner {
                 Ok(())
             });
 
-        builder
-            .launch_with_fn(|builder| {
-                let engine_tree_config = TreeConfig::default()
-                    .with_persistence_threshold(builder.config().engine.persistence_threshold)
-                    .with_memory_block_buffer_target(
-                        builder.config().engine.memory_block_buffer_target,
-                    );
-
-                let launcher = EngineNodeLauncher::new(
-                    builder.task_executor().clone(),
-                    builder.config().datadir(),
-                    engine_tree_config,
-                );
-
-                builder.launch_with(launcher)
-            })
-            .await
+        builder.launch_with_fn(|builder| builder.launch()).await
     }
 }
