@@ -3,7 +3,7 @@ description = "Sequential load generation based on different workloads"
 
 [spam]
 mode = "tps"
-rate = 200        # default rate if a stage omits one
+rate = 100        # default rate if a stage omits one
 duration = 60     # default duration per stage (seconds)
 seed = 1
 
@@ -15,8 +15,8 @@ seed = 1
 name = "simulator-load"
 
 # 100 * 0.25 = 25 TPS per scenario over 10s
-rate = 100
-duration = 20
+rate = 60
+duration = 10
   [[spam.stage.mix]]
   scenario  = "erc20"
   share_pct = 25.0
@@ -35,31 +35,24 @@ duration = 20
 # with Uniswap pools, transferring tokens, and interacting with the mempool
 [[spam.stage]]
 name = "trading-load"
-rate = 100
-duration = 20
+rate = 60
+duration = 10
   [[spam.stage.mix]]
   scenario  = "erc20"
-  share_pct = 25.0
-  [[spam.stage.mix]]
-  scenario  = "scenario:uniV2.toml"
-  share_pct = 25.0
+  share_pct = 30.0
   [[spam.stage.mix]]
   scenario  = "scenario:uniV3.toml"
-  share_pct = 25.0 
+  share_pct = 40.0
   [[spam.stage.mix]]
   scenario  = "scenario:mempool.toml"
-  share_pct = 25.0 
+  share_pct = 30.0  
   
 
-# This load is just a pure spam (i.e., XEN). It also uses the provided "stress" scenario 
-# to add regular, but heavy load on top of this spam.
+# This load is just a pure spam (i.e., XEN).
 [[spam.stage]]
 name = "spam-load"
-rate = 100
-duration = 20
-  [[spam.stage.mix]]
-  scenario  = "scenario:stress.toml"
-  share_pct = 50.0
+rate = 20
+duration = 10
   [[spam.stage.mix]]
   scenario  = "scenario:xen.toml"
-  share_pct = 50.0
+  share_pct = 100.0

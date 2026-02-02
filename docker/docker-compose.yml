@@ -438,7 +438,5 @@ services:
       - --min-balance
       - ${CONTENDER_MIN_BALANCE}
       - --optimistic-nonces
-      - --accounts-per-agent
-      - ${CONTENDER_ACCOUNTS_PER_AGENT}
       - ${CONTENDER_GEN_REPORT:+--gen-report} 
     restart: no
