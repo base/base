@@ -142,7 +142,9 @@ mod tests {
     /// Scenario (based on real Base Mainnet block 41628995):
     /// - Sender A has TX_A (nonce 0, LOW tip) and TX_B (nonce 1, HIGH tip) in the pool
     /// - Sender B has TX_C (MEDIUM tip)
-    /// - In flashblock 1, TX_C and TX_A are consumed (TX_B unlocks after TX_A)
+    /// TX_A is in the mempool, TX_B and TX_C arrive later after the first flashblock has
+    /// started building already
+    /// - In flashblock 1, TX_A gets consumed (TX_B unlocks after TX_A)
     /// - Only TX_A is marked as committed (simulating flashblock timer expiring)
     /// - In flashblock 2, TX_B (HIGH tip) should come before TX_C (MEDIUM tip)
     ///
