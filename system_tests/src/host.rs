@@ -32,7 +32,7 @@
 //! let container_builder = with_host_port_if_needed(container_builder, port);
 //! ```
 
-use testcontainers::{ContainerRequest, Image, ImageExt, core::Host};
+use testcontainers::{ContainerRequest, Image, ImageExt};
 
 /// Returns the address containers should use to reach the host machine.
 ///
