@@ -7,7 +7,7 @@ use std::time::Duration;
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{Host, WaitFor},
+    core::WaitFor,
     runners::AsyncRunner,
 };
 
@@ -27,6 +27,8 @@ pub struct BatcherConfig {
     pub l1_rpc_url: String,
     /// L2 RPC URL for reading transactions.
     pub l2_rpc_url: String,
+    /// L2 RPC port on host (for testcontainers host port exposure).
+    pub l2_rpc_port: u16,
     /// Rollup RPC URL (op-node).
     pub rollup_rpc_url: String,
     /// Batcher private key (hex-encoded string, e.g., "0x...").
@@ -59,7 +61,7 @@ impl BatcherContainer {
         let container = image
             .with_container_name(&name)
             .with_network(network_name())
-            .with_host("host.docker.internal", Host::HostGateway)
+            .with_exposed_host_port(config.l2_rpc_port)
             .with_cmd(batcher_args(&config))
             .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()

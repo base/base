@@ -17,7 +17,7 @@ workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
 # Container orchestration
-testcontainers = { workspace = true, features = ["blocking"] }
+testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
 # Ethereum/Alloy
 alloy-primitives.workspace = true

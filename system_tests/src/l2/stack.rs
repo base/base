@@ -116,6 +116,7 @@ impl L2Stack {
             l1_rpc_url: config.l1_rpc_url.clone(),
             l1_beacon_url: config.l1_beacon_url.clone(),
             l2_engine_url: builder.host_engine_url(),
+            l2_engine_port: builder.engine_port(),
         };
         let op_node =
             OpNodeContainer::start(op_node_config).await.wrap_err("Failed to start op-node")?;
@@ -123,6 +124,7 @@ impl L2Stack {
         let batcher_config = BatcherConfig {
             l1_rpc_url: config.l1_rpc_url.clone(),
             l2_rpc_url: builder.host_rpc_url(),
+            l2_rpc_port: builder.rpc_port(),
             rollup_rpc_url: op_node.internal_rpc_url(),
             batcher_key: config.batcher_key,
         };
@@ -147,6 +149,7 @@ impl L2Stack {
             l1_rpc_url: config.l1_rpc_url,
             l1_beacon_url: config.l1_beacon_url,
             l2_engine_url: client.host_engine_url(),
+            l2_engine_port: client.engine_port(),
             builder_op_node_name: op_node.name().to_string(),
             builder_op_node_peer_id: BUILDER_LIBP2P_PEER_ID.to_string(),
         };

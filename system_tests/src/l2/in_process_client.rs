@@ -196,9 +196,14 @@ impl InProcessClient {
         Ok(url)
     }
 
-    /// Returns the Engine API URL using `host.docker.internal` for Docker containers.
+    /// Returns the Engine API URL for Docker containers using testcontainers host port exposure.
     pub fn host_engine_url(&self) -> String {
-        format!("http://host.docker.internal:{}", self.engine_addr.port())
+        format!("http://host.testcontainers.internal:{}", self.engine_addr.port())
+    }
+
+    /// Returns the engine port for host port exposure.
+    pub fn engine_port(&self) -> u16 {
+        self.engine_addr.port()
     }
 
     /// Creates a test database with a 100 MB map size.
