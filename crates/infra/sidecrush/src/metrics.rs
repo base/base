@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use cadence::{Counted, StatsdClient};
+use cadence::{CountedExt, StatsdClient};
 
-/// Metrics client wrapper for block building health checks
-/// Emits metrics every 2 seconds via status heartbeat (independent of poll frequency)
+/// Metrics client wrapper for block building health checks.
+/// Emits metrics every 2 seconds via status heartbeat (independent of poll frequency).
 #[derive(Clone, Debug)]
 pub struct HealthcheckMetrics {
     client: Arc<StatsdClient>,
@@ -14,23 +14,23 @@ impl HealthcheckMetrics {
         Self { client: Arc::new(client) }
     }
 
-    /// Increment status_healthy counter (2s heartbeat)
+    /// Increment status_healthy counter (2s heartbeat).
     pub fn increment_status_healthy(&self) {
-        let _ = self.client.count("healthy", 1);
+        let _ = self.client.incr("healthy");
     }
 
-    /// Increment status_delayed counter (2s heartbeat)
+    /// Increment status_delayed counter (2s heartbeat).
     pub fn increment_status_delayed(&self) {
-        let _ = self.client.count("delayed", 1);
+        let _ = self.client.incr("delayed");
     }
 
-    /// Increment status_unhealthy counter (2s heartbeat)
+    /// Increment status_unhealthy counter (2s heartbeat).
     pub fn increment_status_unhealthy(&self) {
-        let _ = self.client.count("unhealthy", 1);
+        let _ = self.client.incr("unhealthy");
     }
 
-    /// Increment status_error counter (2s heartbeat)
+    /// Increment status_error counter (2s heartbeat).
     pub fn increment_status_error(&self) {
-        let _ = self.client.count("error", 1);
+        let _ = self.client.incr("error");
     }
 }

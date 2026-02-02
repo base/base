@@ -12,7 +12,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 cadence = { workspace = true }
-cadence-macros = { workspace = true }
 async-trait = "0.1"
 anyhow = "1.0"
 clap = { workspace = true }

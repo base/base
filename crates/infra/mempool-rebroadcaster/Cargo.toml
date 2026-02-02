@@ -16,24 +16,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 dotenvy = "0.15.7"
 
-
 # alloy
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types = { workspace = true, features = ["txpool"] }
-alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-trie.workspace = true
 alloy-provider = { workspace = true, features = ["txpool-api"] }
-alloy-hardforks.workspace = true
 
-# op-alloy
-op-alloy-rpc-types.workspace = true
-op-alloy-rpc-types-engine.workspace = true
-op-alloy-rpc-jsonrpsee.workspace = true
-op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
-
-[dev-dependencies]
-tempfile = "3.8"
