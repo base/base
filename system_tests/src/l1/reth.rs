@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
@@ -7,8 +5,6 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use url::Url;
-
-const CONTAINER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     containers::L1_RETH_NAME,
@@ -54,7 +50,6 @@ impl RethContainer {
             .with_cmd(reth_args())
             .with_copy_to(GENESIS_PATH, genesis_json.as_ref().to_vec())
             .with_copy_to(JWT_PATH, jwt_secret_hex.as_ref().to_vec())
-            .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()
             .await
             .wrap_err("Failed to start Reth container")?;
