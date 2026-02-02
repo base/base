@@ -5,7 +5,7 @@ use std::time::Duration;
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{Host, IntoContainerPort, WaitFor},
+    core::{IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
 use url::Url;
@@ -47,6 +47,8 @@ pub struct OpNodeConfig {
     pub l1_beacon_url: String,
     /// L2 engine API URL.
     pub l2_engine_url: String,
+    /// L2 engine port on host (for testcontainers host port exposure).
+    pub l2_engine_port: u16,
 }
 
 /// Configuration for starting a follower op-node container.
@@ -64,6 +66,8 @@ pub struct OpNodeFollowerConfig {
     pub l1_beacon_url: String,
     /// L2 engine API URL.
     pub l2_engine_url: String,
+    /// L2 engine port on host (for testcontainers host port exposure).
+    pub l2_engine_port: u16,
     /// Builder op-node container name for P2P static peer.
     pub builder_op_node_name: String,
     /// Builder op-node libp2p peer ID for P2P sync.
@@ -97,7 +101,7 @@ impl OpNodeContainer {
         let container = image
             .with_container_name(&name)
             .with_network(network_name())
-            .with_host("host.docker.internal", Host::HostGateway)
+            .with_exposed_host_port(config.l2_engine_port)
             .with_cmd(sequencer_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
@@ -173,7 +177,7 @@ impl OpNodeFollowerContainer {
         let container = image
             .with_container_name(&name)
             .with_network(network_name())
-            .with_host("host.docker.internal", Host::HostGateway)
+            .with_exposed_host_port(config.l2_engine_port)
             .with_cmd(follower_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)

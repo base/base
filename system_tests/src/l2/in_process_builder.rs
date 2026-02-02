@@ -214,24 +214,34 @@ impl InProcessBuilder {
         format!("enode://{BUILDER_ENODE_ID}@127.0.0.1:{}", self.p2p_port)
     }
 
-    /// Returns the Engine URL using `host.docker.internal:port` for Docker containers to reach.
+    /// Returns the Engine URL for Docker containers using testcontainers host port exposure.
     pub fn host_engine_url(&self) -> String {
-        format!("http://host.docker.internal:{}", self.engine_addr.port())
+        format!("http://host.testcontainers.internal:{}", self.engine_addr.port())
     }
 
-    /// Returns the HTTP RPC URL using `host.docker.internal` for Docker containers.
+    /// Returns the engine port for host port exposure.
+    pub fn engine_port(&self) -> u16 {
+        self.engine_addr.port()
+    }
+
+    /// Returns the HTTP RPC URL for Docker containers using testcontainers host port exposure.
     pub fn host_rpc_url(&self) -> String {
-        format!("http://host.docker.internal:{}", self.http_api_addr.port())
+        format!("http://host.testcontainers.internal:{}", self.http_api_addr.port())
     }
 
-    /// Returns the P2P enode URL using `host.docker.internal` for Docker containers.
+    /// Returns the HTTP RPC port for host port exposure.
+    pub fn rpc_port(&self) -> u16 {
+        self.http_api_addr.port()
+    }
+
+    /// Returns the P2P enode URL for Docker containers using testcontainers host port exposure.
     pub fn host_p2p_enode(&self) -> String {
-        format!("enode://{BUILDER_ENODE_ID}@host.docker.internal:{}", self.p2p_port)
+        format!("enode://{BUILDER_ENODE_ID}@host.testcontainers.internal:{}", self.p2p_port)
     }
 
-    /// Returns the Flashblocks URL using `host.docker.internal` for Docker containers.
+    /// Returns the Flashblocks URL for Docker containers using testcontainers host port exposure.
     pub fn host_flashblocks_url(&self) -> String {
-        format!("ws://host.docker.internal:{}/", self.flashblocks_port)
+        format!("ws://host.testcontainers.internal:{}/", self.flashblocks_port)
     }
 }
 
