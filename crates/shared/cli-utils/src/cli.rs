@@ -22,7 +22,7 @@
 macro_rules! parse_cli {
     ($cli_type:ty) => {{ $crate::parse_cli!($cli_type, |cmd| cmd) }};
     ($cli_type:ty, $customize:expr) => {{
-        use $crate::clap::{CommandFactory, FromArgMatches};
+        use clap::{CommandFactory, FromArgMatches};
 
         let pkg_name = env!("CARGO_PKG_NAME");
         let version = env!("CARGO_PKG_VERSION");

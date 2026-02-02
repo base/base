@@ -20,10 +20,8 @@ fn main() {
         .unwrap()
         .into_os_string();
 
-    let cli = base_cli_utils::parse_cli!(Cli, |cmd: base_cli_utils::clap::Command| {
-        cmd.mut_arg("log_file_directory", |arg: base_cli_utils::clap::Arg| {
-            arg.default_value(logs_dir)
-        })
+    let cli = base_cli_utils::parse_cli!(Cli, |cmd: clap::Command| {
+        cmd.mut_arg("log_file_directory", |arg: clap::Arg| arg.default_value(logs_dir))
     });
 
     if let Err(err) = op_rbuilder::launcher::launch(cli) {

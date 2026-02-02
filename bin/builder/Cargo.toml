@@ -19,6 +19,7 @@ base-cli-utils.workspace = true
 op-rbuilder.workspace = true
 
 # CLI
+clap.workspace = true
 dirs-next.workspace = true
 
 # reth
