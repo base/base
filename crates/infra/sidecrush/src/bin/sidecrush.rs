@@ -1,10 +1,13 @@
+use std::net::UdpSocket;
+
 use cadence::{StatsdClient, UdpMetricSink};
 use clap::Parser;
-use sidecrush::blockbuilding_healthcheck::{
-    alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node,
+use sidecrush::{
+    blockbuilding_healthcheck::{
+        BlockProductionHealthChecker, HealthcheckConfig, Node, alloy_client::AlloyEthClient,
+    },
+    metrics::HealthcheckMetrics,
 };
-use sidecrush::metrics::HealthcheckMetrics;
-use std::net::UdpSocket;
 use tracing::Level;
 
 #[derive(Parser, Debug)]
@@ -23,11 +26,7 @@ struct Args {
     grace_period_ms: u64,
 
     /// Threshold in milliseconds to consider unhealthy/stalled
-    #[arg(
-        long,
-        env = "BBHC_SIDECAR_UNHEALTHY_NODE_THRESHOLD_MS",
-        default_value_t = 3000u64
-    )]
+    #[arg(long, env = "BBHC_SIDECAR_UNHEALTHY_NODE_THRESHOLD_MS", default_value_t = 3000u64)]
     unhealthy_node_threshold_ms: u64,
 
     /// Log level
@@ -49,14 +48,9 @@ async fn main() {
 
     // Initialize logging
     if args.log_format.to_lowercase() == "json" {
-        let _ = tracing_subscriber::fmt()
-            .json()
-            .with_max_level(args.log_level)
-            .try_init();
+        let _ = tracing_subscriber::fmt().json().with_max_level(args.log_level).try_init();
     } else {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(args.log_level)
-            .try_init();
+        let _ = tracing_subscriber::fmt().with_max_level(args.log_level).try_init();
     }
 
     // Initialize StatsD client (sends to Datadog agent)
@@ -66,9 +60,7 @@ async fn main() {
     tracing::info!(address = %statsd_addr, "Connecting to StatsD agent");
 
     let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP socket");
-    socket
-        .set_nonblocking(true)
-        .expect("failed to set socket nonblocking");
+    socket.set_nonblocking(true).expect("failed to set socket nonblocking");
     let sink =
         UdpMetricSink::from(statsd_addr.as_str(), socket).expect("failed to create StatsD sink");
 

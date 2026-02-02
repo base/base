@@ -1,8 +1,12 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info};
 
@@ -42,11 +46,7 @@ impl HealthcheckConfig {
         grace_period_ms: u64,
         unhealthy_node_threshold_ms: u64,
     ) -> Self {
-        Self {
-            poll_interval_ms,
-            grace_period_ms,
-            unhealthy_node_threshold_ms,
-        }
+        Self { poll_interval_ms, grace_period_ms, unhealthy_node_threshold_ms }
     }
 }
 
@@ -58,10 +58,7 @@ pub struct Node {
 
 impl Node {
     pub fn new(url: impl Into<String>, is_new_instance: bool) -> Self {
-        Self {
-            url: url.into(),
-            is_new_instance,
-        }
+        Self { url: url.into(), is_new_instance }
     }
 }
 
@@ -97,13 +94,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
     ) -> Self {
         // default to healthy until first classification
         let initial_status: u8 = HealthState::Healthy.code();
-        Self {
-            node,
-            client,
-            config,
-            status_code: Arc::new(AtomicU8::new(initial_status)),
-            metrics,
-        }
+        Self { node, client, config, status_code: Arc::new(AtomicU8::new(initial_status)), metrics }
     }
 
     pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
@@ -137,24 +128,20 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             Ok(Err(e)) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, error = %e, "waiting for node to become healthy");
-                    self.status_code
-                        .store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, error = %e, "failed to fetch block");
-                    self.status_code
-                        .store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
             }
             Err(_elapsed) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, "waiting for node to become healthy (timeout)");
-                    self.status_code
-                        .store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, "failed to fetch block (timeout)");
-                    self.status_code
-                        .store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
             }
@@ -227,9 +214,11 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
+
+    use async_trait::async_trait;
+
+    use super::*;
 
     #[derive(Clone)]
     struct MockClient {
@@ -253,8 +242,9 @@ mod tests {
     }
 
     fn mock_metrics() -> HealthcheckMetrics {
-        use cadence::{StatsdClient, UdpMetricSink};
         use std::net::UdpSocket;
+
+        use cadence::{StatsdClient, UdpMetricSink};
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         socket.set_nonblocking(true).unwrap();
         let sink = UdpMetricSink::from("127.0.0.1:8125", socket).unwrap();
@@ -271,18 +261,13 @@ mod tests {
             timestamp_unix_seconds: start,
             transaction_count: 5,
         }));
-        let client = MockClient {
-            header: shared_header.clone(),
-        };
+        let client = MockClient { header: shared_header.clone() };
         let node = Node::new("http://localhost:8545", false);
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
         checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Healthy.code()
-        );
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -295,32 +280,21 @@ mod tests {
             timestamp_unix_seconds: start,
             transaction_count: 5,
         }));
-        let client = MockClient {
-            header: shared_header.clone(),
-        };
+        let client = MockClient { header: shared_header.clone() };
         let node = Node::new("http://localhost:8545", false);
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
         // First healthy block
         checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Healthy.code()
-        );
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
 
         // Next block arrives but is delayed beyond grace
         let delayed_ts = start.saturating_sub((grace_ms / 1000) + 1);
-        *shared_header.lock().unwrap() = HeaderSummary {
-            number: 2,
-            timestamp_unix_seconds: delayed_ts,
-            transaction_count: 5,
-        };
+        *shared_header.lock().unwrap() =
+            HeaderSummary { number: 2, timestamp_unix_seconds: delayed_ts, transaction_count: 5 };
         checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Delayed.code()
-        );
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Delayed.code());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -333,19 +307,14 @@ mod tests {
             timestamp_unix_seconds: start,
             transaction_count: 5,
         }));
-        let client = MockClient {
-            header: shared_header.clone(),
-        };
+        let client = MockClient { header: shared_header.clone() };
         let node = Node::new("http://localhost:8545", false);
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
         // First observation (healthy)
         checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Healthy.code()
-        );
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
 
         // Same head, but now sufficiently old to be unhealthy -> emits stall once
         let unhealthy_ts = start.saturating_sub((unhealthy_ms / 1000) + 1);
@@ -355,16 +324,10 @@ mod tests {
             transaction_count: 5,
         };
         checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Unhealthy.code()
-        );
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
 
         // Re-run again with same head: should not re-emit; flag remains set
         checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Unhealthy.code()
-        );
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
     }
 }

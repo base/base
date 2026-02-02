@@ -1,9 +1,8 @@
 use clap::Parser;
 use dotenvy::dotenv;
-use tracing::{error, info, Level};
-use tracing_subscriber::EnvFilter;
-
 use mempool_rebroadcaster::rebroadcaster::Rebroadcaster;
+use tracing::{Level, error, info};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "A mempool rebroadcaster service")]

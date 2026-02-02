@@ -1,6 +1,7 @@
+use std::path::Path;
+
 use alloy_rpc_types::txpool::TxpoolContent;
 use mempool_rebroadcaster::rebroadcaster::Rebroadcaster;
-use std::path::Path;
 
 fn load_static_mempool_content<P: AsRef<Path>>(
     filepath: P,
@@ -97,16 +98,10 @@ async fn test_e2e_filtering_logic() {
     );
 
     // Assert all transactions are filtered out due to high base fee
-    let total_pending = filtered_geth_mempool
-        .pending
-        .values()
-        .map(|nonce_txs| nonce_txs.len())
-        .sum::<usize>();
-    let total_queued = filtered_geth_mempool
-        .queued
-        .values()
-        .map(|nonce_txs| nonce_txs.len())
-        .sum::<usize>();
+    let total_pending =
+        filtered_geth_mempool.pending.values().map(|nonce_txs| nonce_txs.len()).sum::<usize>();
+    let total_queued =
+        filtered_geth_mempool.queued.values().map(|nonce_txs| nonce_txs.len()).sum::<usize>();
 
     assert_eq!(
         0,

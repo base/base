@@ -1,7 +1,8 @@
-use super::{EthClient, HeaderSummary};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockId;
 use async_trait::async_trait;
+
+use super::{EthClient, HeaderSummary};
 
 #[derive(Clone)]
 pub struct AlloyEthClient {
@@ -10,9 +11,8 @@ pub struct AlloyEthClient {
 
 impl AlloyEthClient {
     pub fn new_http(url: &str) -> anyhow::Result<Self> {
-        let provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .connect_http(url.parse()?);
+        let provider =
+            ProviderBuilder::new().disable_recommended_fillers().connect_http(url.parse()?);
         Ok(Self { provider })
     }
 }
@@ -33,10 +33,6 @@ impl EthClient for AlloyEthClient {
         let timestamp_unix_seconds: u64 = block.header.timestamp;
         let transaction_count: usize = block.transactions.len();
 
-        Ok(HeaderSummary {
-            number,
-            timestamp_unix_seconds,
-            transaction_count,
-        })
+        Ok(HeaderSummary { number, timestamp_unix_seconds, transaction_count })
     }
 }

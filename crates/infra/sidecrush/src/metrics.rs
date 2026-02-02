@@ -1,5 +1,6 @@
-use cadence::{Counted, StatsdClient};
 use std::sync::Arc;
+
+use cadence::{Counted, StatsdClient};
 
 /// Metrics client wrapper for block building health checks
 /// Emits metrics every 2 seconds via status heartbeat (independent of poll frequency)
@@ -10,9 +11,7 @@ pub struct HealthcheckMetrics {
 
 impl HealthcheckMetrics {
     pub fn new(client: StatsdClient) -> Self {
-        Self {
-            client: Arc::new(client),
-        }
+        Self { client: Arc::new(client) }
     }
 
     /// Increment status_healthy counter (2s heartbeat)

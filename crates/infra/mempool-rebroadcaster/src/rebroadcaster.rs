@@ -1,22 +1,18 @@
 use std::{collections::HashMap, error::Error};
 
 use alloy_consensus::Transaction;
-use alloy_eips::eip2718::{
-    EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID,
+use alloy_eips::{
+    Encodable2718,
+    eip2718::{EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID},
 };
-use alloy_eips::Encodable2718;
 use alloy_primitives::B256;
-use alloy_provider::{ext::TxPoolApi, Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider, ext::TxPoolApi};
 use alloy_rpc_types::txpool::TxpoolContent;
 use alloy_rpc_types_eth::{BlockId, Transaction as RpcTransaction};
-
 use tracing::{debug, error, info, warn};
 
-const IGNORED_ERRORS: [&str; 3] = [
-    "transaction underpriced",
-    "replacement transaction underpriced",
-    "already known",
-];
+const IGNORED_ERRORS: [&str; 3] =
+    ["transaction underpriced", "replacement transaction underpriced", "already known"];
 
 #[derive(Debug, Clone)]
 pub struct Rebroadcaster {
@@ -47,10 +43,7 @@ impl Rebroadcaster {
             .disable_recommended_fillers()
             .connect_http(reth_endpoint.parse().expect("Invalid reth endpoint"));
 
-        Self {
-            geth_provider,
-            reth_provider,
-        }
+        Self { geth_provider, reth_provider }
     }
 
     pub async fn run(&self) -> Result<RebroadcasterResult, Box<dyn Error>> {
@@ -83,10 +76,8 @@ impl Rebroadcaster {
             "filtered txn counts"
         );
 
-        let diff = self.compute_diff(
-            &filtered_geth_mempool_contents,
-            &filtered_reth_mempool_contents,
-        );
+        let diff =
+            self.compute_diff(&filtered_geth_mempool_contents, &filtered_reth_mempool_contents);
 
         let mut output = RebroadcasterResult {
             success_geth_to_reth: 0,
@@ -159,10 +150,7 @@ impl Rebroadcaster {
             .expect("Failed to get latest block");
 
         let gas_price = self.geth_provider.get_gas_price().await?;
-        let base_fee: u128 = latest_block
-            .header
-            .base_fee_per_gas
-            .map_or(gas_price, |v| v.into());
+        let base_fee: u128 = latest_block.header.base_fee_per_gas.map_or(gas_price, |v| v.into());
 
         Ok((base_fee, gas_price))
     }
@@ -170,10 +158,8 @@ impl Rebroadcaster {
     async fn fetch_mempool_contents(
         &self,
     ) -> Result<(TxpoolContent, TxpoolContent), Box<dyn Error>> {
-        let (geth_mempool_contents, reth_mempool_contents) = tokio::join!(
-            self.geth_provider.txpool_content(),
-            self.reth_provider.txpool_content(),
-        );
+        let (geth_mempool_contents, reth_mempool_contents) =
+            tokio::join!(self.geth_provider.txpool_content(), self.reth_provider.txpool_content(),);
         let geth_mempool_contents = geth_mempool_contents?;
         let reth_mempool_contents = reth_mempool_contents?;
 
@@ -191,11 +177,7 @@ impl Rebroadcaster {
         for (account, nonce_txns) in content.pending.iter() {
             for (nonce, txn) in nonce_txns.iter() {
                 if self.is_underpriced(txn, base_fee, gas_price) {
-                    filtered_content
-                        .pending
-                        .get_mut(account)
-                        .unwrap()
-                        .remove(nonce);
+                    filtered_content.pending.get_mut(account).unwrap().remove(nonce);
                 }
             }
 
@@ -207,11 +189,7 @@ impl Rebroadcaster {
         for (account, nonce_txns) in content.queued.iter() {
             for (nonce, txn) in nonce_txns.iter() {
                 if self.is_underpriced(txn, base_fee, gas_price) {
-                    filtered_content
-                        .queued
-                        .get_mut(account)
-                        .unwrap()
-                        .remove(nonce);
+                    filtered_content.queued.get_mut(account).unwrap().remove(nonce);
                 }
             }
 
@@ -267,10 +245,8 @@ impl Rebroadcaster {
         geth_mempool: &TxpoolContent,
         reth_mempool: &TxpoolContent,
     ) -> TxpoolDiff {
-        let mut diff = TxpoolDiff {
-            in_geth_not_in_reth: Vec::new(),
-            in_reth_not_in_geth: Vec::new(),
-        };
+        let mut diff =
+            TxpoolDiff { in_geth_not_in_reth: Vec::new(), in_reth_not_in_geth: Vec::new() };
 
         let geth_hashes = self.txns_by_hash(geth_mempool);
         let reth_hashes = self.txns_by_hash(reth_mempool);
@@ -287,10 +263,8 @@ impl Rebroadcaster {
             }
         }
 
-        diff.in_geth_not_in_reth
-            .sort_by_key(|txn| txn.as_recovered().nonce());
-        diff.in_reth_not_in_geth
-            .sort_by_key(|txn| txn.as_recovered().nonce());
+        diff.in_geth_not_in_reth.sort_by_key(|txn| txn.as_recovered().nonce());
+        diff.in_reth_not_in_geth.sort_by_key(|txn| txn.as_recovered().nonce());
 
         diff
     }
