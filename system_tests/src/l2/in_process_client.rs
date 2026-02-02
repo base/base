@@ -27,7 +27,7 @@ use reth_tasks::TaskManager;
 use url::Url;
 
 /// Configuration for starting an in-process client node.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InProcessClientConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
@@ -39,6 +39,14 @@ pub struct InProcessClientConfig {
     pub builder_flashblocks_url: String,
     /// Builder P2P enode for trusted-peers.
     pub builder_p2p_enode: String,
+    /// Optional fixed HTTP RPC port (uses random if None).
+    pub http_port: Option<u16>,
+    /// Optional fixed WebSocket port (uses random if None).
+    pub ws_port: Option<u16>,
+    /// Optional fixed Auth RPC port (uses random if None).
+    pub auth_port: Option<u16>,
+    /// Optional fixed P2P port (uses random if None).
+    pub p2p_port: Option<u16>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -82,12 +90,14 @@ impl InProcessClient {
             .map_err(|e| eyre!("Failed to parse genesis JSON: {}", e))?;
         let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
-        // Network config: disable discovery, client syncs from builder only
-        let network_config = NetworkArgs {
+        let mut network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
             trusted_peers: vec![config.builder_p2p_enode.parse()?],
             ..NetworkArgs::default()
         };
+        if let Some(port) = config.p2p_port {
+            network_config.port = port;
+        }
 
         let (db, db_path) = Self::create_test_database()?;
         let jwt_path = db_path.join("jwt.hex");
@@ -105,9 +115,23 @@ impl InProcessClient {
         );
 
         let mut rpc_args =
-            RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
+            if config.http_port.is_some() || config.ws_port.is_some() || config.auth_port.is_some()
+            {
+                RpcServerArgs::default().with_http().with_auth_ipc().with_ws()
+            } else {
+                RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws()
+            };
         rpc_args.auth_ipc_path = unique_ipc_path;
         rpc_args.auth_jwtsecret = Some(jwt_path);
+        if let Some(port) = config.http_port {
+            rpc_args.http_port = port;
+        }
+        if let Some(port) = config.ws_port {
+            rpc_args.ws_port = port;
+        }
+        if let Some(port) = config.auth_port {
+            rpc_args.auth_port = port;
+        }
 
         // Configure rollup args with sequencer URL
         let rollup_args =
@@ -117,8 +141,15 @@ impl InProcessClient {
 
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
-            .with_rpc(rpc_args)
-            .with_unused_ports();
+            .with_rpc(rpc_args);
+
+        if config.http_port.is_none()
+            && config.ws_port.is_none()
+            && config.auth_port.is_none()
+            && config.p2p_port.is_none()
+        {
+            node_config = node_config.with_unused_ports();
+        }
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
         node_config = node_config
@@ -198,7 +229,7 @@ impl InProcessClient {
 
     /// Returns the Engine API URL for Docker containers using testcontainers host port exposure.
     pub fn host_engine_url(&self) -> String {
-        format!("http://host.testcontainers.internal:{}", self.engine_addr.port())
+        format!("http://{}:{}", crate::host::host_address(), self.engine_addr.port())
     }
 
     /// Returns the engine port for host port exposure.

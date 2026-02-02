@@ -7,8 +7,9 @@ pub mod l1_genesis;
 pub mod l2_intent;
 
 pub use accounts::{
-    ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, Account, BATCHER, CHALLENGER, DEPLOYER,
-    PROPOSER, SEQUENCER, anvil_addresses,
+    ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, ANVIL_ACCOUNT_8, ANVIL_ACCOUNT_9, Account,
+    BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER, anvil_addresses,
 };
 /// JWT secret helpers for Engine API authentication.
 pub use jwt::{random_jwt_secret, random_jwt_secret_hex};

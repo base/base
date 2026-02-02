@@ -37,7 +37,15 @@
 #![warn(missing_docs)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+use alloy_network as _;
+use alloy_rpc_types as _;
+use base_flashtypes as _;
+use futures_util as _;
+use tokio_tungstenite as _;
+
+pub mod cli;
 pub mod config;
+pub mod devnet_config;
 
 /// Generates a unique container name with the given prefix.
 pub fn unique_name(prefix: &str) -> String {
@@ -46,12 +54,18 @@ pub fn unique_name(prefix: &str) -> String {
 /// Container orchestration and management.
 pub mod containers;
 pub mod deployer;
+/// Docker utilities for devnet container management.
+pub mod docker;
+/// Host connectivity for container-to-host communication.
+pub mod host;
 /// Docker images used for testing.
 pub mod images;
 pub mod l1;
 pub mod l2;
 /// Network management for test containers.
 pub mod network;
+/// RPC client for querying devnet nodes.
+pub mod rpc;
 /// Test setup and environment generation.
 pub mod setup;
 /// High-level devnet orchestration and smoke tests.

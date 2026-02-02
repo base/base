@@ -9,6 +9,10 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "devnet"
+path = "src/bin/devnet.rs"
+
 [lints]
 workspace = true
 
@@ -37,6 +41,19 @@ tracing.workspace = true
 url.workspace = true
 nanoid.workspace = true
 
+# CLI
+clap.workspace = true
+
+# Serialization (for URLs JSON)
+serde = { workspace = true, features = ["derive"] }
+
+# WebSocket client (for flashblocks)
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util.workspace = true
+
+# RPC client (moved from dev-dependencies for CLI)
+alloy-provider = { workspace = true, features = ["reqwest"] }
+
 # Reth node dependencies (for in-process builder)
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 reth-node-core.workspace = true
@@ -55,16 +72,18 @@ base-builder-cli.workspace = true
 base-client-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
+base-flashtypes.workspace = true
 base-txpool.workspace = true
 reth-provider.workspace = true
 alloy-genesis.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+alloy-rpc-types.workspace = true
+alloy-network.workspace = true
 
 [dev-dependencies]
-# Test-only Alloy dependencies
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-rpc-client.workspace = true
 alloy-signer.workspace = true
 

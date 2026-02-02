@@ -6,8 +6,9 @@ use url::Url;
 
 use crate::{
     config::{self, BATCHER, SEQUENCER},
-    l1::{L1Stack, L1StackConfig},
-    l2::{L2Stack, L2StackConfig},
+    devnet_config::StableDevnetConfig,
+    l1::{L1ContainerConfig, L1Stack, L1StackConfig},
+    l2::{L2ContainerConfig, L2Stack, L2StackConfig},
     network::cleanup_network,
     setup::{BUILDER_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer},
 };
@@ -97,6 +98,7 @@ pub struct DevnetBuilder {
     l2_chain_id: Option<u64>,
     slot_duration: Option<u64>,
     output_dir: Option<PathBuf>,
+    stable_config: Option<StableDevnetConfig>,
 }
 
 impl DevnetBuilder {
@@ -129,6 +131,12 @@ impl DevnetBuilder {
         self
     }
 
+    /// Enables stable container names and ports matching docker-compose.yml.
+    pub fn with_stable_config(mut self) -> Self {
+        self.stable_config = Some(StableDevnetConfig::devnet());
+        self
+    }
+
     /// Builds and starts the devnet.
     pub async fn build(self) -> Result<Devnet> {
         let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
@@ -138,10 +146,14 @@ impl DevnetBuilder {
         let temp_dir = TempDir::new().wrap_err("Failed to create temp directory")?;
         let output_dir = self.output_dir.unwrap_or_else(|| temp_dir.path().to_path_buf());
 
-        let setup = SetupContainer::new(&output_dir)
+        let mut setup = SetupContainer::new(&output_dir)
             .with_chain_id(l1_chain_id)
             .with_l2_chain_id(l2_chain_id)
             .with_slot_duration(slot_duration);
+
+        if let Some(ref config) = self.stable_config {
+            setup = setup.with_network_name(&config.network_name);
+        }
 
         let l1_genesis = tokio::task::spawn_blocking({
             let setup = setup.clone();
@@ -154,10 +166,41 @@ impl DevnetBuilder {
         let el_genesis_json = l1_genesis.read_el_genesis()?;
         let jwt_secret_hex = l1_genesis.read_jwt_secret()?;
 
+        let (l1_container_config, l2_container_config) =
+            self.stable_config.as_ref().map_or((None, None), |config| {
+                let l1_config = L1ContainerConfig {
+                    use_stable_names: true,
+                    network_name: Some(config.network_name.clone()),
+                    http_port: Some(config.ports.l1_http),
+                    engine_port: Some(config.ports.l1_auth),
+                    beacon_http_port: Some(config.ports.l1_cl_http),
+                    beacon_p2p_port: Some(config.ports.l1_cl_p2p),
+                };
+                let l2_config = L2ContainerConfig {
+                    use_stable_names: true,
+                    network_name: Some(config.network_name.clone()),
+                    op_node_rpc_port: Some(config.ports.l2_builder_cl_rpc),
+                    op_node_p2p_port: Some(config.ports.l2_builder_cl_p2p),
+                    op_node_follower_rpc_port: Some(config.ports.l2_client_cl_rpc),
+                    batcher_metrics_port: Some(config.ports.batcher_metrics),
+                    builder_http_port: Some(config.ports.l2_builder_http),
+                    builder_ws_port: Some(config.ports.l2_builder_ws),
+                    builder_auth_port: Some(config.ports.l2_builder_auth),
+                    builder_p2p_port: Some(config.ports.l2_builder_p2p),
+                    builder_flashblocks_port: Some(config.ports.l2_builder_flashblocks),
+                    client_http_port: Some(config.ports.l2_client_http),
+                    client_ws_port: Some(config.ports.l2_client_ws),
+                    client_auth_port: Some(config.ports.l2_client_auth),
+                    client_p2p_port: Some(config.ports.l2_client_p2p),
+                };
+                (Some(l1_config), Some(l2_config))
+            });
+
         let l1_config = L1StackConfig {
             el_genesis_json,
             jwt_secret_hex,
             testnet_dir: l1_genesis.testnet_dir(),
+            container_config: l1_container_config,
         };
 
         let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
@@ -188,6 +231,7 @@ impl DevnetBuilder {
             batcher_key: format!("0x{}", hex::encode(BATCHER.private_key)),
             l1_rpc_url: l1_stack.reth().internal_rpc_url(),
             l1_beacon_url: l1_stack.beacon().internal_beacon_url(),
+            container_config: l2_container_config,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

@@ -6,10 +6,11 @@ use testcontainers::{
 };
 use url::Url;
 
+use super::config::L1ContainerConfig;
 use crate::{
     containers::L1_RETH_NAME,
     images::RETH_IMAGE,
-    network::{ensure_network_exists, network_name},
+    network::{ensure_network_exists, ensure_network_exists_with_name, network_name},
     unique_name,
 };
 
@@ -30,8 +31,15 @@ impl RethContainer {
     pub async fn start(
         genesis_json: impl AsRef<[u8]>,
         jwt_secret_hex: impl AsRef<[u8]>,
+        config: Option<L1ContainerConfig>,
     ) -> Result<Self> {
-        ensure_network_exists()?;
+        let config = config.unwrap_or_default();
+
+        if let Some(ref net) = config.network_name {
+            ensure_network_exists_with_name(net)?;
+        } else {
+            ensure_network_exists()?;
+        }
 
         let (image_name, image_tag) =
             RETH_IMAGE.split_once(':').ok_or_else(|| eyre!("Reth image tag is missing"))?;
@@ -42,17 +50,29 @@ impl RethContainer {
             .with_exposed_port(ENGINE_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("RPC HTTP server started"));
 
-        let name = unique_name(L1_RETH_NAME);
+        let name = if config.use_stable_names {
+            L1_RETH_NAME.to_string()
+        } else {
+            unique_name(L1_RETH_NAME)
+        };
+        let network = config.network_name.unwrap_or_else(|| network_name().to_string());
 
-        let container = image
+        let mut container_builder = image
             .with_container_name(&name)
-            .with_network(network_name())
+            .with_network(&network)
             .with_cmd(reth_args())
             .with_copy_to(GENESIS_PATH, genesis_json.as_ref().to_vec())
-            .with_copy_to(JWT_PATH, jwt_secret_hex.as_ref().to_vec())
-            .start()
-            .await
-            .wrap_err("Failed to start Reth container")?;
+            .with_copy_to(JWT_PATH, jwt_secret_hex.as_ref().to_vec());
+
+        if let Some(port) = config.http_port {
+            container_builder = container_builder.with_mapped_port(port, HTTP_PORT.tcp());
+        }
+        if let Some(port) = config.engine_port {
+            container_builder = container_builder.with_mapped_port(port, ENGINE_PORT.tcp());
+        }
+
+        let container =
+            container_builder.start().await.wrap_err("Failed to start Reth container")?;
 
         Ok(Self { container, name })
     }
