@@ -185,11 +185,13 @@ mod tests {
         // === FLASHBLOCK 1 ===
         let mut iterator = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
 
+        // Simulate: Flashblock 1 starts building
+        // Start consuming txns from the txpool
         let first = iterator.next(()).unwrap();
         assert_eq!(first.sender(), sender_a, "First should be TX_A (1 gwei)");
 
         // TX_B and TX_C arrive late, but we have already yielded lower-priority transactions
-        // so we do not immediately add them to the best txns
+        // from the iterator, so these do not immediately get added to the best txns
         pool.add_transaction(Arc::new(f.validated(tx_b.clone())), 0);
         pool.add_transaction(Arc::new(f.validated(tx_c.clone())), 0);
         assert_eq!(iterator.next(()), None);
