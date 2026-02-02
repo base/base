@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 # CLI
 clap.workspace = true
-clap_builder.workspace = true
 
 # reth
 reth-optimism-cli = { workspace = true, features = ["otlp"] }

@@ -1,58 +1,7 @@
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
-    metrics::{Counter, Gauge, Histogram, gauge},
-};
-
-/// The latest version from Cargo.toml.
-pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// The 8 character short SHA of the latest commit.
-pub const VERGEN_GIT_SHA: &str = env!("VERGEN_GIT_SHA_SHORT");
-
-/// The build timestamp.
-pub const VERGEN_BUILD_TIMESTAMP: &str = env!("VERGEN_BUILD_TIMESTAMP");
-
-/// The target triple.
-pub const VERGEN_CARGO_TARGET_TRIPLE: &str = env!("VERGEN_CARGO_TARGET_TRIPLE");
-
-/// The build features.
-pub const VERGEN_CARGO_FEATURES: &str = env!("VERGEN_CARGO_FEATURES");
-
-/// The latest commit message and author name and email.
-pub const VERGEN_GIT_AUTHOR: &str = env!("VERGEN_GIT_COMMIT_AUTHOR");
-pub const VERGEN_GIT_COMMIT_MESSAGE: &str = env!("VERGEN_GIT_COMMIT_MESSAGE");
-
-/// The build profile name.
-pub const BUILD_PROFILE_NAME: &str = env!("OP_RBUILDER_BUILD_PROFILE");
-
-/// The short version information for op-rbuilder.
-pub const SHORT_VERSION: &str = env!("OP_RBUILDER_SHORT_VERSION");
-
-/// The long version information for op-rbuilder.
-pub const LONG_VERSION: &str = concat!(
-    env!("OP_RBUILDER_LONG_VERSION_0"),
-    "\n",
-    env!("OP_RBUILDER_LONG_VERSION_1"),
-    "\n",
-    env!("OP_RBUILDER_LONG_VERSION_2"),
-    "\n",
-    env!("OP_RBUILDER_LONG_VERSION_3"),
-    "\n",
-    env!("OP_RBUILDER_LONG_VERSION_4"),
-    "\n",
-    env!("OP_RBUILDER_LONG_VERSION_5"),
-);
-
-pub const VERSION: VersionInfo = VersionInfo {
-    version: CARGO_PKG_VERSION,
-    build_timestamp: VERGEN_BUILD_TIMESTAMP,
-    cargo_features: VERGEN_CARGO_FEATURES,
-    git_sha: VERGEN_GIT_SHA,
-    target_triple: VERGEN_CARGO_TARGET_TRIPLE,
-    build_profile: BUILD_PROFILE_NAME,
-    commit_author: VERGEN_GIT_AUTHOR,
-    commit_message: VERGEN_GIT_COMMIT_MESSAGE,
+    metrics::{Counter, Gauge, Histogram},
 };
 
 /// op-rbuilder metrics
@@ -196,45 +145,5 @@ impl OpRBuilderMetrics {
         self.payload_num_tx_simulated_fail.record(num_txs_simulated_fail);
         self.payload_num_tx_simulated_fail_gauge.set(num_txs_simulated_fail);
         self.payload_reverted_tx_gas_used.set(reverted_gas_used);
-    }
-}
-
-/// Contains version information for the application.
-#[derive(Debug, Clone)]
-pub struct VersionInfo {
-    /// The version of the application.
-    pub version: &'static str,
-    /// The build timestamp of the application.
-    pub build_timestamp: &'static str,
-    /// The cargo features enabled for the build.
-    pub cargo_features: &'static str,
-    /// The Git SHA of the build.
-    pub git_sha: &'static str,
-    /// The target triple for the build.
-    pub target_triple: &'static str,
-    /// The build profile (e.g., debug or release).
-    pub build_profile: &'static str,
-    /// The author of the latest commit.
-    pub commit_author: &'static str,
-    /// The message of the latest commit.
-    pub commit_message: &'static str,
-}
-
-impl VersionInfo {
-    /// This exposes op-rbuilder's version information over prometheus.
-    pub fn register_version_metrics(&self) {
-        let labels: [(&str, &str); 8] = [
-            ("version", self.version),
-            ("build_timestamp", self.build_timestamp),
-            ("cargo_features", self.cargo_features),
-            ("git_sha", self.git_sha),
-            ("target_triple", self.target_triple),
-            ("build_profile", self.build_profile),
-            ("commit_author", self.commit_author),
-            ("commit_message", self.commit_message),
-        ];
-
-        let gauge = gauge!("builder_info", &labels);
-        gauge.set(1);
     }
 }
