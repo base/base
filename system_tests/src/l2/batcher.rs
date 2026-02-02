@@ -5,7 +5,11 @@
 use std::time::Duration;
 
 use eyre::{Result, WrapErr, eyre};
-use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::WaitFor, runners::AsyncRunner};
+use testcontainers::{
+    ContainerAsync, GenericImage, ImageExt,
+    core::{Host, WaitFor},
+    runners::AsyncRunner,
+};
 
 const CONTAINER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -55,6 +59,7 @@ impl BatcherContainer {
         let container = image
             .with_container_name(&name)
             .with_network(network_name())
+            .with_host("host.docker.internal", Host::HostGateway)
             .with_cmd(batcher_args(&config))
             .with_startup_timeout(CONTAINER_STARTUP_TIMEOUT)
             .start()

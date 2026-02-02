@@ -5,7 +5,7 @@ use std::time::Duration;
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
-    core::{IntoContainerPort, WaitFor},
+    core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
 use url::Url;
@@ -97,6 +97,7 @@ impl OpNodeContainer {
         let container = image
             .with_container_name(&name)
             .with_network(network_name())
+            .with_host("host.docker.internal", Host::HostGateway)
             .with_cmd(sequencer_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
@@ -172,6 +173,7 @@ impl OpNodeFollowerContainer {
         let container = image
             .with_container_name(&name)
             .with_network(network_name())
+            .with_host("host.docker.internal", Host::HostGateway)
             .with_cmd(follower_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
