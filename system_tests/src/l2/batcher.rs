@@ -5,11 +5,7 @@
 use std::time::Duration;
 
 use eyre::{Result, WrapErr, eyre};
-use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt,
-    core::WaitFor,
-    runners::AsyncRunner,
-};
+use testcontainers::{ContainerAsync, GenericImage, ImageExt, core::WaitFor, runners::AsyncRunner};
 
 const CONTAINER_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 

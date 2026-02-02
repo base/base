@@ -220,7 +220,7 @@ impl InProcessBuilder {
     }
 
     /// Returns the engine port for host port exposure.
-    pub fn engine_port(&self) -> u16 {
+    pub const fn engine_port(&self) -> u16 {
         self.engine_addr.port()
     }
 
@@ -230,7 +230,7 @@ impl InProcessBuilder {
     }
 
     /// Returns the HTTP RPC port for host port exposure.
-    pub fn rpc_port(&self) -> u16 {
+    pub const fn rpc_port(&self) -> u16 {
         self.http_api_addr.port()
     }
 
