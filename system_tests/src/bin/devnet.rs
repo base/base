@@ -8,7 +8,7 @@ use clap::Parser;
 use eyre::{Result, WrapErr};
 use futures_util::StreamExt;
 use system_tests::{
-    DevnetBuilder,
+    DevnetBuilder, DevnetUrls,
     cli::{Command, DevnetCli},
     docker::{
         cleanup_devnet_network, is_devnet_running, list_devnet_containers, stop_devnet_containers,
@@ -68,13 +68,10 @@ async fn start_devnet() -> Result<()> {
         l2_builder_op_rpc: l2_builder_op_rpc.to_string(),
         l2_client_op_rpc,
     };
-    fs::write(devnet_dir.join("urls.json"), serde_json::to_string_pretty(&urls)?)?;
+    urls.write_to_file(&devnet_dir.join("urls.json"))?;
 
     println!("\nDevnet started successfully!");
-    println!("\nRPC URLs:");
-    println!("  L1:          {l1_rpc}");
-    println!("  L2 Builder:  {l2_builder_rpc}");
-    println!("  L2 Client:   {l2_client_rpc}");
+    println!("{urls}");
     println!("\nURLs saved to .devnet/urls.json");
     println!("\nPress Ctrl+C to stop the devnet...");
 
@@ -97,7 +94,7 @@ async fn smoke_devnet() -> Result<()> {
         std::process::exit(1);
     }
 
-    let urls = read_urls()?;
+    let urls = DevnetUrls::read_from_file(&PathBuf::from(".devnet/urls.json"))?;
 
     let signer = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
         .wrap_err("Invalid private key")?;
@@ -164,21 +161,7 @@ fn clean_devnet() -> Result<()> {
     Ok(())
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
-struct DevnetUrls {
-    l1_rpc: String,
-    l2_builder_rpc: String,
-    l2_client_rpc: String,
-    l2_builder_op_rpc: String,
-    l2_client_op_rpc: String,
-}
 
-fn read_urls() -> Result<DevnetUrls> {
-    let path = PathBuf::from(".devnet/urls.json");
-    let content = fs::read_to_string(&path)
-        .wrap_err("Failed to read .devnet/urls.json - is devnet running?")?;
-    serde_json::from_str(&content).wrap_err("Failed to parse urls.json")
-}
 
 async fn status_devnet() -> Result<()> {
     if !is_devnet_running()? {
@@ -186,7 +169,7 @@ async fn status_devnet() -> Result<()> {
         std::process::exit(1);
     }
 
-    let urls = read_urls()?;
+    let urls = DevnetUrls::read_from_file(&PathBuf::from(".devnet/urls.json"))?;
     let client = DevnetRpcClient::new(
         &urls.l1_rpc,
         &urls.l2_builder_rpc,
@@ -199,14 +182,18 @@ async fn status_devnet() -> Result<()> {
     let builder_status = client.l2_builder_sync_status().await?;
     let client_status = client.l2_client_sync_status().await?;
 
-    let builder_unsafe =
-        builder_status.unsafe_l2.map_or_else(|| "N/A".to_string(), |b| b.number.to_string());
-    let builder_safe =
-        builder_status.safe_l2.map_or_else(|| "N/A".to_string(), |b| b.number.to_string());
-    let client_unsafe =
-        client_status.unsafe_l2.map_or_else(|| "N/A".to_string(), |b| b.number.to_string());
-    let client_safe =
-        client_status.safe_l2.map_or_else(|| "N/A".to_string(), |b| b.number.to_string());
+    let builder_unsafe = builder_status
+        .unsafe_l2
+        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
+    let builder_safe = builder_status
+        .safe_l2
+        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
+    let client_unsafe = client_status
+        .unsafe_l2
+        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
+    let client_safe = client_status
+        .safe_l2
+        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
 
     println!();
     println!("{:<12} | {:<10} | {:<10}", "Component", "Unsafe", "Safe");
@@ -225,7 +212,7 @@ async fn accounts_devnet() -> Result<()> {
         std::process::exit(1);
     }
 
-    let urls = read_urls()?;
+    let urls = DevnetUrls::read_from_file(&PathBuf::from(".devnet/urls.json"))?;
     let client = DevnetRpcClient::new(
         &urls.l1_rpc,
         &urls.l2_builder_rpc,
