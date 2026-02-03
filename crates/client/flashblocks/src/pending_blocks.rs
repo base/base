@@ -130,17 +130,17 @@ impl PendingBlocksBuilder {
 
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
-        if self.headers.is_empty() {
-            return Err(BuildError::MissingHeaders.into());
-        }
+        let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
+        let latest_header = self.headers.last().cloned().ok_or(BuildError::MissingHeaders)?;
 
-        if self.flashblocks.is_empty() {
-            return Err(BuildError::NoFlashblocks.into());
-        }
+        let latest_flashblock_index =
+            self.flashblocks.last().map(|fb| fb.index).ok_or(BuildError::NoFlashblocks)?;
 
         Ok(PendingBlocks {
+            earliest_header,
+            latest_header,
+            latest_flashblock_index,
             flashblocks: self.flashblocks,
-            headers: self.headers,
             transactions: self.transactions,
             account_balances: self.account_balances,
             transaction_count: self.transaction_count,
@@ -157,8 +157,10 @@ impl PendingBlocksBuilder {
 /// Aggregated pending block state from flashblocks.
 #[derive(Debug, Clone)]
 pub struct PendingBlocks {
+    earliest_header: Sealed<Header>,
+    latest_header: Sealed<Header>,
+    latest_flashblock_index: u64,
     flashblocks: Vec<Flashblock>,
-    headers: Vec<Sealed<Header>>,
     transactions: Vec<Transaction>,
 
     account_balances: HashMap<Address, U256>,
@@ -174,28 +176,33 @@ pub struct PendingBlocks {
 
 impl PendingBlocks {
     /// Returns the latest block number in the pending state.
+    #[inline]
     pub fn latest_block_number(&self) -> BlockNumber {
-        self.headers.last().unwrap().number
+        self.latest_header.number
     }
 
     /// Returns the canonical block number (the block before pending).
+    #[inline]
     pub fn canonical_block_number(&self) -> BlockNumberOrTag {
-        BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
+        BlockNumberOrTag::Number(self.earliest_header.number - 1)
     }
 
     /// Returns the earliest block number in the pending state.
+    #[inline]
     pub fn earliest_block_number(&self) -> BlockNumber {
-        self.headers.first().unwrap().number
+        self.earliest_header.number
     }
 
     /// Returns the index of the latest flashblock.
-    pub fn latest_flashblock_index(&self) -> u64 {
-        self.flashblocks.last().unwrap().index
+    #[inline]
+    pub const fn latest_flashblock_index(&self) -> u64 {
+        self.latest_flashblock_index
     }
 
     /// Returns the latest header.
+    #[inline]
     pub fn latest_header(&self) -> Sealed<Header> {
-        self.headers.last().unwrap().clone()
+        self.latest_header.clone()
     }
 
     /// Returns all flashblocks.
