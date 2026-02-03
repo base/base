@@ -36,9 +36,8 @@ pub struct BatcherConfig {
 /// Running op-batcher container.
 #[derive(Debug)]
 pub struct BatcherContainer {
-    container: ContainerAsync<GenericImage>,
-    #[allow(dead_code)]
-    name: String,
+    _container: ContainerAsync<GenericImage>,
+    _name: String,
 }
 
 const METRICS_PORT: u16 = 7300;
@@ -82,13 +81,9 @@ impl BatcherContainer {
         let container =
             container_builder.start().await.wrap_err("Failed to start batcher container")?;
 
-        Ok(Self { container, name })
+        Ok(Self { _container: container, _name: name })
     }
 
-    #[allow(dead_code)]
-    pub(crate) const fn container(&self) -> &ContainerAsync<GenericImage> {
-        &self.container
-    }
 }
 
 fn batcher_args(config: &BatcherConfig) -> Vec<String> {

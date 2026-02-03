@@ -26,7 +26,7 @@ impl Account {
 
 /// Derives an account from the test mnemonic at the given index.
 fn derive_account(index: u32) -> Account {
-    let path = format!("m/44'/60'/0'/0/{}", index);
+    let path = format!("m/44'/60'/0'/0/{index}");
     let signer = MnemonicBuilder::<English>::default()
         .phrase(TEST_MNEMONIC)
         .derivation_path(&path)

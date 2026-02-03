@@ -2,7 +2,7 @@
 
 use std::{fs, io::Write, path::PathBuf};
 
-use alloy_primitives::U256;
+use alloy_primitives::utils::format_ether;
 use base_flashtypes::Flashblock;
 use clap::Parser;
 use eyre::{Result, WrapErr};
@@ -266,11 +266,7 @@ async fn accounts_devnet() -> Result<()> {
     Ok(())
 }
 
-fn format_ether(wei: U256) -> String {
-    let wei_u128: u128 = wei.try_into().unwrap_or(u128::MAX);
-    let eth = wei_u128 as f64 / 1e18;
-    format!("{eth:.4}")
-}
+
 
 async fn flashblocks_devnet() -> Result<()> {
     if !is_devnet_running()? {

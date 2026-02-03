@@ -19,8 +19,7 @@ const DEFAULT_SLOT_DURATION: u64 = 2;
 
 /// A complete L1+L2 devnet stack.
 pub struct Devnet {
-    #[allow(dead_code)]
-    temp_dir: TempDir,
+    _temp_dir: TempDir,
     l1_genesis: L1GenesisOutput,
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
@@ -236,6 +235,6 @@ impl DevnetBuilder {
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
 
-        Ok(Devnet { temp_dir, l1_genesis, l2_deployment, l1_stack, l2_stack: Some(l2_stack) })
+        Ok(Devnet { _temp_dir: temp_dir, l1_genesis, l2_deployment, l1_stack, l2_stack: Some(l2_stack) })
     }
 }
