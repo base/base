@@ -46,15 +46,17 @@ zepter-fix:
     @command -v zepter >/dev/null 2>&1 || cargo install zepter
     zepter format features --fix
 
+# Installs cargo-nextest if not present
+install-nextest:
+	@command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+
 # Runs tests across workspace with all features enabled (excludes system_tests)
-test: build-contracts
-    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
+test: install-nextest build-contracts
+	RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
 
 # Runs system tests (requires Docker)
-system-tests: build-contracts
-    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
-    cargo nextest run -p system_tests
+system-tests: install-nextest build-contracts
+	cargo nextest run -p system_tests
 
 # Pre-pulls Docker images needed for system tests
 system-tests-pull-images:
