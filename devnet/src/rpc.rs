@@ -1,18 +1,20 @@
 //! RPC client for querying devnet nodes.
 
+use alloy_network::Network;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use base_consensus_rpc::SyncStatusApiClient;
 use base_protocol::SyncStatus;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use op_alloy_network::Optimism;
 
 /// RPC client for querying devnet L1 and L2 nodes.
 #[derive(Debug)]
 pub struct DevnetRpcClient {
     l1_provider: RootProvider,
-    l2_builder_provider: RootProvider,
-    l2_client_provider: RootProvider,
+    l2_builder_provider: RootProvider<Optimism>,
+    l2_client_provider: RootProvider<Optimism>,
     l2_builder_op_client: HttpClient,
     l2_client_op_client: HttpClient,
 }
@@ -42,7 +44,7 @@ impl DevnetRpcClient {
     }
 
     /// Create a provider from an HTTP URL.
-    fn create_provider(url: &str) -> Result<RootProvider> {
+    fn create_provider<N: Network>(url: &str) -> Result<RootProvider<N>> {
         let url: url::Url = url.parse().wrap_err("Invalid URL")?;
         Ok(RootProvider::new_http(url))
     }

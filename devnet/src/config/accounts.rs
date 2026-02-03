@@ -1,6 +1,6 @@
 //! Anvil default test accounts derived from mnemonic.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, FixedBytes};
 use alloy_signer_local::{MnemonicBuilder, PrivateKeySigner, coins_bip39::English};
 
 /// Standard Anvil test mnemonic.
@@ -32,10 +32,8 @@ fn derive_account(index: u32) -> Account {
         .expect("valid derivation path")
         .build()
         .expect("valid signer");
-    let key_bytes = signer.credential().to_bytes();
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&key_bytes[..]);
-    Account { address: signer.address(), private_key: B256::from(arr) }
+    let key_bytes = FixedBytes::<32>::from_slice(signer.credential().to_bytes().as_slice());
+    Account { address: signer.address(), private_key: B256::from(key_bytes) }
 }
 
 /// Anvil account #0.

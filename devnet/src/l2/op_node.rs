@@ -16,6 +16,7 @@ use crate::{
     images::OP_NODE_IMAGE,
     l2::L2ContainerConfig,
     network::{ensure_network_exists, network_name},
+    setup::BUILDER_LIBP2P_PEER_ID,
     unique_name,
 };
 
@@ -128,9 +129,7 @@ impl OpNodeContainer {
         let container =
             container_builder.start().await.wrap_err("Failed to start op-node container")?;
 
-        let libp2p_peer_id = derive_libp2p_peer_id()?;
-
-        Ok(Self { container, name, libp2p_peer_id })
+        Ok(Self { container, name, libp2p_peer_id: BUILDER_LIBP2P_PEER_ID.to_string() })
     }
 
     /// Returns the RPC URL for the container (host-accessible).
@@ -279,9 +278,4 @@ fn follower_args(config: &OpNodeFollowerConfig) -> Vec<String> {
         "--rpc.addr=0.0.0.0".to_string(),
         format!("--rpc.port={RPC_PORT}"),
     ]
-}
-
-fn derive_libp2p_peer_id() -> Result<String> {
-    use crate::setup::BUILDER_LIBP2P_PEER_ID;
-    Ok(BUILDER_LIBP2P_PEER_ID.to_string())
 }

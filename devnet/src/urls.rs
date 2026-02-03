@@ -25,7 +25,9 @@ impl fmt::Display for DevnetUrls {
         writeln!(f, "RPC URLs:")?;
         writeln!(f, "  L1:          {}", self.l1_rpc)?;
         writeln!(f, "  L2 Builder:  {}", self.l2_builder_rpc)?;
-        write!(f, "  L2 Client:   {}", self.l2_client_rpc)
+        writeln!(f, "  L2 Client:   {}", self.l2_client_rpc)?;
+        writeln!(f, "  L2 Builder OP Node: {}", self.l2_builder_op_rpc)?;
+        write!(f, "  L2 Client OP Node:  {}", self.l2_client_op_rpc)
     }
 }
 
