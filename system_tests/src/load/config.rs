@@ -25,7 +25,7 @@ impl Default for LoadConfig {
     fn default() -> Self {
         Self {
             tx_rate: 2.0,
-            parallel: 3,
+            parallel: 5,
             duration_secs: 15,
             create_storage: 5,
             create_accounts: 2,

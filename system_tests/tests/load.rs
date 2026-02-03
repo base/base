@@ -3,22 +3,31 @@
 //! These tests deploy the Simulator contract and send multiple transactions
 //! to verify the network can handle sustained transaction load without failures.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use alloy_provider::Provider;
+use alloy_network::Ethereum;
+use alloy_primitives::Address;
+use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use system_tests::{
-    DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID,
+    Devnet, DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID,
     config::ANVIL_ACCOUNT_1,
     http_provider,
-    load::{Generator, LoadConfig, deploy, fund_contract, get_simulator_bytecode},
+    load::{Generator, LoadConfig, Stats, deploy, fund_contract, get_simulator_bytecode},
 };
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
-#[tokio::test]
-async fn load_test_devnet_transaction_acceptance() -> Result<()> {
+struct TestContext {
+    provider: RootProvider<Ethereum>,
+    signer: PrivateKeySigner,
+    contract_address: Address,
+    #[allow(dead_code)]
+    devnet: Devnet,
+}
+
+async fn setup_test() -> Result<TestContext> {
     eprintln!("Starting load test...");
 
     let devnet = DevnetBuilder::new()
@@ -28,7 +37,6 @@ async fn load_test_devnet_transaction_acceptance() -> Result<()> {
         .await?;
 
     let l2_rpc_url = devnet.l2_rpc_url()?;
-
     let provider = http_provider(l2_rpc_url.as_ref())?;
 
     timeout(Duration::from_secs(30), async {
@@ -53,16 +61,18 @@ async fn load_test_devnet_transaction_acceptance() -> Result<()> {
     fund_contract(&provider, &signer, contract_address, L2_CHAIN_ID).await?;
     eprintln!("Simulator contract funded");
 
-    let config = LoadConfig::default()
-        .with_tx_rate(2.0)
-        .with_parallel(3)
-        .with_duration_secs(15)
-        .with_create_storage(5)
-        .with_create_accounts(2)
-        .with_calldata_bytes(1000);
+    Ok(TestContext { provider, signer, contract_address, devnet })
+}
 
-    let generator =
-        Generator::new(provider.clone(), signer, config, contract_address, L2_CHAIN_ID).await?;
+async fn run_load_test(ctx: &TestContext, config: LoadConfig) -> Result<Arc<Stats>> {
+    let generator = Generator::new(
+        ctx.provider.clone(),
+        ctx.signer.clone(),
+        config,
+        ctx.contract_address,
+        L2_CHAIN_ID,
+    )
+    .await?;
 
     let stats = generator.stats();
     let shutdown = CancellationToken::new();
@@ -72,12 +82,54 @@ async fn load_test_devnet_transaction_acceptance() -> Result<()> {
 
     eprintln!("Load test completed: submitted={}, failed={}", stats.submitted(), stats.failed());
 
+    Ok(stats)
+}
+
+fn assert_load_test_passed(stats: &Stats) {
     assert!(
         stats.submitted() >= 10,
         "Expected at least 10 transactions to be submitted, got {}",
         stats.submitted()
     );
-
     assert_eq!(stats.failed(), 0, "Expected no failed transactions, but {} failed", stats.failed());
+}
+
+#[tokio::test]
+async fn load_test_state_root_time() -> Result<()> {
+    let ctx = setup_test().await?;
+    let config = LoadConfig::default().with_tx_rate(2.0).with_create_accounts(100);
+    let stats = run_load_test(&ctx, config).await?;
+    assert_load_test_passed(&stats);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_test_calldata() -> Result<()> {
+    let ctx = setup_test().await?;
+    let config = LoadConfig::default().with_tx_rate(1.0).with_calldata_bytes(1000);
+    let stats = run_load_test(&ctx, config).await?;
+    assert_load_test_passed(&stats);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_test_storage_slot_creation() -> Result<()> {
+    let ctx = setup_test().await?;
+    let config = LoadConfig::default().with_tx_rate(1.0).with_create_storage(100);
+    let stats = run_load_test(&ctx, config).await?;
+    assert_load_test_passed(&stats);
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_test_combined_high_parallelism() -> Result<()> {
+    let ctx = setup_test().await?;
+    let config = LoadConfig::default()
+        .with_tx_rate(1.0)
+        .with_create_storage(20)
+        .with_create_accounts(10)
+        .with_parallel(10);
+    let stats = run_load_test(&ctx, config).await?;
+    assert_load_test_passed(&stats);
     Ok(())
 }
