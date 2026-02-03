@@ -96,7 +96,6 @@ base-rpc = { path = "crates/consensus/rpc" }
 
 # Shared
 base-access-lists = { path = "crates/shared/access-lists" }
-base-account-abstraction = { path = "crates/shared/account-abstraction" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
 base-engine-ext = { path = "crates/shared/engine-ext" }
