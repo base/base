@@ -16,23 +16,23 @@ default = [ "std" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
-	"alloy-primitives/std", 
-	"op-alloy-rpc-types-engine/std"
+	"alloy-primitives/std",
+	"op-alloy-rpc-types-engine/std",
 ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"dep:serde",
-	"op-alloy-rpc-types-engine/serde"
+	"op-alloy-rpc-types-engine/serde",
 ]
 arbitrary = [
-	"dep:arbitrary",
 	"alloy-consensus/arbitrary",
 	"alloy-eips/arbitrary",
 	"alloy-primitives/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
-	"op-alloy-rpc-types-engine/arbitrary"
+	"dep:arbitrary",
+	"op-alloy-rpc-types-engine/arbitrary",
 ]
 
 [dependencies]
