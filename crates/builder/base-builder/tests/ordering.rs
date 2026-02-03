@@ -2,8 +2,8 @@
 
 use alloy_consensus::Transaction;
 use alloy_network::TransactionResponse;
-use futures::{StreamExt, future::join_all, stream};
 use base_builder::test_utils::{ChainDriverExt, ONE_ETH, setup_test_instance};
+use futures::{StreamExt, future::join_all, stream};
 
 /// This test ensures that the transactions are ordered by fee priority within each flashblock.
 /// We expect breaks in global ordering that align with flashblock boundaries.

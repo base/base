@@ -14,13 +14,15 @@ mod metrics;
 pub use metrics::OpRBuilderMetrics;
 
 mod traits;
-pub use traits::{NodeBounds, PoolBounds, ClientBounds, PayloadTxsBounds, NodeComponents};
+pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
 
 mod launcher;
 pub use launcher::{BuilderLauncher, launch};
 
 mod storage;
-pub use storage::{BaseApiExtServer, StoredBackrunBundle, StoreData, TxData, TxDataStore, TxDataStoreExt};
+pub use storage::{
+    BaseApiExtServer, StoreData, StoredBackrunBundle, TxData, TxDataStore, TxDataStoreExt,
+};
 
 pub mod flashblocks;
 

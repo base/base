@@ -1,8 +1,8 @@
 //! Contains the [`StoredBackrunBundle`] type.
 
-use uuid::Uuid;
 use alloy_primitives::Address;
 use reth_optimism_txpool::OpPooledTransaction;
+use uuid::Uuid;
 
 /// A backrun bundle that's stored.
 #[derive(Clone, Debug)]
@@ -16,4 +16,3 @@ pub struct StoredBackrunBundle {
     /// The total priority fee for the bundle.
     pub total_priority_fee: u128,
 }
-

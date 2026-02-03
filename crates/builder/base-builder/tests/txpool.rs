@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use base_builder_cli::OpRbuilderArgs;
 use base_builder::test_utils::{
     BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
     setup_test_instance_with_config,
 };
+use base_builder_cli::OpRbuilderArgs;
 use reth_node_builder::NodeConfig;
 use reth_node_core::args::TxPoolArgs;
 use reth_optimism_chainspec::OpChainSpec;

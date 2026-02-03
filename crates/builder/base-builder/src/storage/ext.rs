@@ -13,8 +13,6 @@ use tracing::warn;
 use super::TxDataStore;
 use crate::OpRBuilderMetrics;
 
-
-
 #[cfg_attr(not(test), rpc(server, namespace = "base"))]
 #[cfg_attr(test, rpc(server, client, namespace = "base"))]
 pub trait BaseApiExt {

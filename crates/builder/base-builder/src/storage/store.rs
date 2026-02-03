@@ -19,7 +19,7 @@ use reth_optimism_txpool::OpPooledTransaction;
 use reth_transaction_pool::PoolTransaction;
 use tracing::{debug, info};
 
-use super::{StoredBackrunBundle, StoreData, TxData};
+use super::{StoreData, StoredBackrunBundle, TxData};
 use crate::OpRBuilderMetrics;
 
 #[derive(Clone)]
@@ -218,9 +218,6 @@ impl Default for TxDataStore {
         Self::new(false, 10_000)
     }
 }
-
-
-
 
 #[cfg(test)]
 mod tests {

@@ -7,12 +7,12 @@ use core::{
 use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
-use base_builder_cli::OpRbuilderArgs;
 #[cfg(target_os = "linux")]
 use base_builder::test_utils::ExternalNode;
 use base_builder::test_utils::{
     TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args,
 };
+use base_builder_cli::OpRbuilderArgs;
 use tokio::{join, task::yield_now};
 use tracing::info;
 
