@@ -179,7 +179,8 @@ where
             })
         });
 
-        let l1_block_info = self.get_l1_block_info(&header)?;
+        // Get L1 block info from the canonical block (not flashblock header, which has zero hash)
+        let l1_block_info = self.get_l1_block_info(canonical_block_number)?;
 
         // Meter bundle using utility function
         let output = meter_bundle(
@@ -329,13 +330,17 @@ where
         + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    /// Get the first transaction from a L2 block to retrieve the L1 block info.
-    fn get_l1_block_info(&self, header: &SealedHeader) -> RpcResult<L1BlockInfo> {
+    /// Get L1 block info from the first transaction of a block.
+    ///
+    /// Uses the block number/tag to look up the block, which works for both canonical blocks
+    /// and when metering against pending flashblocks (where we use the canonical parent block
+    /// to get L1 info, since flashblock headers have zero hashes and can't be looked up by hash).
+    fn get_l1_block_info(&self, block_id: BlockNumberOrTag) -> RpcResult<L1BlockInfo> {
         let first_tx = self
             .provider
-            .block_by_hash(header.hash())
+            .block_by_number_or_tag(block_id)
             .map_err(|e| {
-                error!(error = %e, "Failed to get block by hash");
+                error!(error = %e, block = ?block_id, "Failed to get block");
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
                     format!("Failed to get block: {e}"),
@@ -345,7 +350,7 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block not found: {}", header.hash()),
+                    format!("Block not found: {block_id:?}"),
                     None::<()>,
                 )
             })?
@@ -355,7 +360,7 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block has no transactions: {}", header.hash()),
+                    format!("Block has no transactions: {block_id:?}"),
                     None::<()>,
                 )
             })?
@@ -742,6 +747,108 @@ mod tests {
             client.request("base_meterBundle", (bundle,)).await;
 
         assert!(response.is_err());
+
+        Ok(())
+    }
+
+    /// Test that `meter_bundle` works when flashblocks are present with a zero-hash header.
+    ///
+    /// This test verifies the fix for an issue where `get_l1_block_info` would fail when
+    /// flashblocks were present because it was looking up the block by the flashblock
+    /// header's hash (which is always `B256::ZERO` for flashblocks) instead of using the
+    /// canonical block number.
+    ///
+    /// Without the fix, this test would fail with:
+    /// "Block not found: 0x0000000000000000000000000000000000000000000000000000000000000000"
+    #[tokio::test]
+    async fn test_meter_bundle_with_flashblocks_zero_hash_header() -> eyre::Result<()> {
+        use alloy_consensus::Header;
+        use alloy_primitives::{B256, Bloom};
+        use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
+        use base_flashtypes::{
+            ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+        };
+        use url::Url;
+
+        // Create a shared flashblocks state that we can inject pending blocks into
+        let flashblocks_config =
+            FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10);
+        let flashblocks_state = Arc::clone(&flashblocks_config.state);
+
+        // Setup harness with flashblocks-enabled metering
+        let harness = TestHarness::builder()
+            .with_ext::<MeteringExtension>(MeteringConfig::with_flashblocks(flashblocks_config))
+            .build()
+            .await?;
+        let client = harness.rpc_client()?;
+
+        // Build a canonical block with L1 block info deposit
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        // Create a flashblock with a zero-hash header (this is how real flashblocks work)
+        // The header hash is B256::ZERO because the final block hash isn't known yet
+        let flashblock_header = Header {
+            number: 2, // Pending block on top of canonical block 1
+            timestamp: 1_700_000_001,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+
+        // Seal with zero hash (this is what block_assembler.rs does)
+        let sealed_header = flashblock_header.seal(B256::ZERO);
+
+        // Create a minimal flashblock
+        let flashblock = Flashblock {
+            payload_id: Default::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Default::default(),
+                prev_randao: B256::ZERO,
+                block_number: 2,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_001,
+                extra_data: Default::default(),
+                base_fee_per_gas: alloy_primitives::U256::from(1_000_000_000u64),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::default(),
+                gas_used: 0,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: Some(0),
+            },
+            metadata: Metadata { block_number: 2 },
+        };
+
+        // Build PendingBlocks with zero-hash header
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_header(sealed_header);
+        builder.with_flashblocks([flashblock]);
+        let pending_blocks = builder.build()?;
+
+        // Inject the pending blocks into the flashblocks state
+        flashblocks_state.set_pending_blocks_for_testing(Some(pending_blocks));
+
+        // Now call meter_bundle - this should succeed with the fix
+        // Without the fix, it would fail with "Block not found: 0x0000..."
+        // because get_l1_block_info would try to look up block by zero hash
+        let bundle = create_bundle(vec![], 0, None);
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
+
+        // Verify we got a response and it used the flashblock state
+        // state_block_number should be 2 (the pending block number)
+        assert_eq!(response.state_block_number, 2);
+        // state_flashblock_index should be present and be 0
+        assert_eq!(response.state_flashblock_index, Some(0));
 
         Ok(())
     }

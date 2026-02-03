@@ -125,3 +125,13 @@ impl FlashblocksAPI for FlashblocksState {
         self.flashblock_sender.subscribe()
     }
 }
+
+impl FlashblocksState {
+    /// Sets the pending blocks directly for testing purposes.
+    ///
+    /// This bypasses the normal flashblock processing pipeline and allows
+    /// tests to inject a pre-built `PendingBlocks` state.
+    pub fn set_pending_blocks_for_testing(&self, pending_blocks: Option<PendingBlocks>) {
+        self.pending_blocks.store(pending_blocks.map(Arc::new));
+    }
+}
