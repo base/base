@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
+use alloy_network::Ethereum;
+use alloy_provider::RootProvider;
+use alloy_rpc_client::RpcClient;
 use eyre::{Result, WrapErr};
+use op_alloy_network::Optimism;
 use tempfile::TempDir;
 use url::Url;
 
@@ -80,6 +84,27 @@ impl Devnet {
     /// Returns the L2 client's RPC URL.
     pub fn l2_client_rpc_url(&self) -> Result<Url> {
         self.l2_stack().client_rpc_url()
+    }
+
+    /// Returns an L1 provider with Ethereum network.
+    pub async fn l1_provider(&self) -> Result<RootProvider<Ethereum>> {
+        let url = self.l1_rpc_url().await?;
+        let client = RpcClient::builder().http(url);
+        Ok(RootProvider::<Ethereum>::new(client))
+    }
+
+    /// Returns an L2 builder provider with Optimism network.
+    pub fn l2_builder_provider(&self) -> Result<RootProvider<Optimism>> {
+        let url = self.l2_rpc_url()?;
+        let client = RpcClient::builder().http(url);
+        Ok(RootProvider::<Optimism>::new(client))
+    }
+
+    /// Returns an L2 client provider with Optimism network.
+    pub fn l2_client_provider(&self) -> Result<RootProvider<Optimism>> {
+        let url = self.l2_client_rpc_url()?;
+        let client = RpcClient::builder().http(url);
+        Ok(RootProvider::<Optimism>::new(client))
     }
 }
 

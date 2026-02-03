@@ -4,9 +4,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 use alloy_network as _;
+use alloy_rpc_client as _;
 use alloy_rpc_types as _;
 use base_flashtypes as _;
 use futures_util as _;
+use op_alloy_network as _;
 use tokio_tungstenite as _;
 
 mod utils;
