@@ -54,6 +54,13 @@ futures-util.workspace = true
 
 # RPC client (moved from dev-dependencies for CLI)
 alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-rpc-client.workspace = true
+
+# OP Alloy network types (for Optimism providers)
+op-alloy-network.workspace = true
+
+# Base protocol types
+base-protocol = { path = "../crates/consensus/protocol", features = ["serde"] }
 
 # Reth node dependencies (for in-process builder)
 reth-node-builder = { workspace = true, features = ["test-utils"] }
@@ -84,12 +91,8 @@ alloy-network.workspace = true
 [dev-dependencies]
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
-alloy-network.workspace = true
-alloy-rpc-client.workspace = true
 alloy-signer.workspace = true
 
-# Test-only OP types
-op-alloy-network.workspace = true
 op-alloy-rpc-types.workspace = true
 
 

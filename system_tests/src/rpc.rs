@@ -2,23 +2,19 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
+use base_protocol::L2BlockInfo;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
 
 /// Sync status from op-node's `optimism_syncStatus` RPC.
+/// This is the JSON response wrapper from the op-node API, which differs from
+/// [`base_protocol::SyncStatus`] used internally by the protocol.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SyncStatus {
     /// Unsafe L2 block info.
-    pub unsafe_l2: Option<L2BlockRef>,
+    pub unsafe_l2: Option<L2BlockInfo>,
     /// Safe L2 block info.
-    pub safe_l2: Option<L2BlockRef>,
-}
-
-/// L2 block reference from sync status.
-#[derive(Debug, Clone, Deserialize)]
-pub struct L2BlockRef {
-    /// Block number.
-    pub number: u64,
+    pub safe_l2: Option<L2BlockInfo>,
 }
 
 /// RPC client for querying devnet L1 and L2 nodes.
