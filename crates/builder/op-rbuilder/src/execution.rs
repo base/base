@@ -1,30 +1,84 @@
+//! Transaction execution types and errors.
+//!
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
+
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, U256};
 use derive_more::Display;
 use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use thiserror::Error;
 
 use crate::flashblocks::FlashblocksExecutionInfo;
 
-#[derive(Debug, Display, Clone)]
-pub enum TxnExecutionResult {
+/// Error returned when a transaction fails execution or exceeds block limits.
+#[derive(Debug, Error, Clone)]
+pub enum TxnExecutionError {
+    /// Transaction data availability size exceeds the per-transaction limit.
+    #[error("transaction DA limit exceeded")]
     TransactionDALimitExceeded,
-    #[display("BlockDALimitExceeded: total_da_used={_0} tx_da_size={_1} block_da_limit={_2}")]
-    BlockDALimitExceeded(u64, u64, u64),
-    #[display("TransactionGasLimitExceeded: total_gas_used={_0} tx_gas_limit={_1}")]
-    TransactionGasLimitExceeded(u64, u64, u64),
+
+    /// Block data availability limit exceeded.
+    #[error(
+        "block DA limit exceeded: total_da_used={total_da_used} tx_da_size={tx_da_size} block_da_limit={block_da_limit}"
+    )]
+    BlockDALimitExceeded {
+        /// Total DA bytes used before this transaction.
+        total_da_used: u64,
+        /// DA size of this transaction.
+        tx_da_size: u64,
+        /// Block DA limit.
+        block_da_limit: u64,
+    },
+
+    /// Transaction gas limit exceeds remaining block gas.
+    #[error(
+        "transaction gas limit exceeded: cumulative_gas_used={cumulative_gas_used} tx_gas_limit={tx_gas_limit} block_gas_limit={block_gas_limit}"
+    )]
+    TransactionGasLimitExceeded {
+        /// Cumulative gas used before this transaction.
+        cumulative_gas_used: u64,
+        /// Gas limit of this transaction.
+        tx_gas_limit: u64,
+        /// Block gas limit.
+        block_gas_limit: u64,
+    },
+
+    /// Transaction is a sequencer transaction (skipped).
+    #[error("sequencer transaction")]
     SequencerTransaction,
+
+    /// Transaction nonce is too low.
+    #[error("nonce too low")]
     NonceTooLow,
+
+    /// Interop validation failed.
+    #[error("interop failed")]
     InteropFailed,
-    #[display("InternalError({_0})")]
+
+    /// Internal EVM error during transaction execution.
+    #[error("internal error: {0}")]
     InternalError(OpTransactionError),
+
+    /// EVM execution error.
+    #[error("EVM error")]
     EvmError,
-    Success,
-    Reverted,
-    RevertedAndExcluded,
+
+    /// Transaction gas usage exceeds configured maximum.
+    #[error("max gas usage exceeded")]
     MaxGasUsageExceeded,
+}
+
+/// Outcome of transaction execution for logging purposes.
+#[derive(Debug, Display, Clone, Copy)]
+pub enum TxnOutcome {
+    /// Transaction executed successfully.
+    Success,
+    /// Transaction reverted but was included.
+    Reverted,
+    /// Transaction reverted and was excluded from the block.
+    RevertedAndExcluded,
 }
 
 #[derive(Default, Debug)]
@@ -78,17 +132,17 @@ impl ExecutionInfo {
         tx_gas_limit: u64,
         da_footprint_gas_scalar: Option<u16>,
         block_da_footprint_limit: Option<u64>,
-    ) -> Result<(), TxnExecutionResult> {
+    ) -> Result<(), TxnExecutionError> {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
-            return Err(TxnExecutionResult::TransactionDALimitExceeded);
+            return Err(TxnExecutionError::TransactionDALimitExceeded);
         }
         let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
         if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
-            return Err(TxnExecutionResult::BlockDALimitExceeded(
-                self.cumulative_da_bytes_used,
+            return Err(TxnExecutionError::BlockDALimitExceeded {
+                total_da_used: self.cumulative_da_bytes_used,
                 tx_da_size,
-                block_data_limit.unwrap_or_default(),
-            ));
+                block_da_limit: block_data_limit.unwrap_or_default(),
+            });
         }
 
         // Post Jovian: the tx DA footprint must be less than the block gas limit
@@ -96,20 +150,20 @@ impl ExecutionInfo {
             let tx_da_footprint =
                 total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
             if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
-                return Err(TxnExecutionResult::BlockDALimitExceeded(
-                    total_da_bytes_used,
+                return Err(TxnExecutionError::BlockDALimitExceeded {
+                    total_da_used: total_da_bytes_used,
                     tx_da_size,
-                    tx_da_footprint,
-                ));
+                    block_da_limit: tx_da_footprint,
+                });
             }
         }
 
         if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
-            return Err(TxnExecutionResult::TransactionGasLimitExceeded(
-                self.cumulative_gas_used,
+            return Err(TxnExecutionError::TransactionGasLimitExceeded {
+                cumulative_gas_used: self.cumulative_gas_used,
                 tx_gas_limit,
                 block_gas_limit,
-            ));
+            });
         }
         Ok(())
     }

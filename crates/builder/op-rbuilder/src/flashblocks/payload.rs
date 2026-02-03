@@ -44,6 +44,7 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use super::wspub::WebSocketPublisher;
 use crate::{
+    ExecutionInfo,
     flashblocks::{
         BuilderConfig, FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
@@ -52,7 +53,6 @@ use crate::{
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
     metrics::OpRBuilderMetrics,
-    primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
 };
 

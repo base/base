@@ -1733,8 +1733,13 @@ name = "base-builder-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "eyre",
  "reth-optimism-cli",
  "reth-optimism-node",
+ "reth-tracing-otlp",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
 ]
 
 [[package]]
