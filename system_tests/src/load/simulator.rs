@@ -50,7 +50,7 @@ pub fn build_simulator_config(create_storage: u64, create_accounts: u64) -> Simu
 }
 
 /// Returns the Simulator contract deployment bytecode with constructor args.
-pub fn simulator_deploy_bytecode(offset: u64) -> Bytes {
+pub fn get_simulator_bytecode(offset: u64) -> Bytes {
     let bytecode = hex::decode(SIMULATOR_BYTECODE_HEX.trim().trim_start_matches("0x"))
         .expect("invalid simulator bytecode hex");
 
@@ -67,16 +67,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_run_call() {
+    fn test_simulator_bytecode_and_encoding() {
+        let bytecode = get_simulator_bytecode(0);
+        assert!(!bytecode.is_empty());
+
         let config = build_simulator_config(10, 5);
         let calldata = encode_run_call(&config);
         assert!(!calldata.is_empty());
         assert!(calldata.len() > 4);
-    }
-
-    #[test]
-    fn test_deploy_bytecode() {
-        let bytecode = simulator_deploy_bytecode(0);
-        assert!(!bytecode.is_empty());
     }
 }

@@ -1,8 +1,8 @@
-//! Atomic statistics collection for stress tests.
+//! Atomic statistics collection for load tests.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Thread-safe statistics collector for stress test results.
+/// Thread-safe statistics collector for load test results.
 #[derive(Debug, Default)]
 pub struct Stats {
     /// Total transactions submitted.

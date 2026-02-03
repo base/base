@@ -1,6 +1,6 @@
-//! Stress test configuration.
+//! Load test configuration.
 
-/// Configuration for the stress test generator.
+/// Configuration for the load test generator.
 #[derive(Clone, Debug)]
 pub struct LoadConfig {
     /// Transactions per second rate.
@@ -17,6 +17,8 @@ pub struct LoadConfig {
     pub priority_fee_min_gwei: f64,
     /// Maximum priority fee in gwei.
     pub priority_fee_max_gwei: f64,
+    /// Extra calldata bytes for DA pressure (sent as separate tx to address(0)).
+    pub calldata_bytes: usize,
 }
 
 impl Default for LoadConfig {
@@ -29,6 +31,7 @@ impl Default for LoadConfig {
             create_accounts: 2,
             priority_fee_min_gwei: 0.001,
             priority_fee_max_gwei: 1.0,
+            calldata_bytes: 0,
         }
     }
 }
@@ -61,6 +64,12 @@ impl LoadConfig {
     /// Sets the number of accounts to touch per transaction.
     pub const fn with_create_accounts(mut self, n: u64) -> Self {
         self.create_accounts = n;
+        self
+    }
+
+    /// Sets the extra calldata bytes for DA pressure transactions.
+    pub const fn with_calldata_bytes(mut self, n: usize) -> Self {
+        self.calldata_bytes = n;
         self
     }
 
