@@ -7,11 +7,10 @@ use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
-use op_alloy_network::TransactionBuilder;
+use op_alloy_network::{Optimism, TransactionBuilder};
 use op_alloy_rpc_types::OpTransactionRequest;
 use system_tests::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use tokio::time::{sleep, timeout};
@@ -30,25 +29,18 @@ async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
         .build()
         .await?;
 
-    let l1_rpc_url = devnet.l1_rpc_url().await?;
-    let l2_builder_rpc_url = devnet.l2_rpc_url()?;
-    let l2_client_rpc_url = devnet.l2_client_rpc_url()?;
+    let l1_provider = devnet.l1_provider().await?;
+    let l2_builder_provider = devnet.l2_builder_provider()?;
+    let l2_client_provider = devnet.l2_client_provider()?;
 
-    verify_l1_block_production(l1_rpc_url.as_ref()).await?;
-    verify_l2_block_production(l2_builder_rpc_url.as_ref()).await?;
-    send_l2_transaction_via_client(l2_client_rpc_url.as_ref(), l2_builder_rpc_url.as_ref()).await?;
+    verify_l1_block_production(&l1_provider).await?;
+    verify_l2_block_production(&l2_builder_provider).await?;
+    send_l2_transaction_via_client(&l2_client_provider, &l2_builder_provider).await?;
 
     Ok(())
 }
 
-fn http_provider(url: &str) -> Result<RootProvider<Ethereum>> {
-    let client = RpcClient::builder().http(url.parse()?);
-    Ok(RootProvider::<Ethereum>::new(client))
-}
-
-async fn verify_l1_block_production(rpc_url: &str) -> Result<()> {
-    let provider = http_provider(rpc_url)?;
-
+async fn verify_l1_block_production(provider: &RootProvider<Ethereum>) -> Result<()> {
     let initial_block = provider.get_block_number().await?;
 
     let result = timeout(BLOCK_PRODUCTION_TIMEOUT, async {
@@ -67,9 +59,7 @@ async fn verify_l1_block_production(rpc_url: &str) -> Result<()> {
     Ok(())
 }
 
-async fn verify_l2_block_production(rpc_url: &str) -> Result<()> {
-    let provider = http_provider(rpc_url)?;
-
+async fn verify_l2_block_production(provider: &RootProvider<Optimism>) -> Result<()> {
     let initial_block = provider.get_block_number().await?;
 
     let result = timeout(BLOCK_PRODUCTION_TIMEOUT, async {
@@ -88,10 +78,10 @@ async fn verify_l2_block_production(rpc_url: &str) -> Result<()> {
     Ok(())
 }
 
-async fn send_l2_transaction_via_client(client_rpc_url: &str, builder_rpc_url: &str) -> Result<()> {
-    let builder_provider = http_provider(builder_rpc_url)?;
-    let client_provider = http_provider(client_rpc_url)?;
-
+async fn send_l2_transaction_via_client(
+    client_provider: &RootProvider<Optimism>,
+    builder_provider: &RootProvider<Optimism>,
+) -> Result<()> {
     let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
     let signer: PrivateKeySigner = private_key_hex.parse()?;
     let sender_address = signer.address();
@@ -150,10 +140,10 @@ async fn send_l2_transaction_via_client(client_rpc_url: &str, builder_rpc_url: &
     .wrap_err("Transaction receipt timed out on builder")?
     .wrap_err("Failed to get transaction receipt")?;
 
-    assert_eq!(receipt.transaction_hash, tx_hash);
-    assert!(receipt.block_number.is_some(), "Receipt should have block number");
-    assert_eq!(receipt.from, sender_address);
-    assert_eq!(receipt.to, Some(recipient));
+    assert_eq!(receipt.inner.transaction_hash, tx_hash);
+    assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
+    assert_eq!(receipt.inner.from, sender_address);
+    assert_eq!(receipt.inner.to, Some(recipient));
 
     Ok(())
 }
@@ -166,11 +156,8 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
         .build()
         .await?;
 
-    let l2_builder_rpc_url = devnet.l2_rpc_url()?;
-    let l2_client_rpc_url = devnet.l2_client_rpc_url()?;
-
-    let builder_provider = http_provider(l2_builder_rpc_url.as_ref())?;
-    let client_provider = http_provider(l2_client_rpc_url.as_ref())?;
+    let builder_provider = devnet.l2_builder_provider()?;
+    let client_provider = devnet.l2_client_provider()?;
 
     timeout(BLOCK_PRODUCTION_TIMEOUT, async {
         loop {
@@ -209,11 +196,8 @@ async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
         .build()
         .await?;
 
-    let l2_builder_rpc_url = devnet.l2_rpc_url()?;
-    let l2_client_rpc_url = devnet.l2_client_rpc_url()?;
-
-    let builder_provider = http_provider(l2_builder_rpc_url.as_ref())?;
-    let client_provider = http_provider(l2_client_rpc_url.as_ref())?;
+    let builder_provider = devnet.l2_builder_provider()?;
+    let client_provider = devnet.l2_client_provider()?;
 
     timeout(BLOCK_PRODUCTION_TIMEOUT, async {
         loop {
@@ -265,7 +249,7 @@ async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
     );
 }
 
-async fn get_pending_block_number<P: Provider>(provider: &P) -> Result<u64> {
+async fn get_pending_block_number(provider: &RootProvider<Optimism>) -> Result<u64> {
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Pending)
         .await
