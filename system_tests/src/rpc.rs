@@ -1,9 +1,17 @@
 //! RPC client for querying devnet nodes.
 
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
+
+/// Creates an HTTP provider for the given RPC URL.
+pub fn http_provider(url: &str) -> Result<RootProvider<Ethereum>> {
+    let client = RpcClient::builder().http(url.parse()?);
+    Ok(RootProvider::<Ethereum>::new(client))
+}
 
 /// Sync status from op-node's `optimism_syncStatus` RPC.
 #[derive(Debug, Clone, Deserialize)]

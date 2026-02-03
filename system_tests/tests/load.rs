@@ -1,4 +1,4 @@
-//! Stress tests for metering and transaction acceptance on the L2 devnet.
+//! Load tests for metering and transaction acceptance on the L2 devnet.
 //!
 //! These tests deploy the Simulator contract and send multiple transactions
 //! to verify the network can handle sustained transaction load without failures.
@@ -10,7 +10,6 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
@@ -19,15 +18,11 @@ use op_alloy_rpc_types::OpTransactionRequest;
 use system_tests::{
     DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID,
     config::ANVIL_ACCOUNT_1,
-    stress::{Generator, StressConfig, simulator_deploy_bytecode},
+    http_provider,
+    load::{Generator, LoadConfig, simulator_deploy_bytecode},
 };
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
-
-fn http_provider(url: &str) -> Result<RootProvider<Ethereum>> {
-    let client = RpcClient::builder().http(url.parse()?);
-    Ok(RootProvider::<Ethereum>::new(client))
-}
 
 async fn deploy_simulator(
     provider: &RootProvider<Ethereum>,
@@ -137,8 +132,8 @@ async fn fund_simulator_contract(
 }
 
 #[tokio::test]
-async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
-    eprintln!("Starting stress test...");
+async fn load_test_devnet_transaction_acceptance() -> Result<()> {
+    eprintln!("Starting load test...");
 
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
@@ -147,7 +142,6 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
         .await?;
 
     let l2_rpc_url = devnet.l2_rpc_url()?;
-    eprintln!("Devnet started: {l2_rpc_url}");
 
     let provider = http_provider(l2_rpc_url.as_ref())?;
 
@@ -170,7 +164,7 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
 
     fund_simulator_contract(&provider, &signer, contract_address, L2_CHAIN_ID).await?;
 
-    let config = StressConfig::default()
+    let config = LoadConfig::default()
         .with_tx_rate(2.0)
         .with_parallel(3)
         .with_duration_secs(15)
@@ -178,15 +172,15 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
         .with_create_accounts(2);
 
     let generator =
-        Generator::new(l2_rpc_url.as_ref(), signer, config, contract_address, L2_CHAIN_ID).await?;
+        Generator::new(provider.clone(), signer, config, contract_address, L2_CHAIN_ID).await?;
 
     let stats = generator.stats();
     let shutdown = CancellationToken::new();
 
-    eprintln!("Starting stress generator...");
+    eprintln!("Starting load generator...");
     generator.run(shutdown).await?;
 
-    eprintln!("Stress test completed: submitted={}, failed={}", stats.submitted(), stats.failed());
+    eprintln!("Load test completed: submitted={}, failed={}", stats.submitted(), stats.failed());
 
     assert!(
         stats.submitted() >= 10,
@@ -195,8 +189,5 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
     );
 
     assert_eq!(stats.failed(), 0, "Expected no failed transactions, but {} failed", stats.failed());
-
-    eprintln!("Stress test PASSED");
-
     Ok(())
 }

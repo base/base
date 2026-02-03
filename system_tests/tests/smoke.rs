@@ -4,16 +4,16 @@ use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_client::RpcClient;
+use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use op_alloy_network::TransactionBuilder;
 use op_alloy_rpc_types::OpTransactionRequest;
-use system_tests::{DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID, config::ANVIL_ACCOUNT_1};
+use system_tests::{
+    DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID, config::ANVIL_ACCOUNT_1, http_provider,
+};
 use tokio::time::{sleep, timeout};
 
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -37,11 +37,6 @@ async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
     send_l2_transaction_via_client(l2_client_rpc_url.as_ref(), l2_builder_rpc_url.as_ref()).await?;
 
     Ok(())
-}
-
-fn http_provider(url: &str) -> Result<RootProvider<Ethereum>> {
-    let client = RpcClient::builder().http(url.parse()?);
-    Ok(RootProvider::<Ethereum>::new(client))
 }
 
 async fn verify_l1_block_production(rpc_url: &str) -> Result<()> {

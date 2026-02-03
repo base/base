@@ -74,6 +74,8 @@ pub mod host;
 pub mod images;
 pub mod l1;
 pub mod l2;
+/// Stress testing module for metering.
+pub mod load;
 /// Network management for test containers.
 pub mod network;
 /// RPC client for querying devnet nodes.
@@ -82,8 +84,7 @@ pub mod rpc;
 pub mod setup;
 /// High-level devnet orchestration and smoke tests.
 pub mod smoke;
-/// Stress testing module for metering.
-pub mod stress;
 
+pub use rpc::http_provider;
 pub use setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer};
 pub use smoke::{Devnet, DevnetBuilder};

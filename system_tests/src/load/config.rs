@@ -2,7 +2,7 @@
 
 /// Configuration for the stress test generator.
 #[derive(Clone, Debug)]
-pub struct StressConfig {
+pub struct LoadConfig {
     /// Transactions per second rate.
     pub tx_rate: f64,
     /// Maximum concurrent in-flight transactions.
@@ -19,7 +19,7 @@ pub struct StressConfig {
     pub priority_fee_max_gwei: f64,
 }
 
-impl Default for StressConfig {
+impl Default for LoadConfig {
     fn default() -> Self {
         Self {
             tx_rate: 2.0,
@@ -33,7 +33,7 @@ impl Default for StressConfig {
     }
 }
 
-impl StressConfig {
+impl LoadConfig {
     /// Sets the transaction rate (TPS).
     pub const fn with_tx_rate(mut self, rate: f64) -> Self {
         self.tx_rate = rate;

@@ -1,41 +1,43 @@
-//! Transaction generator for stress testing.
+//! Transaction generator for load testing.
 
 use std::{
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use op_alloy_network::TransactionBuilder;
 use op_alloy_rpc_types::OpTransactionRequest;
+use rand::Rng;
 use tokio::{
     sync::Semaphore,
     time::{interval, sleep},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 use super::{
-    config::StressConfig,
+    config::LoadConfig,
     simulator::{build_simulator_config, encode_run_call},
     stats::Stats,
 };
 
-/// Generates stress test transactions at a configurable rate.
+/// Generates load test transactions at a configurable rate.
 #[derive(Debug)]
 pub struct Generator {
     provider: RootProvider<Ethereum>,
     signer: PrivateKeySigner,
-    config: StressConfig,
+    config: LoadConfig,
     contract_address: Address,
     chain_id: u64,
     nonce: AtomicU64,
@@ -45,15 +47,12 @@ pub struct Generator {
 impl Generator {
     /// Creates a new generator with the given configuration.
     pub async fn new(
-        rpc_url: &str,
+        provider: RootProvider<Ethereum>,
         signer: PrivateKeySigner,
-        config: StressConfig,
+        config: LoadConfig,
         contract_address: Address,
         chain_id: u64,
     ) -> Result<Self> {
-        let client = alloy_rpc_client::RpcClient::builder().http(rpc_url.parse()?);
-        let provider = RootProvider::<Ethereum>::new(client);
-
         let initial_nonce = provider
             .get_transaction_count(signer.address())
             .await
@@ -84,32 +83,32 @@ impl Generator {
         let gas_price = self.provider.get_gas_price().await.unwrap_or(1_000_000_000);
         let max_fee = gas_price * 2;
 
-        tracing::info!(
+        info!(
             tx_rate = self.config.tx_rate,
             parallel = self.config.parallel,
             duration_secs = self.config.duration_secs,
-            "Starting stress generator"
+            "Starting load generator"
         );
 
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let duration = Duration::from_secs(self.config.duration_secs);
 
         loop {
             if start.elapsed() >= duration {
-                tracing::info!("Duration elapsed, stopping generator");
+                info!("Duration elapsed, stopping generator");
                 break;
             }
 
             tokio::select! {
                 _ = shutdown.cancelled() => {
-                    tracing::info!("Shutdown signal received");
+                    info!("Shutdown signal received");
                     break;
                 }
                 _ = interval_timer.tick() => {
                     let permit = match Arc::clone(&semaphore).try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
-                            tracing::debug!("At max parallelism, skipping tick");
+                            debug!("At max parallelism, skipping tick");
                             continue;
                         }
                     };
@@ -122,11 +121,11 @@ impl Generator {
                     match tx_result {
                         Ok(tx_hash) => {
                             self.stats.record_submitted();
-                            tracing::debug!(%tx_hash, nonce = tx_nonce, "Transaction sent");
+                            debug!(%tx_hash, nonce = tx_nonce, "Transaction sent");
                         }
                         Err(e) => {
                             self.stats.record_failed();
-                            tracing::warn!(error = %e, nonce = tx_nonce, "Transaction failed");
+                            warn!(error = %e, nonce = tx_nonce, "Transaction failed");
                         }
                     }
 
@@ -136,13 +135,12 @@ impl Generator {
         }
 
         let _ = semaphore.acquire_many(self.config.parallel as u32).await;
-        tracing::info!("All in-flight transactions completed");
+        info!("All in-flight transactions completed");
 
         Ok(())
     }
 
     fn sample_priority_fee(&self) -> u128 {
-        use rand::Rng;
         let mut rng = rand::rng();
         let min = self.config.priority_fee_min_wei();
         let max = self.config.priority_fee_max_wei();
@@ -154,7 +152,7 @@ impl Generator {
         nonce: u64,
         priority_fee: u128,
         max_fee: u128,
-    ) -> Result<alloy_primitives::B256> {
+    ) -> Result<B256> {
         let sim_config =
             build_simulator_config(self.config.create_storage, self.config.create_accounts);
         let calldata = encode_run_call(&sim_config);
@@ -195,15 +193,14 @@ impl Generator {
         if submitted == 0 {
             return Ok(());
         }
+        info!(submitted, "Waiting for transaction receipts (up to {}s)", timeout_secs);
 
-        tracing::info!(submitted, "Waiting for transaction receipts (up to {}s)", timeout_secs);
-
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let timeout = Duration::from_secs(timeout_secs);
 
         while start.elapsed() < timeout {
             let block_number = self.provider.get_block_number().await?;
-            tracing::debug!(block_number, "Current block");
+            debug!(block_number, "Current block");
 
             if start.elapsed() > Duration::from_secs(5) {
                 break;
