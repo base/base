@@ -5,9 +5,7 @@ use std::{fs, io::Write, path::PathBuf};
 use alloy_primitives::utils::format_ether;
 use base_flashtypes::Flashblock;
 use clap::Parser;
-use eyre::{Result, WrapErr};
-use futures_util::StreamExt;
-use system_tests::{
+use devnet::{
     DevnetBuilder, DevnetUrls,
     cli::{Command, DevnetCli},
     docker::{
@@ -15,6 +13,8 @@ use system_tests::{
     },
     rpc::DevnetRpcClient,
 };
+use eyre::{Result, WrapErr};
+use futures_util::StreamExt;
 use tokio_tungstenite::connect_async;
 
 #[tokio::main]
@@ -48,26 +48,12 @@ async fn start_devnet() -> Result<()> {
     println!("Starting devnet...");
 
     let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(1337)
-        .with_l2_chain_id(84538453)
         .with_output_dir(devnet_dir.clone())
         .with_stable_config()
         .build()
         .await?;
 
-    let l1_rpc = devnet.l1_rpc_url().await?;
-    let l2_builder_rpc = devnet.l2_rpc_url()?;
-    let l2_client_rpc = devnet.l2_client_rpc_url()?;
-    let l2_builder_op_rpc = devnet.l2_stack().op_node().rpc_url().await?;
-    let l2_client_op_rpc = "http://localhost:8549".to_string();
-
-    let urls = DevnetUrls {
-        l1_rpc: l1_rpc.to_string(),
-        l2_builder_rpc: l2_builder_rpc.to_string(),
-        l2_client_rpc: l2_client_rpc.to_string(),
-        l2_builder_op_rpc: l2_builder_op_rpc.to_string(),
-        l2_client_op_rpc,
-    };
+    let urls = devnet.urls().await?;
     urls.write_to_file(&devnet_dir.join("urls.json"))?;
 
     println!("\nDevnet started successfully!");
@@ -87,7 +73,7 @@ async fn smoke_devnet() -> Result<()> {
     use alloy_provider::{Provider, ProviderBuilder};
     use alloy_rpc_types::TransactionRequest;
     use alloy_signer_local::PrivateKeySigner;
-    use system_tests::config::{ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2};
+    use devnet::config::{ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2};
 
     if !is_devnet_running()? {
         eprintln!("Error: Devnet is not running. Start it with 'devnet start'");
@@ -161,8 +147,6 @@ fn clean_devnet() -> Result<()> {
     Ok(())
 }
 
-
-
 async fn status_devnet() -> Result<()> {
     if !is_devnet_running()? {
         eprintln!("Error: Devnet is not running. Start it with 'devnet start'");
@@ -182,18 +166,10 @@ async fn status_devnet() -> Result<()> {
     let builder_status = client.l2_builder_sync_status().await?;
     let client_status = client.l2_client_sync_status().await?;
 
-    let builder_unsafe = builder_status
-        .unsafe_l2
-        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
-    let builder_safe = builder_status
-        .safe_l2
-        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
-    let client_unsafe = client_status
-        .unsafe_l2
-        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
-    let client_safe = client_status
-        .safe_l2
-        .map_or_else(|| "N/A".to_string(), |b| b.block_info.number.to_string());
+    let builder_unsafe = builder_status.unsafe_l2.block_info.number;
+    let builder_safe = builder_status.safe_l2.block_info.number;
+    let client_unsafe = client_status.unsafe_l2.block_info.number;
+    let client_safe = client_status.safe_l2.block_info.number;
 
     println!();
     println!("{:<12} | {:<10} | {:<10}", "Component", "Unsafe", "Safe");
@@ -226,7 +202,7 @@ async fn accounts_devnet() -> Result<()> {
     println!("{:<4} {:<44} {:>20} {:>20}", "#", "Address", "L1 Balance (ETH)", "L2 Balance (ETH)");
     println!("{}", "-".repeat(92));
 
-    use system_tests::config::{
+    use devnet::config::{
         ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
         ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, ANVIL_ACCOUNT_8, ANVIL_ACCOUNT_9,
     };
@@ -252,8 +228,6 @@ async fn accounts_devnet() -> Result<()> {
 
     Ok(())
 }
-
-
 
 async fn flashblocks_devnet() -> Result<()> {
     if !is_devnet_running()? {

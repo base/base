@@ -15,7 +15,7 @@ members = [
     "crates/consensus/*",
     "crates/shared/*",
     "crates/builder/*",
-    "system_tests"
+    "devnet"
 ]
 default-members = ["bin/node", "bin/consensus", "bin/builder"]
 
@@ -93,7 +93,7 @@ codegen-units = 1
 [workspace.dependencies]
 # Consensus
 base-protocol = { path = "crates/consensus/protocol" }
-base-rpc = { path = "crates/consensus/rpc" }
+base-consensus-rpc = { path = "crates/consensus/rpc" }
 
 # Shared
 base-access-lists = { path = "crates/shared/access-lists" }

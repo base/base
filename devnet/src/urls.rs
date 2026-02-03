@@ -1,7 +1,6 @@
-//! DevnetUrls type for managing RPC endpoints.
+//! `DevnetUrls` type for managing RPC endpoints.
 
-use std::fmt;
-use std::path::Path;
+use std::{fmt, path::Path};
 
 use eyre::{Result, WrapErr};
 
@@ -31,13 +30,13 @@ impl fmt::Display for DevnetUrls {
 }
 
 impl DevnetUrls {
-    /// Read DevnetUrls from a JSON file.
+    /// Read `DevnetUrls` from a JSON file.
     pub fn read_from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path).wrap_err("Failed to read urls.json")?;
         serde_json::from_str(&content).wrap_err("Failed to parse urls.json")
     }
 
-    /// Write DevnetUrls to a JSON file.
+    /// Write `DevnetUrls` to a JSON file.
     pub fn write_to_file(&self, path: &Path) -> Result<()> {
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(path, content).wrap_err("Failed to write urls.json")

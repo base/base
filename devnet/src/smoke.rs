@@ -1,3 +1,5 @@
+//! Devnet orchestration and lifecycle management.
+
 use std::path::PathBuf;
 
 use alloy_network::Ethereum;
@@ -13,7 +15,6 @@ use crate::{
     devnet_config::StableDevnetConfig,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
     l2::{L2ContainerConfig, L2Stack, L2StackConfig},
-    network::cleanup_network,
     setup::{BUILDER_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer},
 };
 
@@ -27,7 +28,7 @@ pub struct Devnet {
     l1_genesis: L1GenesisOutput,
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
-    l2_stack: Option<L2Stack>,
+    l2_stack: L2Stack,
 }
 
 impl std::fmt::Debug for Devnet {
@@ -46,9 +47,8 @@ impl Devnet {
     }
 
     /// Returns a reference to the L2 stack.
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn l2_stack(&self) -> &L2Stack {
-        self.l2_stack.as_ref().expect("L2Stack already dropped")
+    pub const fn l2_stack(&self) -> &L2Stack {
+        &self.l2_stack
     }
 
     /// Returns the public RPC URL of the L1 Reth node.
@@ -106,12 +106,16 @@ impl Devnet {
         let client = RpcClient::builder().http(url);
         Ok(RootProvider::<Optimism>::new(client))
     }
-}
 
-impl Drop for Devnet {
-    fn drop(&mut self) {
-        drop(self.l2_stack.take());
-        cleanup_network();
+    /// Returns all RPC URLs for this devnet instance.
+    pub async fn urls(&self) -> Result<crate::DevnetUrls> {
+        Ok(crate::DevnetUrls {
+            l1_rpc: self.l1_rpc_url().await?.to_string(),
+            l2_builder_rpc: self.l2_rpc_url()?.to_string(),
+            l2_client_rpc: self.l2_client_rpc_url()?.to_string(),
+            l2_builder_op_rpc: self.l2_stack().builder_op_node_rpc_url().await?.to_string(),
+            l2_client_op_rpc: self.l2_stack().client_op_node_rpc_url().await?.to_string(),
+        })
     }
 }
 
@@ -260,6 +264,6 @@ impl DevnetBuilder {
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
 
-        Ok(Devnet { _temp_dir: temp_dir, l1_genesis, l2_deployment, l1_stack, l2_stack: Some(l2_stack) })
+        Ok(Devnet { _temp_dir: temp_dir, l1_genesis, l2_deployment, l1_stack, l2_stack })
     }
 }

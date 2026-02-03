@@ -83,7 +83,6 @@ impl BatcherContainer {
 
         Ok(Self { _container: container, _name: name })
     }
-
 }
 
 fn batcher_args(config: &BatcherConfig) -> Vec<String> {

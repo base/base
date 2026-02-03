@@ -1,3 +1,5 @@
+//! Container name constants for devnet infrastructure.
+
 /// Name of the L1 Reth container.
 pub const L1_RETH_NAME: &str = "l1-reth";
 /// Name of the L1 Lighthouse beacon container.

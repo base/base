@@ -50,13 +50,13 @@ zepter-fix:
 install-nextest:
 	@command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
 
-# Runs tests across workspace with all features enabled (excludes system_tests)
+# Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts
-	RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude system_tests
+	RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet
 
-# Runs system tests (requires Docker)
-system-tests: install-nextest build-contracts
-	cargo nextest run -p system_tests
+# Runs devnet tests (requires Docker)
+devnet-tests: install-nextest build-contracts
+	cargo nextest run -p devnet
 
 # Pre-pulls Docker images needed for system tests
 system-tests-pull-images:

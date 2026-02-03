@@ -9,10 +9,10 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};
 use op_alloy_network::{Optimism, TransactionBuilder};
 use op_alloy_rpc_types::OpTransactionRequest;
-use system_tests::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use tokio::time::{sleep, timeout};
 
 const L1_CHAIN_ID: u64 = 1337;

@@ -1,5 +1,5 @@
 [package]
-name = "system_tests"
+name = "devnet"
 description = "System/E2E tests for Base node infrastructure"
 
 version.workspace = true
@@ -17,6 +17,15 @@ path = "src/bin/devnet.rs"
 workspace = true
 
 [dependencies]
+base-protocol = { workspace = true, features = ["serde"] }
+base-consensus-rpc = { workspace = true, features = ["client"] }
+base-client-node = { workspace = true, features = ["test-utils"] }
+base-flashblocks.workspace = true
+base-flashblocks-node.workspace = true
+base-flashtypes.workspace = true
+base-txpool.workspace = true
+base-builder-cli.workspace = true
+
 # Async runtime
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
@@ -59,8 +68,8 @@ alloy-rpc-client.workspace = true
 # OP Alloy network types (for Optimism providers)
 op-alloy-network.workspace = true
 
-# Base protocol types
-base-protocol = { path = "../crates/consensus/protocol", features = ["serde"] }
+# RPC (jsonrpsee for sync status client)
+jsonrpsee = { workspace = true, features = ["http-client"] }
 
 # Reth node dependencies (for in-process builder)
 reth-node-builder = { workspace = true, features = ["test-utils"] }
@@ -74,17 +83,9 @@ reth-optimism-txpool.workspace = true
 
 # op-rbuilder (for FlashblocksServiceBuilder)
 op-rbuilder = { workspace = true, features = ["test-utils"] }
-base-builder-cli.workspace = true
 
-# Base client node (for in-process client)
-base-client-node = { workspace = true, features = ["test-utils"] }
-base-flashblocks.workspace = true
-base-flashblocks-node.workspace = true
-base-flashtypes.workspace = true
-base-txpool.workspace = true
 reth-provider.workspace = true
 alloy-genesis.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 alloy-rpc-types.workspace = true
 alloy-network.workspace = true
 
@@ -94,5 +95,3 @@ alloy-eips.workspace = true
 alloy-signer.workspace = true
 
 op-alloy-rpc-types.workspace = true
-
-

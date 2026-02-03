@@ -280,10 +280,10 @@ jobs:
       - name: Cache docker images
         uses: ScribeMD/docker-cache@fb28c93772363301b8d0a6072ce850224b73f74e # 0.5.0
         with:
-          key: docker-${{ runner.os }}-${{ hashFiles('system_tests/src/images.rs', 'docker/Dockerfile.devnet') }}
+          key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'docker/Dockerfile.devnet') }}
 
       - name: Pre-pull docker images
         run: just system-tests-pull-images
 
-      - name: Run system tests
-        run: just system-tests
+      - name: Run devnet tests
+        run: just devnet-tests

@@ -15,7 +15,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use system_tests::host::{host_address, with_host_port_if_needed};
+//! use devnet::host::{host_address, with_host_port_if_needed};
 //!
 //! let engine_url = format!("http://{}:{}", host_address(), port);
 //! let container_builder = with_host_port_if_needed(container_builder, port);

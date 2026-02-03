@@ -57,7 +57,7 @@ pub struct L2StackConfig {
 /// # Example
 ///
 /// ```ignore
-/// use system_tests::l2::{L2Stack, L2StackConfig};
+/// use devnet::l2::{L2Stack, L2StackConfig};
 ///
 /// let config = L2StackConfig {
 ///     l2_genesis: genesis_json,
@@ -75,10 +75,9 @@ pub struct L2StackConfig {
 /// ```
 pub struct L2Stack {
     builder: InProcessBuilder,
-    op_node: OpNodeContainer,
+    builder_op_node: OpNodeContainer,
     batcher: BatcherContainer,
     client: InProcessClient,
-    #[allow(dead_code)]
     client_op_node: OpNodeFollowerContainer,
 }
 
@@ -86,7 +85,7 @@ impl std::fmt::Debug for L2Stack {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("L2Stack")
             .field("builder", &self.builder)
-            .field("op_node", &self.op_node)
+            .field("builder_op_node", &self.builder_op_node)
             .field("batcher", &self.batcher)
             .field("client", &self.client)
             .field("client_op_node", &"OpNodeFollowerContainer")
@@ -126,15 +125,16 @@ impl L2Stack {
             l2_engine_url: builder.host_engine_url(),
             l2_engine_port: builder.engine_port(),
         };
-        let op_node = OpNodeContainer::start(op_node_config, config.container_config.as_ref())
-            .await
-            .wrap_err("Failed to start op-node")?;
+        let builder_op_node =
+            OpNodeContainer::start(op_node_config, config.container_config.as_ref())
+                .await
+                .wrap_err("Failed to start op-node")?;
 
         let batcher_config = BatcherConfig {
             l1_rpc_url: config.l1_rpc_url.clone(),
             l2_rpc_url: builder.host_rpc_url(),
             l2_rpc_port: builder.rpc_port(),
-            rollup_rpc_url: op_node.internal_rpc_url(),
+            rollup_rpc_url: builder_op_node.internal_rpc_url(),
             batcher_key: config.batcher_key,
         };
         let batcher = BatcherContainer::start(batcher_config, config.container_config.as_ref())
@@ -164,7 +164,7 @@ impl L2Stack {
             l1_beacon_url: config.l1_beacon_url,
             l2_engine_url: client.host_engine_url(),
             l2_engine_port: client.engine_port(),
-            builder_op_node_name: op_node.name().to_string(),
+            builder_op_node_name: builder_op_node.name().to_string(),
             builder_op_node_peer_id: BUILDER_LIBP2P_PEER_ID.to_string(),
         };
         let client_op_node =
@@ -172,7 +172,7 @@ impl L2Stack {
                 .await
                 .wrap_err("Failed to start client op-node follower")?;
 
-        Ok(Self { builder, op_node, batcher, client, client_op_node })
+        Ok(Self { builder, builder_op_node, batcher, client, client_op_node })
     }
 
     /// Returns a reference to the in-process builder.
@@ -180,9 +180,9 @@ impl L2Stack {
         &self.builder
     }
 
-    /// Returns a reference to the op-node container.
-    pub const fn op_node(&self) -> &OpNodeContainer {
-        &self.op_node
+    /// Returns a reference to the builder's op-node container.
+    pub const fn builder_op_node(&self) -> &OpNodeContainer {
+        &self.builder_op_node
     }
 
     /// Returns a reference to the batcher container.
@@ -210,8 +210,13 @@ impl L2Stack {
         self.client.rpc_url()
     }
 
-    /// Returns the op-node's RPC URL.
-    pub async fn op_node_rpc_url(&self) -> Result<Url> {
-        self.op_node.rpc_url().await
+    /// Returns the builder's op-node RPC URL.
+    pub async fn builder_op_node_rpc_url(&self) -> Result<Url> {
+        self.builder_op_node.rpc_url().await
+    }
+
+    /// Returns the client op-node follower's RPC URL.
+    pub async fn client_op_node_rpc_url(&self) -> Result<Url> {
+        self.client_op_node.rpc_url().await
     }
 }

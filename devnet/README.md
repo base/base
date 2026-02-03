@@ -1,4 +1,4 @@
-# `system_tests`
+# `devnet`
 
 System/E2E test infrastructure for Base node.
 

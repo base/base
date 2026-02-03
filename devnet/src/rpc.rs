@@ -2,20 +2,10 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
-use base_protocol::L2BlockInfo;
+use base_consensus_rpc::SyncStatusApiClient;
+use base_protocol::SyncStatus;
 use eyre::{Result, WrapErr};
-use serde::Deserialize;
-
-/// Sync status from op-node's `optimism_syncStatus` RPC.
-/// This is the JSON response wrapper from the op-node API, which differs from
-/// [`base_protocol::SyncStatus`] used internally by the protocol.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SyncStatus {
-    /// Unsafe L2 block info.
-    pub unsafe_l2: Option<L2BlockInfo>,
-    /// Safe L2 block info.
-    pub safe_l2: Option<L2BlockInfo>,
-}
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 
 /// RPC client for querying devnet L1 and L2 nodes.
 #[derive(Debug)]
@@ -23,8 +13,8 @@ pub struct DevnetRpcClient {
     l1_provider: RootProvider,
     l2_builder_provider: RootProvider,
     l2_client_provider: RootProvider,
-    l2_builder_op_rpc_url: String,
-    l2_client_op_rpc_url: String,
+    l2_builder_op_client: HttpClient,
+    l2_client_op_client: HttpClient,
 }
 
 impl DevnetRpcClient {
@@ -39,13 +29,15 @@ impl DevnetRpcClient {
         let l1_provider = Self::create_provider(l1_url)?;
         let l2_builder_provider = Self::create_provider(l2_builder_url)?;
         let l2_client_provider = Self::create_provider(l2_client_url)?;
+        let l2_builder_op_client = Self::create_http_client(l2_builder_op_rpc_url)?;
+        let l2_client_op_client = Self::create_http_client(l2_client_op_rpc_url)?;
 
         Ok(Self {
             l1_provider,
             l2_builder_provider,
             l2_client_provider,
-            l2_builder_op_rpc_url: l2_builder_op_rpc_url.to_string(),
-            l2_client_op_rpc_url: l2_client_op_rpc_url.to_string(),
+            l2_builder_op_client,
+            l2_client_op_client,
         })
     }
 
@@ -53,6 +45,11 @@ impl DevnetRpcClient {
     fn create_provider(url: &str) -> Result<RootProvider> {
         let url: url::Url = url.parse().wrap_err("Invalid URL")?;
         Ok(RootProvider::new_http(url))
+    }
+
+    /// Create a jsonrpsee HTTP client.
+    fn create_http_client(url: &str) -> Result<HttpClient> {
+        HttpClientBuilder::default().build(url).wrap_err("Failed to create HTTP client")
     }
 
     /// Get the current block number on L1.
@@ -88,37 +85,17 @@ impl DevnetRpcClient {
 
     /// Get sync status from L2 builder op-node.
     pub async fn l2_builder_sync_status(&self) -> Result<SyncStatus> {
-        self.fetch_sync_status(&self.l2_builder_op_rpc_url).await
+        self.l2_builder_op_client
+            .op_sync_status()
+            .await
+            .wrap_err("Failed to get L2 builder sync status")
     }
 
     /// Get sync status from L2 client op-node.
     pub async fn l2_client_sync_status(&self) -> Result<SyncStatus> {
-        self.fetch_sync_status(&self.l2_client_op_rpc_url).await
-    }
-
-    async fn fetch_sync_status(&self, url: &str) -> Result<SyncStatus> {
-        let client = reqwest::Client::new();
-        let body = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "optimism_syncStatus",
-            "params": [],
-            "id": 1
-        });
-
-        let resp = client
-            .post(url)
-            .json(&body)
-            .send()
+        self.l2_client_op_client
+            .op_sync_status()
             .await
-            .wrap_err("Failed to send syncStatus request")?;
-
-        #[derive(Deserialize)]
-        struct RpcResponse {
-            result: SyncStatus,
-        }
-
-        let rpc_resp: RpcResponse =
-            resp.json().await.wrap_err("Failed to parse syncStatus response")?;
-        Ok(rpc_resp.result)
+            .wrap_err("Failed to get L2 client sync status")
     }
 }

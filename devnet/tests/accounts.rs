@@ -1,5 +1,7 @@
+//! Tests for mnemonic-based account derivation.
+
 use alloy_primitives::address;
-use system_tests::config::{
+use devnet::config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
     ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, ANVIL_ACCOUNT_8, ANVIL_ACCOUNT_9,
 };
@@ -35,6 +37,6 @@ fn test_mnemonic_derivation() {
     for (i, (expected, derived)) in
         expected_addresses.iter().zip(derived_addresses.iter()).enumerate()
     {
-        assert_eq!(expected, derived, "account {} address mismatch", i);
+        assert_eq!(expected, derived, "account {i} address mismatch");
     }
 }
