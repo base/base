@@ -95,28 +95,29 @@ base-protocol = { path = "crates/consensus/protocol" }
 base-rpc = { path = "crates/consensus/rpc" }
 
 # Shared
-base-jwt = { path = "crates/shared/jwt" }
+base-access-lists = { path = "crates/shared/access-lists" }
+base-account-abstraction = { path = "crates/shared/account-abstraction" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
-base-flashtypes = { path = "crates/shared/flashtypes" }
-base-primitives = { path = "crates/shared/primitives" }
 base-engine-ext = { path = "crates/shared/engine-ext" }
-base-access-lists = { path = "crates/shared/access-lists" }
-base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
+base-flashtypes = { path = "crates/shared/flashtypes" }
+base-jwt = { path = "crates/shared/jwt" }
+base-primitives = { path = "crates/shared/primitives" }
 base-proofs-extension = { path = "crates/client/proofs" }
+base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 
 # Client
-base-txpool = { path = "crates/client/txpool" }
 base-client-cli = { path = "crates/client/cli" }
-base-client-node = { path = "crates/client/node" }
-base-metering = { path = "crates/client/metering" }
 base-client-engine = { path = "crates/client/engine" }
+base-client-node = { path = "crates/client/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
+base-metering = { path = "crates/client/metering" }
+base-txpool = { path = "crates/client/txpool" }
 
 # Builder
-op-rbuilder = { path = "crates/builder/op-rbuilder" }
 base-builder-cli = { path = "crates/builder/base-builder-cli" }
+op-rbuilder = { path = "crates/builder/op-rbuilder" }
 
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
