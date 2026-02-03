@@ -5,11 +5,13 @@ use core::{
 
 use base_builder_cli::OpRbuilderArgs;
 
-use crate::flashblocks::BuilderConfig;
+use crate::BuilderConfig;
 
-/// Configuration values that are specific to the flashblocks builder.
-#[allow(unnameable_types)]
-#[derive(Debug, Clone)]
+/// Configuration values specific to the flashblocks builder.
+///
+/// Controls flashblock timing, WebSocket publishing, and state root
+/// computation settings for progressive block construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlashblocksConfig {
     /// The address of the websockets endpoint that listens for subscriptions to
     /// new flashblocks updates.

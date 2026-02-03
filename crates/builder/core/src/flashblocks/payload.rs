@@ -44,9 +44,9 @@ use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use super::wspub::WebSocketPublisher;
 use crate::{
-    ExecutionInfo,
+    BuilderConfig, ExecutionInfo,
     flashblocks::{
-        BuilderConfig, FlashblocksExtraCtx,
+        FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
@@ -69,6 +69,10 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
+/// Execution information specific to flashblocks.
+///
+/// Tracks the last consumed flashblock index and manages the
+/// flashblock-level access list builder for progressive block construction.
 #[derive(Debug, Default, Clone)]
 pub struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock

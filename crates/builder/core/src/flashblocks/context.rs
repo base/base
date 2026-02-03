@@ -54,7 +54,11 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         .record(priority_fee);
 }
 
-#[derive(Debug, Default, Clone)]
+/// Extra context for flashblock payload building.
+///
+/// Contains flashblock-specific configuration and state for tracking
+/// gas and data availability limits across flashblock batches.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct FlashblocksExtraCtx {
     /// Current flashblock index
     pub flashblock_index: u64,
@@ -77,6 +81,10 @@ pub struct FlashblocksExtraCtx {
 }
 
 impl FlashblocksExtraCtx {
+    /// Creates the next flashblock context with updated gas and DA targets.
+    ///
+    /// Increments the flashblock index and sets new target limits for the
+    /// next flashblock batch iteration.
     pub const fn next(
         self,
         target_gas_for_batch: u64,

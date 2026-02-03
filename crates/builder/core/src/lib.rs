@@ -4,8 +4,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
-mod execution;
-pub use execution::{ExecutionInfo, TxnExecutionError, TxnOutcome};
+mod config;
+pub use config::BuilderConfig;
 
 mod engine;
 pub use engine::OpEngineApiBuilder;
@@ -13,18 +13,25 @@ pub use engine::OpEngineApiBuilder;
 mod metrics;
 pub use metrics::OpRBuilderMetrics;
 
-mod traits;
-pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
-
 mod launcher;
 pub use launcher::{BuilderLauncher, launch};
+
+mod execution;
+pub use execution::{ExecutionInfo, TxnExecutionError, TxnOutcome};
+
+mod traits;
+pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
 
 mod storage;
 pub use storage::{
     BaseApiExtServer, StoreData, StoredBackrunBundle, TxData, TxDataStore, TxDataStoreExt,
 };
 
-pub mod flashblocks;
+mod flashblocks;
+pub use flashblocks::{
+    FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx, FlashblocksServiceBuilder,
+    OpPayloadBuilderCtx, PayloadHandler,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
