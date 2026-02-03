@@ -147,7 +147,7 @@ jobs:
           mkdir -p ${{ runner.temp }}/output
 
           go run benchmark/cmd/main.go \
-            --log.level info \
+            --log.level debug \
             run \
             --config ../node-reth/.github/benchmark/transfer-only.yml \
             --root-dir ${{ runner.temp }}/data-dir \
