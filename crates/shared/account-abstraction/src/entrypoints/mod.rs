@@ -1,8 +1,10 @@
 //! `EntryPoint` contract definitions for ERC-4337 versions.
 
-/// ERC-4337 v0.6 user operation hash calculation.
 pub mod v06;
-/// ERC-4337 v0.7 packed user operation hash calculation.
+pub use v06::hash_user_operation as hash_user_operation_v06;
+
 pub mod v07;
-/// `EntryPoint` version detection and addresses.
+pub use v07::hash_user_operation as hash_user_operation_v07;
+
 pub mod version;
+pub use version::{EntryPointVersion, UnknownEntryPointAddress};

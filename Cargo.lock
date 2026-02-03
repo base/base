@@ -1723,13 +1723,11 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
- "alloy-serde",
  "alloy-sol-types",
  "anyhow",
  "async-trait",
  "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]

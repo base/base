@@ -1,21 +1,20 @@
 //! Core types for ERC-4337 user operations and validation.
 
 use alloy_primitives::{Address, B256, ChainId, FixedBytes, U256};
-use alloy_rpc_types::erc4337;
-pub use alloy_rpc_types::erc4337::SendUserOperationResponse;
+use alloy_rpc_types::erc4337::{PackedUserOperation, UserOperation};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use super::entrypoints::{v06, v07, version::EntryPointVersion};
+use super::entrypoints::{EntryPointVersion, hash_user_operation_v06, hash_user_operation_v07};
 
 /// A user operation that can be either v0.6 or v0.7 format.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum VersionedUserOperation {
     /// ERC-4337 v0.6 user operation.
-    UserOperation(erc4337::UserOperation),
+    UserOperation(UserOperation),
     /// ERC-4337 v0.7 packed user operation.
-    PackedUserOperation(erc4337::PackedUserOperation),
+    PackedUserOperation(PackedUserOperation),
 }
 
 impl VersionedUserOperation {
@@ -71,10 +70,10 @@ impl UserOperationRequest {
 
         match (&self.user_operation, entry_point_version) {
             (VersionedUserOperation::UserOperation(op), EntryPointVersion::V06) => {
-                Ok(v06::hash_user_operation(op, self.entry_point, self.chain_id))
+                Ok(hash_user_operation_v06(op, self.entry_point, self.chain_id))
             }
             (VersionedUserOperation::PackedUserOperation(op), EntryPointVersion::V07) => {
-                Ok(v07::hash_user_operation(op, self.entry_point, self.chain_id))
+                Ok(hash_user_operation_v07(op, self.entry_point, self.chain_id))
             }
             _ => Err(anyhow::anyhow!("Mismatched operation type and entry point version")),
         }

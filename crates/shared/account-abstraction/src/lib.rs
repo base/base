@@ -1,22 +1,20 @@
-//! Account abstraction types and utilities for ERC-4337.
-//!
-//! This crate provides types and utilities for working with ERC-4337 account abstraction,
-//! including user operations, mempools, and reputation services.
+#![doc = include_str!("../README.md")]
+#![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-/// `EntryPoint` contract definitions and hash calculation for different ERC-4337 versions.
 pub mod entrypoints;
-/// Events emitted by the mempool.
-pub mod events;
-/// Mempool trait and configuration for user operations.
-pub mod mempool;
-/// Reputation tracking for entity behavior.
-pub mod reputation;
-/// Core types for user operations and validation.
-pub mod types;
 
+pub mod events;
 pub use events::MempoolEvent;
+
+pub mod mempool;
 pub use mempool::{Mempool, PoolConfig};
+
+pub mod reputation;
 pub use reputation::{ReputationService, ReputationStatus};
+
+pub mod types;
 pub use types::{
     UserOpHash, UserOperationRequest, ValidationResult, VersionedUserOperation,
     WrappedUserOperation,

@@ -1,13 +1,11 @@
-/*
- * ERC-4337 v0.6 UserOperation Hash Calculation
- *
- * 1. Hash variable-length fields: initCode, callData, paymasterAndData
- * 2. Pack all fields into struct (using hashes from step 1, gas values as uint256)
- * 3. encodedHash = keccak256(abi.encode(packed struct))
- * 4. final hash = keccak256(abi.encode(encodedHash, entryPoint, chainId))
- *
- * Reference: rundler/crates/types/src/user_operation/v0_6.rs:927-934
- */
+//! ERC-4337 v0.6 `UserOperation` Hash Calculation
+//!
+//! 1. Hash variable-length fields: initCode, callData, paymasterAndData
+//! 2. Pack all fields into struct (using hashes from step 1, gas values as uint256)
+//! 3. encodedHash = keccak256(abi.encode(packed struct))
+//! 4. final hash = keccak256(abi.encode(encodedHash, entryPoint, chainId))
+//!
+//! Reference: rundler/crates/types/src/user_operation/v0_6.rs:927-934
 use alloy_primitives::{ChainId, U256};
 use alloy_rpc_types::erc4337;
 use alloy_sol_types::{SolValue, sol};
