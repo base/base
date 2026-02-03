@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum JwtError {
     /// Failed to parse JWT secret from hex.
-    #[error("Failed to parse JWT secret: {0}")]
+    #[error("failed to parse JWT secret: {0}")]
     ParseError(String),
     /// IO error reading/writing JWT file.
     #[error("IO error: {0}")]
@@ -20,6 +20,6 @@ pub enum JwtValidationError {
     #[error("JWT signature is invalid")]
     InvalidSignature,
     /// Failed to exchange capabilities with engine.
-    #[error("Failed to exchange capabilities with engine: {0}")]
+    #[error("failed to exchange capabilities with engine: {0}")]
     CapabilityExchange(String),
 }

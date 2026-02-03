@@ -123,19 +123,19 @@ impl arbitrary::Arbitrary<'_> for L2BlockInfo {
 #[derive(Debug, thiserror::Error)]
 pub enum FromBlockError {
     /// The genesis block hash does not match the expected value.
-    #[error("Invalid genesis hash")]
+    #[error("invalid genesis hash")]
     InvalidGenesisHash,
     /// The L2 block is missing the L1 info deposit transaction.
     #[error("L2 block is missing L1 info deposit transaction ({0})")]
     MissingL1InfoDeposit(B256),
     /// The first payload transaction has an unexpected type.
-    #[error("First payload transaction has unexpected type: {0}")]
+    #[error("first payload transaction has unexpected type: {0}")]
     UnexpectedTxType(u8),
     /// Failed to decode the first transaction into an OP transaction.
-    #[error("Failed to decode the first transaction into an OP transaction: {0}")]
+    #[error("failed to decode the first transaction into an OP transaction: {0}")]
     TxEnvelopeDecodeError(Eip2718Error),
     /// The first payload transaction is not a deposit transaction.
-    #[error("First payload transaction is not a deposit transaction, type: {0}")]
+    #[error("first payload transaction is not a deposit transaction, type: {0}")]
     FirstTxNonDeposit(u8),
     /// Failed to convert [`OpExecutionPayload`] to [`OpBlock`].
     #[error(transparent)]

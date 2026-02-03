@@ -80,33 +80,33 @@ pub struct SignerArgs {
 #[derive(Debug, thiserror::Error)]
 pub enum SignerArgsParseError {
     /// The local sequencer key and remote signer cannot be specified at the same time.
-    #[error("A local sequencer key and a remote signer cannot be specified at the same time.")]
+    #[error("local sequencer key and remote signer cannot be specified at the same time")]
     LocalAndRemoteSigner,
     /// Both sequencer key and sequencer key path cannot be specified at the same time.
     #[error(
-        "Both sequencer key and sequencer key path cannot be specified at the same time. Use either --p2p.sequencer.key or --p2p.sequencer.key.path."
+        "sequencer key and sequencer key path cannot both be specified, use either --p2p.sequencer.key or --p2p.sequencer.key.path"
     )]
     ConflictingSequencerKeyInputs,
     /// The sequencer key is invalid.
-    #[error("The sequencer key is invalid.")]
+    #[error("sequencer key is invalid")]
     SequencerKeyInvalid(#[from] ecdsa::Error),
     /// Failed to load sequencer key from file.
-    #[error("Failed to load sequencer key from file")]
+    #[error("failed to load sequencer key from file")]
     SequencerKeyFileError(#[from] kona_cli::KeypairError),
     /// The address is required if `signer.endpoint` is provided.
-    #[error("The address is required if `signer.endpoint` is provided.")]
+    #[error("address is required when `signer.endpoint` is provided")]
     AddressRequired,
     /// The header is invalid.
-    #[error("The header is invalid.")]
+    #[error("header is invalid")]
     InvalidHeader,
     /// The private key field is required if `signer.tls.cert` is provided.
-    #[error("The private key field is required if `signer.tls.cert` is provided.")]
+    #[error("private key field is required when `signer.tls.cert` is provided")]
     KeyRequired,
     /// The header name is invalid.
-    #[error("The header name is invalid.")]
+    #[error("header name is invalid")]
     InvalidHeaderName(#[from] reqwest::header::InvalidHeaderName),
     /// The header value is invalid.
-    #[error("The header value is invalid.")]
+    #[error("header value is invalid")]
     InvalidHeaderValue(#[from] reqwest::header::InvalidHeaderValue),
 }
 

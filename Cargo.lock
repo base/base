@@ -1987,6 +1987,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "arc-swap",
  "base-flashtypes",
+ "derive_more",
  "futures-util",
  "jsonrpsee",
  "jsonrpsee-types",
@@ -2088,10 +2089,10 @@ dependencies = [
  "alloy-serde",
  "brotli",
  "bytes",
- "derive_more",
  "rstest",
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -2177,6 +2178,7 @@ dependencies = [
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

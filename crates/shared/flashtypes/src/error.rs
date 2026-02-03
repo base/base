@@ -1,22 +1,22 @@
 //! Contains error types relating to primitive flashblock type functionality.
 
-use derive_more::{Display, Error};
+use thiserror::Error;
 
 /// Errors that can occur while decoding a flashblock payload.
-#[derive(Debug, Display, Error)]
+#[derive(Debug, Error)]
 pub enum FlashblockDecodeError {
     /// Failed to deserialize the flashblock payload JSON into the expected struct.
-    #[display("failed to parse flashblock payload JSON: {_0}")]
-    PayloadParse(serde_json::Error),
+    #[error("failed to parse flashblock payload JSON: {0}")]
+    PayloadParse(#[source] serde_json::Error),
     /// Failed to deserialize the flashblock metadata into the expected struct.
-    #[display("failed to parse flashblock metadata: {_0}")]
-    MetadataParse(serde_json::Error),
+    #[error("failed to parse flashblock metadata: {0}")]
+    MetadataParse(#[source] serde_json::Error),
     /// Brotli decompression failed.
-    #[display("failed to decompress brotli payload: {_0}")]
-    Decompress(std::io::Error),
+    #[error("failed to decompress brotli payload: {0}")]
+    Decompress(#[source] std::io::Error),
     /// The decompressed payload was not valid UTF-8 JSON.
-    #[display("decompressed payload is not valid UTF-8 JSON: {_0}")]
-    Utf8(std::string::FromUtf8Error),
+    #[error("decompressed payload is not valid UTF-8 JSON: {0}")]
+    Utf8(#[source] std::string::FromUtf8Error),
 }
 
 #[cfg(test)]
