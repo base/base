@@ -4,7 +4,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod extension;
-pub use base_flashblocks::FlashblocksConfig;
 pub use extension::FlashblocksExtension;
 
 #[cfg(any(test, feature = "test-utils"))]

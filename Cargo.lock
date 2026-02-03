@@ -2220,6 +2220,7 @@ version = "0.0.0"
 dependencies = [
  "base-cli-utils",
  "base-client-node",
+ "base-flashblocks",
  "base-flashblocks-node",
  "base-metering",
  "base-proofs-extension",

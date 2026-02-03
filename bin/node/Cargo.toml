@@ -16,6 +16,7 @@ workspace = true
 # internal
 base-cli-utils.workspace = true
 base-client-node.workspace = true
+base-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
 base-metering.workspace = true
 base-txpool.workspace = true
