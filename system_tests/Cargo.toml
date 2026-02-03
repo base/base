@@ -26,6 +26,7 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 # Ethereum/Alloy
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
+alloy-rpc-types-engine.workspace = true
 
 # Serialization
 serde_json.workspace = true
