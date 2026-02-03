@@ -66,8 +66,7 @@ impl Stats {
         assert!(submitted > 0, "Expected at least one transaction to be submitted");
         assert_eq!(
             failed, 0,
-            "Expected no failed transactions, but {} out of {} failed",
-            failed, submitted
+            "Expected no failed transactions, but {failed} out of {submitted} failed",
         );
     }
 }

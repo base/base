@@ -1,8 +1,12 @@
 //! Transaction generator for stress testing.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
@@ -14,13 +18,17 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use op_alloy_network::TransactionBuilder;
 use op_alloy_rpc_types::OpTransactionRequest;
-use tokio::sync::Semaphore;
-use tokio::time::{interval, sleep};
+use tokio::{
+    sync::Semaphore,
+    time::{interval, sleep},
+};
 use tokio_util::sync::CancellationToken;
 
-use super::config::StressConfig;
-use super::simulator::{build_simulator_config, encode_run_call};
-use super::stats::Stats;
+use super::{
+    config::StressConfig,
+    simulator::{build_simulator_config, encode_run_call},
+    stats::Stats,
+};
 
 /// Generates stress test transactions at a configurable rate.
 #[derive(Debug)]
@@ -64,7 +72,7 @@ impl Generator {
 
     /// Returns a shared handle to the statistics collector.
     pub fn stats(&self) -> Arc<Stats> {
-        self.stats.clone()
+        Arc::clone(&self.stats)
     }
 
     /// Runs the generator until duration elapses or shutdown is signaled.
@@ -98,7 +106,7 @@ impl Generator {
                     break;
                 }
                 _ = interval_timer.tick() => {
-                    let permit = match semaphore.clone().try_acquire_owned() {
+                    let permit = match Arc::clone(&semaphore).try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
                             tracing::debug!("At max parallelism, skipping tick");
@@ -127,9 +135,7 @@ impl Generator {
             }
         }
 
-        let _ = semaphore
-            .acquire_many(self.config.parallel as u32)
-            .await;
+        let _ = semaphore.acquire_many(self.config.parallel as u32).await;
         tracing::info!("All in-flight transactions completed");
 
         Ok(())
@@ -140,11 +146,7 @@ impl Generator {
         let mut rng = rand::rng();
         let min = self.config.priority_fee_min_wei();
         let max = self.config.priority_fee_max_wei();
-        if min >= max {
-            min
-        } else {
-            rng.random_range(min..=max)
-        }
+        if min >= max { min } else { rng.random_range(min..=max) }
     }
 
     async fn build_and_send_tx(
@@ -153,10 +155,8 @@ impl Generator {
         priority_fee: u128,
         max_fee: u128,
     ) -> Result<alloy_primitives::B256> {
-        let sim_config = build_simulator_config(
-            self.config.create_storage,
-            self.config.create_accounts,
-        );
+        let sim_config =
+            build_simulator_config(self.config.create_storage, self.config.create_accounts);
         let calldata = encode_run_call(&sim_config);
 
         let gas_limit = 1_000_000u64;
@@ -180,7 +180,8 @@ impl Generator {
         let raw_tx: Bytes = signed_tx.encoded_2718().into();
         let tx_hash = *signed_tx.hash();
 
-        let _ = self.provider
+        let _ = self
+            .provider
             .send_raw_transaction(&raw_tx)
             .await
             .wrap_err("Failed to send raw transaction")?;
@@ -195,11 +196,7 @@ impl Generator {
             return Ok(());
         }
 
-        tracing::info!(
-            submitted,
-            "Waiting for transaction receipts (up to {}s)",
-            timeout_secs
-        );
+        tracing::info!(submitted, "Waiting for transaction receipts (up to {}s)", timeout_secs);
 
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(timeout_secs);

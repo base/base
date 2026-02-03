@@ -16,14 +16,13 @@ use alloy_signer_local::PrivateKeySigner;
 use eyre::{Result, WrapErr};
 use op_alloy_network::TransactionBuilder;
 use op_alloy_rpc_types::OpTransactionRequest;
-use system_tests::config::ANVIL_ACCOUNT_1;
-use system_tests::stress::{simulator_deploy_bytecode, Generator, StressConfig};
-use system_tests::DevnetBuilder;
+use system_tests::{
+    DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID,
+    config::ANVIL_ACCOUNT_1,
+    stress::{Generator, StressConfig, simulator_deploy_bytecode},
+};
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
-
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 
 fn http_provider(url: &str) -> Result<RootProvider<Ethereum>> {
     let client = RpcClient::builder().http(url.parse()?);
@@ -59,7 +58,7 @@ async fn deploy_simulator(
     let raw_tx: Bytes = signed_tx.encoded_2718().into();
     let tx_hash = *signed_tx.hash();
 
-    eprintln!("Deploying Simulator contract... tx_hash={}", tx_hash);
+    eprintln!("Deploying Simulator contract... tx_hash={tx_hash}");
 
     let _ = provider
         .send_raw_transaction(&raw_tx)
@@ -78,11 +77,10 @@ async fn deploy_simulator(
     .wrap_err("Deploy receipt timed out")?
     .wrap_err("Failed to get deploy receipt")?;
 
-    let contract_address = receipt
-        .contract_address
-        .ok_or_else(|| eyre::eyre!("No contract address in receipt"))?;
+    let contract_address =
+        receipt.contract_address.ok_or_else(|| eyre::eyre!("No contract address in receipt"))?;
 
-    eprintln!("Simulator contract deployed: {}", contract_address);
+    eprintln!("Simulator contract deployed: {contract_address}");
 
     Ok(contract_address)
 }
@@ -115,7 +113,7 @@ async fn fund_simulator_contract(
     let raw_tx: Bytes = signed_tx.encoded_2718().into();
     let tx_hash = *signed_tx.hash();
 
-    eprintln!("Funding Simulator contract... tx_hash={}", tx_hash);
+    eprintln!("Funding Simulator contract... tx_hash={tx_hash}");
 
     let _ = provider
         .send_raw_transaction(&raw_tx)
@@ -149,7 +147,7 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
         .await?;
 
     let l2_rpc_url = devnet.l2_rpc_url()?;
-    eprintln!("Devnet started: {}", l2_rpc_url);
+    eprintln!("Devnet started: {l2_rpc_url}");
 
     let provider = http_provider(l2_rpc_url.as_ref())?;
 
@@ -179,14 +177,8 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
         .with_create_storage(5)
         .with_create_accounts(2);
 
-    let generator = Generator::new(
-        l2_rpc_url.as_ref(),
-        signer,
-        config,
-        contract_address,
-        L2_CHAIN_ID,
-    )
-    .await?;
+    let generator =
+        Generator::new(l2_rpc_url.as_ref(), signer, config, contract_address, L2_CHAIN_ID).await?;
 
     let stats = generator.stats();
     let shutdown = CancellationToken::new();
@@ -194,11 +186,7 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
     eprintln!("Starting stress generator...");
     generator.run(shutdown).await?;
 
-    eprintln!(
-        "Stress test completed: submitted={}, failed={}",
-        stats.submitted(),
-        stats.failed()
-    );
+    eprintln!("Stress test completed: submitted={}, failed={}", stats.submitted(), stats.failed());
 
     assert!(
         stats.submitted() >= 10,
@@ -206,12 +194,7 @@ async fn stress_test_devnet_transaction_acceptance() -> Result<()> {
         stats.submitted()
     );
 
-    assert_eq!(
-        stats.failed(),
-        0,
-        "Expected no failed transactions, but {} failed",
-        stats.failed()
-    );
+    assert_eq!(stats.failed(), 0, "Expected no failed transactions, but {} failed", stats.failed());
 
     eprintln!("Stress test PASSED");
 

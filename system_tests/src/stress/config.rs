@@ -35,31 +35,31 @@ impl Default for StressConfig {
 
 impl StressConfig {
     /// Sets the transaction rate (TPS).
-    pub fn with_tx_rate(mut self, rate: f64) -> Self {
+    pub const fn with_tx_rate(mut self, rate: f64) -> Self {
         self.tx_rate = rate;
         self
     }
 
     /// Sets the maximum parallel in-flight transactions.
-    pub fn with_parallel(mut self, n: usize) -> Self {
+    pub const fn with_parallel(mut self, n: usize) -> Self {
         self.parallel = n;
         self
     }
 
     /// Sets the test duration in seconds.
-    pub fn with_duration_secs(mut self, secs: u64) -> Self {
+    pub const fn with_duration_secs(mut self, secs: u64) -> Self {
         self.duration_secs = secs;
         self
     }
 
     /// Sets the number of storage slots to create per transaction.
-    pub fn with_create_storage(mut self, n: u64) -> Self {
+    pub const fn with_create_storage(mut self, n: u64) -> Self {
         self.create_storage = n;
         self
     }
 
     /// Sets the number of accounts to touch per transaction.
-    pub fn with_create_accounts(mut self, n: u64) -> Self {
+    pub const fn with_create_accounts(mut self, n: u64) -> Self {
         self.create_accounts = n;
         self
     }
