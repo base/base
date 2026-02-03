@@ -26,6 +26,15 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 # Ethereum/Alloy
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-rpc-client.workspace = true
+alloy-sol-macro.workspace = true
+
+# OP Alloy types
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
 
 # Serialization
 serde_json.workspace = true
@@ -40,6 +49,10 @@ tempfile.workspace = true
 tracing.workspace = true
 url.workspace = true
 nanoid.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+
+# Alloy sol types for contract ABI encoding
+alloy-sol-types.workspace = true
 
 # CLI
 clap.workspace = true

@@ -39,9 +39,11 @@
 
 use alloy_network as _;
 use alloy_rpc_types as _;
+use alloy_sol_types as _;
 use base_flashtypes as _;
 use futures_util as _;
 use tokio_tungstenite as _;
+use tokio_util as _;
 
 pub mod cli;
 pub mod config;
@@ -75,6 +77,8 @@ pub mod rpc;
 pub mod setup;
 /// High-level devnet orchestration and smoke tests.
 pub mod smoke;
+/// Stress testing module for metering.
+pub mod stress;
 
 pub use setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer};
 pub use smoke::{Devnet, DevnetBuilder};
