@@ -1,6 +1,11 @@
 //! Flashblocks state processor.
 
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, time::Duration, time::Instant};
+
+/// Number of retry attempts when waiting for canonical header to be written to DB.
+const CANONICAL_HEADER_RETRY_ATTEMPTS: u32 = 50;
+/// Interval between retry attempts in milliseconds.
+const CANONICAL_HEADER_RETRY_INTERVAL_MS: u64 = 10;
 
 use alloy_consensus::{
     Header,
@@ -288,10 +293,31 @@ where
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
-        let mut last_block_header = self
-            .client
-            .header_by_number(canonical_block)
-            .map_err(|e| ProviderError::StateProvider(e.to_string()))?
+
+        // Retry waiting for canonical header to be written to DB.
+        // This handles the race condition where a new block's first flashblock arrives before
+        // the consensus engine has finished persisting the previous block's header.
+        let mut last_block_header = None;
+        for attempt in 0..CANONICAL_HEADER_RETRY_ATTEMPTS {
+            match self.client.header_by_number(canonical_block) {
+                Ok(Some(header)) => {
+                    last_block_header = Some(header);
+                    break;
+                }
+                Ok(None) => {
+                    if attempt < CANONICAL_HEADER_RETRY_ATTEMPTS - 1 {
+                        info!(
+                            message = "waiting for canonical header",
+                            block_number = canonical_block,
+                            attempt = attempt + 1,
+                        );
+                        std::thread::sleep(Duration::from_millis(CANONICAL_HEADER_RETRY_INTERVAL_MS));
+                    }
+                }
+                Err(e) => return Err(ProviderError::StateProvider(e.to_string()).into()),
+            }
+        }
+        let mut last_block_header = last_block_header
             .ok_or(ProviderError::MissingCanonicalHeader { block_number: canonical_block })?;
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
