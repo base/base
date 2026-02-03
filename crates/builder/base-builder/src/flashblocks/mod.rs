@@ -3,7 +3,7 @@ use core::{convert::TryFrom, time::Duration};
 use base_builder_cli::OpRbuilderArgs;
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
-use crate::tx_data_store::TxDataStore;
+use crate::TxDataStore;
 
 pub(crate) mod best_txs;
 pub(crate) mod config;

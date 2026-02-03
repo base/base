@@ -1,9 +1,9 @@
-# `op-rbuilder`
+# `base-builder`
 
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 
-Optimism block builder library for Base. Provides flashblocks payload building infrastructure, which progressively builds block chunks at sub-second intervals.
+Block builder library for Base. Provides flashblocks payload building infrastructure, which progressively builds block chunks at sub-second intervals.
 
 ## Overview
 
@@ -23,7 +23,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-op-rbuilder = { git = "https://github.com/base/base" }
+base-builder = { git = "https://github.com/base/base" }
 ```
 
 To run the builder, use the [`base-builder`](../../../bin/builder/) binary.

@@ -4,9 +4,9 @@ use reth_metrics::{
     metrics::{Counter, Gauge, Histogram},
 };
 
-/// op-rbuilder metrics
+/// base-builder metrics
 #[derive(Metrics, Clone)]
-#[metrics(scope = "op_rbuilder")]
+#[metrics(scope = "base_builder")]
 pub struct OpRBuilderMetrics {
     /// Block built success
     pub block_built_success: Counter,

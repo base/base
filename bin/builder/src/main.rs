@@ -21,7 +21,7 @@ fn main() {
         })
     });
 
-    if let Err(err) = op_rbuilder::launcher::launch(cli) {
+    if let Err(err) = base_builder::launch(cli) {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }

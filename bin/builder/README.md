@@ -2,4 +2,4 @@
 
 The block builder for the Base Stack.
 
-Under the hood, `base-builder` runs [op-rbuilder](../../crates/builder/op-rbuilder/).
+Under the hood, `base-builder` runs [base-builder](../../crates/builder/base-builder/).

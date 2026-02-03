@@ -1,5 +1,5 @@
 [package]
-name = "op-rbuilder"
+name = "base-builder"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -152,7 +152,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 alloy-provider = { workspace = true, default-features = true, features = [
   "txpool-api",
 ] }
-op-rbuilder = { path = ".", features = ["test-utils"] }
+base-builder = { path = ".", features = ["test-utils"] }
 tempfile.workspace = true
 nanoid.workspace = true
 reth-ipc.workspace = true

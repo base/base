@@ -38,10 +38,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    ExecutionInfo, TxnExecutionError, TxnOutcome,
-    metrics::OpRBuilderMetrics,
-    traits::PayloadTxsBounds,
-    tx_data_store::{TxData, TxDataStore},
+    ExecutionInfo, OpRBuilderMetrics, PayloadTxsBounds, TxData, TxDataStore, TxnExecutionError,
+    TxnOutcome,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
@@ -52,7 +50,7 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
         _ => "unknown",
     };
-    reth_metrics::metrics::histogram!("op_rbuilder_rejected_tx_priority_fee", "reason" => r)
+    reth_metrics::metrics::histogram!("base_builder_rejected_tx_priority_fee", "reason" => r)
         .record(priority_fee);
 }
 
