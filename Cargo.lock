@@ -1718,6 +1718,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-account-abstraction"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "alloy-serde",
+ "alloy-sol-types",
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "base-builder"
 version = "0.0.0"
 dependencies = [
@@ -7478,6 +7493,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "alloy-serde",
+ "arbitrary",
  "derive_more",
  "ethereum_ssz",
  "ethereum_ssz_derive",
