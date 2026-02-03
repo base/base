@@ -4,7 +4,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod sync;
-pub use sync::SyncStatusApiServer;
-
 #[cfg(feature = "client")]
 pub use sync::SyncStatusApiClient;
+pub use sync::SyncStatusApiServer;

@@ -19,10 +19,10 @@ base-protocol = { workspace = true, features = ["serde"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [features]
-default = ["std"]
-std = ["base-protocol/std"]
+default = [ "std" ]
+std = [ "base-protocol/std" ]
 client = [
-    "jsonrpsee/async-client",
-    "jsonrpsee/client",
-    "jsonrpsee/http-client",
+	"jsonrpsee/async-client",
+	"jsonrpsee/client",
+	"jsonrpsee/http-client",
 ]
