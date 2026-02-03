@@ -42,8 +42,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
-use super::wspub::WebSocketPublisher;
-use super::state_root_task::StateRootTaskHandle;
+use super::{state_root_task::StateRootTaskHandle, wspub::WebSocketPublisher};
 use crate::{
     flashblocks::{
         BuilderConfig, FlashblocksExtraCtx,
