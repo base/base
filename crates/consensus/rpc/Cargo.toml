@@ -1,5 +1,5 @@
 [package]
-name = "base-rpc"
+name = "base-consensus-rpc"
 description = "RPC Types and Client for Base"
 version.workspace = true
 edition.workspace = true

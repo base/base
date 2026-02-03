@@ -1933,6 +1933,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-consensus-rpc"
+version = "0.0.0"
+dependencies = [
+ "base-protocol",
+ "jsonrpsee",
+]
+
+[[package]]
 name = "base-engine-ext"
 version = "0.0.0"
 dependencies = [
@@ -2208,14 +2216,6 @@ version = "0.0.0"
 dependencies = [
  "reth-optimism-evm",
  "reth-rpc-eth-types",
-]
-
-[[package]]
-name = "base-rpc"
-version = "0.0.0"
-dependencies = [
- "base-protocol",
- "jsonrpsee",
 ]
 
 [[package]]
