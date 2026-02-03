@@ -1938,6 +1938,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-consensus-rpc"
+version = "0.0.0"
+dependencies = [
+ "base-protocol",
+ "jsonrpsee",
+]
+
+[[package]]
 name = "base-engine-ext"
 version = "0.0.0"
 dependencies = [
@@ -7483,6 +7491,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "alloy-serde",
+ "arbitrary",
  "derive_more",
  "ethereum_ssz",
  "ethereum_ssz_derive",
