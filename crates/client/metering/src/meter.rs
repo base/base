@@ -217,6 +217,12 @@ where
     // pending state if it was provided via with_bundle_prestate.
     db.merge_transitions(BundleRetention::Reverts);
     let bundle_update = db.take_bundle();
+
+    // Gets the number of storage slots modified from every account
+    let storage_slots_modified: usize =
+        bundle_update.state().values().map(|account| account.storage.len()).sum();
+    metrics.storage_slots_modified.record(storage_slots_modified as f64);
+
     let state_provider = db.database.as_ref();
 
     let state_root_start = Instant::now();
