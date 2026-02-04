@@ -1,0 +1,185 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  BENCHMARK_REPO: "base/benchmark"
+  BENCHMARK_REF: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  # Build base-reth-node and base-builder together, cached by source hash
+  build-binaries:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      # Cache based on Cargo files and crates source, not the whole repo
+      # This allows iterating on benchmark workflow without rebuilding binaries
+      - name: Cache binaries by source hash
+        uses: actions/cache@2f8e54208210a422b2efd51efaa6bd6d7ca8920f # v3.4.3
+        id: cache-binaries
+        with:
+          path: ~/bin
+          key: ${{ runner.os }}-binaries-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'bin/**') }}
+
+      - name: Install native dependencies
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        with:
+          packages: libsqlite3-dev clang libclang-dev llvm build-essential pkg-config
+          version: 1.0
+
+      - name: Set up Rust
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+
+      - name: Rust cache
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          cache-on-failure: true
+          add-rust-environment-hash-key: "false"
+          key: benchmark-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install Foundry
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+        with:
+          version: stable
+
+      - name: Build base-reth-node
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        run: |
+          cargo build --bin base-reth-node --profile maxperf
+          mkdir -p ~/bin
+          cp target/maxperf/base-reth-node ~/bin/
+
+      - name: Build base-builder
+        if: steps.cache-binaries.outputs.cache-hit != 'true'
+        run: |
+          cargo build --bin base-builder --profile maxperf
+          cp target/maxperf/base-builder ~/bin/base-builder
+
+      - name: Verify binaries exist
+        run: |
+          echo "Binaries in ~/bin:"
+          ls -la ~/bin/
+
+      - name: Upload binaries artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: binaries
+          path: ~/bin/
+          retention-days: 1
+
+  # Run the benchmark
+  benchmark:
+    name: Run Benchmark
+    runs-on: ubuntu-latest
+    needs: [build-binaries]
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: node-reth
+
+      - name: Checkout benchmark repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.BENCHMARK_REF }}
+          path: benchmark
+          submodules: true
+
+      - name: Set up Go
+        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+
+      - name: Install Go dependencies
+        working-directory: benchmark
+        run: go mod download
+
+      - name: Download binaries
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: binaries
+          path: ${{ runner.temp }}/bin/
+
+      - name: Make binaries executable
+        run: |
+          chmod +x ${{ runner.temp }}/bin/*
+          echo "Downloaded binaries:"
+          ls -la ${{ runner.temp }}/bin
+
+      - name: Run Benchmark
+        working-directory: benchmark
+        run: |
+          mkdir -p ${{ runner.temp }}/data-dir
+          mkdir -p ${{ runner.temp }}/output
+
+          go run benchmark/cmd/main.go \
+            --log.level info \
+            run \
+            --config ../node-reth/.github/benchmark/transfer-only.yml \
+            --root-dir ${{ runner.temp }}/data-dir \
+            --output-dir ${{ runner.temp }}/output \
+            --rbuilder-bin ${{ runner.temp }}/bin/base-builder \
+            --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Build Report
+        working-directory: benchmark
+        run: |
+          cp -r ${{ runner.temp }}/output/ ./output/
+          pushd report
+          npm install
+          npm run build
+          popd
+
+      - name: Upload Output
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        if: always()
+        with:
+          name: benchmark-output
+          path: ${{ runner.temp }}/output/
+          retention-days: 7
+
+      - name: Upload Report
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: benchmark-report
+          path: benchmark/report/dist/
+          retention-days: 7
