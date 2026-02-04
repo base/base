@@ -160,17 +160,8 @@ skip = [
     "if-addrs",
     "yamux",
 
-    # discv5 (older hashlink) vs libp2p-swarm (newer hashlink)
-    "hashlink",
-
-    # tracing-samply (older mach2) vs metrics-process (newer mach2)
-    "mach2",
-
-    # reth uses older rlimit via reth-node-metrics
-    "rlimit",
-
-    # if-watch/libp2p (older system-configuration) vs hyper-util (newer system-configuration)
-    "system-configuration",
+    # jsonrpsee (older rustc-hash) vs other deps (newer rustc-hash)
+    "rustc-hash",
 ]
 
 [sources]
