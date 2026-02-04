@@ -9,14 +9,20 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
 use super::{
-    BuilderConfig, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder,
-    payload_handler::PayloadHandler, wspub::WebSocketPublisher,
+    PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder,
+    wspub::WebSocketPublisher,
 };
 use crate::{
+    BuilderConfig,
     metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 
+/// Builder for the flashblocks payload service.
+///
+/// Wraps [`BuilderConfig`] and implements [`PayloadServiceBuilder`] to spawn
+/// the flashblocks payload builder service, which produces sub-block chunks
+/// (flashblocks) at sub-second intervals during block construction.
 #[derive(Debug)]
 pub struct FlashblocksServiceBuilder(pub BuilderConfig);
 

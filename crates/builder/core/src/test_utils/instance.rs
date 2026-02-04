@@ -37,8 +37,8 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    OpEngineApiBuilder, TxDataStore,
-    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
+    BuilderConfig, OpEngineApiBuilder, TxDataStore,
+    flashblocks::FlashblocksServiceBuilder,
     test_utils::{EngineApi, Ipc, TransactionPoolObserver, create_test_db, driver::ChainDriver},
 };
 
