@@ -7,6 +7,7 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc};
 
+use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_cli::OpRbuilderArgs;
 use base_builder_core::{
@@ -103,7 +104,7 @@ impl InProcessBuilder {
         let jwt_path = data_path.join("jwt.hex");
 
         std::fs::create_dir_all(&data_path).wrap_err("Failed to create data directory")?;
-        std::fs::write(&jwt_path, config.jwt_secret.as_bytes())
+        std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
         let tasks = TaskManager::current();

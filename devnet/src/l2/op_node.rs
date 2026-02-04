@@ -1,9 +1,8 @@
 //! op-node container for L2 consensus.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, hex::ToHexExt};
 use alloy_rpc_types_engine::JwtSecret;
 use eyre::{Result, WrapErr, eyre};
-use hex::ToHex;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor},
@@ -117,8 +116,8 @@ impl OpNodeContainer {
             .with_cmd(sequencer_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
-            .with_copy_to(JWT_PATH, config.jwt_secret.as_bytes().to_vec())
-            .with_copy_to(P2P_KEY_PATH, config.p2p_key.to_vec());
+            .with_copy_to(JWT_PATH, config.jwt_secret.as_bytes().encode_hex().as_bytes().to_vec())
+            .with_copy_to(P2P_KEY_PATH, config.p2p_key.encode_hex().as_bytes().to_vec());
 
         let mut container_builder = with_host_port_if_needed(base_container, config.l2_engine_port);
 
@@ -209,7 +208,7 @@ impl OpNodeFollowerContainer {
             .with_cmd(follower_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
-            .with_copy_to(JWT_PATH, config.jwt_secret.as_bytes().to_vec());
+            .with_copy_to(JWT_PATH, config.jwt_secret.as_bytes().encode_hex().as_bytes().to_vec());
 
         let mut container_builder = with_host_port_if_needed(base_container, config.l2_engine_port);
 

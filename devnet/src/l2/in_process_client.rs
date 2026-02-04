@@ -2,14 +2,15 @@
 //!
 //! Replaces Docker-based `ClientContainer` with an in-process node for faster tests.
 
-use std::{any::Any, io::Write, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 
+use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_client_node::{BaseBuilder, BaseNode, BaseNodeExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_txpool::{TxPoolExtension, TxpoolConfig};
-use eyre::{Result, eyre};
+use eyre::{Context, Result, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
@@ -102,11 +103,8 @@ impl InProcessClient {
 
         let (db, db_path) = Self::create_test_database()?;
         let jwt_path = db_path.join("jwt.hex");
-        let mut jwt_file = std::fs::File::create(&jwt_path)
-            .map_err(|e| eyre!("Failed to create JWT file: {}", e))?;
-        jwt_file
-            .write_all(config.jwt_secret.as_bytes())
-            .map_err(|e| eyre!("Failed to write JWT secret: {}", e))?;
+        std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
+            .wrap_err("Failed to write JWT secret")?;
 
         let unique_ipc_path = format!(
             "/tmp/reth_client_api_{}_{}_{:?}.ipc",
