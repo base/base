@@ -12,8 +12,8 @@ use super::{
     PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder,
     wspub::WebSocketPublisher,
 };
-use crate::BuilderConfig;
 use crate::{
+    BuilderConfig,
     metrics::OpRBuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
