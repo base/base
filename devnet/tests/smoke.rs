@@ -9,14 +9,12 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
+use devnet::{DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};
 use op_alloy_network::{Optimism, TransactionBuilder};
 use op_alloy_rpc_types::OpTransactionRequest;
 use tokio::time::{sleep, timeout};
 
-const L1_CHAIN_ID: u64 = 1337;
-const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);

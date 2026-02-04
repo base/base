@@ -36,6 +36,13 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 alloy-primitives.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 alloy-rpc-types-engine.workspace = true
+alloy-sol-macro.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+
+# OP Alloy 
+op-alloy-rpc-types.workspace = true
 
 # Serialization
 serde_json.workspace = true
@@ -50,6 +57,7 @@ tempfile.workspace = true
 tracing.workspace = true
 url.workspace = true
 nanoid.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
 
 # CLI
 clap.workspace = true
@@ -67,6 +75,7 @@ alloy-rpc-client.workspace = true
 
 # OP Alloy network types (for Optimism providers)
 op-alloy-network.workspace = true
+alloy-sol-types.workspace = true
 
 # RPC (jsonrpsee for sync status client)
 jsonrpsee = { workspace = true, features = ["http-client"] }
@@ -90,5 +99,3 @@ alloy-network.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-signer.workspace = true
-
-op-alloy-rpc-types.workspace = true
