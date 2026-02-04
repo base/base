@@ -42,6 +42,12 @@ pub struct FlashblocksConfig {
     /// When enabled, flashblocks are built without state root, but the final payload
     /// returned by `get_payload` will have the state root computed.
     pub compute_state_root_on_finalize: bool,
+
+    /// Whether to use streaming state root calculation.
+    /// When enabled, state updates are streamed to a background task during transaction
+    /// execution, reducing finalization latency by pre-fetching trie nodes and building
+    /// a sparse trie incrementally.
+    pub streaming_state_root: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -53,6 +59,7 @@ impl Default for FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
+            streaming_state_root: false,
         }
     }
 }
@@ -77,6 +84,8 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         let compute_state_root_on_finalize =
             args.flashblocks.flashblocks_compute_state_root_on_finalize;
 
+        let streaming_state_root = args.flashblocks.flashblocks_streaming_state_root;
+
         Ok(Self {
             ws_addr,
             interval,
@@ -84,6 +93,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             fixed,
             disable_state_root,
             compute_state_root_on_finalize,
+            streaming_state_root,
         })
     }
 }

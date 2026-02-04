@@ -21,6 +21,7 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
             flashblocks_fixed: true,
             flashblocks_disable_state_root: true,
             flashblocks_compute_state_root_on_finalize: true,
+            flashblocks_streaming_state_root: false,
         },
         ..Default::default()
     };
@@ -288,6 +289,7 @@ async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
             flashblocks_fixed: false,
             flashblocks_disable_state_root: true,
             flashblocks_compute_state_root_on_finalize: false,
+            flashblocks_streaming_state_root: false,
         },
         ..Default::default()
     };

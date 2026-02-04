@@ -30,7 +30,8 @@ pub use storage::{
 mod flashblocks;
 pub use flashblocks::{
     FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx, FlashblocksServiceBuilder,
-    OpPayloadBuilderCtx, PayloadHandler,
+    OpPayloadBuilderCtx, PayloadHandler, StateRootError, StateRootMessage, StateRootResult,
+    StateRootTask, StateRootTaskBuilder, StateRootTaskConfig, StateRootTaskHandle,
 };
 
 #[cfg(any(test, feature = "test-utils"))]
