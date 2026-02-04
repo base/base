@@ -8,21 +8,17 @@ use testcontainers::{
 };
 
 use crate::{
-    config::{BATCHER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
+    config::{BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER},
     network::{ensure_network_exists, network_name},
 };
 
 const SETUP_IMAGE_TAG: &str = "devnet-setup:local";
 const DEPLOY_TIMEOUT_SECS: u64 = 300;
 
-/// Builder P2P private key (derived from Anvil Account 9, no 0x prefix for reth).
-pub const BUILDER_P2P_KEY: &str =
-    "2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
-
-/// Builder enode ID (public key derived from `BUILDER_P2P_KEY`).
+/// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5";
 
-/// Builder op-node libp2p peer ID (derived from SEQUENCER key for P2P identity).
+/// Builder op-node libp2p peer ID
 /// This is used by the client op-node to connect to the builder op-node via P2P.
 pub const BUILDER_LIBP2P_PEER_ID: &str = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
 
@@ -224,7 +220,7 @@ impl SetupContainer {
             .with_env_var("BATCHER_ADDR", format!("{:#x}", BATCHER.address))
             .with_env_var("PROPOSER_ADDR", format!("{:#x}", PROPOSER.address))
             .with_env_var("CHALLENGER_ADDR", format!("{:#x}", CHALLENGER.address))
-            .with_env_var("BUILDER_P2P_KEY", BUILDER_P2P_KEY)
+            .with_env_var("BUILDER_P2P_KEY", format!("{:#x}", BUILDER.private_key))
             .with_env_var("BUILDER_ENODE_ID", BUILDER_ENODE_ID)
             .with_mount(Mount::bind_mount(l2_output_mount, "/output/l2"))
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))

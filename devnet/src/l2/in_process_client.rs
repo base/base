@@ -4,6 +4,7 @@
 
 use std::{any::Any, io::Write, net::SocketAddr, path::PathBuf, sync::Arc};
 
+use alloy_rpc_types_engine::JwtSecret;
 use base_client_node::{BaseBuilder, BaseNode, BaseNodeExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -27,12 +28,12 @@ use reth_tasks::TaskManager;
 use url::Url;
 
 /// Configuration for starting an in-process client node.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct InProcessClientConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
-    /// JWT secret hex for Engine API authentication.
-    pub jwt_secret_hex: Vec<u8>,
+    /// JWT secret for Engine API authentication.
+    pub jwt_secret: JwtSecret,
     /// Builder HTTP RPC URL for rollup.sequencer.
     pub builder_rpc_url: String,
     /// Builder flashblocks WebSocket URL.
@@ -104,7 +105,7 @@ impl InProcessClient {
         let mut jwt_file = std::fs::File::create(&jwt_path)
             .map_err(|e| eyre!("Failed to create JWT file: {}", e))?;
         jwt_file
-            .write_all(&config.jwt_secret_hex)
+            .write_all(config.jwt_secret.as_bytes())
             .map_err(|e| eyre!("Failed to write JWT secret: {}", e))?;
 
         let unique_ipc_path = format!(

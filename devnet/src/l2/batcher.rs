@@ -2,6 +2,7 @@
 //!
 //! The batcher submits L2 transaction batches to L1 for data availability.
 
+use alloy_primitives::B256;
 use eyre::{Result, WrapErr, eyre};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
@@ -29,8 +30,8 @@ pub struct BatcherConfig {
     pub l2_rpc_port: u16,
     /// Rollup RPC URL (op-node).
     pub rollup_rpc_url: String,
-    /// Batcher private key (hex-encoded string, e.g., "0x...").
-    pub batcher_key: String,
+    /// Batcher private key
+    pub batcher_key: B256,
 }
 
 /// Running op-batcher container.

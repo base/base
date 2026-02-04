@@ -77,6 +77,8 @@ pub static BATCHER: std::sync::LazyLock<Account> = std::sync::LazyLock::new(|| *
 pub static PROPOSER: std::sync::LazyLock<Account> = std::sync::LazyLock::new(|| *ANVIL_ACCOUNT_7);
 /// Challenger role account alias (Anvil account 8).
 pub static CHALLENGER: std::sync::LazyLock<Account> = std::sync::LazyLock::new(|| *ANVIL_ACCOUNT_8);
+/// Builder role account alias (Anvil account 9).
+pub static BUILDER: std::sync::LazyLock<Account> = std::sync::LazyLock::new(|| *ANVIL_ACCOUNT_9);
 
 /// Returns the default Anvil account addresses.
 pub fn anvil_addresses() -> Vec<Address> {

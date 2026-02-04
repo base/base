@@ -4,9 +4,10 @@
 //! - Builder execution layer (in-process, produces blocks and sequences transactions)
 //! - op-node consensus layer (Docker container, derives L2 blocks from L1 data)
 //! - Batcher (Docker container, submits L2 transaction batches to L1)
-//!
-//! Optionally, an in-process client can be added for follower testing.
+//! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
+use alloy_primitives::B256;
+use alloy_rpc_types_engine::JwtSecret;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -26,14 +27,14 @@ pub struct L2StackConfig {
     pub rollup_config: Vec<u8>,
     /// L1 genesis JSON (for op-node chain spec).
     pub l1_genesis: Vec<u8>,
-    /// JWT secret hex for Engine API authentication.
-    pub jwt_secret_hex: Vec<u8>,
-    /// P2P private key (hex-encoded, no 0x prefix) for op-node libp2p identity.
-    pub p2p_key: Vec<u8>,
-    /// Sequencer private key (hex-encoded with 0x prefix) for block signing.
-    pub sequencer_key: Vec<u8>,
+    /// JWT secret for Engine API authentication.
+    pub jwt_secret: JwtSecret,
+    /// P2P private key for op-node libp2p identity.
+    pub p2p_key: B256,
+    /// Sequencer private key for block signing.
+    pub sequencer_key: B256,
     /// Batcher private key (hex-encoded string, e.g., "0x...").
-    pub batcher_key: String,
+    pub batcher_key: B256,
     /// L1 RPC endpoint URL.
     pub l1_rpc_url: String,
     /// L1 beacon API endpoint URL.
@@ -62,7 +63,7 @@ pub struct L2StackConfig {
 /// let config = L2StackConfig {
 ///     l2_genesis: genesis_json,
 ///     rollup_config: rollup_json,
-///     jwt_secret_hex: jwt_secret,
+///     jwt_secret: jwt_secret,
 ///     sequencer_key: seq_key,
 ///     batcher_key: batch_key,
 ///     l1_rpc_url: "http://localhost:8545".to_string(),
@@ -88,7 +89,7 @@ impl std::fmt::Debug for L2Stack {
             .field("builder_op_node", &self.builder_op_node)
             .field("batcher", &self.batcher)
             .field("client", &self.client)
-            .field("client_op_node", &"OpNodeFollowerContainer")
+            .field("client_op_node", &self.client_op_node)
             .finish()
     }
 }
@@ -103,7 +104,7 @@ impl L2Stack {
         let container_config = config.container_config.as_ref();
         let builder_config = InProcessBuilderConfig {
             genesis_json: config.l2_genesis.clone(),
-            jwt_secret_hex: config.jwt_secret_hex.clone(),
+            jwt_secret: config.jwt_secret,
             http_port: container_config.and_then(|c| c.builder_http_port),
             ws_port: container_config.and_then(|c| c.builder_ws_port),
             auth_port: container_config.and_then(|c| c.builder_auth_port),
@@ -117,7 +118,7 @@ impl L2Stack {
         let op_node_config = OpNodeConfig {
             rollup_config: config.rollup_config.clone(),
             l1_genesis: config.l1_genesis.clone(),
-            jwt_secret_hex: config.jwt_secret_hex.clone(),
+            jwt_secret: config.jwt_secret,
             p2p_key: config.p2p_key,
             sequencer_key: config.sequencer_key,
             l1_rpc_url: config.l1_rpc_url.clone(),
@@ -143,7 +144,7 @@ impl L2Stack {
 
         let client_config = InProcessClientConfig {
             genesis_json: config.l2_genesis.clone(),
-            jwt_secret_hex: config.jwt_secret_hex.clone(),
+            jwt_secret: config.jwt_secret,
             builder_rpc_url: builder.rpc_url()?.to_string(),
             builder_flashblocks_url: builder.flashblocks_url(),
             builder_p2p_enode: builder.p2p_enode(),
@@ -159,7 +160,7 @@ impl L2Stack {
         let client_op_node_config = OpNodeFollowerConfig {
             rollup_config: config.rollup_config,
             l1_genesis: config.l1_genesis,
-            jwt_secret_hex: config.jwt_secret_hex,
+            jwt_secret: config.jwt_secret,
             l1_rpc_url: config.l1_rpc_url,
             l1_beacon_url: config.l1_beacon_url,
             l2_engine_url: client.host_engine_url(),

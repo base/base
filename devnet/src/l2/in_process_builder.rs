@@ -7,6 +7,7 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc};
 
+use alloy_rpc_types_engine::JwtSecret;
 use base_builder_cli::OpRbuilderArgs;
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
@@ -36,15 +37,15 @@ use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::TaskManager;
 use url::Url;
 
-use crate::setup::{BUILDER_ENODE_ID, BUILDER_P2P_KEY};
+use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct InProcessBuilderConfig {
     /// L2 genesis JSON content.
     pub genesis_json: Vec<u8>,
     /// JWT secret hex for Engine API authentication.
-    pub jwt_secret_hex: Vec<u8>,
+    pub jwt_secret: JwtSecret,
     /// Optional fixed HTTP RPC port (uses random if None).
     pub http_port: Option<u16>,
     /// Optional fixed WebSocket port (uses random if None).
@@ -104,7 +105,8 @@ impl InProcessBuilder {
         let jwt_path = data_path.join("jwt.hex");
 
         std::fs::create_dir_all(&data_path).wrap_err("Failed to create data directory")?;
-        std::fs::write(&jwt_path, &config.jwt_secret_hex).wrap_err("Failed to write JWT secret")?;
+        std::fs::write(&jwt_path, config.jwt_secret.as_bytes())
+            .wrap_err("Failed to write JWT secret")?;
 
         let tasks = TaskManager::current();
         let exec = tasks.executor();
@@ -331,7 +333,7 @@ fn create_node_config(
     } else {
         NetworkArgs::default().with_unused_ports()
     };
-    network.p2p_secret_key_hex = Some(BUILDER_P2P_KEY.parse().expect("valid P2P key"));
+    network.p2p_secret_key_hex = Some(BUILDER.private_key);
     network.discovery.disable_discovery = true;
     if let Some(port) = config.p2p_port {
         network.port = port;

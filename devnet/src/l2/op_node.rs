@@ -1,6 +1,9 @@
 //! op-node container for L2 consensus.
 
+use alloy_primitives::B256;
+use alloy_rpc_types_engine::JwtSecret;
 use eyre::{Result, WrapErr, eyre};
+use hex::ToHex;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor},
@@ -34,12 +37,12 @@ pub struct OpNodeConfig {
     pub rollup_config: Vec<u8>,
     /// L1 genesis JSON (for chain spec).
     pub l1_genesis: Vec<u8>,
-    /// JWT secret hex for Engine API authentication.
-    pub jwt_secret_hex: Vec<u8>,
-    /// P2P private key (hex-encoded, no 0x prefix) for libp2p identity.
-    pub p2p_key: Vec<u8>,
-    /// Sequencer private key (hex-encoded with 0x prefix) for block signing.
-    pub sequencer_key: Vec<u8>,
+    /// JWT secret for Engine API authentication.
+    pub jwt_secret: JwtSecret,
+    /// P2P private key for libp2p identity.
+    pub p2p_key: B256,
+    /// Sequencer private key for block signing.
+    pub sequencer_key: B256,
     /// L1 RPC URL.
     pub l1_rpc_url: String,
     /// L1 beacon API URL.
@@ -57,8 +60,8 @@ pub struct OpNodeFollowerConfig {
     pub rollup_config: Vec<u8>,
     /// L1 genesis JSON (for chain spec).
     pub l1_genesis: Vec<u8>,
-    /// JWT secret hex for Engine API authentication.
-    pub jwt_secret_hex: Vec<u8>,
+    /// JWT secret for Engine API authentication.
+    pub jwt_secret: JwtSecret,
     /// L1 RPC URL.
     pub l1_rpc_url: String,
     /// L1 beacon API URL.
@@ -114,8 +117,8 @@ impl OpNodeContainer {
             .with_cmd(sequencer_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
-            .with_copy_to(JWT_PATH, config.jwt_secret_hex)
-            .with_copy_to(P2P_KEY_PATH, config.p2p_key);
+            .with_copy_to(JWT_PATH, config.jwt_secret.as_bytes().to_vec())
+            .with_copy_to(P2P_KEY_PATH, config.p2p_key.to_vec());
 
         let mut container_builder = with_host_port_if_needed(base_container, config.l2_engine_port);
 
@@ -206,7 +209,7 @@ impl OpNodeFollowerContainer {
             .with_cmd(follower_args(&config))
             .with_copy_to(ROLLUP_CONFIG_PATH, config.rollup_config)
             .with_copy_to(L1_GENESIS_PATH, config.l1_genesis)
-            .with_copy_to(JWT_PATH, config.jwt_secret_hex);
+            .with_copy_to(JWT_PATH, config.jwt_secret.as_bytes().to_vec());
 
         let mut container_builder = with_host_port_if_needed(base_container, config.l2_engine_port);
 
@@ -237,7 +240,7 @@ impl OpNodeFollowerContainer {
 }
 
 fn sequencer_args(config: &OpNodeConfig) -> Vec<String> {
-    let sequencer_key = String::from_utf8_lossy(&config.sequencer_key);
+    let sequencer_key: String = config.sequencer_key.encode_hex();
     vec![
         format!("--rollup.config={ROLLUP_CONFIG_PATH}"),
         format!("--rollup.l1-chain-config={L1_GENESIS_PATH}"),

@@ -5,17 +5,18 @@ use std::path::PathBuf;
 use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
+use alloy_rpc_types_engine::JwtSecret;
 use eyre::{Result, WrapErr};
 use op_alloy_network::Optimism;
 use tempfile::TempDir;
 use url::Url;
 
 use crate::{
-    config::{self, BATCHER, SEQUENCER},
+    config::{BATCHER, BUILDER, SEQUENCER},
     devnet_config::StableDevnetConfig,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
     l2::{L2ContainerConfig, L2Stack, L2StackConfig},
-    setup::{BUILDER_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer},
+    setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
 };
 
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
@@ -240,7 +241,7 @@ impl DevnetBuilder {
                 .wrap_err("L2 deployment task panicked")?
                 .wrap_err("Failed to deploy L2 contracts")?;
 
-        let jwt_secret = config::random_jwt_secret_hex();
+        let jwt_secret = JwtSecret::random();
 
         let l2_genesis_bytes =
             std::fs::read(l2_deployment.genesis_path()).wrap_err("Failed to read L2 genesis")?;
@@ -253,10 +254,10 @@ impl DevnetBuilder {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
             l1_genesis: l1_genesis_bytes,
-            jwt_secret_hex: jwt_secret.into_bytes(),
-            p2p_key: BUILDER_P2P_KEY.as_bytes().to_vec(),
-            sequencer_key: format!("0x{}", hex::encode(SEQUENCER.private_key)).into_bytes(),
-            batcher_key: format!("0x{}", hex::encode(BATCHER.private_key)),
+            jwt_secret,
+            p2p_key: BUILDER.private_key,
+            sequencer_key: SEQUENCER.private_key,
+            batcher_key: BATCHER.private_key,
             l1_rpc_url: l1_stack.reth().internal_rpc_url(),
             l1_beacon_url: l1_stack.beacon().internal_beacon_url(),
             container_config: l2_container_config,
