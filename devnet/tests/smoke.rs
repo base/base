@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use devnet::{DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID, config::ANVIL_ACCOUNT_1};
+use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1, smoke::DEFAULT_L2_CHAIN_ID};
 use eyre::{Result, WrapErr};
 use op_alloy_network::{Optimism, TransactionBuilder};
 use op_alloy_rpc_types::OpTransactionRequest;
@@ -21,11 +21,7 @@ const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::test]
 async fn smoke_test_devnet_block_production_and_transactions() -> Result<()> {
-    let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
+    let devnet = DevnetBuilder::new().build().await?;
 
     let l1_provider = devnet.l1_provider().await?;
     let l2_builder_provider = devnet.l2_builder_provider()?;
@@ -110,7 +106,7 @@ async fn send_l2_transaction_via_client(
         .with_gas_limit(21000)
         .with_max_fee_per_gas(1_000_000_000)
         .with_max_priority_fee_per_gas(0)
-        .with_chain_id(L2_CHAIN_ID)
+        .with_chain_id(DEFAULT_L2_CHAIN_ID)
         .with_nonce(nonce);
 
     let tx = tx_request.build_typed_tx().map_err(|_| eyre::eyre!("invalid transaction request"))?;
@@ -148,11 +144,7 @@ async fn send_l2_transaction_via_client(
 
 #[tokio::test]
 async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
-    let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
+    let devnet = DevnetBuilder::new().build().await?;
 
     let builder_provider = devnet.l2_builder_provider()?;
     let client_provider = devnet.l2_client_provider()?;
@@ -188,11 +180,7 @@ async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
 
 #[tokio::test]
 async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
-    let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
+    let devnet = DevnetBuilder::new().build().await?;
 
     let builder_provider = devnet.l2_builder_provider()?;
     let client_provider = devnet.l2_client_provider()?;

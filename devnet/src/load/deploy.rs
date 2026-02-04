@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
@@ -75,7 +75,10 @@ pub async fn deploy_with_options(
     gas_limit: u64,
     receipt_timeout_secs: u64,
 ) -> Result<Address> {
-    let nonce = provider.get_transaction_count(signer.address()).await?;
+    let nonce = provider
+        .get_transaction_count(signer.address())
+        .block_id(BlockNumberOrTag::Latest.into())
+        .await?;
     let gas_price = provider.get_gas_price().await?;
 
     let tx_request = OpTransactionRequest::default()
@@ -121,6 +124,25 @@ pub async fn deploy_with_options(
         .contract_address
         .ok_or_else(|| eyre::eyre!("No contract address in receipt"))?;
 
+    // Wait for nonce to increment before returning to avoid race conditions
+    // where subsequent transactions query a stale nonce.
+    let expected_nonce = nonce + 1;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let current = provider
+                .get_transaction_count(signer.address())
+                .block_id(BlockNumberOrTag::Latest.into())
+                .await?;
+            if current >= expected_nonce {
+                return Ok::<_, eyre::Error>(());
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .wrap_err("Nonce update timed out")?
+    .wrap_err("Failed waiting for nonce update")?;
+
     tracing::debug!(%contract_address, "Contract deployed");
 
     Ok(contract_address)
@@ -164,7 +186,10 @@ pub async fn fund_contract_with_amount(
     chain_id: u64,
     amount: U256,
 ) -> Result<()> {
-    let nonce = provider.get_transaction_count(signer.address()).await?;
+    let nonce = provider
+        .get_transaction_count(signer.address())
+        .block_id(BlockNumberOrTag::Latest.into())
+        .await?;
     let gas_price = provider.get_gas_price().await?;
 
     let mut tx_request = OpTransactionRequest::default()
@@ -203,6 +228,24 @@ pub async fn fund_contract_with_amount(
     })
     .await
     .wrap_err("Funding receipt timed out")??;
+
+    // Wait for nonce to increment before returning.
+    let expected_nonce = nonce + 1;
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let current = provider
+                .get_transaction_count(signer.address())
+                .block_id(BlockNumberOrTag::Latest.into())
+                .await?;
+            if current >= expected_nonce {
+                return Ok::<_, eyre::Error>(());
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .wrap_err("Nonce update timed out")?
+    .wrap_err("Failed waiting for nonce update")?;
 
     tracing::debug!(%to, "Address funded");
 

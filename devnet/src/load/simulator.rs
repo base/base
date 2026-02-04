@@ -27,7 +27,7 @@ alloy_sol_macro::sol! {
     }
 }
 
-const SIMULATOR_BYTECODE_HEX: &str = include_str!("simulator_bytecode.hex");
+const SIMULATOR_BYTECODE_HEX: &str = include_str!("../static/simulator_bytecode.hex");
 
 /// Encodes a call to `Simulator.run()` with the given config.
 pub fn encode_run_call(config: &SimulatorConfig) -> Bytes {

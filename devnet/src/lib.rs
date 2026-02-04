@@ -12,7 +12,7 @@ use op_alloy_network as _;
 use tokio_tungstenite as _;
 
 mod utils;
-pub use utils::{L1_CHAIN_ID, L2_CHAIN_ID, unique_name};
+pub use utils::unique_name;
 
 pub mod cli;
 pub mod config;

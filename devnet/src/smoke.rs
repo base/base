@@ -19,8 +19,10 @@ use crate::{
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
 };
 
+/// Default L2 chain ID.
+pub const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
+
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
-const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
 const DEFAULT_SLOT_DURATION: u64 = 2;
 
 /// A complete L1+L2 devnet stack.

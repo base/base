@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
@@ -59,8 +59,9 @@ impl Generator {
         contract_address: Address,
         chain_id: u64,
     ) -> Result<Self> {
-        let initial_nonce = provider
+        let nonce = provider
             .get_transaction_count(signer.address())
+            .block_id(BlockNumberOrTag::Latest.into())
             .await
             .wrap_err("Failed to get initial nonce")?;
 
@@ -70,7 +71,7 @@ impl Generator {
             config,
             contract_address,
             chain_id,
-            nonce: Arc::new(AtomicU64::new(initial_nonce)),
+            nonce: Arc::new(AtomicU64::new(nonce)),
             stats: Arc::new(Stats::new()),
         })
     }

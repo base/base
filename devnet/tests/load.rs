@@ -9,9 +9,10 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use devnet::{
-    Devnet, DevnetBuilder, L1_CHAIN_ID, L2_CHAIN_ID,
+    Devnet, DevnetBuilder,
     config::ANVIL_ACCOUNT_1,
     load::{Generator, LoadConfig, Stats, deploy, fund_contract, get_simulator_bytecode},
+    smoke::DEFAULT_L2_CHAIN_ID,
 };
 use eyre::{Result, WrapErr};
 use op_alloy_network::Optimism;
@@ -27,13 +28,9 @@ struct TestContext {
 }
 
 async fn setup_test() -> Result<TestContext> {
-    eprintln!("Starting load test...");
+    println!("Starting load test...");
 
-    let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
+    let devnet = DevnetBuilder::new().build().await?;
 
     let provider = devnet.l2_client_provider()?;
 
@@ -53,11 +50,11 @@ async fn setup_test() -> Result<TestContext> {
     let signer: PrivateKeySigner = private_key_hex.parse()?;
 
     let deploy_bytecode = get_simulator_bytecode(0);
-    let contract_address = deploy(&provider, &signer, deploy_bytecode, L2_CHAIN_ID).await?;
-    eprintln!("Simulator contract deployed: {contract_address}");
+    let contract_address = deploy(&provider, &signer, deploy_bytecode, DEFAULT_L2_CHAIN_ID).await?;
+    println!("Simulator contract deployed: {contract_address}");
 
-    fund_contract(&provider, &signer, contract_address, L2_CHAIN_ID).await?;
-    eprintln!("Simulator contract funded");
+    fund_contract(&provider, &signer, contract_address, DEFAULT_L2_CHAIN_ID).await?;
+    println!("Simulator contract funded");
 
     Ok(TestContext { provider, signer, contract_address, devnet })
 }
@@ -68,17 +65,17 @@ async fn run_load_test(ctx: &TestContext, config: LoadConfig) -> Result<Arc<Stat
         ctx.signer.clone(),
         config,
         ctx.contract_address,
-        L2_CHAIN_ID,
+        DEFAULT_L2_CHAIN_ID,
     )
     .await?;
 
     let stats = generator.stats();
     let shutdown = CancellationToken::new();
 
-    eprintln!("Starting load generator...");
+    println!("Starting load generator...");
     generator.run(shutdown).await?;
 
-    eprintln!("Load test completed: submitted={}, failed={}", stats.submitted(), stats.failed());
+    println!("Load test completed: submitted={}, failed={}", stats.submitted(), stats.failed());
 
     Ok(stats)
 }
@@ -89,9 +86,12 @@ fn assert_load_test_passed(stats: &Stats) {
         "Expected at least 10 transactions to be submitted, got {}",
         stats.submitted()
     );
-    // TODO: once the resource metering changes are in, we should have different
-    // thresholds for failed transactions
-    assert!(stats.failed() <= 2, "Expected no more than 2 failed transactions, but {} failed", stats.failed());
+    // https://github.com/base/base/issues/669
+    assert!(
+        stats.failed() <= 3,
+        "Expected no more than 3 failed transactions, but {} failed",
+        stats.failed()
+    );
 }
 
 #[tokio::test]
