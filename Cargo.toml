@@ -96,24 +96,24 @@ base-protocol = { path = "crates/consensus/protocol" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 
 # Shared
-base-access-lists = { path = "crates/shared/access-lists" }
+base-jwt = { path = "crates/shared/jwt" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
-base-engine-ext = { path = "crates/shared/engine-ext" }
-base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-flashtypes = { path = "crates/shared/flashtypes" }
-base-jwt = { path = "crates/shared/jwt" }
+base-engine-ext = { path = "crates/shared/engine-ext" }
 base-primitives = { path = "crates/shared/primitives" }
+base-access-lists = { path = "crates/shared/access-lists" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
+base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # Client
+base-txpool = { path = "crates/client/txpool" }
+base-metering = { path = "crates/client/metering" }
 base-client-cli = { path = "crates/client/cli" }
-base-client-engine = { path = "crates/client/engine" }
 base-client-node = { path = "crates/client/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
-base-metering = { path = "crates/client/metering" }
-base-txpool = { path = "crates/client/txpool" }
+base-client-engine = { path = "crates/client/engine" }
 
 # Builder
 base-builder-cli = { path = "crates/builder/cli" }
@@ -141,6 +141,7 @@ reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
@@ -193,16 +194,15 @@ reth-optimism-consensus = { git = "https://github.com/paradigmxyz/reth", tag = "
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
+reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.10.2" }
 
 # op-reth
 reth-optimism-rpc = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
-reth-optimism-node = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
 reth-optimism-cli = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
-reth-optimism-trie = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
 reth-optimism-exex = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
+reth-optimism-node = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
+reth-optimism-trie = { git = "https://github.com/op-rs/op-reth", rev = "8746d94ea4c6d2743ce5fe8e9f7c9301af02cd66" }
 
 # revm
 revm = { version = "34.0.0", default-features = false }
@@ -211,47 +211,47 @@ revm-context = { version = "13.0.0", default-features = false }
 revm-bytecode = { version = "8.0.0", default-features = false }
 revm-database = { version = "10.0.0", default-features = false }
 revm-inspector = { version = "15.0.0", default-features = false }
-revm-primitives = { version = "22.0.0", default-features = false }
 revm-inspectors = { version = "0.34.0", default-features = false }
+revm-primitives = { version = "22.0.0", default-features = false }
 revm-interpreter = { version = "32.0.0", default-features = false }
 revm-context-interface = { version = "14.0.0", default-features = false }
 revm-database-interface = { version = "9.0.0", default-features = false }
 
 # alloy
-alloy-eips = "1.4.3"
 alloy-rlp = "0.3.10"
 alloy-trie = "0.9.1"
+alloy-eips = "1.4.3"
 alloy-serde = "1.4.3"
+alloy-signer = "1.4.3"
 alloy-chains = "0.2.5"
 alloy-pubsub = "1.4.3"
-alloy-genesis = "1.4.3"
-alloy-signer = "1.4.3"
 alloy-network = "1.4.3"
+alloy-genesis = "1.4.3"
 alloy-eip7928 = "0.3.0"
+alloy-provider = "1.4.3"
 alloy-contract = "1.4.3"
 alloy-json-rpc = "1.4.3"
+alloy-consensus = "1.4.3"
 alloy-transport = "1.4.3"
 alloy-rpc-types = "1.4.3"
 alloy-hardforks = "0.4.5"
-alloy-rpc-client = "1.4.3"
+alloy-sol-types = "1.5.0"
 alloy-sol-macro = "1.5.0"
+alloy-rpc-client = "1.4.3"
 alloy-signer-local = "1.4.3"
+alloy-node-bindings = "1.4.3"
 alloy-rpc-types-eth = "1.4.3"
 alloy-transport-http = "1.4.3"
-alloy-node-bindings = "1.4.3"
-alloy-network-primitives = "1.4.3"
-alloy-evm = { version = "0.26.3", default-features = false }
-alloy-consensus = "1.4.3"
-alloy-sol-types = "1.5.0"
 alloy-rpc-types-beacon = "1.4.3"
 alloy-rpc-types-engine = "1.4.3"
+alloy-network-primitives = "1.4.3"
+alloy-evm = { version = "0.26.3", default-features = false }
 alloy-primitives = { version = "1.5.0", default-features = false }
-alloy-provider = "1.4.3"
 
 # op-alloy
 alloy-op-hardforks = "0.4.4"
-alloy-op-evm = { version = "0.26.3", default-features = false }
 op-alloy-flz = { version = "0.13.1", default-features = false }
+alloy-op-evm = { version = "0.26.3", default-features = false }
 op-alloy-network = { version = "0.23.1", default-features = false }
 op-alloy-provider = { version = "0.23.1", default-features = false }
 op-alloy-rpc-types = { version = "0.23.1", default-features = false }
@@ -268,13 +268,13 @@ op-revm = { version = "15.0.0", default-features = false }
 
 # tokio
 tokio = "1.48.0"
+tokio-util = "0.7.4"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.28.0"
-tokio-util = "0.7.4"
 
 # async
 futures = "0.3.31"
-reqwest = "0.12.25"
+reqwest = "0.13.1"
 futures-util = "0.3.31"
 async-trait = "0.1.83"
 
@@ -284,10 +284,10 @@ jsonrpsee-core = "0.26.0"
 jsonrpsee-types = "0.26.0"
 
 # cli
+clap = "4.5.57"
 vergen = "9.1.0"
 vergen-git2 = "9.1.0"
-clap_builder = "4.5.19"
-clap = "4.5.53"
+clap_builder = "4.5.57"
 
 # Tracing
 tracing = "0.1.43"
@@ -298,31 +298,32 @@ tracing-subscriber = "0.3.22"
 metrics-derive = "0.1.0"
 metrics = { version = "0.24.3", default-features = false }
 prometheus = { version = "0.14.0", default-features = false }
-metrics-process = { version = "2.4.2", default-features = false }
+metrics-process = { version = "2.4.3", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 
 # misc
-criterion = "0.5"
 hex = "0.4"
 tar = "0.4"
 http = "1.0"
 sha3 = "0.10"
 tower = "0.5"
 anyhow = "1"
+moka = "0.12"
 discv5 = "0.10"
 rlimit = "0.10"
 url = "2.5.7"
 rayon = "1.11"
 ctor = "0.4.2"
 rand = "0.9.2"
-strum = "0.27.2"
-ahash = "0.8.6"
-serde = "1.0.228"
 nanoid = "0.4"
-k256 = "0.13.4"
-uuid = "1.19.0"
 lru = "0.16.3"
 dashmap = "6.1"
+strum = "0.27.2"
+ahash = "0.8.6"
+k256 = "0.13.4"
+uuid = "1.19.0"
+warp = "0.3.7"
+hyper = "1.7.0"
 eyre = "0.6.12"
 backon = "1.6.0"
 brotli = "8.0.2"
@@ -330,25 +331,28 @@ bytes = "1.11.1"
 rstest = "0.26.1"
 chrono = "0.4.42"
 rustls = "0.23.35"
+serde = "1.0.228"
 thiserror = "2.0"
-secp256k1 = "0.30"
-warp = "0.3.7"
-libp2p = "0.56.0"
 tempfile = "3.8"
+criterion = "0.5"
+secp256k1 = "0.30"
+libp2p = "0.56.0"
+time = "0.3.44"
 arc-swap = "1.7.1"
 auto_impl = "1.2.0"
 flate2 = "1.0.37"
-once_cell = "1.21.3"
 serde_with = "3.8.1"
 httpmock = "0.8.2"
 itertools = "0.14.0"
 dirs-next = "2.0.0"
-serde_json = "1.0.145"
+once_cell = "1.21.3"
 hyper-util = "0.1.11"
 derive_more = "2.1.0"
 lazy_static = "1.4.0"
 parking_lot = "0.12.3"
 shellexpand = "3.1"
+serde_json = "1.0.145"
+opentelemetry = "0.31"
 ethereum_ssz = "0.9.0"
 http-body-util = "0.1.3"
 libp2p-identity = "0.2.12"
@@ -356,8 +360,4 @@ testcontainers = "0.26.3"
 concurrent-queue = "2.5.0"
 tikv-jemallocator = "0.6"
 ethereum_ssz_derive = "0.9.0"
-moka = "0.12"
-hyper = "1.7.0"
 either = { version = "1.15.0", default-features = false }
-opentelemetry = "0.31"
-time = "0.3.44"
