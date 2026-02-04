@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    ExecutionInfo, OpRBuilderMetrics, PayloadTxsBounds, TxData, TxDataStore, TxnExecutionError,
+    ExecutionInfo, BuilderMetrics, PayloadTxsBounds, TxData, TxDataStore, TxnExecutionError,
     TxnOutcome,
 };
 
@@ -121,7 +121,7 @@ pub struct OpPayloadBuilderCtx {
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
     /// The metrics for the builder
-    pub metrics: Arc<OpRBuilderMetrics>,
+    pub metrics: Arc<BuilderMetrics>,
     /// Extra context for the payload builder
     pub extra: FlashblocksExtraCtx,
     /// Max gas that can be used by a transaction.

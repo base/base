@@ -47,9 +47,7 @@ allow = [
 confidence-threshold = 0.8
 
 # Allow workspace crates that don't have explicit license fields
-exceptions = [
-    { name = "macros", allow = ["MIT"] },
-]
+exceptions = []
 
 [bans]
 deny = ["reth"]
@@ -156,17 +154,8 @@ skip = [
     "if-addrs",
     "yamux",
 
-    # discv5 (older hashlink) vs libp2p-swarm (newer hashlink)
-    "hashlink",
-
-    # tracing-samply (older mach2) vs metrics-process (newer mach2)
-    "mach2",
-
-    # reth uses older rlimit via reth-node-metrics
-    "rlimit",
-
-    # if-watch/libp2p (older system-configuration) vs hyper-util (newer system-configuration)
-    "system-configuration",
+    # bindgen (older rustc-hash) vs various upstream deps (newer rustc-hash)
+    "rustc-hash",
 ]
 
 [sources]
@@ -176,6 +165,6 @@ unknown-git = "deny"
 # Allow git sources from known upstream repositories
 allow-git = [
     "https://github.com/paradigmxyz/reth",
-    "https://github.com/op-rs/kona",
-    "https://github.com/flashbots/rollup-boost.git",
+    "https://github.com/op-rs/op-reth",
+    "https://github.com/ethereum-optimism/optimism",
 ]
