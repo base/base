@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BENCHMARK_REPO: "base/benchmark"
-  BENCHMARK_REF: "main"
+  BENCHMARK_REF: "meyer9/remove-unnecessary-flashblock-enabled-flag"
 
 permissions:
   contents: read
