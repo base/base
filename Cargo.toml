@@ -116,7 +116,7 @@ base-metering = { path = "crates/client/metering" }
 base-txpool = { path = "crates/client/txpool" }
 
 # Builder
-base-builder-cli = { path = "crates/builder/base-builder-cli" }
+base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
 
 # Kona
@@ -326,7 +326,7 @@ dashmap = "6.1"
 eyre = "0.6.12"
 backon = "1.6.0"
 brotli = "8.0.2"
-bytes = "1.11.0"
+bytes = "1.11.1"
 rstest = "0.26.1"
 chrono = "0.4.42"
 rustls = "0.23.35"

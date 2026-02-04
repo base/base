@@ -7,7 +7,7 @@ use reth_metrics::{
 /// base-builder metrics
 #[derive(Metrics, Clone)]
 #[metrics(scope = "base_builder")]
-pub struct OpRBuilderMetrics {
+pub struct BuilderMetrics {
     /// Block built success
     pub block_built_success: Counter,
     /// Block synced success
@@ -124,7 +124,7 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundle_execution_duration: Histogram,
 }
 
-impl OpRBuilderMetrics {
+impl BuilderMetrics {
     pub fn set_payload_builder_metrics(
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,

@@ -20,12 +20,12 @@ use reth_transaction_pool::PoolTransaction;
 use tracing::{debug, info};
 
 use super::{StoreData, StoredBackrunBundle, TxData};
-use crate::OpRBuilderMetrics;
+use crate::BuilderMetrics;
 
 #[derive(Clone)]
 pub struct TxDataStore {
     data: Arc<StoreData>,
-    metrics: OpRBuilderMetrics,
+    metrics: BuilderMetrics,
 }
 
 impl Debug for TxDataStore {
@@ -45,7 +45,7 @@ impl TxDataStore {
                 lru: ConcurrentQueue::bounded(buffer_size),
                 metering_enabled: AtomicBool::new(enable_resource_metering),
             }),
-            metrics: OpRBuilderMetrics::default(),
+            metrics: BuilderMetrics::default(),
         }
     }
 
