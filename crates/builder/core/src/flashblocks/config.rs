@@ -3,8 +3,6 @@ use core::{
     time::Duration,
 };
 
-use base_builder_cli::OpRbuilderArgs;
-
 use crate::BuilderConfig;
 
 /// Configuration values specific to the flashblocks builder.
@@ -57,34 +55,54 @@ impl Default for FlashblocksConfig {
     }
 }
 
-impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
-    type Error = eyre::Report;
+#[cfg(any(test, feature = "test-utils"))]
+impl FlashblocksConfig {
+    /// Creates a new [`FlashblocksConfig`] suitable for testing with a randomized port.
+    pub fn for_tests() -> Self {
+        Self {
+            ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+            interval: Duration::from_millis(200),
+            leeway_time: Duration::from_millis(100),
+            fixed: false,
+            disable_state_root: false,
+            compute_state_root_on_finalize: false,
+        }
+    }
 
-    fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
-        let interval = Duration::from_millis(args.flashblocks.flashblocks_block_time);
+    #[must_use]
+    pub const fn with_interval_ms(mut self, ms: u64) -> Self {
+        self.interval = Duration::from_millis(ms);
+        self
+    }
 
-        let ws_addr = SocketAddr::new(
-            args.flashblocks.flashblocks_addr.parse()?,
-            args.flashblocks.flashblocks_port,
-        );
+    #[must_use]
+    pub const fn with_leeway_time_ms(mut self, ms: u64) -> Self {
+        self.leeway_time = Duration::from_millis(ms);
+        self
+    }
 
-        let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
+    #[must_use]
+    pub const fn with_fixed(mut self, fixed: bool) -> Self {
+        self.fixed = fixed;
+        self
+    }
 
-        let fixed = args.flashblocks.flashblocks_fixed;
+    #[must_use]
+    pub const fn with_disable_state_root(mut self, disable: bool) -> Self {
+        self.disable_state_root = disable;
+        self
+    }
 
-        let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
+    #[must_use]
+    pub const fn with_compute_state_root_on_finalize(mut self, compute: bool) -> Self {
+        self.compute_state_root_on_finalize = compute;
+        self
+    }
 
-        let compute_state_root_on_finalize =
-            args.flashblocks.flashblocks_compute_state_root_on_finalize;
-
-        Ok(Self {
-            ws_addr,
-            interval,
-            leeway_time,
-            fixed,
-            disable_state_root,
-            compute_state_root_on_finalize,
-        })
+    #[must_use]
+    pub const fn with_port(mut self, port: u16) -> Self {
+        self.ws_addr.set_port(port);
+        self
     }
 }
 

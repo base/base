@@ -10,9 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
-use base_builder_cli::{Cli, OpRbuilderArgs};
 use base_flashtypes::FlashblocksPayloadV1;
-use clap::Parser;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
@@ -23,9 +21,9 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
     OpNode,
+    args::RollupArgs,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
@@ -65,8 +63,8 @@ pub fn clear_otel_env_vars() {
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
-    config: NodeConfig<OpChainSpec>,
-    args: OpRbuilderArgs,
+    node_config: NodeConfig<OpChainSpec>,
+    builder_config: BuilderConfig,
     task_manager: Option<TaskManager>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
@@ -75,34 +73,32 @@ pub struct LocalInstance {
 }
 
 impl LocalInstance {
-    /// Creates a new local instance of the OP builder node with the given arguments,
+    /// Creates a new local instance of the OP builder node with the given builder configuration,
     /// with the default Reth node configuration.
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new(args: OpRbuilderArgs) -> eyre::Result<Self> {
-        Box::pin(Self::new_with_config(args, default_node_config())).await
+    pub async fn new(builder_config: BuilderConfig) -> eyre::Result<Self> {
+        Box::pin(Self::new_with_node_config(builder_config, default_node_config())).await
     }
 
-    /// Creates a new local instance of the OP builder node with the given arguments,
+    /// Creates a new local instance of the OP builder node with the given builder configuration,
     /// with a given Reth node configuration.
     ///
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
-    pub async fn new_with_config(
-        args: OpRbuilderArgs,
-        config: NodeConfig<OpChainSpec>,
+    pub async fn new_with_node_config(
+        builder_config: BuilderConfig,
+        node_config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         let task_manager = task_manager();
-        let op_node = OpNode::new(args.rollup_args.clone());
+        let op_node = OpNode::new(RollupArgs::default());
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
             oneshot::channel::<AllTransactionsEvents<OpPooledTransaction>>();
 
-        let builder_config = BuilderConfig::try_from(args.clone())
-            .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let tx_data_store = builder_config.tx_data_store.clone();
@@ -113,21 +109,21 @@ impl LocalInstance {
             OpEngineValidatorBuilder,
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()
-            .with_sequencer(args.rollup_args.sequencer.clone())
+            .with_sequencer(None)
             .with_enable_tx_conditional(false)
-            .with_da_config(da_config)
-            .with_gas_limit_config(gas_limit_config)
+            .with_da_config(da_config.clone())
+            .with_gas_limit_config(gas_limit_config.clone())
             .build();
 
-        let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
-            .with_database(create_test_db(config.clone()))
+        let node_builder = NodeBuilder::<_, OpChainSpec>::new(node_config.clone())
+            .with_database(create_test_db(node_config.clone()))
             .with_launch_context(task_manager.executor())
             .with_types::<OpNode>()
             .with_components(
                 op_node
                     .components()
-                    .pool(pool_component(&args))
-                    .payload(FlashblocksServiceBuilder(builder_config)),
+                    .pool(pool_component())
+                    .payload(FlashblocksServiceBuilder(builder_config.clone())),
             )
             .with_add_ons(addons)
             .on_rpc_started(move |_, _| {
@@ -152,8 +148,8 @@ impl LocalInstance {
         let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
 
         Ok(Self {
-            args,
-            config,
+            builder_config,
+            node_config,
             exit_future,
             _node_handle: node_handle,
             task_manager: Some(task_manager),
@@ -166,32 +162,25 @@ impl LocalInstance {
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
         clear_otel_env_vars();
-        let mut args = Cli::parse_from(["dummy", "node"]);
-        let Commands::Node(ref mut node_command) = args.command else { unreachable!() };
-        node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
-        Self::new(node_command.ext.clone()).await
+        Self::new(BuilderConfig::for_tests()).await
     }
 
-    pub const fn config(&self) -> &NodeConfig<OpChainSpec> {
-        &self.config
+    pub const fn node_config(&self) -> &NodeConfig<OpChainSpec> {
+        &self.node_config
     }
 
-    pub const fn args(&self) -> &OpRbuilderArgs {
-        &self.args
+    pub const fn builder_config(&self) -> &BuilderConfig {
+        &self.builder_config
     }
 
     pub fn flashblocks_ws_url(&self) -> String {
-        let ipaddr: Ipv4Addr = self
-            .args
-            .flashblocks
-            .flashblocks_addr
-            .parse()
-            .expect("Failed to parse flashblocks IP address");
-
-        let ipaddr = if ipaddr.is_unspecified() { Ipv4Addr::LOCALHOST } else { ipaddr };
-
-        let port = self.args.flashblocks.flashblocks_port;
-
+        let ipaddr = self.builder_config.flashblocks.ws_addr.ip();
+        let ipaddr = if ipaddr.is_unspecified() {
+            std::net::IpAddr::V4(Ipv4Addr::LOCALHOST)
+        } else {
+            ipaddr
+        };
+        let port = self.builder_config.flashblocks.ws_addr.port();
         format!("ws://{ipaddr}:{port}/")
     }
 
@@ -200,11 +189,11 @@ impl LocalInstance {
     }
 
     pub fn rpc_ipc(&self) -> &str {
-        &self.config.rpc.ipcpath
+        &self.node_config.rpc.ipcpath
     }
 
     pub fn auth_ipc(&self) -> &str {
-        &self.config.rpc.auth_ipc_path
+        &self.node_config.rpc.auth_ipc_path
     }
 
     pub fn engine_api(&self) -> EngineApi<Ipc> {
@@ -235,8 +224,11 @@ impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(task_manager) = self.task_manager.take() {
             task_manager.graceful_shutdown_with_timeout(Duration::from_secs(3));
-            std::fs::remove_dir_all(self.config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!("Failed to remove temporary data directory {}: {e}", self.config().datadir())
+            std::fs::remove_dir_all(self.node_config().datadir().to_string()).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to remove temporary data directory {}: {e}",
+                    self.node_config().datadir()
+                )
             });
         }
     }
@@ -306,11 +298,8 @@ fn task_manager() -> TaskManager {
     TaskManager::new(tokio::runtime::Handle::current())
 }
 
-fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<OpPooledTransaction> {
-    let rollup_args = &args.rollup_args;
-    OpPoolBuilder::<OpPooledTransaction>::default()
-        .with_enable_tx_conditional(false)
-        .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)
+fn pool_component() -> OpPoolBuilder<OpPooledTransaction> {
+    OpPoolBuilder::<OpPooledTransaction>::default().with_enable_tx_conditional(false)
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.

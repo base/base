@@ -1,6 +1,10 @@
+//! Contains the builder launcher.
+
 use std::sync::Arc;
 
-use base_builder_cli::{Cli, OpRbuilderArgs};
+use base_builder_core::{
+    BaseApiExtServer, BuilderConfig, FlashblocksServiceBuilder, OpEngineApiBuilder, TxDataStoreExt,
+};
 use eyre::Result;
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -14,37 +18,14 @@ use reth_optimism_node::{
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_optimism_txpool::OpPooledTransaction;
 
-use crate::{
-    BaseApiExtServer, BuilderConfig, OpEngineApiBuilder, TxDataStoreExt,
-    flashblocks::FlashblocksServiceBuilder,
-};
+use crate::BuilderArgs;
 
-pub fn launch(cli: Cli) -> Result<()> {
-    let telemetry_args = match &cli.command {
-        reth_optimism_cli::commands::Commands::Node(node_command) => {
-            node_command.ext.telemetry.clone()
-        }
-        _ => Default::default(),
-    };
-
-    let mut cli_app = cli.configure();
-
-    // Only setup telemetry if an OTLP endpoint is provided
-    if telemetry_args.otlp_endpoint.is_some() {
-        let telemetry_layer = telemetry_args.setup()?;
-        cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
-    }
-
-    tracing::info!("Starting OP builder in flashblocks mode");
-    let launcher = BuilderLauncher::new();
-    cli_app.run(launcher)?;
-    Ok(())
-}
-
+/// A launcher for the [`OpNode`].
 #[derive(Debug)]
 pub struct BuilderLauncher;
 
 impl BuilderLauncher {
+    /// Constructs a new instance of the [`BuilderLauncher`].
     pub const fn new() -> Self {
         Self
     }
@@ -56,11 +37,11 @@ impl Default for BuilderLauncher {
     }
 }
 
-impl Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher {
+impl Launcher<OpChainSpecParser, BuilderArgs> for BuilderLauncher {
     async fn entrypoint(
         self,
         builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
-        builder_args: OpRbuilderArgs,
+        builder_args: BuilderArgs,
     ) -> Result<()> {
         let builder_config = BuilderConfig::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");

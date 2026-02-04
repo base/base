@@ -13,9 +13,6 @@ pub use engine::OpEngineApiBuilder;
 mod metrics;
 pub use metrics::BuilderMetrics;
 
-mod launcher;
-pub use launcher::{BuilderLauncher, launch};
-
 mod execution;
 pub use execution::{ExecutionInfo, TxnExecutionError, TxnOutcome};
 

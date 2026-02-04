@@ -185,18 +185,6 @@ impl BlockTransactionsExt for BlockTransactionHashes<'_, Transaction> {
     }
 }
 
-pub trait OpRbuilderArgsTestExt {
-    fn test_default() -> Self;
-}
-
-impl OpRbuilderArgsTestExt for base_builder_cli::OpRbuilderArgs {
-    fn test_default() -> Self {
-        let mut default = Self::default();
-        default.flashblocks.flashblocks_port = 0; // randomize port
-        default
-    }
-}
-
 pub trait AsTxs {
     fn as_txs(&self) -> Vec<TxHash>;
 }

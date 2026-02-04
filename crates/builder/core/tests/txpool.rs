@@ -1,23 +1,24 @@
 #![allow(missing_docs)]
 
-use base_builder_cli::OpRbuilderArgs;
-use base_builder_core::test_utils::{
-    BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
-    setup_test_instance_with_config,
+use base_builder_core::{
+    BuilderConfig,
+    test_utils::{
+        BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
+        setup_test_instance_with_node_config,
+    },
 };
 use reth_node_builder::NodeConfig;
 use reth_node_core::args::TxPoolArgs;
 use reth_optimism_chainspec::OpChainSpec;
 
-/// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {
-    let config = NodeConfig::<OpChainSpec> {
+    let node_config = NodeConfig::<OpChainSpec> {
         txpool: TxPoolArgs { pending_max_count: 50, ..Default::default() },
         ..default_node_config()
     };
-    let args = OpRbuilderArgs::default();
-    let rbuilder = setup_test_instance_with_config(args, config).await?;
+    let builder_config = BuilderConfig::for_tests();
+    let rbuilder = setup_test_instance_with_node_config(builder_config, node_config).await?;
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(50, ONE_ETH).await?;
 

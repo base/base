@@ -1,8 +1,7 @@
 //! Builder Configuration
 
-use core::{convert::TryFrom, time::Duration};
+use core::time::Duration;
 
-use base_builder_cli::OpRbuilderArgs;
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{FlashblocksConfig, TxDataStore};
@@ -68,23 +67,37 @@ impl Default for BuilderConfig {
     }
 }
 
-impl TryFrom<OpRbuilderArgs> for BuilderConfig {
-    type Error = eyre::Report;
+#[cfg(any(test, feature = "test-utils"))]
+impl BuilderConfig {
+    /// Creates a new [`BuilderConfig`] suitable for testing with a randomized flashblocks port.
+    pub fn for_tests() -> Self {
+        use core::net::{Ipv4Addr, SocketAddr};
+        let mut config = Self::default();
+        // Use port 0 to get a random available port
+        config.flashblocks.ws_addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0);
+        // Default 1 second block time for tests
+        config.block_time = Duration::from_secs(1);
+        config
+    }
 
-    fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
-        let flashblocks = FlashblocksConfig::try_from(args.clone())?;
-        Ok(Self {
-            block_time: Duration::from_millis(args.chain_block_time),
-            block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
-            da_config: Default::default(),
-            gas_limit_config: Default::default(),
-            sampling_ratio: args.telemetry.sampling_ratio,
-            max_gas_per_txn: args.max_gas_per_txn,
-            tx_data_store: TxDataStore::new(
-                args.enable_resource_metering,
-                args.resource_metering_buffer_size,
-            ),
-            flashblocks,
-        })
+    /// Sets the block time in milliseconds.
+    #[must_use]
+    pub const fn with_block_time_ms(mut self, ms: u64) -> Self {
+        self.block_time = Duration::from_millis(ms);
+        self
+    }
+
+    /// Sets the maximum gas per transaction.
+    #[must_use]
+    pub const fn with_max_gas_per_txn(mut self, max_gas: Option<u64>) -> Self {
+        self.max_gas_per_txn = max_gas;
+        self
+    }
+
+    /// Sets the flashblocks configuration.
+    #[must_use]
+    pub const fn with_flashblocks(mut self, flashblocks: FlashblocksConfig) -> Self {
+        self.flashblocks = flashblocks;
+        self
     }
 }
