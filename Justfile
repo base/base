@@ -46,10 +46,25 @@ zepter-fix:
     @command -v zepter >/dev/null 2>&1 || cargo install zepter
     zepter format features --fix
 
-# Runs tests across workspace with all features enabled
-test: build-contracts
+# Installs cargo-nextest if not present
+install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features
+
+# Runs tests across workspace with all features enabled (excludes devnet)
+test: install-nextest build-contracts
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet
+
+# Runs devnet tests (requires Docker)
+devnet-tests: install-nextest build-contracts
+    cargo nextest run -p devnet
+
+# Pre-pulls Docker images needed for system tests
+system-tests-pull-images:
+    docker build -t devnet-setup:local -f docker/Dockerfile.devnet .
+    docker pull ghcr.io/paradigmxyz/reth:v1.10.2
+    docker pull sigp/lighthouse:v8.0.1
+    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
 
 # Runs cargo hack against the workspace
 hack:
@@ -160,4 +175,4 @@ devnet-flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
-    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{containers}}
+    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{ containers }}

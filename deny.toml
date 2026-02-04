@@ -104,7 +104,6 @@ skip = [
     "linux-raw-sys",
     "socket2",
     "bitflags",
-    "redox_syscall",
     "redox_users",
 
     # Network crates
@@ -120,12 +119,17 @@ skip = [
     "toml",
 
     # Other common duplicates from upstream
+    "axum",
+    "axum-core",
     "base64",
     "bindgen",
     "cargo_metadata",
     "cargo-platform",
     "core-foundation",
     "crossterm",
+    "generic-array",
+    "matchit",
+    "nix",
     "gloo-timers",
     "indexmap",
     "miniz_oxide",
@@ -154,7 +158,7 @@ skip = [
     "if-addrs",
     "yamux",
 
-    # bindgen (older rustc-hash) vs various upstream deps (newer rustc-hash)
+    # jsonrpsee (older rustc-hash) vs other deps (newer rustc-hash)
     "rustc-hash",
 ]
 
