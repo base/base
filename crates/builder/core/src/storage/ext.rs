@@ -11,7 +11,7 @@ use jsonrpsee::{
 use tracing::warn;
 
 use super::TxDataStore;
-use crate::OpRBuilderMetrics;
+use crate::BuilderMetrics;
 
 #[cfg_attr(not(test), rpc(server, namespace = "base"))]
 #[cfg_attr(test, rpc(server, client, namespace = "base"))]
@@ -36,12 +36,12 @@ pub trait BaseApiExt {
 #[derive(Debug)]
 pub struct TxDataStoreExt {
     store: TxDataStore,
-    metrics: OpRBuilderMetrics,
+    metrics: BuilderMetrics,
 }
 
 impl TxDataStoreExt {
     pub fn new(store: TxDataStore) -> Self {
-        Self { store, metrics: OpRBuilderMetrics::default() }
+        Self { store, metrics: BuilderMetrics::default() }
     }
 }
 

@@ -52,7 +52,7 @@ use crate::{
         context::OpPayloadBuilderCtx,
         generator::{BlockCell, BuildArguments, PayloadBuilder},
     },
-    metrics::OpRBuilderMetrics,
+    metrics::BuilderMetrics,
     traits::{ClientBounds, PoolBounds},
 };
 
@@ -100,7 +100,7 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
     /// System configuration for the builder
     pub config: BuilderConfig,
     /// The metrics for the builder
-    pub metrics: Arc<OpRBuilderMetrics>,
+    pub metrics: Arc<BuilderMetrics>,
 }
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
@@ -112,7 +112,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         config: BuilderConfig,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
-        metrics: Arc<OpRBuilderMetrics>,
+        metrics: Arc<BuilderMetrics>,
     ) -> Self {
         Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics }
     }

@@ -11,7 +11,7 @@ mod engine;
 pub use engine::OpEngineApiBuilder;
 
 mod metrics;
-pub use metrics::OpRBuilderMetrics;
+pub use metrics::BuilderMetrics;
 
 mod launcher;
 pub use launcher::{BuilderLauncher, launch};

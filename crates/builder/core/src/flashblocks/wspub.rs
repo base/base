@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, warn};
 
-use crate::metrics::OpRBuilderMetrics;
+use crate::metrics::BuilderMetrics;
 
 /// A `WebSockets` publisher that accepts connections from client websockets and broadcasts to them
 /// updates about new flashblocks. It maintains a count of sent messages and active subscriptions.
@@ -35,7 +35,7 @@ pub(super) struct WebSocketPublisher {
 }
 
 impl WebSocketPublisher {
-    pub(super) fn new(addr: SocketAddr, metrics: Arc<OpRBuilderMetrics>) -> io::Result<Self> {
+    pub(super) fn new(addr: SocketAddr, metrics: Arc<BuilderMetrics>) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(100);
         let (term, _) = watch::channel(false);
 
@@ -88,7 +88,7 @@ impl Drop for WebSocketPublisher {
 
 async fn listener_loop(
     listener: TcpListener,
-    metrics: Arc<OpRBuilderMetrics>,
+    metrics: Arc<BuilderMetrics>,
     receiver: Receiver<Utf8Bytes>,
     term: watch::Receiver<bool>,
     sent: Arc<AtomicUsize>,
@@ -153,7 +153,7 @@ async fn listener_loop(
 /// decrement the subscription count in the `WebSocketPublisher`.
 async fn broadcast_loop(
     stream: WebSocketStream<TcpStream>,
-    metrics: Arc<OpRBuilderMetrics>,
+    metrics: Arc<BuilderMetrics>,
     term: watch::Receiver<bool>,
     blocks: broadcast::Receiver<Utf8Bytes>,
     sent: Arc<AtomicUsize>,
