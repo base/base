@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    ExecutionInfo, BuilderMetrics, PayloadTxsBounds, TxData, TxDataStore, TxnExecutionError,
+    BuilderMetrics, ExecutionInfo, PayloadTxsBounds, TxData, TxDataStore, TxnExecutionError,
     TxnOutcome,
 };
 
