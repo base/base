@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BENCHMARK_REPO: "base/benchmark"
-  BENCHMARK_REF: "meyer9/remove-unnecessary-flashblock-enabled-flag"
+  BENCHMARK_REF: "main"
 
 permissions:
   contents: read
@@ -147,7 +147,7 @@ jobs:
           mkdir -p ${{ runner.temp }}/output
 
           go run benchmark/cmd/main.go \
-            --log.level debug \
+            --log.level info \
             run \
             --config ../node-reth/.github/benchmark/transfer-only.yml \
             --root-dir ${{ runner.temp }}/data-dir \
