@@ -16,6 +16,7 @@ use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes,
 };
+use thiserror::Error;
 
 /// A storage key for proof queries.
 pub type StorageKey = B256;
@@ -28,19 +29,12 @@ pub type StorageKey = B256;
 pub type EngineApiResult<T> = Result<T, EngineApiError>;
 
 /// Engine API error type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
+#[error("{message}")]
 pub struct EngineApiError {
     /// The error message.
     pub message: String,
 }
-
-impl std::fmt::Display for EngineApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for EngineApiError {}
 
 impl EngineApiError {
     /// Creates a new engine API error.

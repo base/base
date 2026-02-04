@@ -1,0 +1,104 @@
+#![allow(missing_docs)]
+
+use alloy_provider::Provider;
+use base_builder_core::test_utils::{BlockTransactionsExt, setup_test_instance};
+
+/// This test ensures that the miner gas limit is respected
+/// We will set the limit to 60,000 and see that the builder will not include any transactions
+#[tokio::test]
+async fn miner_gas_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+
+    let call =
+        driver.provider().raw_request::<(u64,), bool>("miner_setGasLimit".into(), (60000,)).await?;
+    assert!(call, "miner_setGasLimit should be executed successfully");
+
+    let unfit_tx = driver.create_transaction().send().await?;
+    let block = driver.build_new_block().await?;
+
+    // tx should not be included because the gas limit is less than the transaction gas
+    assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
+
+    Ok(())
+}
+
+/// This test ensures that block will fill up to the limit.
+///
+/// - Gas limit: 730,000
+/// - Deposit transaction gas: 182,706
+/// - Each user transaction gas: 53,000
+///
+/// Available gas = 730,000 - 182,706 = 547,294
+/// Transactions that fit = 547,294 / 53,000 = 10.32 = 10 transactions
+#[tokio::test]
+async fn block_fill() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+
+    let call = driver
+        .provider()
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (730_000,))
+        .await?;
+    assert!(call, "miner_setGasLimit should be executed successfully");
+
+    let mut tx_hashes = Vec::new();
+    for _ in 0..10 {
+        let tx = driver
+            .create_transaction()
+            .with_gas_limit(53000)
+            .with_max_priority_fee_per_gas(100)
+            .send()
+            .await?;
+        tx_hashes.push(*tx.tx_hash());
+    }
+    let unfit_tx = driver
+        .create_transaction()
+        .with_gas_limit(53000)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+
+    let block = driver.build_new_block().await?;
+
+    for (i, tx_hash) in tx_hashes.iter().enumerate() {
+        assert!(block.includes(tx_hash), "tx i={i} hash={tx_hash} should be in block");
+    }
+    assert!(!block.includes(unfit_tx.tx_hash()), "unfit tx should not be in block");
+
+    assert_eq!(block.transactions.len(), 11, "deposit + 10 valid txs should be in the block");
+
+    Ok(())
+}
+
+/// This test ensures that the gasLimit can be reset to the default value
+/// by setting it to 0
+#[tokio::test]
+async fn reset_gas_limit() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+
+    let call =
+        driver.provider().raw_request::<(u64,), bool>("miner_setGasLimit".into(), (60000,)).await?;
+    assert!(call, "miner_setGasLimit should be executed successfully");
+
+    let unfit_tx = driver.create_transaction().send().await?;
+    let block = driver.build_new_block().await?;
+
+    // tx should not be included because the gas limit is less than the transaction gas
+    assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
+
+    let reset_call =
+        driver.provider().raw_request::<(u64,), bool>("miner_setGasLimit".into(), (0,)).await?;
+    assert!(reset_call, "miner_setGasLimit should be executed successfully");
+
+    let _ = driver.build_new_block().await?;
+
+    let fit_tx = driver.create_transaction().send().await?;
+    let block = driver.build_new_block().await?;
+
+    // tx should be included because the gas limit is reset to the default value
+    assert!(block.includes(fit_tx.tx_hash()), "transaction should be in block");
+
+    Ok(())
+}

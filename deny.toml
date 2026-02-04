@@ -141,7 +141,6 @@ skip = [
     "procfs",
     "prost-derive",
     "prost",
-    "rustc-hash",
     "security-framework",
     "send_wrapper",
     "toml_datetime",
@@ -156,6 +155,18 @@ skip = [
     "unsigned-varint",
     "if-addrs",
     "yamux",
+
+    # discv5 (older hashlink) vs libp2p-swarm (newer hashlink)
+    "hashlink",
+
+    # tracing-samply (older mach2) vs metrics-process (newer mach2)
+    "mach2",
+
+    # reth uses older rlimit via reth-node-metrics
+    "rlimit",
+
+    # if-watch/libp2p (older system-configuration) vs hyper-util (newer system-configuration)
+    "system-configuration",
 ]
 
 [sources]

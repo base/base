@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # Project
+base-cli-utils.workspace = true
 base-client-engine.workspace = true
 base-primitives = { workspace = true, optional = true }
 

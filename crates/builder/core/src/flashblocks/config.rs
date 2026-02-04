@@ -1,0 +1,112 @@
+use core::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
+
+use base_builder_cli::OpRbuilderArgs;
+
+use crate::BuilderConfig;
+
+/// Configuration values specific to the flashblocks builder.
+///
+/// Controls flashblock timing, WebSocket publishing, and state root
+/// computation settings for progressive block construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlashblocksConfig {
+    /// The address of the websockets endpoint that listens for subscriptions to
+    /// new flashblocks updates.
+    pub ws_addr: SocketAddr,
+
+    /// How often a flashblock is produced. This is independent of the block time of the chain.
+    /// Each block will contain one or more flashblocks. On average, the number of flashblocks
+    /// per block is equal to the block time divided by the flashblock interval.
+    pub interval: Duration,
+
+    /// How much time would be deducted from block build time to account for latencies in
+    /// milliseconds.
+    ///
+    /// If `dynamic_adjustment` is false this value would be deducted from first flashblock and
+    /// it shouldn't be more than interval
+    ///
+    /// If `dynamic_adjustment` is true this value would be deducted from first flashblock and
+    /// it shouldn't be more than interval
+    pub leeway_time: Duration,
+
+    /// Disables dynamic flashblocks number adjustment based on FCU arrival time
+    pub fixed: bool,
+
+    /// Should we disable state root calculation for each flashblock
+    pub disable_state_root: bool,
+
+    /// Whether to compute state root only when `get_payload` is called (finalization).
+    /// When enabled, flashblocks are built without state root, but the final payload
+    /// returned by `get_payload` will have the state root computed.
+    pub compute_state_root_on_finalize: bool,
+
+    /// Whether to use streaming state root calculation.
+    /// When enabled, state updates are streamed to a background task during transaction
+    /// execution, reducing finalization latency by pre-fetching trie nodes and building
+    /// a sparse trie incrementally.
+    pub streaming_state_root: bool,
+}
+
+impl Default for FlashblocksConfig {
+    fn default() -> Self {
+        Self {
+            ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
+            interval: Duration::from_millis(250),
+            leeway_time: Duration::from_millis(50),
+            fixed: false,
+            disable_state_root: false,
+            compute_state_root_on_finalize: false,
+            streaming_state_root: false,
+        }
+    }
+}
+
+impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
+    type Error = eyre::Report;
+
+    fn try_from(args: OpRbuilderArgs) -> Result<Self, Self::Error> {
+        let interval = Duration::from_millis(args.flashblocks.flashblocks_block_time);
+
+        let ws_addr = SocketAddr::new(
+            args.flashblocks.flashblocks_addr.parse()?,
+            args.flashblocks.flashblocks_port,
+        );
+
+        let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
+
+        let fixed = args.flashblocks.flashblocks_fixed;
+
+        let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
+
+        let compute_state_root_on_finalize =
+            args.flashblocks.flashblocks_compute_state_root_on_finalize;
+
+        let streaming_state_root = args.flashblocks.flashblocks_streaming_state_root;
+
+        Ok(Self {
+            ws_addr,
+            interval,
+            leeway_time,
+            fixed,
+            disable_state_root,
+            compute_state_root_on_finalize,
+            streaming_state_root,
+        })
+    }
+}
+
+pub(super) trait FlashBlocksConfigExt {
+    fn flashblocks_per_block(&self) -> u64;
+}
+
+impl FlashBlocksConfigExt for BuilderConfig {
+    fn flashblocks_per_block(&self) -> u64 {
+        if self.block_time.as_millis() == 0 {
+            return 0;
+        }
+        (self.block_time.as_millis() / self.flashblocks.interval.as_millis()) as u64
+    }
+}

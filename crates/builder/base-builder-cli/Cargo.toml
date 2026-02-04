@@ -14,8 +14,16 @@ workspace = true
 [dependencies]
 # CLI
 clap.workspace = true
-clap_builder.workspace = true
 
 # reth
 reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-optimism-node.workspace = true
+reth-tracing-otlp.workspace = true
+
+# tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# misc
+eyre.workspace = true
+url.workspace = true

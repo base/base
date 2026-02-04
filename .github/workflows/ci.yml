@@ -40,8 +40,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: stable-${{ hashFiles('Cargo.lock') }}
+          shared-key: "stable"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - name: Install Foundry
@@ -74,8 +74,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: stable-${{ hashFiles('Cargo.lock') }}
+          shared-key: "stable"
+          save-if: false
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - name: Install cargo-nextest
@@ -105,8 +105,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: nightly-${{ hashFiles('Cargo.lock') }}
+          shared-key: "nightly"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - run: just check-format
@@ -136,8 +136,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: stable-${{ hashFiles('Cargo.lock') }}
+          shared-key: "stable"
+          save-if: false
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - name: Install Foundry
@@ -167,8 +167,8 @@ jobs:
           context: .
           file: docker/Dockerfile.client
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=ci-docker
+          cache-to: type=gha,mode=max,scope=ci-docker
 
   udeps:
     name: udeps
@@ -193,8 +193,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: nightly-${{ hashFiles('Cargo.lock') }}
+          shared-key: "nightly"
+          save-if: false
       - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
         with:
           tool: cargo-udeps
@@ -235,8 +235,8 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: stable-${{ hashFiles('Cargo.lock') }}
+          shared-key: "stable"
+          save-if: false
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - run: just check-deny
