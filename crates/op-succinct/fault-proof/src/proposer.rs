@@ -1840,7 +1840,7 @@ where
 
                     // Spawn proving task
                     match self.spawn_game_proving_task(game_address, false, Some(deadline)).await {
-                        Ok(()) => {
+                        Ok(true) => {
                             tracing::info!(
                                 game_address = ?game_address,
                                 game_index = %index,
@@ -1849,6 +1849,7 @@ where
                             spawned_count += 1;
                             active_proving += 1;
                         }
+                        Ok(false) => {}
                         Err(e) => {
                             tracing::warn!(
                                 ?game_address,
@@ -1992,14 +1993,15 @@ where
                 continue;
             }
 
-            tracing::info!(
-                game_address = ?game_address,
-                game_index = %index,
-                "Spawning defense for challenged game"
-            );
-            self.spawn_game_proving_task(game_address, true, Some(deadline)).await?;
-            active_defense_tasks_count += 1;
-            tasks_spawned = true;
+            if self.spawn_game_proving_task(game_address, true, Some(deadline)).await? {
+                tracing::info!(
+                    game_address = ?game_address,
+                    game_index = %index,
+                    "Spawned defense for challenged game"
+                );
+                active_defense_tasks_count += 1;
+                tasks_spawned = true;
+            }
         }
 
         Ok(tasks_spawned)
@@ -2014,15 +2016,16 @@ where
     }
 
     /// Spawn a game proving task. Skips if deadline passed or vkeys don't match.
+    /// Returns `Ok(true)` if spawned, `Ok(false)` if skipped.
     async fn spawn_game_proving_task(
         &self,
         game_address: Address,
         is_defense: bool,
         deadline: Option<u64>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Skip if game is not owned or deadline has passed
         if self.should_skip_proving(game_address, deadline, is_defense).await? {
-            return Ok(());
+            return Ok(false);
         }
 
         let proposer: OPSuccinctProposer<P, H> = self.clone();
@@ -2097,7 +2100,7 @@ where
 
         let task_info = TaskInfo::GameProving { game_address, is_defense };
         self.tasks.lock().await.insert(task_id, (handle, task_info));
-        Ok(())
+        Ok(true)
     }
 
     /// Check if proving should be skipped for any reason.
