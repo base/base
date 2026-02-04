@@ -25,7 +25,7 @@ base-flashblocks-node.workspace = true
 base-flashtypes.workspace = true
 base-txpool.workspace = true
 base-builder-cli.workspace = true
-
+base-builder-core = { workspace = true, features = ["test-utils"] }
 # Async runtime
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
@@ -80,9 +80,6 @@ reth-optimism-chainspec.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-rpc.workspace = true
 reth-optimism-txpool.workspace = true
-
-# op-rbuilder (for FlashblocksServiceBuilder)
-op-rbuilder = { workspace = true, features = ["test-utils"] }
 
 reth-provider.workspace = true
 alloy-genesis.workspace = true

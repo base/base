@@ -9,13 +9,11 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_cli::OpRbuilderArgs;
+use base_builder_core::{
+    BuilderConfig, FlashblocksServiceBuilder, OpEngineApiBuilder, test_utils::get_available_port,
+};
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
-use op_rbuilder::{
-    flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    test_utils::get_available_port,
-};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
