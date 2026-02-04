@@ -9,7 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_cli::OpRbuilderArgs;
+use base_builder_cli::BuilderArgs;
 use base_builder_core::{
     BuilderConfig, FlashblocksServiceBuilder, OpEngineApiBuilder, test_utils::get_available_port,
 };
@@ -277,8 +277,8 @@ fn parse_genesis(genesis_json: &[u8]) -> Result<Arc<OpChainSpec>> {
     Ok(Arc::new(OpChainSpec::from_genesis(genesis)))
 }
 
-fn default_args(config: &InProcessBuilderConfig) -> OpRbuilderArgs {
-    let mut args = OpRbuilderArgs::default();
+fn default_args(config: &InProcessBuilderConfig) -> BuilderArgs {
+    let mut args = BuilderArgs::default();
 
     args.flashblocks.flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
     args.flashblocks.flashblocks_block_time = 200;
@@ -379,7 +379,7 @@ fn create_test_db(
     Ok((Arc::new(TempDatabase::new(db, db_path.clone())), db_path))
 }
 
-fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<OpPooledTransaction> {
+fn pool_component(args: &BuilderArgs) -> OpPoolBuilder<OpPooledTransaction> {
     let rollup_args = &args.rollup_args;
     OpPoolBuilder::<OpPooledTransaction>::default()
         .with_enable_tx_conditional(false)
