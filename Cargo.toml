@@ -116,7 +116,7 @@ base-txpool = { path = "crates/client/txpool" }
 
 # Builder
 base-builder-cli = { path = "crates/builder/base-builder-cli" }
-base-builder = { path = "crates/builder/base-builder" }
+base-builder-core = { path = "crates/builder/core" }
 
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }

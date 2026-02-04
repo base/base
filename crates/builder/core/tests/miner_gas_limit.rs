@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use alloy_provider::Provider;
-use base_builder::test_utils::{BlockTransactionsExt, setup_test_instance};
+use base_builder_core::test_utils::{BlockTransactionsExt, setup_test_instance};
 
 /// This test ensures that the miner gas limit is respected
 /// We will set the limit to 60,000 and see that the builder will not include any transactions

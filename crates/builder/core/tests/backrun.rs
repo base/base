@@ -3,7 +3,7 @@
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{TxHash, U256};
 use alloy_provider::Provider;
-use base_builder::test_utils::{ChainDriverExt, ONE_ETH, setup_test_instance};
+use base_builder_core::test_utils::{ChainDriverExt, ONE_ETH, setup_test_instance};
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
 use uuid::Uuid;
 
