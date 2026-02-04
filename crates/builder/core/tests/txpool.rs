@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use base_builder_cli::OpRbuilderArgs;
-use op_rbuilder::test_utils::{
+use base_builder_core::test_utils::{
     BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
     setup_test_instance_with_config,
 };

@@ -42,7 +42,7 @@ impl Version {
 
 /// Initializes Reth's global version metadata.
 ///
-/// Use this in execution layer binaries (base-node-reth, op-rbuilder) that need
+/// Use this in execution layer binaries (base-node-reth, base-builder) that need
 /// Reth's global version metadata initialized for P2P identification and logging.
 ///
 /// This macro must be called from the binary crate to capture the correct package metadata.

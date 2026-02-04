@@ -15,9 +15,8 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use reth_optimism_txpool::OpPooledTransaction;
 
 use crate::{
+    BaseApiExtServer, OpEngineApiBuilder, TxDataStoreExt,
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 
 pub fn launch(cli: Cli) -> Result<()> {

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 use base_builder_cli::{FlashblocksArgs, OpRbuilderArgs};
-use op_rbuilder::test_utils::{TransactionBuilderExt, setup_test_instance_with_args};
+use base_builder_core::test_utils::{TransactionBuilderExt, setup_test_instance_with_args};
 
 /// Test that when `compute_state_root_on_finalize` is enabled:
 /// 1. Flashblocks are built without state root (`state_root` = ZERO in intermediate blocks)

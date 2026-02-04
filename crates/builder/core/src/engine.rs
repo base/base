@@ -1,4 +1,4 @@
-//! RPC component builder
+//! OP Stack Engine API builder.
 
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpEngineTypes;
-pub use reth_optimism_rpc::OpEngineApi;
+pub(crate) use reth_optimism_rpc::OpEngineApi;
 use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
 use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::EngineCapabilities;

@@ -1,3 +1,5 @@
+//! Trait bounds for OP Stack builder components.
+
 use alloy_consensus::Header;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
 use reth_optimism_chainspec::OpChainSpec;

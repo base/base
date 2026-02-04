@@ -37,10 +37,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    OpEngineApiBuilder, TxDataStore,
     flashblocks::{BuilderConfig, FlashblocksServiceBuilder},
-    primitives::reth::engine_api_builder::OpEngineApiBuilder,
     test_utils::{EngineApi, Ipc, TransactionPoolObserver, create_test_db, driver::ChainDriver},
-    tx_data_store::TxDataStore,
 };
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.

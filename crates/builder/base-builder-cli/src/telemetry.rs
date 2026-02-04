@@ -38,7 +38,7 @@ impl TelemetryArgs {
 
         // Create OTLP layer with custom configuration
         let otlp_config = OtlpConfig::new(
-            "op-rbuilder",
+            "base-builder",
             Url::parse(self.otlp_endpoint.as_ref().unwrap()).expect("Invalid OTLP endpoint"),
             reth_tracing_otlp::OtlpProtocol::Http,
             Some((self.sampling_ratio as f64) / 100.0),
@@ -48,7 +48,7 @@ impl TelemetryArgs {
         // Create a trace filter that sends more data to OTLP but less to stdout
         let trace_filter = Targets::new()
             .with_default(LevelFilter::WARN)
-            .with_target("op_rbuilder", LevelFilter::INFO)
+            .with_target("base_builder", LevelFilter::INFO)
             .with_target("payload_builder", LevelFilter::DEBUG);
 
         let filtered_layer = otlp_layer.with_filter(trace_filter);

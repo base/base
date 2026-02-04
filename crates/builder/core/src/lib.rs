@@ -7,12 +7,24 @@
 mod execution;
 pub use execution::{ExecutionInfo, TxnExecutionError, TxnOutcome};
 
+mod engine;
+pub use engine::OpEngineApiBuilder;
+
+mod metrics;
+pub use metrics::OpRBuilderMetrics;
+
+mod traits;
+pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
+
+mod launcher;
+pub use launcher::{BuilderLauncher, launch};
+
+mod storage;
+pub use storage::{
+    BaseApiExtServer, StoreData, StoredBackrunBundle, TxData, TxDataStore, TxDataStoreExt,
+};
+
 pub mod flashblocks;
-pub mod launcher;
-pub mod metrics;
-pub mod primitives;
-pub mod traits;
-pub mod tx_data_store;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
