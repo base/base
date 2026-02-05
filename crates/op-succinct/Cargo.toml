@@ -199,12 +199,12 @@ revm-precompile = { version = "31.0.0", default-features = false }
 op-revm = { version = "14.1.0", default-features = false }
 
 # SP1 v6.0.0-beta.1 (Hypercube)
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1", features = ["network", "blocking"] }
-sp1-lib = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1", features = ["verify"] }
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1", features = ["verify"] }
-sp1-build = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1" }
-sp1-prover = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1" }
-sp1-core-executor = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1" }
+sp1-sdk = { version = "6.0.0-beta.1", features = ["network", "blocking"] }
+sp1-lib = { version = "6.0.0-beta.1", features = ["verify"] }
+sp1-zkvm = { version = "6.0.0-beta.1", features = ["verify"] }
+sp1-build = "6.0.0-beta.1"
+sp1-prover = "6.0.0-beta.1"
+sp1-core-executor = "6.0.0-beta.1"
 
 # kzg
 kzg-rs = { version = "0.2.7", features = ["rkyv", "serde"] }
@@ -227,8 +227,6 @@ p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p2
 k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0-beta.1" }
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0-beta.1" }
 kzg-rs = { git = "https://github.com/succinctlabs/kzg-rs", branch = "fakedev9999/patch-6.0.0-beta.1" }
-sp1-lib = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1" }
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1", tag = "v6.0.0-beta.1" }
 
 # Note: alloy-tx-macros crates.io version must match alloy-consensus version
 # Both are now at 1.4.x for hokulea v1.1.4 compatibility
