@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use op_succinct_host_utils::metrics::MetricsGauge;
 use sp1_sdk::{
     network::{proto::types::FulfillmentStatus, NetworkMode},
-    Elf, NetworkProver, Prover, ProveRequest, SP1ProofMode, SP1ProofWithPublicValues,
+    Elf, NetworkProver, ProveRequest, Prover, SP1ProofMode, SP1ProofWithPublicValues,
     SP1ProvingKey, SP1Stdin, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
 use tokio::time::sleep;

@@ -16,7 +16,10 @@ use op_succinct_host_utils::{
 use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use op_succinct_scripts::HostExecutorArgs;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use sp1_sdk::{blocking::CpuProver, blocking::Prover, utils, Elf};
+use sp1_sdk::{
+    blocking::{CpuProver, Prover},
+    utils, Elf,
+};
 use std::{
     cmp::{max, min},
     fs::{self, OpenOptions},
@@ -113,10 +116,7 @@ where
         .map(|r| r.unwrap())
         .collect::<Vec<_>>();
 
-    let execution_inputs = stdins
-        .into_iter()
-        .zip(block_data.into_iter())
-        .collect::<Vec<_>>();
+    let execution_inputs = stdins.into_iter().zip(block_data.into_iter()).collect::<Vec<_>>();
 
     // Execute the program for each block range in parallel.
     // Use spawn_blocking to avoid "Cannot start a runtime from within a runtime" error.

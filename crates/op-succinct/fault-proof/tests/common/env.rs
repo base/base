@@ -30,7 +30,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::{Signer, SignerLock};
-use sp1_sdk::{Elf, HashableKey, Prover, ProvingKey, ProverClient};
+use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, ProvingKey};
 use tokio::task::JoinHandle;
 use tracing::{info, Level};
 

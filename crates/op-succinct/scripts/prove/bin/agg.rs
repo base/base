@@ -8,7 +8,7 @@ use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin
 use op_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{
     blocking::{self, Prover as BlockingProver},
-    utils, Elf, HashableKey, ProveRequest, Prover, ProvingKey, ProverClient, SP1Proof,
+    utils, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1Proof,
     SP1ProofWithPublicValues, SP1VerifyingKey,
 };
 use std::fs;

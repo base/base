@@ -6,7 +6,7 @@ use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_scripts::ConfigArgs;
-use sp1_sdk::{utils, Elf, HashableKey, Prover, ProvingKey, ProverClient};
+use sp1_sdk::{utils, Elf, HashableKey, Prover, ProverClient, ProvingKey};
 
 // Get the verification keys for the ELFs and check them against the contract.
 #[tokio::main]

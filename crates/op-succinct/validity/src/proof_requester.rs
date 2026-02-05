@@ -9,7 +9,7 @@ use op_succinct_host_utils::{
 use op_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{
     network::{proto::types::ExecutionStatus, FulfillmentStrategy},
-    Elf, NetworkProver, Prover, ProveRequest, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
+    Elf, NetworkProver, ProveRequest, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
     SP1_CIRCUIT_VERSION,
 };
 use std::{
