@@ -49,7 +49,9 @@ jobs:
       with:
         version: nightly
     - run: rustup toolchain install stable --profile minimal
-    - uses: Swatinem/rust-cache@v2  
+    - name: Install protobuf compiler
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+    - uses: Swatinem/rust-cache@v2
     - name: Install SP1 toolchain
       run: |
           curl -L https://sp1.succinct.xyz | bash
