@@ -1,5 +1,7 @@
 //! Contains the CLI arguments
 
+use std::net::{IpAddr, SocketAddr};
+
 use base_flashblocks::FlashblocksConfig;
 use reth_optimism_node::args::RollupArgs;
 
@@ -33,6 +35,25 @@ pub struct Args {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
+
+    /// Enable the monitoring dashboard web UI
+    #[arg(long = "dashboard-enabled")]
+    pub dashboard_enabled: bool,
+
+    /// Port for the monitoring dashboard HTTP server
+    #[arg(long = "dashboard-port", default_value = "8080")]
+    pub dashboard_port: u16,
+
+    /// Address to bind the monitoring dashboard HTTP server
+    #[arg(long = "dashboard-addr", default_value = "127.0.0.1")]
+    pub dashboard_addr: IpAddr,
+}
+
+impl Args {
+    /// Returns the dashboard socket address if dashboard is enabled.
+    pub fn dashboard_socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.dashboard_addr, self.dashboard_port)
+    }
 }
 
 impl Args {

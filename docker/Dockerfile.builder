@@ -19,14 +19,14 @@ ARG PROFILE=release
 COPY --from=planner /app/recipe.json recipe.json
 
 # Build dependencies - THIS LAYER IS CACHED until Cargo.toml/Cargo.lock change
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo chef cook --profile $PROFILE --recipe-path recipe.json
 
 # Now copy source and build (only your code compiles here)
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     cargo build --profile $PROFILE --bin base-builder && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-builder /app/base-builder
 

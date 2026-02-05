@@ -325,6 +325,7 @@ services:
       - "${L2_CLIENT_AUTH_PORT}:${L2_CLIENT_AUTH_PORT}"     # Auth RPC (Engine API)
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
+      - "${L2_CLIENT_DASHBOARD_PORT:-8080}:${L2_CLIENT_DASHBOARD_PORT:-8080}"  # Dashboard
     volumes:
       - ../.devnet/l2/client:/data
       - ../.devnet/l1/configs:/genesis:ro
@@ -354,6 +355,9 @@ services:
       - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --color=never
+      - --dashboard-enabled
+      - --dashboard-addr=0.0.0.0
+      - --dashboard-port=${L2_CLIENT_DASHBOARD_PORT:-8080}
       - -vvv
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CLIENT_HTTP_PORT}"]

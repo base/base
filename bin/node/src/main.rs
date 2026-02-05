@@ -6,6 +6,7 @@
 pub mod cli;
 
 use base_client_node::BaseNodeRunner;
+use base_dashboard::{DashboardConfig, DashboardExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteringConfig, MeteringExtension};
@@ -42,6 +43,10 @@ fn main() {
         runner.install_ext::<MeteringExtension>(MeteringConfig {
             enabled: args.enable_metering,
             flashblocks_config: flashblocks_config.clone(),
+        });
+        runner.install_ext::<DashboardExtension>(DashboardConfig {
+            enabled: args.dashboard_enabled,
+            bind_addr: args.dashboard_socket_addr(),
         });
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);

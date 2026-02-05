@@ -161,3 +161,11 @@ devnet-flashblocks:
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
     docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{containers}}
+
+# Run devnet with dashboard and smoke tests
+devnet-demo:
+    ./scripts/devnet/demo-dashboard.sh
+
+# Run devnet with dashboard and load generator
+devnet-demo-load:
+    ./scripts/devnet/demo-dashboard.sh load
