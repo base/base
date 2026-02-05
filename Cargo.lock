@@ -1885,7 +1885,6 @@ dependencies = [
  "opentelemetry 0.31.0",
  "parking_lot",
  "rand 0.9.2",
- "reqwest 0.13.1",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
