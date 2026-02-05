@@ -33,7 +33,7 @@ impl SystemCollector {
         }
     }
 
-    /// Collects current system statistics in Nethermind format.
+    /// Collects current system statistics.
     pub(crate) fn collect(&mut self) -> SystemData {
         self.sys.refresh_cpu_all();
         self.sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[self.pid]), true);
@@ -41,7 +41,7 @@ impl SystemCollector {
         // Get process-specific memory usage
         let working_set = self.sys.process(self.pid).map(|p| p.memory()).unwrap_or(0);
 
-        // CPU usage as fraction (0.0-1.0) matching Nethermind format
+        // CPU usage as fraction (0.0-1.0)
         let cpu_usage = self.sys.global_cpu_usage() / 100.0;
 
         SystemData {

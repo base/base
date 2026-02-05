@@ -1,6 +1,4 @@
 //! JSON-serializable types for dashboard data.
-//!
-//! These types match the Nethermind monitoring dashboard format for compatibility.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,7 +46,7 @@ pub struct SystemData {
 pub struct PeerData {
     /// Number of connection contexts.
     pub contexts: u32,
-    /// Client type ID (0=Unknown, 1=Nethermind, 2=Geth, etc.).
+    /// Client type ID (0=Unknown, 1=Reth, 2=Geth).
     pub client_type: u8,
     /// Client protocol version.
     pub version: u32,

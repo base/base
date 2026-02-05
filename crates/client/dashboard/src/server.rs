@@ -33,7 +33,7 @@ pub(crate) async fn start_dashboard_server<Provider, Pool>(
     let data_feed = Arc::new(DataFeed::new(provider, pool, peers_fn));
     data_feed.start(network_name, client_name);
 
-    // SSE events endpoint (matches Nethermind's path for frontend compatibility)
+    // SSE events endpoint
     let events = warp::path!("data" / "events")
         .and(warp::get())
         .and(warp::any().map(move || Arc::clone(&data_feed)))
