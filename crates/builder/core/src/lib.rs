@@ -23,9 +23,7 @@ mod traits;
 pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
 
 mod storage;
-pub use storage::{
-    BaseApiExtServer, StoreData, StoredBackrunBundle, TxData, TxDataStore, TxDataStoreExt,
-};
+pub use storage::{BaseApiExtServer, StoreData, TxData, TxDataStore, TxDataStoreExt};
 
 mod flashblocks;
 pub use flashblocks::{

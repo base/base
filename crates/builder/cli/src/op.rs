@@ -30,9 +30,9 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
-    /// Buffer size for tx data store (LRU eviction when full)
-    #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
-    pub tx_data_store_buffer_size: usize,
+    /// Buffer size for resource metering store (LRU eviction when full)
+    #[arg(long = "builder.resource-metering-buffer-size", default_value = "10000")]
+    pub resource_metering_buffer_size: usize,
 
     /// Flashblocks configuration
     #[command(flatten)]
@@ -50,7 +50,7 @@ impl Default for OpRbuilderArgs {
             max_gas_per_txn: None,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
-            tx_data_store_buffer_size: 10000,
+            resource_metering_buffer_size: 10000,
             flashblocks: FlashblocksArgs::default(),
             telemetry: TelemetryArgs::default(),
         }
