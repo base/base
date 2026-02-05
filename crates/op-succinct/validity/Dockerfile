@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     git \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 

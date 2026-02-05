@@ -46,7 +46,10 @@ jobs:
           profile: minimal
           toolchain: nightly
           components: rustfmt, clippy
-      
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Install SP1 toolchain
         run: |
           curl -L https://sp1.succinct.xyz | bash
