@@ -101,11 +101,6 @@ th {
   text-align: right;
 }
 
-.logo {
-  height: 32px;
-  width: 241px;
-}
-
 .container {
   position: relative;
   border: 1px solid #555;
@@ -195,12 +190,6 @@ th {
   overflow: hidden;
 }
 
-#network-logo {
-  float: left;
-  width: 42px;
-  height: 42px;
-  margin-left: -50px;
-}
 .title.gasPrices {
   left: calc(50% - 35px);
   width: 70px;
