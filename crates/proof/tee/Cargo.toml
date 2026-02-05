@@ -21,6 +21,37 @@ serde_json = "1.0"
 hex = { version = "0.4.3", features = ["serde"] }
 thiserror = "2.0"
 op-enclave-core = { path = "op-enclave-core" }
+op-enclave-server = { path = "op-enclave-server" }
+
+# NSM and Attestation
+aws-nitro-enclaves-nsm-api = "0.4"
+aws-nitro-enclaves-cose = "0.5"
+
+# Cryptography
+rsa = { version = "0.9", features = ["sha2"] }
+k256 = { version = "0.13", features = ["ecdsa", "arithmetic"] }
+alloy-signer-local = "1.4"
+sha2 = "0.10"
+rand = "0.8"
+
+# X.509 and PKIX
+spki = "0.7"
+x509-cert = "0.2"
+openssl = "0.10"
+
+# Encoding
+zip = "2.2"
+base64 = "0.22"
+ciborium = "0.2"
+serde_bytes = "0.11"
+
+# Logging
+tracing = "0.1"
+
+# Async
+parking_lot = "0.12"
+tokio = { version = "1.0", features = ["full", "process"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 
 [workspace.lints.rust]
 missing-debug-implementations = "warn"
