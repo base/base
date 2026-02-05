@@ -1,6 +1,7 @@
 //! Subscription types for the `eth_` `PubSub` RPC extension
 
 use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
+use derive_more::From;
 use op_alloy_rpc_types::Transaction;
 use serde::{Deserialize, Serialize};
 
@@ -28,14 +29,16 @@ pub struct TransactionWithLogs {
 /// By encapsulating [`SubscriptionKind`] rather than redefining its variants, we automatically
 /// inherit support for any new variants added upstream, or get a compile error if the signature
 /// changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, From)]
 #[serde(untagged)]
 pub enum ExtendedSubscriptionKind {
     /// Standard Ethereum subscription types (newHeads, logs, newPendingTransactions, syncing).
     ///
     /// These are proxied to reth's underlying `EthPubSub` implementation.
+    #[from]
     Standard(SubscriptionKind),
     /// Base-specific subscription types for flashblocks.
+    #[from]
     Base(BaseSubscriptionKind),
 }
 
@@ -81,17 +84,5 @@ impl ExtendedSubscriptionKind {
     /// Returns true if this is a flashblocks-specific subscription.
     pub const fn is_flashblocks(&self) -> bool {
         matches!(self, Self::Base(_))
-    }
-}
-
-impl From<SubscriptionKind> for ExtendedSubscriptionKind {
-    fn from(kind: SubscriptionKind) -> Self {
-        Self::Standard(kind)
-    }
-}
-
-impl From<BaseSubscriptionKind> for ExtendedSubscriptionKind {
-    fn from(kind: BaseSubscriptionKind) -> Self {
-        Self::Base(kind)
     }
 }

@@ -15,13 +15,13 @@ use tracing::debug;
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     /// Failed to open configuration file.
-    #[error("Failed to open config file: {0}")]
+    #[error("failed to open config file: {0}")]
     OpenFile(std::io::Error),
     /// Failed to parse configuration file.
-    #[error("Failed to parse config: {0}")]
+    #[error("failed to parse config: {0}")]
     Parse(serde_json::Error),
     /// Failed to find configuration in registry.
-    #[error("Failed to find config for chain ID {0}")]
+    #[error("failed to find config for chain ID {0}")]
     NotFound(u64),
 }
 

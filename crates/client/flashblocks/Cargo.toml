@@ -72,6 +72,7 @@ metrics.workspace = true
 arc-swap.workspace = true
 metrics-derive.workspace = true
 rayon.workspace = true
+derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]
 rstest.workspace = true

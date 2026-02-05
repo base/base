@@ -7,10 +7,12 @@ CLI utilities for the Base Reth node.
 
 ## Overview
 
-- **`Version`**: Client versioning and P2P identification.
+- **`parse_cli!`**: Parses CLI arguments with package version/description from Cargo.toml.
+- **`init_reth_version!`**: Initializes Reth's global version metadata for P2P identification.
+- **`register_version_metrics!`**: Registers `base_info{version="..."}` Prometheus metric.
 - **`GlobalArgs`**: Common CLI arguments (chain ID, logging).
 - **`LoggingArgs`**: Verbosity levels, output formats, file rotation.
-- **`runtime`**: Tokio runtime with Ctrl+C shutdown handling.
+- **`RuntimeManager`**: Tokio runtime with Ctrl+C shutdown handling.
 
 ## Usage
 
@@ -19,24 +21,23 @@ CLI utilities for the Base Reth node.
 base-cli-utils = { git = "https://github.com/base/base" }
 ```
 
+### Example
+
 ```rust,ignore
-use base_cli_utils::{GlobalArgs, RuntimeManager, Version};
-use clap::Parser;
+use reth_optimism_cli::Cli;
 
-#[derive(Parser)]
-struct MyCli {
-    #[command(flatten)]
-    global: GlobalArgs,
-}
+fn main() {
+    // Initialize Reth version metadata for P2P identification
+    base_cli_utils::init_reth_version!();
 
-fn main() -> eyre::Result<()> {
-    Version::init();
-    let _cli = MyCli::parse();
+    // Parse CLI with package version/description from Cargo.toml
+    let cli = base_cli_utils::parse_cli!(Cli<ChainSpecParser, Args>);
 
-    RuntimeManager::run_until_ctrl_c(async {
-        // ... your async code ...
-        Ok(())
-    })
+    cli.run(|builder, args| async move {
+        // Register version metrics after node starts
+        base_cli_utils::register_version_metrics!();
+        // ...
+    });
 }
 ```
 
