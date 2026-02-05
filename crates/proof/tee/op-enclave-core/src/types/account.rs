@@ -51,6 +51,7 @@ pub struct AccountResult {
 impl AccountResult {
     /// Creates a new AccountResult.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::missing_const_for_fn)] // Not const: Vec params can't be constructed in const context
     pub fn new(
         address: Address,
         account_proof: Vec<Bytes>,

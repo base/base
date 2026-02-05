@@ -9,6 +9,7 @@ pub mod bytes_hex {
     use alloy_primitives::Bytes;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Serializes bytes as 0x-prefixed hex string.
     pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -17,6 +18,7 @@ pub mod bytes_hex {
         serializer.serialize_str(&hex_string)
     }
 
+    /// Deserializes 0x-prefixed hex string to bytes.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
         D: Deserializer<'de>,
@@ -36,6 +38,7 @@ pub mod u256_hex {
     use alloy_primitives::U256;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Serializes U256 as minimal 0x-prefixed hex string.
     pub fn serialize<S>(value: &U256, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -49,6 +52,7 @@ pub mod u256_hex {
         serializer.serialize_str(&hex_string)
     }
 
+    /// Deserializes hex string to U256.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<U256, D::Error>
     where
         D: Deserializer<'de>,
