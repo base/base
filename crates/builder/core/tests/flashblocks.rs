@@ -3,28 +3,22 @@
 use std::time::Duration;
 
 use alloy_primitives::B256;
-use base_builder_cli::{FlashblocksArgs, OpRbuilderArgs};
-use base_builder_core::test_utils::{TransactionBuilderExt, setup_test_instance_with_args};
+use base_builder_core::{
+    BuilderConfig, FlashblocksConfig,
+    test_utils::{TransactionBuilderExt, setup_test_instance_with_builder_config},
+};
 
 /// Test that when `compute_state_root_on_finalize` is enabled:
 /// 1. Flashblocks are built without state root (`state_root` = ZERO in intermediate blocks)
 /// 2. The final payload returned by `get_payload` has a valid state root (non-zero)
 #[tokio::test]
 async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 2000, // 2 second block time for more flashblocks
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 100,
-            flashblocks_fixed: true,
-            flashblocks_disable_state_root: true,
-            flashblocks_compute_state_root_on_finalize: true,
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests()
+        .with_fixed(true)
+        .with_disable_state_root(true)
+        .with_compute_state_root_on_finalize(true);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -33,8 +27,8 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
         let _ = driver.create_transaction().random_valid_transfer().send().await?;
     }
 
-    // Build a block - this will trigger get_payload which should compute state root
-    let block = driver.build_new_block().await?;
+    // Build a block with current timestamp to ensure payload doesn't expire
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify the block has transactions
     assert_eq!(
@@ -44,6 +38,7 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
     );
 
     // Verify that the FINAL block has a valid (non-zero) state root
+    // when compute_state_root_on_finalize is enabled
     assert_ne!(
         block.header.state_root,
         B256::ZERO,
@@ -68,23 +63,13 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_dynamic_base() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 2000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 100,
-            flashblocks_fixed: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
-    // We align out block timestamps with current unix timestamp
+    // We align our block timestamps with current unix timestamp
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
@@ -103,23 +88,13 @@ async fn smoke_dynamic_base() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_dynamic_unichain() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 1000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 100,
-            flashblocks_fixed: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
-    // We align out block timestamps with current unix timestamp
+    // We align our block timestamps with current unix timestamp
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
@@ -138,23 +113,13 @@ async fn smoke_dynamic_unichain() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_classic_unichain() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 1000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 50,
-            flashblocks_fixed: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true).with_leeway_time_ms(50);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
-    // We align out block timestamps with current unix timestamp
+    // We align our block timestamps with current unix timestamp
     for _ in 0..10 {
         for _ in 0..5 {
             // send a valid transaction
@@ -173,29 +138,18 @@ async fn smoke_classic_unichain() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_classic_base() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 2000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 50,
-            flashblocks_fixed: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true).with_leeway_time_ms(50);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
-    // We align out block timestamps with current unix timestamp
     for _ in 0..10 {
         for _ in 0..5 {
-            // send a valid transaction
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
-        let block = driver.build_new_block().await?;
+        // Use current timestamp to prevent payload expiration with 2s block time
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
         assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
@@ -208,23 +162,13 @@ async fn smoke_classic_base() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 1000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 100,
-            flashblocks_fixed: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
-    // We align out block timestamps with current unix timestamp
+    // We align our block timestamps with current unix timestamp
     for i in 0..9 {
         for _ in 0..5 {
             // send a valid transaction
@@ -245,19 +189,9 @@ async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 1000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 0,
-            flashblocks_fixed: false,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false).with_leeway_time_ms(0);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
@@ -278,20 +212,12 @@ async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
-    let args = OpRbuilderArgs {
-        chain_block_time: 1000,
-        flashblocks: FlashblocksArgs {
-            flashblocks_port: 0,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 100,
-            flashblocks_fixed: false,
-            flashblocks_disable_state_root: true,
-            flashblocks_compute_state_root_on_finalize: false,
-        },
-        ..Default::default()
-    };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let flashblocks = FlashblocksConfig::for_tests()
+        .with_fixed(false)
+        .with_disable_state_root(true)
+        .with_compute_state_root_on_finalize(false);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
     // Send a transaction to ensure block has some activity

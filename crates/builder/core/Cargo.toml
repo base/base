@@ -12,14 +12,11 @@ description = "Block builder for the OP Stack"
 workspace = true
 
 [dependencies]
-base-builder-cli.workspace = true
 base-bundles.workspace = true
-base-cli-utils.workspace = true
 base-flashtypes.workspace = true
 base-access-lists.workspace = true
 
 reth-optimism-node.workspace = true
-reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-optimism-chainspec.workspace = true
 reth-optimism-payload-builder.workspace = true
 reth-optimism-evm.workspace = true
@@ -167,11 +164,7 @@ http-body-util.workspace = true
 [features]
 default = [ "jemalloc" ]
 
-jemalloc = [
-	"dep:tikv-jemallocator",
-	"reth-cli-util/jemalloc",
-	"reth-optimism-cli/jemalloc",
-]
+jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
 jemalloc-prof = [
 	"jemalloc",
 	"reth-cli-util/jemalloc-prof",

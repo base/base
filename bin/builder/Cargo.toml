@@ -19,7 +19,6 @@ workspace = true
 [dependencies]
 # Workspace
 base-builder-cli.workspace = true
-base-builder-core.workspace = true
 base-cli-utils.workspace = true
 
 # CLI
@@ -30,4 +29,4 @@ reth-cli-util.workspace = true
 
 [features]
 default = [ "jemalloc" ]
-jemalloc = [ "base-builder-core/jemalloc", "reth-cli-util/jemalloc" ]
+jemalloc = [ "base-builder-cli/jemalloc", "reth-cli-util/jemalloc" ]

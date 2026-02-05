@@ -10,7 +10,6 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::B256;
 pub use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
-use base_builder_cli::OpRbuilderArgs;
 pub use contracts::*;
 pub use driver::*;
 pub use external::*;
@@ -23,6 +22,8 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 pub use txs::*;
 pub use utils::*;
+
+use crate::BuilderConfig;
 
 /// Signs an OP transaction and returns the recovered signed transaction.
 pub fn sign_op_tx(
@@ -52,25 +53,29 @@ pub async fn setup_test_instance() -> eyre::Result<LocalInstance> {
     LocalInstance::flashblocks().await
 }
 
-/// Sets up a test instance with custom `OpRbuilderArgs`.
-/// The `flashblocks_port` will be automatically set to an available port.
-pub async fn setup_test_instance_with_args(
-    mut args: OpRbuilderArgs,
+/// Sets up a test instance with custom `BuilderConfig`.
+/// The flashblocks WebSocket port will be automatically set to an available port if set to 0.
+pub async fn setup_test_instance_with_builder_config(
+    mut config: BuilderConfig,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
-    args.flashblocks.flashblocks_port = get_available_port();
-    LocalInstance::new(args).await
+    if config.flashblocks.ws_addr.port() == 0 {
+        config.flashblocks.ws_addr.set_port(get_available_port());
+    }
+    LocalInstance::new(config).await
 }
 
-/// Sets up a test instance with custom `OpRbuilderArgs` and `NodeConfig`.
-/// The `flashblocks_port` will be automatically set to an available port.
-pub async fn setup_test_instance_with_config(
-    mut args: OpRbuilderArgs,
-    config: NodeConfig<OpChainSpec>,
+/// Sets up a test instance with custom `BuilderConfig` and `NodeConfig`.
+/// The flashblocks WebSocket port will be automatically set to an available port if set to 0.
+pub async fn setup_test_instance_with_node_config(
+    mut builder_config: BuilderConfig,
+    node_config: NodeConfig<OpChainSpec>,
 ) -> eyre::Result<LocalInstance> {
     clear_otel_env_vars();
-    args.flashblocks.flashblocks_port = get_available_port();
-    LocalInstance::new_with_config(args, config).await
+    if builder_config.flashblocks.ws_addr.port() == 0 {
+        builder_config.flashblocks.ws_addr.set_port(get_available_port());
+    }
+    LocalInstance::new_with_node_config(builder_config, node_config).await
 }
 
 // anvil default key[1]

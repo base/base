@@ -52,8 +52,9 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
         "not all transactions included in the block"
     );
 
+    let config = rbuilder.builder_config();
     let flashblocks_per_block =
-        rbuilder.args().chain_block_time / rbuilder.args().flashblocks.flashblocks_block_time;
+        (config.block_time.as_millis() / config.flashblocks.interval.as_millis()) as u64;
 
     // verify user transactions are fee-ordered within each flashblock boundary
     let tips_in_block_order = driver

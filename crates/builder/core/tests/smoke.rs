@@ -7,11 +7,13 @@ use core::{
 use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
-use base_builder_cli::OpRbuilderArgs;
 #[cfg(target_os = "linux")]
 use base_builder_core::test_utils::ExternalNode;
-use base_builder_core::test_utils::{
-    TransactionBuilderExt, setup_test_instance, setup_test_instance_with_args,
+use base_builder_core::{
+    BuilderConfig,
+    test_utils::{
+        TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
+    },
 };
 use tokio::{join, task::yield_now};
 use tracing::info;
@@ -118,8 +120,7 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
                 // Ensure that the builder can still produce blocks under
                 // heavy load of incoming transactions.
                 let block = tokio::time::timeout(
-                    Duration::from_secs(rbuilder.args().chain_block_time)
-                        + Duration::from_millis(500),
+                    rbuilder.builder_config().block_time + Duration::from_millis(1500),
                     driver.build_new_block_with_current_timestamp(None),
                 )
                 .await
@@ -164,8 +165,8 @@ async fn test_no_tx_pool() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
-    let args = OpRbuilderArgs { max_gas_per_txn: Some(25000), ..Default::default() };
-    let rbuilder = setup_test_instance_with_args(args).await?;
+    let config = BuilderConfig::for_tests().with_max_gas_per_txn(Some(25000));
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
