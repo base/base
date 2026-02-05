@@ -45,8 +45,14 @@ pub struct Proposal {
     pub config_hash: B256,
 }
 
+/// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
+pub const SIGNATURE_LENGTH: usize = 65;
+
 impl Proposal {
     /// Creates a new Proposal.
+    ///
+    /// # Panics
+    /// Panics if `signature` is not exactly 65 bytes.
     pub fn new(
         output_root: B256,
         signature: Bytes,
@@ -55,6 +61,13 @@ impl Proposal {
         prev_output_root: B256,
         config_hash: B256,
     ) -> Self {
+        assert_eq!(
+            signature.len(),
+            SIGNATURE_LENGTH,
+            "ECDSA signature must be exactly {} bytes, got {}",
+            SIGNATURE_LENGTH,
+            signature.len()
+        );
         Self {
             output_root,
             signature,
@@ -170,5 +183,18 @@ mod tests {
         assert!(keys.contains(&&"L2BlockNumber".to_string()));
         assert!(keys.contains(&&"PrevOutputRoot".to_string()));
         assert!(keys.contains(&&"ConfigHash".to_string()));
+    }
+
+    #[test]
+    #[should_panic(expected = "ECDSA signature must be exactly 65 bytes")]
+    fn test_proposal_new_rejects_invalid_signature_length() {
+        Proposal::new(
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            Bytes::from(vec![0xab; 64]), // 64 bytes instead of 65
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+            U256::from(12345),
+            b256!("0000000000000000000000000000000000000000000000000000000000000003"),
+            b256!("0000000000000000000000000000000000000000000000000000000000000004"),
+        );
     }
 }
