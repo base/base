@@ -98,6 +98,7 @@ skip = [
     "itertools",
     "lru",
     "dashmap",
+    "rustc-hash",
 
     # System/platform crates
     "rustix",
@@ -152,6 +153,7 @@ skip = [
     "tracing-opentelemetry",
     "unicode-width",
     "webpki-roots",
+    "webpki-root-certs",
 
     # libp2p dependency chain version mismatch
     "unsigned-varint",
