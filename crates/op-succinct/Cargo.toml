@@ -108,15 +108,15 @@ hana-host = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
 hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
 
 # hokulea - SP1 v6 compatible branch
-hokulea-compute-proof = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-hokulea-eigenda = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-hokulea-host-bin = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-hokulea-proof = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-hokulea-witgen = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-hokulea-zkvm-verification = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-canoe-sp1-cc-host = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-canoe-sp1-cc-verifier = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
-canoe-verifier-address-fetcher = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-beta1" }
+hokulea-compute-proof = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+hokulea-eigenda = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+hokulea-host-bin = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+hokulea-proof = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+hokulea-witgen = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+hokulea-zkvm-verification = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+canoe-sp1-cc-host = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+canoe-sp1-cc-verifier = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
+canoe-verifier-address-fetcher = { git = "https://github.com/fakedev9999/hokulea", branch = "fakedev9999/bump-sp1-v6-rc1" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -198,13 +198,13 @@ revm = { version = "33.1.0", default-features = false, features = [
 revm-precompile = { version = "31.0.0", default-features = false }
 op-revm = { version = "14.1.0", default-features = false }
 
-# SP1 v6.0.0-beta.1 (Hypercube)
-sp1-sdk = { version = "6.0.0-beta.1", features = ["network", "blocking"] }
-sp1-lib = { version = "6.0.0-beta.1", features = ["verify"] }
-sp1-zkvm = { version = "6.0.0-beta.1", features = ["verify"] }
-sp1-build = "6.0.0-beta.1"
-sp1-prover = "6.0.0-beta.1"
-sp1-core-executor = "6.0.0-beta.1"
+# SP1 v6.0.0-rc.1 (Hypercube)
+sp1-sdk = { version = "6.0.0-rc.1", features = ["network", "blocking", "profiling"] }
+sp1-lib = { version = "6.0.0-rc.1", features = ["verify"] }
+sp1-zkvm = { version = "6.0.0-rc.1", features = ["verify"] }
+sp1-build = "6.0.0-rc.1"
+sp1-prover = "6.0.0-rc.1"
+sp1-core-executor = "6.0.0-rc.1"
 
 # kzg
 kzg-rs = { version = "0.2.7", features = ["rkyv", "serde"] }
@@ -220,13 +220,13 @@ codegen-units = 1
 lto = "fat"
 
 [patch.crates-io]
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.0.0-beta.1" }
-sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.0.0-beta.1" }
-substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.0.0-beta.1" }
-p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.0.0-beta.1" }
-k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0-beta.1" }
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0-beta.1" }
-kzg-rs = { git = "https://github.com/succinctlabs/kzg-rs", branch = "fakedev9999/patch-6.0.0-beta.1" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.0.0-rc.1" }
+sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.0.0-rc.1" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.0.0-rc.1", package = "substrate-bn-succinct-rs" }
+p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.0.0-rc.1" }
+k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0-rc.1" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0-rc.1" }
+kzg-rs = { git = "https://github.com/succinctlabs/kzg-rs", branch = "fakedev9999/patch-6.0.0-rc.1" }
 
 # Note: alloy-tx-macros crates.io version must match alloy-consensus version
 # Both are now at 1.4.x for hokulea v1.1.4 compatibility
