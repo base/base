@@ -147,3 +147,69 @@ pub(crate) fn receipt_to_web(
         status: if success { "0x1".to_string() } else { "0x0".to_string() },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tx_to_web_hex_formatting() {
+        let hash = B256::from_slice(&[0xab; 32]);
+        let from = Address::from_slice(&[0xcd; 20]);
+        let to = Some(Address::from_slice(&[0xef; 20]));
+        let input = Bytes::from(vec![0x12, 0x34, 0x56, 0x78, 0x9a]);
+
+        let tx = tx_to_web(
+            hash,
+            from,
+            to,
+            2,              // EIP-1559
+            1_000_000_000,  // max priority fee
+            2_000_000_000,  // max fee
+            1_500_000_000,  // gas price
+            21000,          // gas limit
+            42,             // nonce
+            U256::from(1_000_000_000_000_000_000u128), // 1 ETH
+            input,
+            0,
+        );
+
+        // Verify all hex fields are 0x-prefixed
+        assert!(tx.hash.starts_with("0x"), "hash should be 0x-prefixed");
+        assert!(tx.from.starts_with("0x"), "from should be 0x-prefixed");
+        assert!(tx.to.starts_with("0x"), "to should be 0x-prefixed");
+        assert!(tx.gas_limit.starts_with("0x"), "gas_limit should be 0x-prefixed");
+        assert!(tx.gas_price.starts_with("0x"), "gas_price should be 0x-prefixed");
+        assert!(tx.nonce.starts_with("0x"), "nonce should be 0x-prefixed");
+        assert!(tx.value.starts_with("0x"), "value should be 0x-prefixed");
+        assert!(tx.method.starts_with("0x"), "method should be 0x-prefixed");
+
+        // Verify method selector extraction (first 4 bytes)
+        assert_eq!(tx.method, "0x12345678");
+    }
+
+    #[test]
+    fn test_tx_to_web_contract_creation() {
+        let hash = B256::from_slice(&[0x11; 32]);
+        let from = Address::from_slice(&[0x22; 20]);
+        let input = Bytes::from(vec![0x60, 0x80, 0x60, 0x40]); // typical contract bytecode prefix
+
+        let tx = tx_to_web(
+            hash,
+            from,
+            None, // contract creation - no recipient
+            2,
+            0,
+            0,
+            0,
+            100_000,
+            0,
+            U256::ZERO,
+            input,
+            0,
+        );
+
+        // Contract creation should have empty "to" field
+        assert_eq!(tx.to, "", "contract creation should have empty 'to' field");
+    }
+}

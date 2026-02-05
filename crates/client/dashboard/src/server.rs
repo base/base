@@ -87,3 +87,29 @@ async fn serve_static(path: warp::path::Tail) -> Result<impl Reply, Infallible> 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frontend_files_embedded() {
+        let files: Vec<_> = Frontend::iter().collect();
+        println!("Embedded files: {files:?}");
+        assert!(!files.is_empty(), "No frontend files embedded!");
+        assert!(
+            Frontend::get("index.html").is_some(),
+            "index.html not found in embedded assets"
+        );
+    }
+
+    #[test]
+    fn test_index_html_content() {
+        let index = Frontend::get("index.html").expect("index.html must exist");
+        let content = std::str::from_utf8(&index.data).expect("index.html must be valid UTF-8");
+        println!("index.html length: {} bytes", content.len());
+        println!("First 200 chars: {}", &content[..content.len().min(200)]);
+        assert!(content.contains("<!DOCTYPE html>") || content.contains("<html"),
+            "index.html doesn't look like HTML");
+    }
+}

@@ -266,3 +266,115 @@ impl DashboardEvent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_system_data_serializes_to_camel_case() {
+        let data = SystemData {
+            uptime: 100,
+            user_percent: 0.5,
+            privileged_percent: 0.1,
+            working_set: 1024,
+        };
+        let json = serde_json::to_string(&data).unwrap();
+
+        // Verify camelCase keys (not snake_case)
+        assert!(json.contains("\"userPercent\""), "expected userPercent, got: {json}");
+        assert!(json.contains("\"workingSet\""), "expected workingSet, got: {json}");
+        assert!(json.contains("\"privilegedPercent\""), "expected privilegedPercent, got: {json}");
+        assert!(!json.contains("user_percent"), "should not contain snake_case");
+        assert!(!json.contains("working_set"), "should not contain snake_case");
+    }
+
+    #[test]
+    fn test_block_for_web_hex_format() {
+        let block = BlockForWeb {
+            extra_data: "0xabcd".to_string(),
+            gas_limit: "0x1000".to_string(),
+            gas_used: "0x800".to_string(),
+            hash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+                .to_string(),
+            beneficiary: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+            number: "0x10".to_string(),
+            size: "0x200".to_string(),
+            timestamp: "0x60000000".to_string(),
+            base_fee_per_gas: "0x3b9aca00".to_string(),
+            blob_gas_used: "0x0".to_string(),
+            excess_blob_gas: "0x0".to_string(),
+            tx: vec![],
+            receipts: vec![],
+        };
+
+        let json = serde_json::to_string(&block).unwrap();
+
+        // Verify all numeric fields are 0x-prefixed hex strings
+        assert!(json.contains("\"gasLimit\":\"0x"), "gasLimit should be 0x-prefixed hex");
+        assert!(json.contains("\"gasUsed\":\"0x"), "gasUsed should be 0x-prefixed hex");
+        assert!(json.contains("\"hash\":\"0x"), "hash should be 0x-prefixed hex");
+        assert!(json.contains("\"number\":\"0x"), "number should be 0x-prefixed hex");
+        assert!(
+            json.contains("\"baseFeePerGas\":\"0x"),
+            "baseFeePerGas should be 0x-prefixed hex"
+        );
+    }
+
+    #[test]
+    fn test_dashboard_event_types() {
+        let events = [
+            (
+                DashboardEvent::NodeData(NodeData {
+                    uptime: 0,
+                    instance: String::new(),
+                    network: String::new(),
+                    sync_type: String::new(),
+                    pruning_mode: String::new(),
+                    version: String::new(),
+                    commit: String::new(),
+                    runtime: String::new(),
+                    gas_token: String::new(),
+                }),
+                "nodeData",
+            ),
+            (
+                DashboardEvent::ForkChoice(ForkChoiceData {
+                    head: BlockForWeb {
+                        extra_data: String::new(),
+                        gas_limit: String::new(),
+                        gas_used: String::new(),
+                        hash: String::new(),
+                        beneficiary: String::new(),
+                        number: String::new(),
+                        size: String::new(),
+                        timestamp: String::new(),
+                        base_fee_per_gas: String::new(),
+                        blob_gas_used: String::new(),
+                        excess_blob_gas: String::new(),
+                        tx: vec![],
+                        receipts: vec![],
+                    },
+                    safe: String::new(),
+                    finalized: String::new(),
+                }),
+                "forkChoice",
+            ),
+            (DashboardEvent::System(SystemData::default()), "system"),
+            (DashboardEvent::Peers(vec![]), "peers"),
+            (DashboardEvent::TxNodes(vec![]), "txNodes"),
+            (DashboardEvent::TxLinks(TxPoolData::default()), "txLinks"),
+            (DashboardEvent::Processed(ProcessedData::default()), "processed"),
+            (DashboardEvent::Log(String::new()), "log"),
+        ];
+
+        for (event, expected_type) in events {
+            assert_eq!(
+                event.event_type(),
+                expected_type,
+                "wrong event type for {:?}",
+                std::mem::discriminant(&event)
+            );
+        }
+    }
+}
