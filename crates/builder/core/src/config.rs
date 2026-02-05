@@ -34,7 +34,7 @@ pub struct BuilderConfig {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
-    /// Unified transaction data store (backrun bundles + resource metering)
+    /// Transaction data store for resource metering
     pub tx_data_store: TxDataStore,
 }
 
@@ -82,7 +82,7 @@ impl TryFrom<OpRbuilderArgs> for BuilderConfig {
             max_gas_per_txn: args.max_gas_per_txn,
             tx_data_store: TxDataStore::new(
                 args.enable_resource_metering,
-                args.tx_data_store_buffer_size,
+                args.resource_metering_buffer_size,
             ),
             flashblocks,
         })

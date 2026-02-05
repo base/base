@@ -6,18 +6,13 @@ use alloy_primitives::TxHash;
 use base_bundles::MeterBundleResponse;
 use concurrent_queue::ConcurrentQueue;
 
-use super::StoredBackrunBundle;
-
 /// Transaction data stored in the builder cache.
 ///
-/// Contains resource metering information and associated backrun bundles
-/// for a given transaction hash.
+/// Contains resource metering information for a given transaction hash.
 #[derive(Clone, Default, Debug)]
 pub struct TxData {
     /// Resource metering response from simulation.
     pub metering: Option<MeterBundleResponse>,
-    /// Backrun bundles targeting this transaction, sorted by priority fee.
-    pub backrun_bundles: Vec<StoredBackrunBundle>,
 }
 
 /// Internal storage data structure.
