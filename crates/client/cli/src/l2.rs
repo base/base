@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use base_jwt::{JwtError, JwtSecret, JwtValidator, resolve_jwt_secret};
+use base_jwt::{JwtError, JwtSecret, JwtSecretReader, JwtValidator};
 use url::Url;
 
 const DEFAULT_L2_ENGINE_TIMEOUT: u64 = 30_000;
@@ -60,7 +60,7 @@ impl L2ClientArgs {
     /// 2. Use encoded secret if `l2_engine_jwt_encoded` is set
     /// 3. Fall back to default JWT file `l2_jwt.hex`
     pub fn jwt_secret(&self) -> Result<JwtSecret, JwtError> {
-        resolve_jwt_secret(
+        JwtSecretReader::resolve_jwt_secret(
             self.l2_engine_jwt_secret.as_deref(),
             self.l2_engine_jwt_encoded,
             "l2_jwt.hex",
