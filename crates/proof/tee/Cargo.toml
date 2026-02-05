@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["op-enclave-core", "op-enclave-server", "op-enclave-client"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+
+[workspace.dependencies]
+alloy-primitives = { version = "1.5", features = ["serde"] }
+alloy-consensus = { version = "1.6", features = ["serde"] }
+alloy-rlp = "0.3"
+alloy-trie = "0.9"
+op-alloy-consensus = { version = "0.22", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"
+op-enclave-core = { path = "op-enclave-core" }
