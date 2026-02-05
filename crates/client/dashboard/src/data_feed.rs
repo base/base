@@ -14,8 +14,8 @@ use tracing::{debug, error, info};
 
 use crate::{
     collectors::{
-        BlockCollector, GasCollector, PeerCollector, SystemCollector, TxFlowCollector,
-        TxFlowCounters, TxPoolCollector, get_tx_nodes, receipt_to_web, tx_to_web,
+        BlockCollector, PeerCollector, SystemCollector, TxFlowCollector, TxFlowCounters,
+        TxPoolCollector, get_tx_nodes, receipt_to_web, tx_to_web,
     },
     types::{DashboardEvent, NodeData, ReceiptForWeb, TransactionForWeb},
 };
@@ -99,7 +99,8 @@ where
 
     /// Sends initial data events (node info and Sankey nodes).
     fn send_initial_data(&self, network_name: String, client_name: String) {
-        // Send node data
+        // Send node data. Note: sync_type and pruning_mode are hardcoded placeholders.
+        // Retrieving actual values would require deeper integration with reth's config.
         let node_data = NodeData {
             uptime: 0,
             instance: String::new(),
@@ -241,7 +242,8 @@ where
                         )
                         .collect();
 
-                    // Create placeholder receipts
+                    // Create placeholder receipts using gas estimates. Actual receipt data
+                    // (logs, contract addresses) would require querying executed receipts.
                     let web_receipts: Vec<ReceiptForWeb> = tx_data
                         .iter()
                         .map(|(_, _, _, _, _, _, gas_price, gas_limit, _, _, _, _)| {
@@ -307,7 +309,6 @@ where
             let mut system_collector = SystemCollector::new();
             let peer_collector = PeerCollector::new();
             let txpool_collector = TxPoolCollector::new();
-            let _gas_collector = GasCollector::new();
             let tx_flow_collector = TxFlowCollector::new(tx_flow_counters);
 
             let mut interval = tokio::time::interval(METRICS_INTERVAL);

@@ -43,45 +43,9 @@ impl TxFlowCounters {
         Self::default()
     }
 
-    /// Records a transaction hash announcement.
-    #[allow(dead_code)]
-    pub(crate) fn record_hash_received(&self) {
-        self.hashes_received.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Records a full transaction received.
-    #[allow(dead_code)]
-    pub(crate) fn record_tx_received(&self) {
-        self.txs_received.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Records a duplicate transaction.
-    #[allow(dead_code)]
-    pub(crate) fn record_duplicate(&self) {
-        self.duplicates.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Records an invalid transaction.
-    #[allow(dead_code)]
-    pub(crate) fn record_invalid(&self) {
-        self.invalid.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Records a transaction added to pool.
-    #[allow(dead_code)]
-    pub(crate) fn record_pool_add(&self) {
-        self.pool_adds.fetch_add(1, Ordering::Relaxed);
-    }
-
     /// Records transactions included in a block.
     pub(crate) fn record_block_adds(&self, count: u64) {
         self.block_adds.fetch_add(count, Ordering::Relaxed);
-    }
-
-    /// Records transactions evicted from pool.
-    #[allow(dead_code)]
-    pub(crate) fn record_evicted(&self, count: u64) {
-        self.evicted.fetch_add(count, Ordering::Relaxed);
     }
 }
 
@@ -96,12 +60,6 @@ impl TxFlowCollector {
     /// Creates a new transaction flow collector.
     pub(crate) const fn new(counters: Arc<TxFlowCounters>) -> Self {
         Self { counters }
-    }
-
-    /// Gets a clone of the shared counters for external use.
-    #[allow(dead_code)]
-    pub(crate) fn counters(&self) -> Arc<TxFlowCounters> {
-        Arc::clone(&self.counters)
     }
 
     /// Collects current transaction flow data for Sankey diagram.

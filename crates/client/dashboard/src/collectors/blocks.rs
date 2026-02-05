@@ -1,9 +1,8 @@
 //! Block data collector from canonical state subscription.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use reth_primitives_traits::BlockHeader;
 
-use crate::types::{BlockForWeb, ForkChoiceData, LogForWeb, ReceiptForWeb, TransactionForWeb};
+use crate::types::{LogForWeb, ReceiptForWeb, TransactionForWeb};
 
 /// Collector for block data from canonical state notifications.
 #[derive(Debug, Default)]
@@ -34,48 +33,6 @@ impl BlockCollector {
     pub(crate) const fn update_finality(&mut self, safe: u64, finalized: u64) {
         self.safe_block = safe;
         self.finalized_block = finalized;
-    }
-
-    /// Collects fork choice data with full block information.
-    #[allow(dead_code)]
-    pub(crate) fn collect_fork_choice<H: BlockHeader>(
-        &self,
-        header: &H,
-        block_hash: B256,
-        block_size: usize,
-        transactions: Vec<TransactionForWeb>,
-        receipts: Vec<ReceiptForWeb>,
-    ) -> ForkChoiceData {
-        let block = BlockForWeb {
-            extra_data: format!("0x{}", hex::encode(header.extra_data())),
-            gas_limit: format!("0x{:x}", header.gas_limit()),
-            gas_used: format!("0x{:x}", header.gas_used()),
-            hash: format!("0x{block_hash:x}"),
-            beneficiary: format!("0x{:x}", header.beneficiary()),
-            number: format!("0x{:x}", header.number()),
-            size: format!("0x{block_size:x}"),
-            timestamp: format!("0x{:x}", header.timestamp()),
-            base_fee_per_gas: header
-                .base_fee_per_gas()
-                .map(|f| format!("0x{f:x}"))
-                .unwrap_or_else(|| "0x0".to_string()),
-            blob_gas_used: header
-                .blob_gas_used()
-                .map(|g| format!("0x{g:x}"))
-                .unwrap_or_else(|| "0x0".to_string()),
-            excess_blob_gas: header
-                .excess_blob_gas()
-                .map(|g| format!("0x{g:x}"))
-                .unwrap_or_else(|| "0x0".to_string()),
-            tx: transactions,
-            receipts,
-        };
-
-        ForkChoiceData {
-            head: block,
-            safe: format!("0x{:x}", self.safe_block),
-            finalized: format!("0x{:x}", self.finalized_block),
-        }
     }
 }
 
