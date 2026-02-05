@@ -113,44 +113,55 @@ where
         .map(|r| r.unwrap())
         .collect::<Vec<_>>();
 
-    let execution_inputs = stdins.iter().zip(block_data.iter()).collect::<Vec<_>>();
+    let execution_inputs = stdins
+        .into_iter()
+        .zip(block_data.into_iter())
+        .collect::<Vec<_>>();
 
     // Execute the program for each block range in parallel.
-    execution_inputs.par_iter().for_each(|(sp1_stdin, (range, block_data))| {
-        let result = prover.execute(Elf::Static(get_range_elf_embedded()), (*sp1_stdin).clone()).deferred_proof_verification(false).run();
+    // Use spawn_blocking to avoid "Cannot start a runtime from within a runtime" error.
+    let report_path_clone = report_path.clone();
+    tokio::task::spawn_blocking(move || {
+        execution_inputs.par_iter().for_each(|(sp1_stdin, (range, block_data))| {
+            let result = prover
+                .execute(Elf::Static(get_range_elf_embedded()), sp1_stdin.clone())
+                .deferred_proof_verification(false)
+                .run();
 
-        if let Some(err) = result.as_ref().err() {
-            log::warn!(
-                "Failed to execute blocks {:?} - {:?} because of {:?}. Reduce your `batch-size` if you're running into OOM issues on SP1.",
-                range.start,
-                range.end,
-                err
-            );
-            return;
-        }
+            if let Some(err) = result.as_ref().err() {
+                log::warn!(
+                    "Failed to execute blocks {:?} - {:?} because of {:?}. Reduce your `batch-size` if you're running into OOM issues on SP1.",
+                    range.start,
+                    range.end,
+                    err
+                );
+                return;
+            }
 
-        let (_, report) = result.unwrap();
+            let (_, report) = result.unwrap();
 
-        let execution_stats = ExecutionStats::new(0, block_data, &report, 0, 0);
+            let execution_stats = ExecutionStats::new(0, block_data, &report, 0, 0);
 
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(&report_path)
-            .unwrap();
+            let mut file = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(&report_path_clone)
+                .unwrap();
 
-        // Writes the headers only if the file is empty.
-        let needs_header = file.seek(std::io::SeekFrom::End(0)).unwrap() == 0;
+            // Writes the headers only if the file is empty.
+            let needs_header = file.seek(std::io::SeekFrom::End(0)).unwrap() == 0;
 
-        let mut csv_writer = csv::WriterBuilder::new()
-            .has_headers(needs_header)
-            .from_writer(file);
+            let mut csv_writer = csv::WriterBuilder::new()
+                .has_headers(needs_header)
+                .from_writer(file);
 
-        csv_writer
-            .serialize(execution_stats.clone())
-            .expect("Failed to write execution stats to CSV.");
-        csv_writer.flush().expect("Failed to flush CSV writer.");
-    });
+            csv_writer
+                .serialize(execution_stats.clone())
+                .expect("Failed to write execution stats to CSV.");
+            csv_writer.flush().expect("Failed to flush CSV writer.");
+        });
+    })
+    .await?;
 
     info!("Execution is complete.");
 
