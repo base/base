@@ -23,7 +23,7 @@ use op_succinct_host_utils::{
     witness_generation::WitnessGenerator,
 };
 use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
-use sp1_sdk::{utils, Elf, Prover, ProveRequest, ProvingKey, ProverClient, SP1ProofMode};
+use sp1_sdk::{utils, Elf, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofMode};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -256,11 +256,8 @@ async fn main() -> Result<()> {
     assert_eq!(boot_info.l1Head, l1_head_hash, "L1 head hash mismatch");
 
     // Initialize the network prover.
-    let network_prover = ProverClient::builder()
-        .network_for(network_mode)
-        .signer(network_signer)
-        .build()
-        .await;
+    let network_prover =
+        ProverClient::builder().network_for(network_mode).signer(network_signer).build().await;
     info!("Initialized network prover successfully");
 
     let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
