@@ -25,9 +25,10 @@ use op_succinct_host_utils::witness_generation::{
     DefaultOracleBase, WitnessGenerator,
 };
 use rkyv::to_bytes;
-use sp1_core_executor::SP1ReduceProof;
-use sp1_prover::InnerSC;
-use sp1_sdk::{ProverClient, SP1Stdin};
+use sp1_sdk::{
+    blocking::Prover as BlockingProver, Elf, ProvingKey, SP1Proof, SP1ProofWithPublicValues,
+    SP1Stdin,
+};
 
 type WitnessExecutor = EigenDAWitnessExecutor<
     PreimageWitnessCollector<DefaultOracleBase>,
@@ -60,14 +61,22 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
             if let Some(proof_bytes) = eigenda_witness.canoe_proof_bytes.take() {
                 // Get the canoe SP1 CC client ELF and setup verification key
                 // The ELF is included in the canoe-sp1-cc-host crate
-                const CANOE_ELF: &[u8] = canoe_sp1_cc_host::ELF;
-                let client = ProverClient::from_env();
-                let (_pk, canoe_vk) = client.setup(CANOE_ELF);
+                // Use blocking API since this is a sync function
+                let client = sp1_sdk::blocking::ProverClient::from_env();
+                let pk = client
+                    .setup(Elf::Static(canoe_sp1_cc_host::ELF))
+                    .map_err(|e| anyhow::anyhow!("Failed to setup canoe ELF: {}", e))?;
+                let canoe_vk = pk.verifying_key();
 
-                let reduced_proof: SP1ReduceProof<InnerSC> =
-                    serde_cbor::from_slice(&proof_bytes)
-                        .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
-                stdin.write_proof(reduced_proof, canoe_vk.vk.clone());
+                // Deserialize the compressed proof and extract the recursion proof
+                let proof: SP1ProofWithPublicValues = serde_cbor::from_slice(&proof_bytes)
+                    .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
+                let SP1Proof::Compressed(reduced_proof) = proof.proof else {
+                    return Err(anyhow::anyhow!(
+                        "Expected compressed proof, got different proof type"
+                    ));
+                };
+                stdin.write_proof(*reduced_proof, canoe_vk.vk.clone());
 
                 // Re-serialize the witness data without the proof
                 witness.eigenda_data = Some(serde_cbor::to_vec(&eigenda_witness).map_err(|e| {

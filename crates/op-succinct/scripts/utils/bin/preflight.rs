@@ -23,7 +23,7 @@ use op_succinct_host_utils::{
     witness_generation::WitnessGenerator,
 };
 use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
-use sp1_sdk::{utils, Prover, ProverClient, SP1ProofMode};
+use sp1_sdk::{utils, Elf, Prover, ProveRequest, ProvingKey, ProverClient, SP1ProofMode};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -225,16 +225,19 @@ async fn main() -> Result<()> {
 
     let network_mode = determine_network_mode(range_proof_strategy, agg_proof_strategy)
         .context("failed to determine network mode from range and agg fulfillment strategies")?;
-    let network_prover =
-        ProverClient::builder().network_for(network_mode).signer(network_signer.clone()).build();
+    let network_prover = ProverClient::builder()
+        .network_for(network_mode)
+        .signer(network_signer.clone())
+        .build()
+        .await;
     info!("Initialized network prover successfully");
 
-    let (range_pk, _range_vk) = network_prover.setup(get_range_elf_embedded());
+    let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
     let mut range_proof = network_prover
-        .prove(&range_pk, &range_proof_stdin)
+        .prove(&range_pk, range_proof_stdin)
         .compressed()
         .strategy(range_proof_strategy)
-        .run()
+        .await
         .unwrap();
 
     // Save the proof to the proof directory corresponding to the chain ID.
@@ -253,11 +256,15 @@ async fn main() -> Result<()> {
     assert_eq!(boot_info.l1Head, l1_head_hash, "L1 head hash mismatch");
 
     // Initialize the network prover.
-    let network_prover =
-        ProverClient::builder().network_for(network_mode).signer(network_signer).build();
+    let network_prover = ProverClient::builder()
+        .network_for(network_mode)
+        .signer(network_signer)
+        .build()
+        .await;
     info!("Initialized network prover successfully");
 
-    let (_, range_vk) = network_prover.setup(get_range_elf_embedded());
+    let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+    let range_vk = range_pk.verifying_key().clone();
 
     let agg_proof_stdin = get_agg_proof_stdin(
         vec![range_proof.proof],
@@ -285,12 +292,12 @@ async fn main() -> Result<()> {
     };
     info!("Aggregation proof mode: {:?}", agg_proof_mode);
 
-    let (agg_pk, _) = network_prover.setup(AGGREGATION_ELF);
+    let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
     let agg_proof = network_prover
-        .prove(&agg_pk, &agg_proof_stdin)
+        .prove(&agg_pk, agg_proof_stdin)
         .mode(agg_proof_mode)
         .strategy(agg_proof_strategy)
-        .run()
+        .await
         .unwrap();
 
     let agg_proof_dir =

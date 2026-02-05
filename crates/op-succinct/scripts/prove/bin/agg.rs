@@ -7,7 +7,9 @@ use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin};
 use op_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{
-    utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
+    blocking::{self, Prover as BlockingProver},
+    utils, Elf, HashableKey, ProveRequest, Prover, ProvingKey, ProverClient, SP1Proof,
+    SP1ProofWithPublicValues, SP1VerifyingKey,
 };
 use std::fs;
 
@@ -43,7 +45,8 @@ fn load_aggregation_proof_data(
     let mut proofs = Vec::with_capacity(proof_names.len());
     let mut boot_infos = Vec::with_capacity(proof_names.len());
 
-    let prover = ProverClient::builder().cpu().build();
+    // Use blocking prover for synchronous verification
+    let prover = blocking::CpuProver::new();
 
     for proof_name in proof_names.iter() {
         let proof_path = format!("{proof_directory}/{proof_name}.bin");
@@ -52,7 +55,7 @@ fn load_aggregation_proof_data(
         }
         let mut deserialized_proof =
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
-        prover.verify(&deserialized_proof, range_vkey).expect("proof verification failed");
+        prover.verify(&deserialized_proof, range_vkey, None).expect("proof verification failed");
         proofs.push(deserialized_proof.proof);
 
         // The public values are the BootInfoStruct.
@@ -72,10 +75,11 @@ async fn main() -> Result<()> {
 
     dotenv::from_filename(args.env_file).ok();
 
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::from_env().await;
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let (_, vkey) = prover.setup(get_range_elf_embedded());
+    let range_pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+    let vkey = range_pk.verifying_key().clone();
 
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey);
 
@@ -88,17 +92,18 @@ async fn main() -> Result<()> {
         get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, header.hash_slow(), args.prover)
             .expect("Failed to get agg proof stdin");
 
-    let (agg_pk, agg_vk) = prover.setup(AGGREGATION_ELF);
-    println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());
+    let agg_pk = prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
+    let agg_vk = agg_pk.verifying_key();
+    println!("Aggregate ELF Verification Key: {:?}", agg_vk.bytes32());
 
     if args.prove {
-        prover.prove(&agg_pk, &stdin).groth16().run().expect("proving failed");
+        prover.prove(&agg_pk, stdin).groth16().await.expect("proving failed");
     } else {
         let (_, report) = prover
-            .execute(AGGREGATION_ELF, &stdin)
+            .execute(Elf::Static(AGGREGATION_ELF), stdin)
             .calculate_gas(true)
             .deferred_proof_verification(false)
-            .run()
+            .await
             .unwrap();
         println!("report: {report:?}");
     }

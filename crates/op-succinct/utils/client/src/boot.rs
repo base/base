@@ -25,7 +25,7 @@ pub fn hash_rollup_config(config: &RollupConfig) -> B256 {
 
     // Finalize and convert to B256
     let hash = hasher.finalize();
-    B256::from_slice(hash.as_slice())
+    B256::from_slice(&hash)
 }
 
 sol! {

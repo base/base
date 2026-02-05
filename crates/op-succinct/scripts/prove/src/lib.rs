@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Ok, Result};
 use op_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
 use op_succinct_proof_utils::get_range_elf_embedded;
-use sp1_sdk::{ExecutionReport, ProverClient, SP1Stdin};
+use sp1_sdk::{Elf, ExecutionReport, Prover, ProverClient, SP1Stdin};
 
 pub const TWO_WEEKS: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 
@@ -14,13 +14,13 @@ pub async fn execute_multi(
     l2_end_block: u64,
 ) -> Result<(Vec<BlockInfo>, ExecutionReport, Duration)> {
     let start_time = Instant::now();
-    let prover = ProverClient::builder().mock().build();
+    let prover = ProverClient::builder().cpu().build().await;
 
     let (_, report) = prover
-        .execute(get_range_elf_embedded(), &sp1_stdin)
+        .execute(Elf::Static(get_range_elf_embedded()), sp1_stdin)
         .calculate_gas(true)
         .deferred_proof_verification(false)
-        .run()?;
+        .await?;
 
     let execution_duration = start_time.elapsed();
 
