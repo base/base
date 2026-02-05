@@ -28,7 +28,9 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::SignerLock;
-use sp1_sdk::{HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin};
+use sp1_sdk::{
+    Elf, HashableKey, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
+};
 use tokio::{
     sync::{Mutex, RwLock, Semaphore},
     time,
@@ -290,10 +292,12 @@ where
             config.proof_provider.agg_proof_strategy,
         )?;
         let network_prover = Arc::new(
-            ProverClient::builder().network_for(network_mode).signer(network_signer).build(),
+            ProverClient::builder().network_for(network_mode).signer(network_signer).build().await,
         );
-        let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
-        let (agg_pk, agg_vk) = network_prover.setup(AGGREGATION_ELF);
+        let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+        let range_vk = range_pk.verifying_key().clone();
+        let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
+        let agg_vk = agg_pk.verifying_key().clone();
 
         // Compute vkey hashes for on-chain compatibility checks.
         // These are compared against game contract immutable values to ensure proof compatibility.
@@ -314,6 +318,7 @@ where
             range_pk: Arc::new(range_pk),
             range_vk: Arc::new(range_vk),
             agg_pk: Arc::new(agg_pk),
+            agg_vk: Arc::new(agg_vk),
         };
 
         let prover = if config.mock_mode {
@@ -1038,7 +1043,7 @@ where
                 tracing::info!("Generating Range Proof for blocks {start} to {end}");
                 let sp1_stdin = this.range_proof_stdin(start, end, l1_head_hash.into()).await?;
                 let (range_proof, inst_cycles, sp1_gas) =
-                    this.prover.generate_range_proof(&sp1_stdin).await?;
+                    this.prover.generate_range_proof(sp1_stdin).await?;
                 Ok::<_, anyhow::Error>((idx, range_proof, inst_cycles, sp1_gas))
             }
         });
@@ -1110,7 +1115,7 @@ where
             }
         };
 
-        let agg_proof = self.prover.generate_agg_proof(&sp1_stdin).await?;
+        let agg_proof = self.prover.generate_agg_proof(sp1_stdin).await?;
 
         let transaction_request = game.prove(agg_proof.bytes().into()).into_transaction_request();
         let receipt = self

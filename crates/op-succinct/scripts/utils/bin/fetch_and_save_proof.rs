@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     let args = Args::parse();
 
-    let prover = ProverClient::builder().network().build();
+    let prover = ProverClient::builder().network().build().await;
 
     let request_id = hex::decode(&args.request_id)?;
     // Fetch the proof

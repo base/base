@@ -89,8 +89,7 @@ mod integration {
     use op_succinct_host_utils::{
         fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, setup_logger,
     };
-    use sp1_core_executor::SP1ReduceProof;
-    use sp1_prover::InnerSC;
+    use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues};
     use tracing::info;
 
     #[tokio::test(flavor = "multi_thread")]
@@ -127,8 +126,13 @@ mod integration {
 
         // If canoe proof is present, verify it deserializes correctly
         if let Some(ref proof_bytes) = eigenda_witness.canoe_proof_bytes {
-            let _proof: SP1ReduceProof<InnerSC> = serde_cbor::from_slice(proof_bytes)
-                .expect("Canoe proof should deserialize to SP1ReduceProof");
+            let proof_with_pv: SP1ProofWithPublicValues = serde_cbor::from_slice(proof_bytes)
+                .expect("Canoe proof should deserialize to SP1ProofWithPublicValues");
+            // Verify it's a compressed proof as expected
+            assert!(
+                matches!(proof_with_pv.proof, SP1Proof::Compressed(_)),
+                "Canoe proof should be a compressed proof"
+            );
             info!("Canoe proof deserialization verified ({} bytes)", proof_bytes.len());
         }
 

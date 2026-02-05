@@ -5,8 +5,8 @@ use anyhow::{bail, Context, Result};
 use op_succinct_host_utils::metrics::MetricsGauge;
 use sp1_sdk::{
     network::{proto::types::FulfillmentStatus, NetworkMode},
-    NetworkProver, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey, SP1_CIRCUIT_VERSION,
+    Elf, NetworkProver, Prover, ProveRequest, SP1ProofMode, SP1ProofWithPublicValues,
+    SP1ProvingKey, SP1Stdin, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
 use tokio::time::sleep;
 
@@ -37,6 +37,7 @@ pub struct ProofKeys {
     pub range_pk: Arc<SP1ProvingKey>,
     pub range_vk: Arc<SP1VerifyingKey>,
     pub agg_pk: Arc<SP1ProvingKey>,
+    pub agg_vk: Arc<SP1VerifyingKey>,
 }
 
 /// Proof provider abstraction for generating range and aggregation proofs.
@@ -60,7 +61,7 @@ impl ProofProvider {
     /// Returns: (proof, instruction_cycles, sp1_gas)
     pub async fn generate_range_proof(
         &self,
-        stdin: &SP1Stdin,
+        stdin: SP1Stdin,
     ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
         match self {
             ProofProvider::Network(p) => p.generate_range_proof(stdin).await,
@@ -72,7 +73,7 @@ impl ProofProvider {
     ///
     /// In mock mode: executes locally and creates mock proof.
     /// In network mode: submits to network, waits for completion.
-    pub async fn generate_agg_proof(&self, stdin: &SP1Stdin) -> Result<SP1ProofWithPublicValues> {
+    pub async fn generate_agg_proof(&self, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues> {
         match self {
             ProofProvider::Network(p) => p.generate_agg_proof(stdin).await,
             ProofProvider::Mock(p) => p.generate_agg_proof(stdin).await,
@@ -123,7 +124,7 @@ impl NetworkProofProvider {
     /// Generate a range proof via network.
     pub async fn generate_range_proof(
         &self,
-        stdin: &SP1Stdin,
+        stdin: SP1Stdin,
     ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
         tracing::info!("Generating range proof via network");
         let proof_id = self.request_range_proof(stdin).await?;
@@ -132,14 +133,14 @@ impl NetworkProofProvider {
     }
 
     /// Generate an aggregation proof via network.
-    pub async fn generate_agg_proof(&self, stdin: &SP1Stdin) -> Result<SP1ProofWithPublicValues> {
+    pub async fn generate_agg_proof(&self, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues> {
         tracing::info!("Generating aggregation proof via network");
         let proof_id = self.request_agg_proof(stdin).await?;
         self.wait_for_proof(proof_id).await
     }
 
     /// Submit a range proof request to the network.
-    async fn request_range_proof(&self, stdin: &SP1Stdin) -> Result<ProofId> {
+    async fn request_range_proof(&self, stdin: SP1Stdin) -> Result<ProofId> {
         let proof_id = self
             .prover
             .prove(&self.keys.range_pk, stdin)
@@ -152,7 +153,7 @@ impl NetworkProofProvider {
             .cycle_limit(self.config.range_cycle_limit)
             .gas_limit(self.config.range_gas_limit)
             .whitelist(self.config.whitelist.clone())
-            .request_async()
+            .request()
             .await?;
 
         tracing::info!(proof_id = %proof_id, "Range proof request submitted");
@@ -160,7 +161,7 @@ impl NetworkProofProvider {
     }
 
     /// Submit an aggregation proof request to the network.
-    async fn request_agg_proof(&self, stdin: &SP1Stdin) -> Result<ProofId> {
+    async fn request_agg_proof(&self, stdin: SP1Stdin) -> Result<ProofId> {
         let proof_id = self
             .prover
             .prove(&self.keys.agg_pk, stdin)
@@ -172,7 +173,7 @@ impl NetworkProofProvider {
             .cycle_limit(self.config.agg_cycle_limit)
             .gas_limit(self.config.agg_gas_limit)
             .whitelist(self.config.whitelist.clone())
-            .request_async()
+            .request()
             .await?;
 
         tracing::info!(proof_id = %proof_id, "Aggregation proof request submitted");
@@ -382,20 +383,20 @@ impl MockProofProvider {
     /// Generate a range proof in mock mode.
     pub async fn generate_range_proof(
         &self,
-        stdin: &SP1Stdin,
+        stdin: SP1Stdin,
     ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
         tracing::info!("Generating range proof in mock mode");
 
         let (public_values, report) = self
             .prover
-            .execute(get_range_elf_embedded(), stdin)
+            .execute(Elf::Static(get_range_elf_embedded()), stdin)
             .calculate_gas(true)
             .deferred_proof_verification(false)
-            .run()
+            .await
             .context("Mock range proof execution failed")?;
 
         let total_instruction_cycles = report.total_instruction_count();
-        let total_sp1_gas = report.gas.unwrap_or(0);
+        let total_sp1_gas = report.gas().unwrap_or(0);
 
         ProposerGauge::TotalInstructionCycles.set(total_instruction_cycles as f64);
         ProposerGauge::TotalSP1Gas.set(total_sp1_gas as f64);
@@ -407,7 +408,7 @@ impl MockProofProvider {
         );
 
         let proof = SP1ProofWithPublicValues::create_mock_proof(
-            &self.keys.range_pk,
+            &self.keys.range_vk,
             public_values,
             SP1ProofMode::Compressed,
             SP1_CIRCUIT_VERSION,
@@ -417,18 +418,18 @@ impl MockProofProvider {
     }
 
     /// Generate an aggregation proof in mock mode.
-    pub async fn generate_agg_proof(&self, stdin: &SP1Stdin) -> Result<SP1ProofWithPublicValues> {
+    pub async fn generate_agg_proof(&self, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues> {
         tracing::info!("Generating aggregation proof in mock mode");
 
         let (public_values, _) = self
             .prover
-            .execute(self.agg_elf, stdin)
+            .execute(Elf::Static(self.agg_elf), stdin)
             .deferred_proof_verification(false)
-            .run()
+            .await
             .context("Mock aggregation proof execution failed")?;
 
         Ok(SP1ProofWithPublicValues::create_mock_proof(
-            &self.keys.agg_pk,
+            &self.keys.agg_vk,
             public_values,
             self.config.agg_proof_mode,
             SP1_CIRCUIT_VERSION,
