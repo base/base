@@ -3,8 +3,12 @@
 //! This matches the standard Ethereum JSON-RPC `eth_getProof` response format.
 //! Uses camelCase field names (different from Proposal's PascalCase).
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_rlp::Encodable;
+use alloy_trie::{Nibbles, proof::verify_proof};
 use serde::{Deserialize, Serialize};
+
+use crate::error::ProviderError;
 
 /// A storage proof for a single storage slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +74,87 @@ impl AccountResult {
             storage_hash,
             storage_proof,
         }
+    }
+
+    /// Verify the account proof against a state root.
+    ///
+    /// This verifies that:
+    /// 1. The account proof is valid against the state root
+    /// 2. The account data (nonce, balance, storage_hash, code_hash) matches the proof
+    ///
+    /// # Arguments
+    ///
+    /// * `state_root` - The state root to verify against
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProviderError::AccountProofFailed` if:
+    /// - The proof is invalid
+    /// - The account data doesn't match the proof
+    pub fn verify(&self, state_root: B256) -> Result<(), ProviderError> {
+        // Convert account proof to the format expected by verify_proof
+        let proof: Vec<Bytes> = self.account_proof.clone();
+
+        // The key in the state trie is keccak256(address), converted to nibbles
+        let key_hash = keccak256(self.address);
+        let key = Nibbles::unpack(key_hash);
+
+        // RLP encode the account: (nonce, balance, storage_hash, code_hash)
+        // Account nonces in Ethereum are u64, so this conversion is safe.
+        // U256 representation is for JSON-RPC compatibility.
+        let nonce: u64 = self
+            .nonce
+            .try_into()
+            .map_err(|_| ProviderError::AccountProofFailed("nonce exceeds u64::MAX".to_string()))?;
+        let account = Account {
+            nonce,
+            balance: self.balance,
+            storage_root: self.storage_hash,
+            code_hash: self.code_hash,
+        };
+        let mut expected_value = Vec::new();
+        account.encode(&mut expected_value);
+
+        // Verify the proof
+        verify_proof(state_root, key, Some(expected_value), &proof)
+            .map_err(|e| ProviderError::AccountProofFailed(e.to_string()))
+    }
+}
+
+/// Account structure for RLP encoding.
+///
+/// This matches the Ethereum account structure in the state trie.
+#[derive(Debug, Clone)]
+struct Account {
+    nonce: u64,
+    balance: U256,
+    storage_root: B256,
+    code_hash: B256,
+}
+
+impl Encodable for Account {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        // RLP encode as a list: [nonce, balance, storage_root, code_hash]
+        let header = alloy_rlp::Header {
+            list: true,
+            payload_length: self.nonce.length()
+                + self.balance.length()
+                + self.storage_root.length()
+                + self.code_hash.length(),
+        };
+        header.encode(out);
+        self.nonce.encode(out);
+        self.balance.encode(out);
+        self.storage_root.encode(out);
+        self.code_hash.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        let payload_length = self.nonce.length()
+            + self.balance.length()
+            + self.storage_root.length()
+            + self.code_hash.length();
+        alloy_rlp::length_of_length(payload_length) + payload_length
     }
 }
 

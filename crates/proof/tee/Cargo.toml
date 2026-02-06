@@ -14,12 +14,25 @@ alloy-primitives = { version = "1.5", features = ["serde"] }
 alloy-consensus = { version = "1.6", features = ["serde"] }
 alloy-rlp = "0.3"
 alloy-trie = "0.9"
+# Match kona-executor's versions
+alloy-evm = { version = "0.25.2", features = ["op"] }
+alloy-op-evm = "0.25.2"
+alloy-rpc-types-engine = "1.6"
 kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false, features = ["serde"] }
+kona-derive = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false, features = ["serde"] }
+kona-executor = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
+kona-mpt = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
+kona-driver = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
 op-alloy-consensus = { version = "0.23.1", features = ["serde"] }
+op-alloy-rpc-types-engine = { version = "0.23.1", features = ["serde"] }
 kona-protocol = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false, features = ["serde"] }
+# Match kona-executor's versions
+revm = { version = "33.0.0", default-features = false, features = ["std"] }
+op-revm = { version = "14.0.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = { version = "0.4.3", features = ["serde"] }
+hex-literal = "0.4"
 thiserror = "2.0"
 op-enclave-core = { path = "op-enclave-core" }
 op-enclave-server = { path = "op-enclave-server" }
@@ -53,6 +66,9 @@ tracing = "0.1"
 parking_lot = "0.12"
 tokio = { version = "1.0", features = ["full", "process"] }
 reqwest = { version = "0.12", features = ["json", "blocking"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
 
 [workspace.lints.rust]
 missing-debug-implementations = "warn"
