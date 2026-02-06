@@ -213,12 +213,49 @@ services:
       start_period: 250ms
     restart: unless-stopped
 
+  rollup-boost:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rollup-boost
+    container_name: rollup-boost
+    depends_on:
+      base-builder:
+        condition: service_healthy
+    ports:
+      - "${ROLLUP_BOOST_RPC_PORT}:${ROLLUP_BOOST_RPC_PORT}"           # Engine API proxy
+      - "${ROLLUP_BOOST_METRICS_PORT}:${ROLLUP_BOOST_METRICS_PORT}"   # Metrics
+    volumes:
+      - ../.devnet/l1/configs:/genesis:ro
+    command:
+      - --l2-url
+      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - --builder-url
+      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - --l2-jwt-path
+      - /genesis/jwt.hex
+      - --builder-jwt-path
+      - /genesis/jwt.hex
+      - --rpc-host
+      - "0.0.0.0"
+      - --rpc-port
+      - "${ROLLUP_BOOST_RPC_PORT}"
+      - --metrics
+      - --metrics-host
+      - "0.0.0.0"
+      - --metrics-port
+      - "${ROLLUP_BOOST_METRICS_PORT}"
+      - --tracing
+      - --flashblocks
+      - --flashblocks-builder-url
+      - ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
+    restart: unless-stopped
+
   base-builder-cl:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     container_name: base-builder-cl
     depends_on:
-      base-builder:
-        condition: service_healthy
+      rollup-boost:
+        condition: service_started
     ports:
       - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
@@ -235,7 +272,7 @@ services:
       - --l1.beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2
-      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - http://rollup-boost:${ROLLUP_BOOST_RPC_PORT}
       - --l2.jwt-secret
       - /genesis/jwt.hex
       - --rollup.config

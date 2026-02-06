@@ -65,6 +65,7 @@ system-tests-pull-images:
     docker pull sigp/lighthouse:v8.0.1
     docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
+    docker build -t rollup-boost:local -f docker/Dockerfile.rollup-boost .
 
 # Runs cargo hack against the workspace
 hack:

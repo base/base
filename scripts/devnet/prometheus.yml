@@ -23,6 +23,10 @@ scrape_configs:
     static_configs:
       - targets: ['base-client-cl:8300']
 
+  - job_name: 'rollup_boost'
+    static_configs:
+      - targets: ['rollup-boost:7191']
+
   - job_name: 'batcher'
     static_configs:
       - targets: ['op-batcher:6060']

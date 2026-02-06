@@ -1,0 +1,27 @@
+# --- Build rollup-boost from source ---
+FROM rust:1.88-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git libclang-dev libssl-dev openssl pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ARG ROLLUP_BOOST_REPO=https://github.com/flashbots/rollup-boost
+ARG ROLLUP_BOOST_TAG=v0.7.11
+
+# Clone and build rollup-boost at the specified tag
+RUN git clone ${ROLLUP_BOOST_REPO} --branch ${ROLLUP_BOOST_TAG} --single-branch --depth 1 . && \
+    cargo build --bin rollup-boost --release
+
+# --- Runtime image ---
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/target/release/rollup-boost ./
+
+ENTRYPOINT ["./rollup-boost"]
