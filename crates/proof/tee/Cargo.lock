@@ -3379,7 +3379,9 @@ dependencies = [
 name = "op-enclave-server"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
+ "alloy-signer",
  "alloy-signer-local",
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
@@ -3387,6 +3389,7 @@ dependencies = [
  "ciborium",
  "hex",
  "k256",
+ "kona-genesis",
  "op-enclave-core",
  "openssl",
  "parking_lot",

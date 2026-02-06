@@ -19,7 +19,7 @@ use crate::providers::{L2SystemConfigFetcher, compute_l1_receipt_root, compute_t
 use crate::types::account::AccountResult;
 
 /// Maximum sequencer drift in seconds (Fjord hardfork).
-/// If a block's timestamp exceeds l1_origin.timestamp + MAX_SEQUENCER_DRIFT_FJORD,
+/// If a block's timestamp exceeds `l1_origin.timestamp` + `MAX_SEQUENCER_DRIFT_FJORD`,
 /// the block can only contain deposit transactions.
 pub const MAX_SEQUENCER_DRIFT_FJORD: u64 = 1800;
 
@@ -65,7 +65,7 @@ pub struct ExecutionResult {
 /// * `block_header` - The L2 block header to validate
 /// * `sequenced_txs` - Sequenced transactions for this block (RLP-encoded)
 /// * `witness` - The execution witness
-/// * `message_account` - The L2ToL1MessagePasser account proof
+/// * `message_account` - The `L2ToL1MessagePasser` account proof
 ///
 /// # Returns
 ///
@@ -284,7 +284,7 @@ pub fn validate_not_deposit(tx_bytes: &Bytes) -> Result<bool, ExecutorError> {
 /// Validates the sequencer drift constraint.
 ///
 /// If there are sequenced transactions, the block timestamp must be within
-/// MAX_SEQUENCER_DRIFT_FJORD seconds of the L1 origin timestamp.
+/// `MAX_SEQUENCER_DRIFT_FJORD` seconds of the L1 origin timestamp.
 ///
 /// # Arguments
 ///

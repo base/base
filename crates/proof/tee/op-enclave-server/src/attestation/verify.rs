@@ -285,7 +285,7 @@ pub fn verify_attestation_with_pcr0_and_options(
         .document
         .pcrs
         .get(&0)
-        .ok_or(AttestationError::MissingField("PCR0".to_string()))?;
+        .ok_or_else(|| AttestationError::MissingField("PCR0".to_string()))?;
 
     if pcr0.as_ref() != expected_pcr0 {
         return Err(AttestationError::Pcr0Mismatch.into());

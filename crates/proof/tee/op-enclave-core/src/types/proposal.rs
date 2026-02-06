@@ -19,7 +19,7 @@ use crate::serde_utils::{bytes_hex, u256_hex};
 
 /// A proposal containing an output root and signature.
 ///
-/// Field names use PascalCase to match Go's default JSON encoding.
+/// Field names use `PascalCase` to match Go's default JSON encoding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Proposal {

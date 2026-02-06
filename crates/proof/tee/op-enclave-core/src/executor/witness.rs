@@ -1,7 +1,7 @@
 //! Execution witness types and transformation.
 //!
 //! This module provides types for execution witnesses used in stateless block execution,
-//! matching the Go `stateless.ExecutionWitness` structure.
+//! matching the Go `stateless::ExecutionWitness` structure.
 
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ExecutorError;
 
-/// Execution witness matching Go's `stateless.ExecutionWitness`.
+/// Execution witness matching Go's `stateless::ExecutionWitness`.
 ///
 /// This is the JSON representation received from the client, where codes and state
 /// are hex-encoded string maps.
@@ -21,10 +21,10 @@ pub struct ExecutionWitness {
     /// Block headers (previous block header is at index 0).
     pub headers: Vec<Header>,
 
-    /// Bytecode map: hex-encoded code_hash -> hex-encoded bytecode.
+    /// Bytecode map: hex-encoded `code_hash` -> hex-encoded bytecode.
     pub codes: HashMap<String, String>,
 
-    /// State trie nodes: hex-encoded node_hash -> hex-encoded RLP node.
+    /// State trie nodes: hex-encoded `node_hash` -> hex-encoded RLP node.
     pub state: HashMap<String, String>,
 }
 
@@ -36,10 +36,10 @@ pub struct TransformedWitness {
     /// The previous block header.
     pub previous_header: Header,
 
-    /// Bytecode map: code_hash -> bytecode.
+    /// Bytecode map: `code_hash` -> bytecode.
     pub codes: HashMap<B256, Bytes>,
 
-    /// State trie nodes: node_hash -> RLP-encoded node.
+    /// State trie nodes: `node_hash` -> RLP-encoded node.
     pub state: HashMap<B256, Bytes>,
 }
 

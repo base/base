@@ -69,7 +69,7 @@ impl BlockInfoWrapper {
         self.header.timestamp
     }
 
-    /// Returns the mix digest (prev_randao after The Merge).
+    /// Returns the mix digest (`prev_randao` after The Merge).
     #[must_use]
     pub const fn mix_digest(&self) -> B256 {
         self.header.mix_hash

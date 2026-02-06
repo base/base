@@ -118,6 +118,32 @@ pub enum CryptoError {
     InvalidPrivateKeyLength(usize),
 }
 
+/// Errors that can occur during proposal operations.
+#[derive(Debug, Clone, Error)]
+pub enum ProposalError {
+    /// No proposals provided for aggregation.
+    #[error("no proposals provided for aggregation")]
+    EmptyProposals,
+    /// Signature verification failed at the given index.
+    #[error("invalid signature at proposal index {index}")]
+    InvalidSignature {
+        /// Index of the proposal with invalid signature.
+        index: usize,
+    },
+    /// Signature is not the expected 65 bytes.
+    #[error("invalid signature length: expected 65 bytes, got {0}")]
+    InvalidSignatureLength(usize),
+    /// ECDSA signing failed.
+    #[error("signing failed: {0}")]
+    SigningFailed(String),
+    /// Public key recovery failed.
+    #[error("public key recovery failed: {0}")]
+    RecoveryFailed(String),
+    /// Core execution failed.
+    #[error("execution failed: {0}")]
+    ExecutionFailed(String),
+}
+
 /// Top-level error type for server operations.
 #[derive(Debug, Clone, Error)]
 pub enum ServerError {
@@ -130,6 +156,9 @@ pub enum ServerError {
     /// Cryptographic error.
     #[error(transparent)]
     Crypto(#[from] CryptoError),
+    /// Proposal error.
+    #[error(transparent)]
+    Proposal(#[from] ProposalError),
     /// Environment variable error.
     #[error("environment variable error: {0}")]
     EnvVar(String),
@@ -149,6 +178,7 @@ mod tests {
         assert_send_sync::<NsmError>();
         assert_send_sync::<AttestationError>();
         assert_send_sync::<CryptoError>();
+        assert_send_sync::<ProposalError>();
         assert_send_sync::<ServerError>();
     }
 
@@ -159,6 +189,7 @@ mod tests {
         assert_clone::<NsmError>();
         assert_clone::<AttestationError>();
         assert_clone::<CryptoError>();
+        assert_clone::<ProposalError>();
         assert_clone::<ServerError>();
     }
 }

@@ -84,13 +84,9 @@ impl L2SystemConfigFetcher {
                 });
             }
             // Return genesis system config
-            return self
-                .config
-                .genesis
-                .system_config
-                .ok_or(ProviderError::L1InfoParseError(
-                    "genesis system config not set".to_string(),
-                ));
+            return self.config.genesis.system_config.ok_or_else(|| {
+                ProviderError::L1InfoParseError("genesis system config not set".to_string())
+            });
         }
 
         // Non-genesis block: parse L1 info from deposit tx
@@ -220,14 +216,7 @@ const fn is_jovian_but_not_first_block(config: &RollupConfig, l2_time: u64) -> b
 
 /// Helper to check if a fork is active but not the activation block.
 const fn is_fork_active_but_not_activation(fork_time: Option<u64>, l2_time: u64) -> bool {
-    match fork_time {
-        Some(activation_time) => {
-            // Fork is active if l2_time >= activation_time
-            // Not activation block if l2_time > activation_time
-            l2_time > activation_time
-        }
-        None => false,
-    }
+    matches!(fork_time, Some(t) if l2_time > t)
 }
 
 #[cfg(test)]
@@ -247,7 +236,7 @@ mod tests {
     );
 
     /// Ecotone format calldata (164 bytes): selector + packed binary fields
-    /// Selector: 0x440a5e20 (keccak256("setL1BlockValuesEcotone()"))
+    /// Selector: 0x440a5e20 (`keccak256("setL1BlockValuesEcotone()")`)
     const ECOTONE_CALLDATA: [u8; 164] = hex!(
         "440a5e2000000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
     );

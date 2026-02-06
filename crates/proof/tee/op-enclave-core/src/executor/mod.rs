@@ -13,7 +13,7 @@
 //!
 //! - [`stateless`]: Core stateless execution logic
 //! - [`witness`]: Execution witness types and transformation
-//! - [`trie_db`]: TrieDB provider for state access during execution
+//! - [`trie_db`]: `TrieDB` provider for state access during execution
 //! - [`attributes`]: Payload attributes builder for deposit extraction
 //! - [`evm`]: EVM execution wrapper for block execution
 //! - [`l2_block_ref`]: L2 block reference parsing for L1 origin validation
