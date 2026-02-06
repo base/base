@@ -28,7 +28,8 @@
     - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
     - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
     - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
-    - [`l1-precompile <precompile ++ inputbytes>`](#l1-precompile-precompile--inputbytes)
+    - [`l1-blob <blobhash ++ metadata>`](#l1-blob-blobhash--metadata)
+    - [`l1-precompile-v2 <address ++ requiredGas ++ inputbytes>`](#l1-precompile-v2-address--requiredgas--inputbytes)
     - [`l2-block-header <blockhash> <chainID>?`](#l2-block-header-blockhash-chainid)
     - [`l2-transactions <blockhash> <chainID>?`](#l2-transactions-blockhash-chainid)
     - [`l2-receipts <blockhash> <chainID>`](#l2-receipts-blockhash-chainid)
@@ -413,11 +414,40 @@ prepare the RLP pre-images of each of them, including transactions-list MPT node
 Requests the host to prepare the list of receipts of the L1 block with `<blockhash>`:
 prepare the RLP pre-images of each of them, including receipts-list MPT nodes.
 
-#### `l1-precompile <precompile ++ inputbytes>`
+#### `l1-blob <blobhash ++ metadata>`
 
-Requests the host to prepare the result of an L1 call to the `precompile` address given
-`<inputbytes>` as the input. The host also prepares a [global keccak256 preimage](#type-2-global-keccak256-key)
-of the hint data `<precompile ++ inputbytes>`.
+Requests the host to prepare EIP-4844 blob data for fault proof verification.
+
+The hint data consists of 48 bytes concatenated together:
+
+- Bytes 0-31: Blob version hash (32 bytes) - the keccak256 hash of the KZG commitment with version byte prefix
+- Bytes 32-39: Blob index within the block (8-byte big-endian uint64)
+- Bytes 40-47: L1 block timestamp (8-byte big-endian uint64)
+
+The host will:
+
+1. Fetch the blob from the L1 beacon chain using the timestamp and blob hash
+2. Compute the KZG commitment and prepare it as a [SHA256 preimage](#type-3-global-generic-key)
+3. Prepare all 4096 field elements of the blob as [Blob-type preimages](#type-5-global-eip-4844-point-evaluation-key),
+   keyed by `keccak256(commitment || rootOfUnity[i])` for evaluation at the standard roots of unity
+
+This hint is required for verifying transactions that use EIP-4844 blob data (post-Ecotone).
+
+#### `l1-precompile-v2 <address ++ requiredGas ++ inputbytes>`
+
+Requests the host to prepare the result of an L1 precompile call with gas validation.
+
+The hint data format:
+
+- Bytes 0-19: Precompile address (20 bytes)
+- Bytes 20-27: Required gas (8-byte big-endian uint64)
+- Bytes 28+: Input bytes
+
+The host validates the precompile address against an allowlist of accelerated precompiles and
+prepares a [precompile-type preimage](#type-6-global-precompile-key) of the execution result.
+The `requiredGas` parameter allows the preimage oracle to enforce complete precompile execution.
+
+This supersedes the earlier `l1-precompile <precompile ++ inputbytes>` format which did not include gas validation.
 
 #### `l2-block-header <blockhash> <chainID>?`
 
