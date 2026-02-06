@@ -59,20 +59,25 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
 
             // Take the canoe proof bytes from the witness data
             if let Some(proof_bytes) = eigenda_witness.canoe_proof_bytes.take() {
-                // Get the canoe SP1 CC client ELF and setup verification key
-                // The ELF is included in the canoe-sp1-cc-host crate
-                // Use blocking API since this is a sync function
-                let client = sp1_sdk::blocking::ProverClient::from_env();
-                let pk = client
-                    .setup(Elf::Static(canoe_sp1_cc_host::ELF))
-                    .map_err(|e| anyhow::anyhow!("Failed to setup canoe ELF: {}", e))?;
-                let canoe_vk = pk.verifying_key();
+                // SP1 v6's blocking ProverClient creates its own internal tokio runtime.
+                // When get_sp1_stdin is called from an async context (e.g. #[tokio::test]),
+                // this causes "Cannot start a runtime from within a runtime" panics.
+                // Isolate the prover setup on a separate OS thread to avoid nesting.
+                let canoe_vk = std::thread::spawn(|| {
+                    let client = sp1_sdk::blocking::ProverClient::from_env();
+                    let pk = client
+                        .setup(Elf::Static(canoe_sp1_cc_host::ELF))
+                        .map_err(|e| anyhow::anyhow!("Failed to setup canoe ELF: {}", e))?;
+                    Ok::<_, anyhow::Error>(pk.verifying_key().vk.clone())
+                })
+                .join()
+                .map_err(|e| anyhow::anyhow!("Prover setup thread panicked: {:?}", e))??;
 
                 // Deserialize the recursion proof (serialized by CanoeSp1CCReducedProofProvider)
                 let reduced_proof: SP1RecursionProof<SP1GlobalContext, SP1PcsProofInner> =
                     serde_cbor::from_slice(&proof_bytes)
                         .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
-                stdin.write_proof(reduced_proof, canoe_vk.vk.clone());
+                stdin.write_proof(reduced_proof, canoe_vk);
 
                 // Re-serialize the witness data without the proof
                 witness.eigenda_data = Some(serde_cbor::to_vec(&eigenda_witness).map_err(|e| {
