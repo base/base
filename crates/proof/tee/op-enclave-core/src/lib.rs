@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod providers;
 pub mod serde_utils;
 pub mod types;
 
@@ -15,7 +16,7 @@ pub use types::config::{
 pub use types::proposal::Proposal;
 
 // Re-export error types
-pub use error::{ConfigError, CryptoError, EnclaveError, Result};
+pub use error::{ConfigError, CryptoError, EnclaveError, ProviderError, Result};
 
 // Re-export commonly used types from alloy
 pub use alloy_consensus::Header;
@@ -25,3 +26,9 @@ pub use op_alloy_consensus::OpReceiptEnvelope;
 // Re-export kona_genesis types for ecosystem compatibility
 pub use alloy_eips::eip1898::BlockNumHash;
 pub use kona_genesis::{ChainGenesis, HardForkConfig, SystemConfig};
+
+// Re-export provider types
+pub use providers::{
+    BlockInfoWrapper, L1ReceiptsFetcher, L2SystemConfigFetcher, compute_receipt_root,
+    compute_tx_root,
+};

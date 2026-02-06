@@ -167,6 +167,7 @@ mod tests {
         // On non-Linux, this should return None (local mode)
         #[cfg(not(target_os = "linux"))]
         {
+            use super::*;
             let session = NsmSession::open().unwrap();
             assert!(session.is_none());
         }

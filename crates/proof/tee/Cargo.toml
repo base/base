@@ -14,8 +14,9 @@ alloy-primitives = { version = "1.5", features = ["serde"] }
 alloy-consensus = { version = "1.6", features = ["serde"] }
 alloy-rlp = "0.3"
 alloy-trie = "0.9"
-kona-genesis = { version = "0.4", features = ["serde"] }
+kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false, features = ["serde"] }
 op-alloy-consensus = { version = "0.23.1", features = ["serde"] }
+kona-protocol = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false, features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = { version = "0.4.3", features = ["serde"] }

@@ -13,6 +13,7 @@ alloy-rlp.workspace = true
 alloy-trie.workspace = true
 kona-genesis.workspace = true
 op-alloy-consensus.workspace = true
+kona-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
