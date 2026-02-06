@@ -259,8 +259,9 @@ where
         // state hasn't been cleared yet after canonical block commit
         if let Some(canonical_tx) = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
             .await?
-            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
-            .transpose()?
+            .map(|tx| tx.into_transaction(self.eth_api.converter()))
+            .transpose()
+            .map_err(Eth::Error::from)?
         {
             return Ok(Some(canonical_tx));
         }
@@ -314,16 +315,14 @@ where
                 receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
                     if let Some(receipt) = receipt {
                         return Ok(receipt);
-                    } else {
-                        continue
                     }
+                    continue
                 }
                 receipt = self.wait_for_canonical_receipt(tx_hash) => {
                         if let Some(receipt) = receipt {
                             return Ok(receipt);
-                        } else {
-                            continue
                         }
+                        continue
                     }
                 _ = time::sleep(timeout) => {
                     return Err(EthApiError::TransactionConfirmationTimeout {

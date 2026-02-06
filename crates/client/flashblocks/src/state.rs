@@ -67,9 +67,9 @@ impl FlashblocksState {
     {
         let state_processor = StateProcessor::new(
             client,
-            self.pending_blocks.clone(),
+            Arc::clone(&self.pending_blocks),
             self.max_pending_blocks_depth,
-            self.rx.clone(),
+            Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
         );
 
@@ -123,5 +123,15 @@ impl FlashblocksAPI for FlashblocksState {
 
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>> {
         self.flashblock_sender.subscribe()
+    }
+}
+
+impl FlashblocksState {
+    /// Sets the pending blocks directly for testing purposes.
+    ///
+    /// This bypasses the normal flashblock processing pipeline and allows
+    /// tests to inject a pre-built `PendingBlocks` state.
+    pub fn set_pending_blocks_for_testing(&self, pending_blocks: Option<PendingBlocks>) {
+        self.pending_blocks.store(pending_blocks.map(Arc::new));
     }
 }

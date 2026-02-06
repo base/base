@@ -1,5 +1,5 @@
 [package]
-name = "base-builder"
+name = "base-builder-bin"
 description = "Base Builder Binary"
 
 version.workspace = true
@@ -9,21 +9,24 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "base-builder"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 
 [dependencies]
 # Workspace
+base-builder-cli.workspace = true
 base-cli-utils.workspace = true
-op-rbuilder.workspace = true
+
+# CLI
+clap.workspace = true
 
 # reth
 reth-cli-util.workspace = true
 
-[build-dependencies]
-vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
-vergen-git2.workspace = true
-
 [features]
 default = [ "jemalloc" ]
-jemalloc = [ "op-rbuilder/jemalloc", "reth-cli-util/jemalloc" ]
+jemalloc = [ "base-builder-cli/jemalloc", "reth-cli-util/jemalloc" ]

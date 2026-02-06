@@ -32,6 +32,7 @@ alloy-rpc-types-engine = { workspace = true, optional = true }
 alloy-rpc-types-eth = { workspace = true, optional = true }
 kona-genesis = { workspace = true, optional = true }
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -44,6 +45,7 @@ engine = [
 	"dep:kona-genesis",
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types-engine",
+	"dep:thiserror",
 ]
 test-utils = [
 	"dep:alloy-consensus",

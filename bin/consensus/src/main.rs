@@ -5,7 +5,6 @@
 
 pub mod cli;
 pub mod metrics;
-pub mod version;
 
 fn main() {
     use clap::Parser;

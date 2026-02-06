@@ -15,7 +15,7 @@ pub struct FBALBuilderDb<DB>
 where
     DB: DatabaseCommit + Database,
 {
-    /// Underlying CacheDB
+    /// Underlying `CacheDB`
     db: DB,
     /// Transaction index of the transaction currently being executed
     index: u64,
@@ -52,13 +52,18 @@ where
         self.index = index;
     }
 
+    /// Increments the transaction index of the transaction currently being executed
+    pub const fn inc_index(&mut self) {
+        self.index += 1;
+    }
+
     /// Attempts to commit the changes to the underlying database
     /// as well as applies account/storage changes to the access list builder
     fn try_commit(
         &mut self,
         changes: HashMap<Address, Account>,
     ) -> Result<(), <DB as Database>::Error> {
-        for (address, account) in changes.iter() {
+        for (address, account) in &changes {
             let account_changes = self.access_list.changes.entry(*address).or_default();
 
             // Update balance, nonce, and code
@@ -100,7 +105,7 @@ where
             }
 
             // Update storage
-            for (slot, value) in account.storage.iter() {
+            for (slot, value) in &account.storage {
                 let prev = value.original_value;
                 let new = value.present_value;
 

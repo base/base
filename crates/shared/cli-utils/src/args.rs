@@ -116,12 +116,12 @@ impl GlobalArgs {
         let id = self.l2_chain_id;
         OPCHAINS
             .get(&id.id())
-            .ok_or(eyre::eyre!("No chain config found for chain ID: {id}"))?
+            .ok_or_else(|| eyre::eyre!("No chain config found for chain ID: {id}"))?
             .roles
             .as_ref()
-            .ok_or(eyre::eyre!("No roles found for chain ID: {id}"))?
+            .ok_or_else(|| eyre::eyre!("No roles found for chain ID: {id}"))?
             .unsafe_block_signer
-            .ok_or(eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
+            .ok_or_else(|| eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
     }
 }
 
@@ -256,7 +256,7 @@ mod tests {
     mod env_vars {
         use super::*;
 
-        /// Verify that LogArgs fields have the expected env var names.
+        /// Verify that `LogArgs` fields have the expected env var names.
         /// This is done by checking the clap metadata.
         #[test]
         fn log_args_env_var_names() {

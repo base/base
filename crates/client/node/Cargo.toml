@@ -11,48 +11,15 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-test-utils = [
-	"base-primitives/test-utils",
-	"dep:alloy-eips",
-	"dep:alloy-genesis",
-	"dep:alloy-primitives",
-	"dep:alloy-provider",
-	"dep:alloy-rpc-client",
-	"dep:alloy-rpc-types",
-	"dep:alloy-rpc-types-engine",
-	"dep:alloy-signer",
-	"dep:base-primitives",
-	"dep:chrono",
-	"dep:jsonrpsee",
-	"dep:op-alloy-network",
-	"dep:op-alloy-rpc-types-engine",
-	"dep:reth-chainspec",
-	"dep:reth-ipc",
-	"dep:reth-node-core",
-	"dep:reth-primitives-traits",
-	"dep:reth-rpc-layer",
-	"dep:reth-tasks",
-	"dep:tower",
-	"dep:tracing-subscriber",
-	"dep:url",
-	"reth-chainspec/test-utils",
-	"reth-db/test-utils",
-	"reth-evm/test-utils",
-	"reth-node-builder/test-utils",
-	"reth-optimism-node/test-utils",
-	"reth-primitives-traits?/test-utils",
-	"reth-provider/test-utils",
-	"reth-transaction-pool/test-utils",
-]
-
 [dependencies]
 # Project
+base-cli-utils.workspace = true
 base-client-engine.workspace = true
 base-primitives = { workspace = true, optional = true }
 
 # reth
-reth-db.workspace = true
+reth-db = { workspace = true, features = ["op"] }
+reth-exex = { workspace = true }
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-storage.workspace = true
@@ -107,7 +74,7 @@ url = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 
 # tower for middleware
-tower = { version = "0.5", optional = true }
+tower = { workspace = true, optional = true }
 
 [dev-dependencies]
 base-client-node = { path = ".", features = ["test-utils"] }
@@ -118,3 +85,38 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 jsonrpsee-types.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+test-utils = [
+	"base-primitives/test-utils",
+	"dep:alloy-eips",
+	"dep:alloy-genesis",
+	"dep:alloy-primitives",
+	"dep:alloy-provider",
+	"dep:alloy-rpc-client",
+	"dep:alloy-rpc-types",
+	"dep:alloy-rpc-types-engine",
+	"dep:alloy-signer",
+	"dep:base-primitives",
+	"dep:chrono",
+	"dep:jsonrpsee",
+	"dep:op-alloy-network",
+	"dep:op-alloy-rpc-types-engine",
+	"dep:reth-chainspec",
+	"dep:reth-ipc",
+	"dep:reth-node-core",
+	"dep:reth-primitives-traits",
+	"dep:reth-rpc-layer",
+	"dep:reth-tasks",
+	"dep:tower",
+	"dep:tracing-subscriber",
+	"dep:url",
+	"reth-chainspec/test-utils",
+	"reth-db/test-utils",
+	"reth-evm/test-utils",
+	"reth-node-builder/test-utils",
+	"reth-optimism-node/test-utils",
+	"reth-primitives-traits?/test-utils",
+	"reth-provider/test-utils",
+	"reth-transaction-pool/test-utils",
+]

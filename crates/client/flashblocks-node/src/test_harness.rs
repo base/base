@@ -69,7 +69,7 @@ impl fmt::Debug for FlashblocksParts {
 impl FlashblocksParts {
     /// Clone the shared [`FlashblocksState`] handle.
     pub fn state(&self) -> Arc<FlashblocksState> {
-        self.state.clone()
+        Arc::clone(&self.state)
     }
 
     /// Send a flashblock to the background processor and wait until it is handled.
@@ -124,17 +124,20 @@ impl FlashblocksTestExtension {
 
     /// Get the flashblocks parts after the node has been launched.
     pub fn parts(&self) -> Result<FlashblocksParts> {
-        Ok(FlashblocksParts { sender: self.inner.sender.clone(), state: self.inner.state.clone() })
+        Ok(FlashblocksParts {
+            sender: self.inner.sender.clone(),
+            state: Arc::clone(&self.inner.state),
+        })
     }
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
     fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
-        let state = self.inner.state.clone();
-        let receiver = self.inner.receiver.clone();
+        let state = Arc::clone(&self.inner.state);
+        let receiver = Arc::clone(&self.inner.receiver);
         let process_canonical = self.inner.process_canonical;
 
-        let state_for_start = state.clone();
+        let state_for_start = Arc::clone(&state);
         let state_for_rpc = state;
 
         // Start state processor and subscriptions after node is started
@@ -180,14 +183,14 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
-                fb.clone(),
+                Arc::clone(&fb),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 
             // Register eth_subscribe subscription endpoint for flashblocks
             // Uses replace_configured since eth_subscribe already exists from reth's standard module
             // Pass eth_api to enable proxying standard subscription types to reth's implementation
-            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
+            let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), Arc::clone(&fb));
             ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
             let fb_for_task = fb;
@@ -549,7 +552,7 @@ impl<'a> FlashblockBuilder<'a> {
         self.transactions.clear();
 
         let mut cumulative_gas_used = 0;
-        for txn in transactions.iter() {
+        for txn in &transactions {
             cumulative_gas_used += txn.gas_limit();
             self.transactions.push(txn.encoded_2718().into());
             if let Some(ref mut receipts) = self.receipts {

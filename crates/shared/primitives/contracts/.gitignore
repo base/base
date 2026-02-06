@@ -12,3 +12,9 @@ docs/
 
 # Dotenv file
 .env
+
+# lib
+lib/**
+
+# Soldeer
+/dependencies

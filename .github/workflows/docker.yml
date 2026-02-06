@@ -62,12 +62,13 @@ jobs:
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
+          file: docker/Dockerfile.client
           tags: ${{ env.REGISTRY_IMAGE }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.settings.arch }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=docker-dev
+          cache-to: type=gha,mode=max,scope=docker-dev
 
       - name: Export digest
         run: |

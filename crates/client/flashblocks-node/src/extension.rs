@@ -1,6 +1,8 @@
 //! Contains the [`FlashblocksExtension`] which wires up the flashblocks feature
 //! (canonical block subscription and RPC surface) on the Base node builder.
 
+use std::sync::Arc;
+
 use base_client_engine::BaseEngineValidatorBuilder;
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{
@@ -35,9 +37,9 @@ impl BaseNodeExtension for FlashblocksExtension {
         };
 
         let state = cfg.state;
-        let mut subscriber = FlashblocksSubscriber::new(state.clone(), cfg.websocket_url);
+        let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url);
 
-        let engine_validator_state = state.clone();
+        let engine_validator_state = Arc::clone(&state);
 
         builder = builder.map_add_ons(move |add_ons| {
             add_ons.with_engine_validator(
@@ -46,8 +48,8 @@ impl BaseNodeExtension for FlashblocksExtension {
             )
         });
 
-        let state_for_canonical = state.clone();
-        let state_for_rpc = state.clone();
+        let state_for_canonical = Arc::clone(&state);
+        let state_for_rpc = Arc::clone(&state);
         let state_for_start = state;
 
         // Start state processor, subscriber, and canonical subscription after node is started
@@ -77,7 +79,7 @@ impl BaseNodeExtension for FlashblocksExtension {
             let api_ext = EthApiExt::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
-                state_for_rpc.clone(),
+                Arc::clone(&state_for_rpc),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

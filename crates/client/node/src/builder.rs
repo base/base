@@ -3,6 +3,7 @@
 use std::fmt;
 
 use eyre::Result;
+use reth_exex::ExExContext;
 use reth_node_builder::{
     NodeAdapter, NodeComponentsBuilder,
     node::FullNode,
@@ -43,7 +44,7 @@ pub struct BaseBuilder {
 }
 
 impl BaseBuilder {
-    /// Create a new BaseBuilder wrapping the provided OP builder.
+    /// Create a new `BaseBuilder` wrapping the provided OP builder.
     pub const fn new(builder: OpBuilder) -> Self {
         Self { builder, rpc_hooks: Vec::new(), node_started_hooks: Vec::new() }
     }
@@ -54,7 +55,7 @@ impl BaseBuilder {
 
         if !rpc_hooks.is_empty() {
             builder = builder.extend_rpc_modules(move |mut ctx: BaseRpcContext<'_>| {
-                for hook in rpc_hooks.iter_mut() {
+                for hook in &mut rpc_hooks {
                     hook(&mut ctx)?;
                 }
 
@@ -65,7 +66,7 @@ impl BaseBuilder {
         if !node_started_hooks.is_empty() {
             builder = builder.on_node_started(move |full_node: OpFullNode| {
                 let mut hooks = node_started_hooks;
-                for hook in hooks.iter_mut() {
+                for hook in &mut hooks {
                     hook(full_node.clone())?;
                 }
                 Ok(())
@@ -111,6 +112,17 @@ impl BaseBuilder {
         L: FnOnce(OpBuilder) -> R,
     {
         launcher(self.build())
+    }
+
+    /// Installs an `ExEx` extension with the given name and closure.
+    pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
+    where
+        F: FnOnce(ExExContext<OpNodeAdapter>) -> R + Send + 'static,
+        R: Future<Output = eyre::Result<E>> + Send,
+        E: Future<Output = eyre::Result<()>> + Send,
+    {
+        self.builder = self.builder.install_exex(exex_id, exex);
+        self
     }
 
     /// Maps the add-ons with the given closure.

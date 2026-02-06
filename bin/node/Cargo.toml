@@ -16,18 +16,20 @@ workspace = true
 # internal
 base-cli-utils.workspace = true
 base-client-node.workspace = true
+base-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
 base-metering.workspace = true
 base-txpool.workspace = true
+base-proofs-extension.workspace = true
 
 # reth
 reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
 reth-cli-util.workspace = true
 
 # misc
 clap.workspace = true
 
 [features]
-default = []
+default = [ "jemalloc" ]
 jemalloc = [ "reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc" ]

@@ -39,7 +39,7 @@ impl BaseNodeExtension for MeteringExtension {
 
             // Get flashblocks state from config, or create a default one if not configured
             let fb_state: Arc<FlashblocksState> =
-                flashblocks_config.as_ref().map(|cfg| cfg.state.clone()).unwrap_or_default();
+                flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
 
             let metering_api = MeteringApiImpl::new(ctx.provider().clone(), fb_state);
             ctx.modules.merge_configured(metering_api.into_rpc())?;

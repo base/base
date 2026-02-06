@@ -1,4 +1,4 @@
-//! Utility module to house implementation and declaration of MetricsArgs since it's being used in
+//! Utility module to house implementation and declaration of `MetricsArgs` since it's being used in
 //! multiple places, it's just being referenced from this module.
 
 use std::net::IpAddr;
@@ -82,7 +82,7 @@ mod tests {
 
     use super::*;
 
-    /// Helper struct to parse MetricsArgs within a test CLI structure.
+    /// Helper struct to parse `MetricsArgs` within a test CLI structure.
     #[derive(Parser, Debug)]
     struct TestCli {
         #[command(flatten)]

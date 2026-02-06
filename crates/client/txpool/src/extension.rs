@@ -9,14 +9,17 @@ use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
 
-use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_subscription};
+use crate::{
+    TransactionStatusApiImpl, TransactionStatusApiServer, TxPoolManagementApiImpl,
+    TxPoolManagementApiServer, tracex_subscription,
+};
 
 /// Transaction pool configuration.
 #[derive(Debug, Clone)]
 pub struct TxpoolConfig {
-    /// Enables the transaction tracing ExEx.
+    /// Enables transaction tracing.
     pub tracing_enabled: bool,
-    /// Emits `info`-level logs for the tracing ExEx when enabled.
+    /// Emits `info`-level logs for transaction tracing when enabled.
     pub tracing_logs_enabled: bool,
     /// Sequencer RPC endpoint for transaction status proxying.
     pub sequencer_rpc: Option<String>,
@@ -55,6 +58,10 @@ impl BaseNodeExtension for TxPoolExtension {
                 .expect("Failed to create transaction status proxy");
             ctx.modules.merge_configured(proxy_api.into_rpc())?;
 
+            info!(message = "Starting TxPool Management RPC");
+            let management_api = TxPoolManagementApiImpl::new(ctx.pool().clone());
+            ctx.modules.merge_configured(management_api.into_rpc())?;
+
             // Start the tracing subscription if enabled
             if tracing_enabled {
                 let canonical_stream =
@@ -62,8 +69,10 @@ impl BaseNodeExtension for TxPoolExtension {
                 let pool = ctx.pool().clone();
 
                 // Get flashblocks state from config, or create a default one if not configured
-                let fb_state: Arc<FlashblocksState> =
-                    flashblocks_config.as_ref().map(|cfg| cfg.state.clone()).unwrap_or_default();
+                let fb_state: Arc<FlashblocksState> = flashblocks_config
+                    .as_ref()
+                    .map(|cfg| Arc::clone(&cfg.state))
+                    .unwrap_or_default();
 
                 tokio::spawn(tracex_subscription(canonical_stream, fb_state, pool, logs_enabled));
             }

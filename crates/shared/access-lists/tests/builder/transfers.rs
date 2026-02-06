@@ -162,6 +162,6 @@ fn test_multiple_transfers() {
     let tx_indices: Vec<_> =
         sender_changes.nonce_changes.iter().map(|nc| nc.block_access_index).collect();
     for i in 0..10u64 {
-        assert!(tx_indices.contains(&i), "Tx index {} should be present in nonce changes", i);
+        assert!(tx_indices.contains(&i), "Tx index {i} should be present in nonce changes");
     }
 }

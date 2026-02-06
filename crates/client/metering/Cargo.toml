@@ -53,7 +53,8 @@ derive_more.workspace = true
 
 [dev-dependencies]
 base-client-node = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["test-utils"] }
+base-flashblocks.workspace = true
+reth-db = { workspace = true, features = ["op", "test-utils"] }
 reth-db-common.workspace = true
 reth-optimism-node.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
@@ -64,3 +65,5 @@ rand.workspace = true
 tokio.workspace = true
 op-alloy-network.workspace = true
 revm-context-interface.workspace = true
+base-flashtypes.workspace = true
+url.workspace = true

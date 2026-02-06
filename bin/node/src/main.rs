@@ -6,34 +6,37 @@
 pub mod cli;
 
 use base_client_node::BaseNodeRunner;
-use base_flashblocks_node::{FlashblocksConfig, FlashblocksExtension};
+use base_flashblocks::FlashblocksConfig;
+use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteringConfig, MeteringExtension};
+use base_proofs_extension::ProofsHistoryExtension;
 use base_txpool::{TxPoolExtension, TxpoolConfig};
+use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
+
+type NodeCli = Cli<OpChainSpecParser, cli::Args>;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 
 fn main() {
     // Step 1: Initialize versioning so logs / telemetry report the right build info.
-    base_cli_utils::Version::init();
+    base_cli_utils::init_reth_version!();
 
     // Step 2: Parse CLI arguments and hand execution to the Optimism node runner.
-    use clap::Parser;
-    use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
-    let cli = Cli::<OpChainSpecParser, cli::Args>::parse();
+    let cli = base_cli_utils::parse_cli!(NodeCli);
 
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
         let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering
-        let flashblocks_config: Option<FlashblocksConfig> = args.clone().into();
+        let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
             tracing_enabled: args.enable_transaction_tracing,
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
-            sequencer_rpc: args.rollup_args.sequencer,
+            sequencer_rpc: args.rollup_args.sequencer.clone(),
             flashblocks_config: flashblocks_config.clone(),
         });
         runner.install_ext::<MeteringExtension>(MeteringConfig {
@@ -41,6 +44,7 @@ fn main() {
             flashblocks_config: flashblocks_config.clone(),
         });
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
+        runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
 
         let handle = runner.run(builder);
         handle.await

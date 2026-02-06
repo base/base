@@ -10,19 +10,18 @@ use base_client_cli::{
 use clap::Parser;
 use kona_engine::RollupBoostServerArgs;
 use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
-use rollup_boost_kona::ExecutionMode;
+use rollup_boost::ExecutionMode;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
 use url::Url;
 
-use crate::{metrics::init_rollup_config_metrics, version};
+use crate::metrics::init_rollup_config_metrics;
 
 /// The Base Consensus CLI.
 #[derive(Parser, Clone, Debug)]
 #[command(
     author,
-    version = version::SHORT_VERSION,
-    long_version = version::LONG_VERSION,
+    version = env!("CARGO_PKG_VERSION"),
     styles = CliStyles::init(),
     about,
     long_about = None
@@ -86,7 +85,7 @@ impl Cli {
             kona_node_service::Metrics::init();
             kona_derive::Metrics::init();
             kona_providers_alloy::Metrics::init();
-            version::VersionInfo::from_build().register_version_metrics();
+            base_cli_utils::register_version_metrics!();
         })?;
 
         // Run the subcommand.

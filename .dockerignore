@@ -1,1 +1,10 @@
 target/
+assets/
+.devnet/
+.git/
+.github/
+.idea/
+docs/
+docker/docker-compose.yml
+.claude/
+.config/

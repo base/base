@@ -7,8 +7,9 @@ pub use alloy_primitives::{Address, B256, TxKind, U256};
 pub use alloy_sol_types::SolCall;
 use base_access_lists::FBALBuilderDb;
 pub use base_access_lists::FlashblockAccessList;
-use base_primitives::{
-    AccessListContract, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
+pub use base_primitives::{
+    AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
+    build_test_genesis,
 };
 pub use eyre::Result;
 pub use op_revm::OpTransaction;
@@ -33,18 +34,18 @@ fn load_chain_spec() -> Arc<OpChainSpec> {
     Arc::new(OpChainSpec::from_genesis(build_test_genesis()))
 }
 
-/// Executes a list of transactions and builds a FlashblockAccessList tracking all
+/// Executes a list of transactions and builds a `FlashblockAccessList` tracking all
 /// account and storage changes across all transactions.
 ///
-/// Uses a single FBALBuilderDb instance that wraps the underlying InMemoryDB,
-/// calling set_index() before each transaction to track which txn caused which change.
+/// Uses a single `FBALBuilderDb` instance that wraps the underlying `InMemoryDB`,
+/// calling `set_index()` before each transaction to track which txn caused which change.
 pub fn execute_txns_build_access_list(
     txs: Vec<OpTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {
     let chain_spec = load_chain_spec();
-    let evm_config = OpEvmConfig::optimism(chain_spec.clone());
+    let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
     let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
 
     // Set up the underlying InMemoryDB with any overrides

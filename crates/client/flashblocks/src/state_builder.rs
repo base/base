@@ -7,7 +7,7 @@ use alloy_consensus::{
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_consensus::{OpReceipt, OpTxEnvelope};
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_evm::{Evm, FromRecoveredTx, op_revm::L1BlockInfo};
 use reth_optimism_chainspec::OpHardforks;
@@ -124,11 +124,9 @@ where
         effective_gas_price: u128,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-            let deposit_receipt = receipt
-                .inner
-                .inner
-                .as_deposit_receipt()
-                .ok_or(ExecutionError::DepositReceiptMismatch)?;
+            let OpReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
+                return Err(ExecutionError::DepositReceiptMismatch.into());
+            };
 
             (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
         } else {
@@ -174,7 +172,8 @@ where
                     existing_override.nonce = Some(acc.info.nonce);
                     existing_override.code = acc.info.code.clone().map(|code| code.bytes());
 
-                    let existing = existing_override.state_diff.get_or_insert(Default::default());
+                    let existing =
+                        existing_override.state_diff.get_or_insert_with(Default::default);
                     let changed_slots = acc
                         .storage
                         .iter()
@@ -227,11 +226,10 @@ where
                 self.next_log_index += receipt.logs().len();
 
                 let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                    let deposit_receipt = op_receipt
-                        .inner
-                        .inner
-                        .as_deposit_receipt()
-                        .ok_or(ExecutionError::DepositReceiptMismatch)?;
+                    let OpReceipt::Deposit(deposit_receipt) = &op_receipt.inner.inner.receipt
+                    else {
+                        return Err(ExecutionError::DepositReceiptMismatch.into());
+                    };
 
                     (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
                 } else {
@@ -256,7 +254,7 @@ where
             Err(e) => Err(ExecutionError::TransactionFailed {
                 tx_hash,
                 sender: transaction.signer(),
-                reason: format!("{:?}", e),
+                reason: format!("{e:?}"),
             }
             .into()),
         }
