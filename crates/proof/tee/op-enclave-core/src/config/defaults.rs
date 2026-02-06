@@ -1,8 +1,13 @@
 //! Default rollup configuration matching Go's `DefaultDeployConfig()`.
 
+use std::collections::BTreeMap;
+
 use alloy_eips::eip1898::BlockNumHash;
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::Address;
-use kona_genesis::{BaseFeeConfig, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
+use kona_genesis::{
+    BaseFeeConfig, ChainGenesis, HardForkConfig, L1ChainConfig, RollupConfig, SystemConfig,
+};
 
 /// Create a default rollup config matching Go's `DefaultDeployConfig()`.
 ///
@@ -62,6 +67,51 @@ pub fn default_rollup_config() -> RollupConfig {
 
         // Base fee config (Optimism defaults)
         chain_op_config: BaseFeeConfig::optimism(),
+    }
+}
+
+/// Create a default L1 chain config for mainnet.
+///
+/// This provides a template L1 configuration with all relevant hardforks.
+/// For Sepolia or other testnets, you should use chain-specific configurations.
+#[must_use]
+pub fn default_l1_config() -> L1ChainConfig {
+    // Build the blob schedule with hardfork name -> BlobParams mapping
+    let blob_schedule: BTreeMap<String, BlobParams> = BTreeMap::from([
+        ("cancun".to_string(), BlobParams::cancun()),
+        ("prague".to_string(), BlobParams::prague()),
+        ("osaka".to_string(), BlobParams::osaka()),
+        ("bpo1".to_string(), BlobParams::bpo1()),
+        ("bpo2".to_string(), BlobParams::bpo2()),
+    ]);
+
+    // Mainnet L1 chain config with proper hardfork block numbers/timestamps
+    L1ChainConfig {
+        chain_id: 1,
+        homestead_block: Some(1_150_000),
+        eip150_block: Some(2_463_000),
+        eip155_block: Some(2_675_000),
+        eip158_block: Some(2_675_000),
+        byzantium_block: Some(4_370_000),
+        constantinople_block: Some(7_280_000),
+        petersburg_block: Some(7_280_000),
+        istanbul_block: Some(9_069_000),
+        berlin_block: Some(12_244_000),
+        london_block: Some(12_965_000),
+        // Merge (Paris) happened at terminal total difficulty
+        terminal_total_difficulty_passed: true,
+        // Shanghai at 1681338455 (Apr 12, 2023)
+        shanghai_time: Some(1_681_338_455),
+        // Cancun at 1710338135 (Mar 13, 2024)
+        cancun_time: Some(1_710_338_135),
+        // Prague - not yet activated on mainnet, use a far future timestamp
+        prague_time: None,
+        // BPO hardforks not yet activated on mainnet
+        bpo1_time: None,
+        bpo2_time: None,
+        // Blob schedule for correct blob base fee calculation
+        blob_schedule,
+        ..Default::default()
     }
 }
 
