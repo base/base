@@ -436,7 +436,6 @@ build-range-elfs:
     #!/usr/bin/env bash
 
     cd programs/range/ethereum
-    ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-bump --docker --tag v6.0.0-rc.1 --output-directory ../../../elf --features bump
     ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-embedded --docker --tag v6.0.0-rc.1 --output-directory ../../../elf
 
     cd ../celestia
