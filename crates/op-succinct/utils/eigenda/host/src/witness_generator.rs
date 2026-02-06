@@ -25,10 +25,10 @@ use op_succinct_host_utils::witness_generation::{
     DefaultOracleBase, WitnessGenerator,
 };
 use rkyv::to_bytes;
-use sp1_sdk::{
-    blocking::Prover as BlockingProver, Elf, ProvingKey, SP1Proof, SP1ProofWithPublicValues,
-    SP1Stdin,
-};
+use sp1_core_executor::SP1RecursionProof;
+use sp1_hypercube::SP1PcsProofInner;
+use sp1_primitives::SP1GlobalContext;
+use sp1_sdk::{blocking::Prover as BlockingProver, Elf, ProvingKey, SP1Stdin};
 
 type WitnessExecutor = EigenDAWitnessExecutor<
     PreimageWitnessCollector<DefaultOracleBase>,
@@ -68,15 +68,11 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
                     .map_err(|e| anyhow::anyhow!("Failed to setup canoe ELF: {}", e))?;
                 let canoe_vk = pk.verifying_key();
 
-                // Deserialize the compressed proof and extract the recursion proof
-                let proof: SP1ProofWithPublicValues = serde_cbor::from_slice(&proof_bytes)
-                    .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
-                let SP1Proof::Compressed(reduced_proof) = proof.proof else {
-                    return Err(anyhow::anyhow!(
-                        "Expected compressed proof, got different proof type"
-                    ));
-                };
-                stdin.write_proof(*reduced_proof, canoe_vk.vk.clone());
+                // Deserialize the recursion proof (serialized by CanoeSp1CCReducedProofProvider)
+                let reduced_proof: SP1RecursionProof<SP1GlobalContext, SP1PcsProofInner> =
+                    serde_cbor::from_slice(&proof_bytes)
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
+                stdin.write_proof(reduced_proof, canoe_vk.vk.clone());
 
                 // Re-serialize the witness data without the proof
                 witness.eigenda_data = Some(serde_cbor::to_vec(&eigenda_witness).map_err(|e| {

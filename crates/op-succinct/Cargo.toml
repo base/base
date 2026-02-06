@@ -205,6 +205,8 @@ sp1-zkvm = { version = "6.0.0-rc.1", features = ["verify"] }
 sp1-build = "6.0.0-rc.1"
 sp1-prover = "6.0.0-rc.1"
 sp1-core-executor = "6.0.0-rc.1"
+sp1-hypercube = "6.0.0-rc.1"
+sp1-primitives = "6.0.0-rc.1"
 
 # kzg
 kzg-rs = { version = "0.2.7", features = ["rkyv", "serde"] }
