@@ -9,7 +9,10 @@ use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
 
-use crate::{TransactionStatusApiImpl, TransactionStatusApiServer, tracex_subscription};
+use crate::{
+    TransactionStatusApiImpl, TransactionStatusApiServer, TxPoolManagementApiImpl,
+    TxPoolManagementApiServer, tracex_subscription,
+};
 
 /// Transaction pool configuration.
 #[derive(Debug, Clone)]
@@ -54,6 +57,10 @@ impl BaseNodeExtension for TxPoolExtension {
             let proxy_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status proxy");
             ctx.modules.merge_configured(proxy_api.into_rpc())?;
+
+            info!(message = "Starting TxPool Management RPC");
+            let management_api = TxPoolManagementApiImpl::new(ctx.pool().clone());
+            ctx.modules.merge_configured(management_api.into_rpc())?;
 
             // Start the tracing subscription if enabled
             if tracing_enabled {
