@@ -7352,6 +7352,8 @@ dependencies = [
  "rkyv",
  "serde_cbor",
  "sp1-core-executor",
+ "sp1-hypercube",
+ "sp1-primitives 6.0.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "sp1-prover",
  "sp1-sdk",
  "tokio",

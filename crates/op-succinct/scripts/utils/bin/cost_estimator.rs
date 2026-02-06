@@ -72,8 +72,6 @@ where
     fs::File::create(&report_path).unwrap();
     let report_path = report_path.canonicalize().unwrap();
 
-    let prover = CpuProver::new();
-
     // Run the host tasks in parallel using join_all
     let handles = host_args.iter().zip(ranges.iter()).map(|(host_args, range)| {
         let host_args = host_args.clone();
@@ -120,8 +118,11 @@ where
 
     // Execute the program for each block range in parallel.
     // Use spawn_blocking to avoid "Cannot start a runtime from within a runtime" error.
+    // CpuProver::new() creates its own tokio runtime internally, so it must be constructed
+    // outside the main tokio runtime context (i.e., inside spawn_blocking).
     let report_path_clone = report_path.clone();
     tokio::task::spawn_blocking(move || {
+        let prover = CpuProver::new();
         execution_inputs.par_iter().for_each(|(sp1_stdin, (range, block_data))| {
             let result = prover
                 .execute(Elf::Static(get_range_elf_embedded()), sp1_stdin.clone())
