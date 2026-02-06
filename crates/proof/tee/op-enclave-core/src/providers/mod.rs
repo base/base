@@ -33,4 +33,4 @@ mod trie;
 pub use block_info::BlockInfoWrapper;
 pub use l1_receipts::L1ReceiptsFetcher;
 pub use l2_system_config::L2SystemConfigFetcher;
-pub use trie::{compute_receipt_root, compute_tx_root};
+pub use trie::{compute_l1_receipt_root, compute_receipt_root, compute_tx_root};

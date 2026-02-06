@@ -3,6 +3,7 @@
 //! This module provides functions to compute Merkle Patricia Trie roots
 //! for receipts and transactions, matching Ethereum's `DeriveSha` algorithm.
 
+use alloy_consensus::ReceiptEnvelope;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_rlp::Encodable;
@@ -42,6 +43,37 @@ pub fn compute_receipt_root(receipts: &[OpReceiptEnvelope]) -> B256 {
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Build the trie using HashBuilder
+    let mut builder = HashBuilder::default();
+    for (key, value) in pairs {
+        let nibbles = Nibbles::unpack(&key);
+        builder.add_leaf(nibbles, &value);
+    }
+
+    builder.root()
+}
+
+/// Computes the receipt root from L1 receipts (supports all Ethereum receipt types including EIP-4844).
+///
+/// This is used for verifying L1 receipt roots which may contain blob transaction receipts.
+#[must_use]
+pub fn compute_l1_receipt_root(receipts: &[ReceiptEnvelope]) -> B256 {
+    if receipts.is_empty() {
+        return EMPTY_ROOT_HASH;
+    }
+
+    let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = receipts
+        .iter()
+        .enumerate()
+        .map(|(i, receipt)| {
+            let key = encode_index(i);
+            let mut value = Vec::new();
+            receipt.encode_2718(&mut value);
+            (key, value)
+        })
+        .collect();
+
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
     let mut builder = HashBuilder::default();
     for (key, value) in pairs {
         let nibbles = Nibbles::unpack(&key);
