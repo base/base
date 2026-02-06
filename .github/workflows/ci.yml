@@ -42,7 +42,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
           packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.1
+          version: 1.2
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -77,7 +77,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
           packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.1
+          version: 1.2
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
@@ -140,7 +140,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
           packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.1
+          version: 1.2
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
         with:
@@ -202,7 +202,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
           packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.1
+          version: 1.2
 
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
       - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
@@ -277,7 +277,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
           packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.1
+          version: 1.2
 
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
