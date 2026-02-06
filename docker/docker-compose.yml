@@ -200,7 +200,6 @@ services:
       - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
       - --flashblocks.disable-state-root
-      - --flashblocks.compute-state-root-on-finalize
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --color=never
@@ -248,6 +247,7 @@ services:
       - --flashblocks
       - --flashblocks-builder-url
       - ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
+      - --external-state-root
     restart: unless-stopped
 
   base-builder-cl:
