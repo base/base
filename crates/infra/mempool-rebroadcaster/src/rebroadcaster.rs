@@ -28,6 +28,7 @@ pub struct RebroadcasterResult {
     pub unexpected_failed_reth_to_geth: u32,
 }
 
+#[derive(Debug)]
 pub struct TxpoolDiff {
     pub in_geth_not_in_reth: Vec<RpcTransaction>,
     pub in_reth_not_in_geth: Vec<RpcTransaction>,
@@ -174,8 +175,8 @@ impl Rebroadcaster {
     ) -> TxpoolContent {
         let mut filtered_content = content.clone();
 
-        for (account, nonce_txns) in content.pending.iter() {
-            for (nonce, txn) in nonce_txns.iter() {
+        for (account, nonce_txns) in &content.pending {
+            for (nonce, txn) in nonce_txns {
                 if self.is_underpriced(txn, base_fee, gas_price) {
                     filtered_content.pending.get_mut(account).unwrap().remove(nonce);
                 }
@@ -186,8 +187,8 @@ impl Rebroadcaster {
             }
         }
 
-        for (account, nonce_txns) in content.queued.iter() {
-            for (nonce, txn) in nonce_txns.iter() {
+        for (account, nonce_txns) in &content.queued {
+            for (nonce, txn) in nonce_txns {
                 if self.is_underpriced(txn, base_fee, gas_price) {
                     filtered_content.queued.get_mut(account).unwrap().remove(nonce);
                 }
@@ -229,11 +230,11 @@ impl Rebroadcaster {
         let mut pending_count = 0;
         let mut queued_count = 0;
 
-        for (_, nonce_txns) in mempool.pending.iter() {
+        for nonce_txns in mempool.pending.values() {
             pending_count += nonce_txns.len();
         }
 
-        for (_, nonce_txns) in mempool.queued.iter() {
+        for nonce_txns in mempool.queued.values() {
             queued_count += nonce_txns.len();
         }
 
@@ -251,13 +252,13 @@ impl Rebroadcaster {
         let geth_hashes = self.txns_by_hash(geth_mempool);
         let reth_hashes = self.txns_by_hash(reth_mempool);
 
-        for (hash, txn) in geth_hashes.iter() {
+        for (hash, txn) in &geth_hashes {
             if !reth_hashes.contains_key(hash) {
                 diff.in_geth_not_in_reth.push(txn.clone());
             }
         }
 
-        for (hash, txn) in reth_hashes.iter() {
+        for (hash, txn) in &reth_hashes {
             if !geth_hashes.contains_key(hash) {
                 diff.in_reth_not_in_geth.push(txn.clone());
             }
@@ -272,14 +273,14 @@ impl Rebroadcaster {
     fn txns_by_hash(&self, mempool: &TxpoolContent) -> HashMap<B256, RpcTransaction> {
         let mut txns_by_hash = HashMap::new();
 
-        for (_, nonce_txns) in mempool.pending.iter() {
-            for (_, txn) in nonce_txns.iter() {
+        for nonce_txns in mempool.pending.values() {
+            for txn in nonce_txns.values() {
                 txns_by_hash.insert(*txn.as_recovered().hash(), txn.clone());
             }
         }
 
-        for (_, nonce_txns) in mempool.queued.iter() {
-            for (_, txn) in nonce_txns.iter() {
+        for nonce_txns in mempool.queued.values() {
+            for txn in nonce_txns.values() {
                 txns_by_hash.insert(*txn.as_recovered().hash(), txn.clone());
             }
         }

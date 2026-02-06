@@ -23,12 +23,12 @@ enum HealthState {
 }
 
 impl HealthState {
-    fn code(&self) -> u8 {
+    const fn code(&self) -> u8 {
         match self {
-            HealthState::Healthy => 0,
-            HealthState::Delayed => 1,
-            HealthState::Unhealthy => 2,
-            HealthState::Error => 3,
+            Self::Healthy => 0,
+            Self::Delayed => 1,
+            Self::Unhealthy => 2,
+            Self::Error => 3,
         }
     }
 }
@@ -41,7 +41,7 @@ pub struct HealthcheckConfig {
 }
 
 impl HealthcheckConfig {
-    pub fn new(
+    pub const fn new(
         poll_interval_ms: u64,
         grace_period_ms: u64,
         unhealthy_node_threshold_ms: u64,
@@ -98,7 +98,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
     }
 
     pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
-        let status = self.status_code.clone();
+        let status = Arc::clone(&self.status_code);
         let metrics = self.metrics.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_millis(period_ms));
@@ -128,21 +128,19 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             Ok(Err(e)) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, error = %e, "waiting for node to become healthy");
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, error = %e, "failed to fetch block");
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
+                self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 return;
             }
             Err(_elapsed) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, "waiting for node to become healthy (timeout)");
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, "failed to fetch block (timeout)");
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
+                self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 return;
             }
         };
@@ -261,7 +259,7 @@ mod tests {
             timestamp_unix_seconds: start,
             transaction_count: 5,
         }));
-        let client = MockClient { header: shared_header.clone() };
+        let client = MockClient { header: Arc::clone(&shared_header) };
         let node = Node::new("http://localhost:8545", false);
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
@@ -280,7 +278,7 @@ mod tests {
             timestamp_unix_seconds: start,
             transaction_count: 5,
         }));
-        let client = MockClient { header: shared_header.clone() };
+        let client = MockClient { header: Arc::clone(&shared_header) };
         let node = Node::new("http://localhost:8545", false);
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
@@ -307,7 +305,7 @@ mod tests {
             timestamp_unix_seconds: start,
             transaction_count: 5,
         }));
-        let client = MockClient { header: shared_header.clone() };
+        let client = MockClient { header: Arc::clone(&shared_header) };
         let node = Node::new("http://localhost:8545", false);
         let metrics = mock_metrics();
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);

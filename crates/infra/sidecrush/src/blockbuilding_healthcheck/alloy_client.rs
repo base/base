@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use super::{EthClient, HeaderSummary};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AlloyEthClient {
     provider: RootProvider,
 }

@@ -1,7 +1,11 @@
 [package]
 name = "sidecrush"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "sidecrush"
@@ -12,8 +16,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 cadence = { workspace = true }
-async-trait = "0.1"
-anyhow = "1.0"
+async-trait = { workspace = true }
+anyhow = { workspace = true }
 clap = { workspace = true }
 
 # Ethereum client deps (will be used for header fetching)

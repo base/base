@@ -14,22 +14,22 @@ impl HealthcheckMetrics {
         Self { client: Arc::new(client) }
     }
 
-    /// Increment status_healthy counter (2s heartbeat).
+    /// Increment `status_healthy` counter (2s heartbeat).
     pub fn increment_status_healthy(&self) {
         let _ = self.client.incr("healthy");
     }
 
-    /// Increment status_delayed counter (2s heartbeat).
+    /// Increment `status_delayed` counter (2s heartbeat).
     pub fn increment_status_delayed(&self) {
         let _ = self.client.incr("delayed");
     }
 
-    /// Increment status_unhealthy counter (2s heartbeat).
+    /// Increment `status_unhealthy` counter (2s heartbeat).
     pub fn increment_status_unhealthy(&self) {
         let _ = self.client.incr("unhealthy");
     }
 
-    /// Increment status_error counter (2s heartbeat).
+    /// Increment `status_error` counter (2s heartbeat).
     pub fn increment_status_error(&self) {
         let _ = self.client.incr("error");
     }

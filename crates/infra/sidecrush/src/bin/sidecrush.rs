@@ -56,7 +56,7 @@ async fn main() {
     // Initialize StatsD client (sends to Datadog agent)
     // Use DD_AGENT_HOST if set (Kubernetes), otherwise localhost
     let statsd_host = std::env::var("DD_AGENT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let statsd_addr = format!("{}:8125", statsd_host);
+    let statsd_addr = format!("{statsd_host}:8125");
     tracing::info!(address = %statsd_addr, "Connecting to StatsD agent");
 
     let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP socket");
