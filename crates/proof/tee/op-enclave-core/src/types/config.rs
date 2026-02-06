@@ -252,6 +252,8 @@ impl PerChainConfig {
                 eip1559_elasticity: None,
                 operator_fee_scalar: None,
                 operator_fee_constant: None,
+                da_footprint_gas_scalar: None,
+                min_base_fee: None,
             }),
         }
     }
