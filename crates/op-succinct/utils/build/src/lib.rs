@@ -28,7 +28,6 @@ fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String
 /// programs.
 pub fn build_all() {
     // build_program("aggregation", "aggregation-elf", None);
-    // build_program("range/ethereum", "range-elf-bump", None);
     // build_program("range/ethereum", "range-elf-embedded", Some(vec!["embedded".to_string()]));
     // build_program(
     //     "range/celestia",
