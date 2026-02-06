@@ -54,7 +54,7 @@ pub struct StatelessTestFixture {
     /// The execution witness.
     pub witness: ExecutionWitness,
 
-    /// The L2ToL1MessagePasser account proof.
+    /// The `L2ToL1MessagePasser` account proof.
     pub message_account: AccountResult,
 
     /// Expected state root after execution.

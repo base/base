@@ -1,4 +1,4 @@
-//! TrieDB provider implementation for stateless execution.
+//! `TrieDB` provider implementation for stateless execution.
 //!
 //! This module provides a trie database implementation that uses pre-loaded
 //! witness data for stateless block execution within an enclave.
@@ -14,16 +14,16 @@ use kona_mpt::{TrieNode, TrieProvider};
 use super::witness::TransformedWitness;
 use crate::error::ExecutorError;
 
-/// Enclave TrieDB provider for stateless execution.
+/// Enclave `TrieDB` provider for stateless execution.
 ///
 /// This provider uses pre-loaded witness data to provide bytecode and
 /// state trie nodes during stateless block execution.
 #[derive(Debug, Clone)]
 pub struct EnclaveTrieDB {
-    /// Bytecode map: code_hash -> bytecode.
+    /// Bytecode map: `code_hash` -> bytecode.
     codes: HashMap<B256, Bytes>,
 
-    /// State trie nodes: node_hash -> RLP-encoded node.
+    /// State trie nodes: `node_hash` -> RLP-encoded node.
     state: HashMap<B256, Bytes>,
 
     /// The parent block header.
@@ -126,7 +126,7 @@ impl EnclaveTrieDB {
     }
 }
 
-/// Error type for TrieProvider and TrieDBProvider implementations.
+/// Error type for `TrieProvider` and `TrieDBProvider` implementations.
 #[derive(Debug, Clone)]
 pub struct TrieProviderError(pub String);
 

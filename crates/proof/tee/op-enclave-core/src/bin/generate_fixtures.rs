@@ -49,11 +49,11 @@ use op_enclave_core::types::account::AccountResult;
 #[command(name = "generate_fixtures")]
 #[command(about = "Generate test fixtures from Base Sepolia testnet")]
 struct Args {
-    /// L2 RPC endpoint URL (e.g., https://sepolia.base.org)
+    /// L2 RPC endpoint URL (e.g., <https://sepolia.base.org>)
     #[arg(long)]
     l2_rpc: String,
 
-    /// L1 RPC endpoint URL (e.g., https://sepolia.drpc.org)
+    /// L1 RPC endpoint URL (e.g., <https://sepolia.drpc.org>)
     #[arg(long)]
     l1_rpc: String,
 
@@ -102,7 +102,7 @@ pub struct StatelessTestFixture {
     /// The execution witness.
     pub witness: ExecutionWitness,
 
-    /// The L2ToL1MessagePasser account proof.
+    /// The `L2ToL1MessagePasser` account proof.
     pub message_account: AccountResult,
 
     /// Expected state root after execution.
@@ -180,7 +180,7 @@ struct L2BlockResponse {
     withdrawals_root: Option<B256>,
 }
 
-/// Execution witness response from debug_executionWitness RPC.
+/// Execution witness response from `debug_executionWitness` RPC.
 #[derive(Debug, Deserialize)]
 struct ExecutionWitnessResponse {
     headers: Vec<Header>,
@@ -192,7 +192,7 @@ struct ExecutionWitnessResponse {
 // CachingTrieProvider - Lazy-fetch trie nodes during execution
 // =============================================================================
 
-/// Error type for CachingTrieProvider.
+/// Error type for `CachingTrieProvider`.
 #[derive(Debug, Clone)]
 struct CachingTrieError(String);
 
@@ -205,12 +205,12 @@ impl std::fmt::Display for CachingTrieError {
 impl std::error::Error for CachingTrieError {}
 
 /// Shared caches for witness data.
-/// These can be cloned before creating a CachingTrieProvider and accessed after execution.
+/// These can be cloned before creating a `CachingTrieProvider` and accessed after execution.
 #[derive(Clone, Debug)]
 struct SharedWitnessCaches {
-    /// Cached state trie nodes: node_hash -> RLP-encoded node.
+    /// Cached state trie nodes: `node_hash` -> RLP-encoded node.
     state_cache: Arc<Mutex<HashMap<B256, Bytes>>>,
-    /// Cached bytecode: code_hash -> bytecode.
+    /// Cached bytecode: `code_hash` -> bytecode.
     code_cache: Arc<Mutex<HashMap<B256, Bytes>>>,
 }
 
@@ -248,7 +248,7 @@ impl SharedWitnessCaches {
 
 /// A trie provider that fetches nodes on-demand via `debug_dbGet` RPC.
 ///
-/// This implements the kona-mpt TrieProvider and kona-executor TrieDBProvider traits.
+/// This implements the kona-mpt `TrieProvider` and kona-executor `TrieDBProvider` traits.
 /// During block execution, it lazily fetches trie nodes and bytecode as they are accessed,
 /// caching everything for later extraction as witness data.
 #[derive(Debug)]
@@ -266,7 +266,7 @@ struct CachingTrieProvider {
 }
 
 impl CachingTrieProvider {
-    /// Creates a new CachingTrieProvider with the given shared caches.
+    /// Creates a new `CachingTrieProvider` with the given shared caches.
     const fn new(
         client: reqwest::Client,
         rpc_url: String,
@@ -283,7 +283,7 @@ impl CachingTrieProvider {
         }
     }
 
-    /// Fetch a value from the node's database using debug_dbGet.
+    /// Fetch a value from the node's database using `debug_dbGet`.
     fn fetch_db_value(&self, key: B256) -> Result<Option<Bytes>, CachingTrieError> {
         let client = self.client.clone();
         let rpc_url = self.rpc_url.clone();
@@ -840,7 +840,7 @@ async fn fetch_raw_transaction(
         .ok_or_else(|| format!("Raw transaction not found: {tx_hash:?}").into())
 }
 
-/// Fetch execution witness using debug_executionWitness RPC.
+/// Fetch execution witness using `debug_executionWitness` RPC.
 async fn fetch_execution_witness(
     client: &reqwest::Client,
     rpc_url: &str,
@@ -924,7 +924,7 @@ async fn fetch_l1_receipts(
     Ok(response.result.unwrap_or_default())
 }
 
-/// Fetch account proof using eth_getProof.
+/// Fetch account proof using `eth_getProof`.
 async fn fetch_account_proof(
     client: &reqwest::Client,
     rpc_url: &str,
@@ -993,7 +993,7 @@ fn extract_sequenced_txs(block: &L2BlockResponse) -> Vec<Bytes> {
         .collect()
 }
 
-/// Convert L2BlockResponse to Header.
+/// Convert `L2BlockResponse` to Header.
 fn block_response_to_header(block: &L2BlockResponse) -> Result<Header, Box<dyn std::error::Error>> {
     // Parse hex strings to u64
     let number = u64::from_str_radix(block.number.trim_start_matches("0x"), 16)?;

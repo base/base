@@ -14,8 +14,11 @@ aws-nitro-enclaves-cose.workspace = true
 # Cryptography
 rsa.workspace = true
 k256.workspace = true
+alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+kona-genesis.workspace = true
 sha2.workspace = true
 rand.workspace = true
 hex.workspace = true

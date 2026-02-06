@@ -12,13 +12,13 @@ use kona_protocol::{L1BlockInfoTx, decode_deposit};
 
 use crate::error::ExecutorError;
 
-/// The L1 Attributes Depositor address (L1Block contract depositor).
+/// The L1 Attributes Depositor address (`L1Block` contract depositor).
 pub const L1_ATTRIBUTES_DEPOSITOR: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
 /// The L1 Attributes Predeployed Contract address.
 pub const L1_ATTRIBUTES_PREDEPLOYED: Address = address!("4200000000000000000000000000000000000015");
 
-/// Deposit event topic (TransactionDeposited event).
+/// Deposit event topic (`TransactionDeposited` event).
 /// keccak256("TransactionDeposited(address,address,uint256,bytes)")
 pub const DEPOSIT_EVENT_TOPIC: B256 = B256::new(hex!(
     "b3813568d9991fc951961fcb4c784893574240a28925604d09fc577c55bb7c32"
@@ -28,7 +28,7 @@ pub const DEPOSIT_EVENT_TOPIC: B256 = B256::new(hex!(
 ///
 /// This builds the complete deposit transaction list for an L2 block:
 /// 1. First transaction: L1 info deposit tx (records L1 block info on L2)
-/// 2. Remaining transactions: User deposits from TransactionDeposited events
+/// 2. Remaining transactions: User deposits from `TransactionDeposited` events
 ///
 /// # Arguments
 ///
@@ -40,7 +40,7 @@ pub const DEPOSIT_EVENT_TOPIC: B256 = B256::new(hex!(
 /// * `receipts` - The L1 origin block receipts
 /// * `l2_block_number` - The L2 block number being built
 /// * `l2_timestamp` - The L2 block timestamp
-/// * `sequence_number` - The sequence number (0 if new L1 origin, else parent.seq_num + 1)
+/// * `sequence_number` - The sequence number (0 if new L1 origin, else `parent.seq_num` + 1)
 #[allow(clippy::too_many_arguments)]
 pub fn extract_deposits_from_receipts(
     rollup_config: &RollupConfig,
@@ -97,11 +97,11 @@ pub fn extract_deposits_from_receipts(
 /// Get logs from a receipt envelope.
 fn get_receipt_logs(receipt: &ReceiptEnvelope) -> &[Log] {
     match receipt {
-        ReceiptEnvelope::Legacy(r) => &r.receipt.logs,
-        ReceiptEnvelope::Eip2930(r) => &r.receipt.logs,
-        ReceiptEnvelope::Eip1559(r) => &r.receipt.logs,
-        ReceiptEnvelope::Eip4844(r) => &r.receipt.logs,
-        ReceiptEnvelope::Eip7702(r) => &r.receipt.logs,
+        ReceiptEnvelope::Legacy(r)
+        | ReceiptEnvelope::Eip2930(r)
+        | ReceiptEnvelope::Eip1559(r)
+        | ReceiptEnvelope::Eip4844(r)
+        | ReceiptEnvelope::Eip7702(r) => &r.receipt.logs,
     }
 }
 

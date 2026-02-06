@@ -1,6 +1,6 @@
 //! L2 block reference parsing for L1 origin validation.
 //!
-//! This module provides functionality to parse L2BlockInfo from block headers
+//! This module provides functionality to parse `L2BlockInfo` from block headers
 //! and first transaction data, matching the Go `derive.L2BlockToBlockRef()` function.
 
 use alloy_consensus::Header;
@@ -14,7 +14,7 @@ use op_alloy_consensus::OpTxEnvelope;
 
 use crate::error::ExecutorError;
 
-/// Parse L2BlockInfo from a block's header and first transaction.
+/// Parse `L2BlockInfo` from a block's header and first transaction.
 ///
 /// This matches Go's `derive.L2BlockToBlockRef()` function which extracts
 /// the L1 origin information from an L2 block.
@@ -28,14 +28,14 @@ use crate::error::ExecutorError;
 ///
 /// # Returns
 ///
-/// The parsed L2BlockInfo containing block info and L1 origin.
+/// The parsed `L2BlockInfo` containing block info and L1 origin.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - The genesis block hash doesn't match
 /// - The first transaction is not a deposit
-/// - The L1BlockInfo cannot be decoded
+/// - The `L1BlockInfo` cannot be decoded
 pub fn l2_block_to_block_info(
     rollup_config: &RollupConfig,
     header: &Header,

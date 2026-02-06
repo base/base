@@ -53,7 +53,7 @@ impl NsmRng {
     /// Create a fallback RNG using the OS random source.
     ///
     /// On Linux, uses fd = -1 as a sentinel value. The `fill_bytes`
-    /// implementation checks for this and falls back to OsRng.
+    /// implementation checks for this and falls back to `OsRng`.
     #[cfg(target_os = "linux")]
     pub const fn fallback() -> Self {
         Self { fd: -1 }

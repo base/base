@@ -1,7 +1,7 @@
-//! AccountResult type matching the Go `eth.AccountResult` struct.
+//! `AccountResult` type matching the Go `eth.AccountResult` struct.
 //!
 //! This matches the standard Ethereum JSON-RPC `eth_getProof` response format.
-//! Uses camelCase field names (different from Proposal's PascalCase).
+//! Uses camelCase field names (different from Proposal's `PascalCase`).
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
@@ -53,7 +53,7 @@ pub struct AccountResult {
 }
 
 impl AccountResult {
-    /// Creates a new AccountResult.
+    /// Creates a new `AccountResult`.
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::missing_const_for_fn)] // Not const: Vec params can't be constructed in const context
     pub fn new(
@@ -80,7 +80,7 @@ impl AccountResult {
     ///
     /// This verifies that:
     /// 1. The account proof is valid against the state root
-    /// 2. The account data (nonce, balance, storage_hash, code_hash) matches the proof
+    /// 2. The account data (nonce, balance, `storage_hash`, `code_hash`) matches the proof
     ///
     /// # Arguments
     ///

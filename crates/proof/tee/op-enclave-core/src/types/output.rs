@@ -16,13 +16,13 @@ use alloy_primitives::{B256, keccak256};
 /// Where:
 /// - `version` is 32 zero bytes (version 0)
 /// - `state_root` is the state root from the block header (32 bytes)
-/// - `storage_root` is the storage root of the L2ToL1MessagePasser contract (32 bytes)
+/// - `storage_root` is the storage root of the `L2ToL1MessagePasser` contract (32 bytes)
 /// - `block_hash` is the hash of the block header (32 bytes)
 ///
 /// # Arguments
 ///
 /// * `header` - The L2 block header
-/// * `storage_root` - The storage root of the L2ToL1MessagePasser contract
+/// * `storage_root` - The storage root of the `L2ToL1MessagePasser` contract
 ///
 /// # Returns
 ///

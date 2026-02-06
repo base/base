@@ -1,7 +1,7 @@
 //! RSA cryptographic operations.
 //!
 //! This module provides RSA-4096 key generation, PKIX serialization,
-//! and PKCS1v15 encryption/decryption.
+//! and `PKCS1v15` encryption/decryption.
 
 use rand::CryptoRng;
 use rsa::pkcs1v15::{DecryptingKey, EncryptingKey};

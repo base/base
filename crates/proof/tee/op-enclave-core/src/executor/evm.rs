@@ -27,20 +27,20 @@ use revm::inspector::NoOpInspector;
 use super::trie_db::EnclaveTrieDB;
 use crate::error::ExecutorError;
 
-/// Custom EVM factory for enclave execution that pre-populates L1BlockInfo.
+/// Custom EVM factory for enclave execution that pre-populates `L1BlockInfo`.
 ///
-/// This factory wraps the standard OpEvmFactory but initializes the EVM with
-/// pre-computed L1BlockInfo values from the L1 origin header and system config.
-/// This is necessary for stateless execution where the L1Block contract storage
+/// This factory wraps the standard `OpEvmFactory` but initializes the EVM with
+/// pre-computed `L1BlockInfo` values from the L1 origin header and system config.
+/// This is necessary for stateless execution where the `L1Block` contract storage
 /// may contain stale values from the previous block.
 #[derive(Debug, Clone)]
 pub struct EnclaveEvmFactory {
-    /// Pre-computed L1BlockInfo with values from the L1 origin header
+    /// Pre-computed `L1BlockInfo` with values from the L1 origin header
     l1_block_info: L1BlockInfo,
 }
 
 impl EnclaveEvmFactory {
-    /// Creates a new enclave EVM factory with the given L1BlockInfo.
+    /// Creates a new enclave EVM factory with the given `L1BlockInfo`.
     #[must_use]
     pub const fn new(l1_block_info: L1BlockInfo) -> Self {
         Self { l1_block_info }
@@ -107,9 +107,9 @@ impl EvmFactory for EnclaveEvmFactory {
     }
 }
 
-/// Build L1BlockInfo from the previous block's L1 info deposit transaction.
+/// Build `L1BlockInfo` from the previous block's L1 info deposit transaction.
 ///
-/// This extracts the L1BlockInfo values that were actually used for the previous block,
+/// This extracts the `L1BlockInfo` values that were actually used for the previous block,
 /// which should match what we need for the current block (assuming same L1 origin).
 /// If the L1 origin changed, the values will be updated by the new L1 info deposit.
 ///
@@ -120,7 +120,7 @@ impl EvmFactory for EnclaveEvmFactory {
 ///
 /// # Returns
 ///
-/// An L1BlockInfo populated with the values from the previous block.
+/// An `L1BlockInfo` populated with the values from the previous block.
 ///
 /// # Errors
 ///

@@ -3,19 +3,25 @@
 //! This module contains the main [`Server`] struct that manages cryptographic
 //! keys and attestation for the enclave.
 
-use alloy_primitives::Address;
+use alloy_consensus::{Header, ReceiptEnvelope};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use parking_lot::RwLock;
 use rsa::RsaPrivateKey;
 
 use crate::attestation::{extract_public_key, verify_attestation_with_pcr0};
 use crate::crypto::{
-    decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, generate_signer, pkix_to_public_key,
-    private_key_bytes, private_to_public, public_key_bytes, public_key_to_pkix, signer_from_bytes,
-    signer_from_hex,
+    build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, generate_signer,
+    pkix_to_public_key, private_key_bytes, private_to_public, public_key_bytes, public_key_to_pkix,
+    sign_proposal_data_sync, signer_from_bytes, signer_from_hex, verify_proposal_signature,
 };
-use crate::error::{CryptoError, NsmError, ServerError};
+use crate::error::{CryptoError, NsmError, ProposalError, ServerError};
 use crate::nsm::{NsmRng, NsmSession};
+
+use op_enclave_core::executor::{ExecutionWitness, execute_stateless as core_execute_stateless};
+use op_enclave_core::types::account::AccountResult;
+use op_enclave_core::{Proposal, output_root_v0};
 
 /// Environment variable for setting the signer key in local mode.
 const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
@@ -205,6 +211,223 @@ impl Server {
     pub fn signer(&self) -> parking_lot::RwLockReadGuard<'_, PrivateKeySigner> {
         self.signer_key.read()
     }
+
+    /// Execute stateless block validation and create a signed proposal.
+    ///
+    /// This method:
+    /// 1. Extracts the previous block header from the witness
+    /// 2. Calls the core `execute_stateless` function to validate the block
+    /// 3. Computes the previous and current output roots
+    /// 4. Signs the proposal data and returns a `Proposal`
+    ///
+    /// # Arguments
+    ///
+    /// * `rollup_config` - The rollup configuration
+    /// * `l1_config` - The L1 chain configuration
+    /// * `config_hash` - The per-chain configuration hash
+    /// * `l1_origin` - The L1 origin block header
+    /// * `l1_receipts` - The L1 origin block receipts
+    /// * `previous_block_txs` - Transactions from the previous L2 block (RLP-encoded)
+    /// * `block_header` - The L2 block header to validate
+    /// * `sequenced_txs` - Sequenced transactions for this block (RLP-encoded)
+    /// * `witness` - The execution witness (contains previous block header at headers[0])
+    /// * `message_account` - The `L2ToL1MessagePasser` account proof
+    /// * `prev_message_account_hash` - The storage hash of the message account in the previous block
+    ///
+    /// # Returns
+    ///
+    /// A signed `Proposal` containing the output root and signature.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_stateless(
+        &self,
+        rollup_config: &RollupConfig,
+        l1_config: &L1ChainConfig,
+        config_hash: B256,
+        l1_origin: &Header,
+        l1_receipts: &[ReceiptEnvelope],
+        previous_block_txs: &[Bytes],
+        block_header: &Header,
+        sequenced_txs: &[Bytes],
+        witness: ExecutionWitness,
+        message_account: &AccountResult,
+        prev_message_account_hash: B256,
+    ) -> Result<Proposal, ServerError> {
+        // Extract previous block header from witness before consuming it
+        // (matches Go: previousBlockHeader := w.Headers[0])
+        let previous_header = witness.headers.first().cloned().ok_or_else(|| {
+            ProposalError::ExecutionFailed("witness headers is empty".to_string())
+        })?;
+
+        // Execute stateless validation using the core function
+        core_execute_stateless(
+            rollup_config,
+            l1_config,
+            l1_origin,
+            l1_receipts,
+            previous_block_txs,
+            block_header,
+            sequenced_txs,
+            witness,
+            message_account,
+        )
+        .map_err(|e| ProposalError::ExecutionFailed(e.to_string()))?;
+
+        let l1_origin_hash = l1_origin.hash_slow();
+
+        // Compute output roots (matching Go implementation exactly)
+        let prev_output_root = output_root_v0(&previous_header, prev_message_account_hash);
+        let output_root = output_root_v0(block_header, message_account.storage_hash);
+        let l2_block_number = U256::from(block_header.number);
+
+        // Build signing data matching Go's format
+        let signing_data = build_signing_data(
+            config_hash,
+            l1_origin_hash,
+            l2_block_number,
+            prev_output_root,
+            output_root,
+        );
+
+        // Sign the proposal
+        let signer = self.signer_key.read();
+        let signature = sign_proposal_data_sync(&signer, &signing_data)?;
+
+        Ok(Proposal::new(
+            output_root,
+            signature,
+            l1_origin_hash,
+            l2_block_number,
+            prev_output_root,
+            config_hash,
+        ))
+    }
+
+    /// Create a server for testing without RSA key generation.
+    ///
+    /// This is much faster than `new()` because RSA-4096 key generation takes ~7s
+    /// in debug mode. Tests that don't need RSA decryption should use this.
+    ///
+    /// # Warning
+    /// The decryption key is NOT usable - do not use for actual encryption/decryption tests.
+    #[cfg(test)]
+    pub fn new_for_testing() -> Result<Self, ServerError> {
+        use rand::rngs::OsRng;
+
+        let mut rng = OsRng;
+
+        // Generate ECDSA signer (fast, ~1ms)
+        let signer_key = generate_signer(&mut rng)?;
+
+        tracing::info!(
+            address = %signer_key.address(),
+            "test server initialized (no RSA key)"
+        );
+
+        // Use a minimal RSA key (smallest allowed: 64 bytes = 512 bits) for struct completeness.
+        // This key is NOT secure and MUST NOT be used for actual encryption.
+        let decryption_key = rsa::RsaPrivateKey::new(&mut rng, 512)
+            .map_err(|e| CryptoError::RsaKeyGeneration(e.to_string()))?;
+
+        Ok(Self {
+            pcr0: Vec::new(),
+            signer_key: RwLock::new(signer_key),
+            decryption_key,
+        })
+    }
+
+    /// Aggregate multiple proposals into a single proposal.
+    ///
+    /// This method:
+    /// 1. Verifies the signature chain of all proposals
+    /// 2. Creates a new aggregated proposal spanning from the first to last block
+    ///
+    /// # Arguments
+    ///
+    /// * `config_hash` - The per-chain configuration hash
+    /// * `prev_output_root` - The output root before the first proposal
+    /// * `proposals` - The proposals to aggregate
+    ///
+    /// # Returns
+    ///
+    /// A new signed proposal covering the entire range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No proposals are provided
+    /// - Any signature verification fails
+    pub fn aggregate(
+        &self,
+        config_hash: B256,
+        prev_output_root: B256,
+        proposals: &[Proposal],
+    ) -> Result<Proposal, ServerError> {
+        if proposals.is_empty() {
+            return Err(ProposalError::EmptyProposals.into());
+        }
+
+        // Single proposal case - return as-is
+        if proposals.len() == 1 {
+            return Ok(proposals[0].clone());
+        }
+
+        // Get our public key for signature verification
+        let public_key = self.signer_public_key();
+
+        // Verify the signature chain
+        let mut output_root = prev_output_root;
+        let mut l1_origin_hash = B256::ZERO;
+        let mut l2_block_number = U256::ZERO;
+
+        for (index, proposal) in proposals.iter().enumerate() {
+            l1_origin_hash = proposal.l1_origin_hash;
+            l2_block_number = proposal.l2_block_number;
+
+            // Build the signing data for this proposal
+            let signing_data = build_signing_data(
+                config_hash,
+                l1_origin_hash,
+                l2_block_number,
+                output_root,
+                proposal.output_root,
+            );
+
+            // Verify the signature
+            let valid = verify_proposal_signature(&public_key, &signing_data, &proposal.signature)
+                .map_err(|_| ProposalError::InvalidSignature { index })?;
+
+            if !valid {
+                return Err(ProposalError::InvalidSignature { index }.into());
+            }
+
+            output_root = proposal.output_root;
+        }
+
+        // Create the aggregated proposal
+        let final_output_root = output_root;
+
+        // Build signing data for the aggregated proposal
+        let signing_data = build_signing_data(
+            config_hash,
+            l1_origin_hash,
+            l2_block_number,
+            prev_output_root,
+            final_output_root,
+        );
+
+        // Sign the aggregated proposal
+        let signer = self.signer_key.read();
+        let signature = sign_proposal_data_sync(&signer, &signing_data)?;
+
+        Ok(Proposal::new(
+            final_output_root,
+            signature,
+            l1_origin_hash,
+            l2_block_number,
+            prev_output_root,
+            config_hash,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +498,187 @@ mod tests {
         let pk1 = server.signer_public_key();
         let pk2 = server.signer_public_key();
         assert_eq!(pk1, pk2);
+    }
+
+    #[test]
+    fn test_aggregate_empty_proposals() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let result = server.aggregate(B256::ZERO, B256::ZERO, &[]);
+
+        assert!(matches!(
+            result,
+            Err(ServerError::Proposal(ProposalError::EmptyProposals))
+        ));
+    }
+
+    #[test]
+    fn test_aggregate_single_proposal() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        // Create a proposal signed by this server
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash = B256::repeat_byte(0x22);
+        let l2_block_number = U256::from(100);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root = B256::repeat_byte(0x44);
+
+        let signing_data = build_signing_data(
+            config_hash,
+            l1_origin_hash,
+            l2_block_number,
+            prev_output_root,
+            output_root,
+        );
+
+        let signer = server.signer();
+        let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");
+        drop(signer);
+
+        let proposal = Proposal::new(
+            output_root,
+            signature,
+            l1_origin_hash,
+            l2_block_number,
+            prev_output_root,
+            config_hash,
+        );
+
+        let result = server.aggregate(config_hash, prev_output_root, &[proposal.clone()]);
+
+        assert!(result.is_ok());
+        let aggregated = result.unwrap();
+        // Single proposal should be returned as-is
+        assert_eq!(aggregated, proposal);
+    }
+
+    #[test]
+    fn test_aggregate_multiple_proposals() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash_1 = B256::repeat_byte(0x22);
+        let l1_origin_hash_2 = B256::repeat_byte(0x23);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root_1 = B256::repeat_byte(0x44);
+        let output_root_2 = B256::repeat_byte(0x55);
+
+        // Create first proposal
+        let signing_data_1 = build_signing_data(
+            config_hash,
+            l1_origin_hash_1,
+            U256::from(100),
+            prev_output_root,
+            output_root_1,
+        );
+
+        let signer = server.signer();
+        let signature_1 =
+            sign_proposal_data_sync(&signer, &signing_data_1).expect("signing failed");
+        drop(signer);
+
+        let proposal_1 = Proposal::new(
+            output_root_1,
+            signature_1,
+            l1_origin_hash_1,
+            U256::from(100),
+            prev_output_root,
+            config_hash,
+        );
+
+        // Create second proposal (chained from first)
+        let signing_data_2 = build_signing_data(
+            config_hash,
+            l1_origin_hash_2,
+            U256::from(101),
+            output_root_1, // prev_output_root is the output_root of proposal 1
+            output_root_2,
+        );
+
+        let signer = server.signer();
+        let signature_2 =
+            sign_proposal_data_sync(&signer, &signing_data_2).expect("signing failed");
+        drop(signer);
+
+        let proposal_2 = Proposal::new(
+            output_root_2,
+            signature_2,
+            l1_origin_hash_2,
+            U256::from(101),
+            output_root_1,
+            config_hash,
+        );
+
+        let result = server.aggregate(config_hash, prev_output_root, &[proposal_1, proposal_2]);
+
+        assert!(result.is_ok());
+        let aggregated = result.unwrap();
+
+        // Aggregated proposal should span from first to last
+        assert_eq!(aggregated.output_root, output_root_2);
+        assert_eq!(aggregated.prev_output_root, prev_output_root);
+        assert_eq!(aggregated.l1_origin_hash, l1_origin_hash_2);
+        assert_eq!(aggregated.l2_block_number, U256::from(101));
+        assert_eq!(aggregated.config_hash, config_hash);
+    }
+
+    #[test]
+    fn test_aggregate_invalid_signature_rejected() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash_1 = B256::repeat_byte(0x22);
+        let l1_origin_hash_2 = B256::repeat_byte(0x23);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root_1 = B256::repeat_byte(0x44);
+        let output_root_2 = B256::repeat_byte(0x55);
+
+        // Create a valid first proposal
+        let signing_data_1 = build_signing_data(
+            config_hash,
+            l1_origin_hash_1,
+            U256::from(100),
+            prev_output_root,
+            output_root_1,
+        );
+
+        let signer = server.signer();
+        let signature_1 =
+            sign_proposal_data_sync(&signer, &signing_data_1).expect("signing failed");
+        drop(signer);
+
+        let proposal_1 = Proposal::new(
+            output_root_1,
+            signature_1,
+            l1_origin_hash_1,
+            U256::from(100),
+            prev_output_root,
+            config_hash,
+        );
+
+        // Create a second proposal with an invalid signature (random bytes)
+        let invalid_signature = Bytes::from(vec![0xab; 65]);
+
+        let proposal_2 = Proposal::new(
+            output_root_2,
+            invalid_signature,
+            l1_origin_hash_2,
+            U256::from(101),
+            output_root_1,
+            config_hash,
+        );
+
+        let result = server.aggregate(config_hash, prev_output_root, &[proposal_1, proposal_2]);
+
+        // The second proposal (index 1) should fail signature verification
+        assert!(
+            matches!(
+                &result,
+                Err(ServerError::Proposal(ProposalError::InvalidSignature {
+                    index: 1
+                }))
+            ),
+            "Expected InvalidSignature error at index 1, got: {result:?}"
+        );
     }
 }
