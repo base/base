@@ -5,4 +5,4 @@
 
 mod defaults;
 
-pub use defaults::default_rollup_config;
+pub use defaults::{default_l1_config, default_rollup_config};

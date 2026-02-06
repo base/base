@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "enclave"
+path = "src/bin/enclave.rs"
+
+[[bin]]
+name = "proxy"
+path = "src/bin/proxy.rs"
+
 [dependencies]
 op-enclave-core.workspace = true
 
@@ -34,9 +42,11 @@ base64.workspace = true
 ciborium.workspace = true
 serde.workspace = true
 serde_bytes.workspace = true
+serde_json.workspace = true
 
 # Logging
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # Error handling
 thiserror.workspace = true
@@ -44,10 +54,24 @@ thiserror.workspace = true
 # Sync primitives
 parking_lot.workspace = true
 
+# Async runtime
+tokio.workspace = true
+
+# RPC
+jsonrpsee.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+async-trait.workspace = true
+
+# Vsock (Unix only)
+[target.'cfg(unix)'.dependencies]
+vsock.workspace = true
+
 [dev-dependencies]
-tokio = { workspace = true }
 reqwest = { workspace = true }
-serde_json = { workspace = true }
 
 [lints]
 workspace = true

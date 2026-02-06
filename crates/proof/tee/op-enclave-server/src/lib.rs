@@ -8,6 +8,8 @@
 //! - **Attestation**: Verification of AWS Nitro Enclave attestation documents
 //! - **Cryptography**: RSA-4096 and ECDSA secp256k1 key operations
 //! - **Server**: Main server struct for key management and attestation
+//! - **RPC**: JSON-RPC server interface using jsonrpsee
+//! - **Transport**: Vsock and HTTP transport configuration
 //!
 //! # Local Mode
 //!
@@ -36,7 +38,9 @@ pub mod attestation;
 pub mod crypto;
 pub mod error;
 pub mod nsm;
+pub mod rpc;
 mod server;
+pub mod transport;
 
 // Re-export core types
 pub use op_enclave_core::*;
