@@ -1,10 +1,6 @@
 use basectl_cli::{
-    commands::{
-        config::{ConfigCommand, default_view, run_config},
-        flashblocks::{FlashblocksCommand, default_subscribe, run_flashblocks},
-    },
+    app::{ViewId, run_app, run_app_with_view},
     config::ChainConfig,
-    tui::{HomeSelection, NavResult, run_homescreen},
 };
 use clap::{Parser, Subcommand};
 
@@ -24,16 +20,16 @@ struct Cli {
 enum Commands {
     /// Chain configuration operations
     #[command(visible_alias = "c")]
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommand,
-    },
+    Config,
     /// Flashblocks operations
     #[command(visible_alias = "f")]
-    Flashblocks {
-        #[command(subcommand)]
-        command: FlashblocksCommand,
-    },
+    Flashblocks,
+    /// DA (Data Availability) backlog monitor
+    #[command(visible_alias = "d")]
+    Da,
+    /// Command center (combined view)
+    #[command(visible_alias = "cc")]
+    CommandCenter,
 }
 
 #[tokio::main]
@@ -43,20 +39,12 @@ async fn main() -> anyhow::Result<()> {
     let chain_config = ChainConfig::load(&cli.config)?;
 
     match cli.command {
-        Some(Commands::Config { command }) => run_config(command, &chain_config).await,
-        Some(Commands::Flashblocks { command }) => run_flashblocks(command, &chain_config).await,
-        None => {
-            // Show homescreen when no command provided
-            loop {
-                let next = match run_homescreen()? {
-                    HomeSelection::Config => default_view(&chain_config).await?,
-                    HomeSelection::Flashblocks => default_subscribe(&chain_config).await?,
-                    HomeSelection::Quit => return Ok(()),
-                };
-                if next == NavResult::Quit {
-                    return Ok(());
-                }
-            }
+        Some(Commands::Config) => run_app_with_view(chain_config, ViewId::Config).await,
+        Some(Commands::Flashblocks) => run_app_with_view(chain_config, ViewId::Flashblocks).await,
+        Some(Commands::Da) => run_app_with_view(chain_config, ViewId::DaMonitor).await,
+        Some(Commands::CommandCenter) => {
+            run_app_with_view(chain_config, ViewId::CommandCenter).await
         }
+        None => run_app(chain_config).await,
     }
 }

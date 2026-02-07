@@ -1,64 +1,75 @@
-use ratatui::{layout::Rect, prelude::*};
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    prelude::*,
+    widgets::{Block, Borders, Paragraph},
+};
 
-use super::{HelpSidebar, Keybinding, StatusBar, StatusInfo};
+use super::Keybinding;
 
-/// Layout areas computed by `AppFrame`.
+const HELP_SIDEBAR_WIDTH: u16 = 30;
+
 #[derive(Debug)]
 pub struct AppLayout {
-    /// Main content area.
     pub content: Rect,
-    /// Sidebar area (if help is shown).
     pub sidebar: Option<Rect>,
-    /// Status bar area at the bottom.
-    pub status_bar: Rect,
 }
 
-/// App frame component that provides consistent layout for all views.
-///
-/// Handles:
-/// - Main content area
-/// - Optional help sidebar (right)
-/// - Status bar (bottom)
 #[derive(Debug)]
 pub struct AppFrame;
 
 impl AppFrame {
-    /// Splits the given area into content, optional sidebar, and status bar areas.
     pub fn split_layout(area: Rect, show_help: bool) -> AppLayout {
-        // Reserve space for status bar at the bottom
-        let status_height = StatusBar::height();
-        let main_height = area.height.saturating_sub(status_height);
+        if show_help && area.width > HELP_SIDEBAR_WIDTH + 20 {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(20), Constraint::Length(HELP_SIDEBAR_WIDTH)])
+                .split(area);
 
-        let main_area = Rect { x: area.x, y: area.y, width: area.width, height: main_height };
-
-        let status_bar =
-            Rect { x: area.x, y: area.y + main_height, width: area.width, height: status_height };
-
-        // Split main area for help sidebar if needed
-        let (content, sidebar) = if show_help {
-            let (content_area, sidebar_area) = HelpSidebar::split_layout(main_area);
-            (content_area, Some(sidebar_area))
+            AppLayout { content: chunks[0], sidebar: Some(chunks[1]) }
         } else {
-            (main_area, None)
-        };
-
-        AppLayout { content, sidebar, status_bar }
+            AppLayout { content: area, sidebar: None }
+        }
     }
 
-    /// Renders the frame components (status bar and optional help sidebar).
     pub fn render(
         f: &mut Frame,
         layout: &AppLayout,
         config_name: &str,
         keybindings: &[Keybinding],
-        status_info: Option<&StatusInfo>,
     ) {
-        // Render status bar
-        StatusBar::render(f, layout.status_bar, config_name, status_info);
-
-        // Render help sidebar if visible
-        if let Some(sidebar_area) = layout.sidebar {
-            HelpSidebar::render(f, sidebar_area, keybindings);
+        if let Some(sidebar) = layout.sidebar {
+            render_help_sidebar(f, sidebar, config_name, keybindings);
         }
     }
+}
+
+fn render_help_sidebar(f: &mut Frame, area: Rect, config_name: &str, keybindings: &[Keybinding]) {
+    let block = Block::default()
+        .title(format!(" Help [{config_name}] "))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = keybindings
+        .iter()
+        .map(|kb| {
+            Line::from(vec![
+                Span::styled(format!("{:>12}", kb.key), Style::default().fg(Color::Yellow)),
+                Span::raw("  "),
+                Span::styled(kb.description, Style::default().fg(Color::White)),
+            ])
+        })
+        .collect();
+
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("           ?", Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled("Close help", Style::default().fg(Color::White)),
+    ]));
+
+    let para = Paragraph::new(lines);
+    f.render_widget(para, inner);
 }
