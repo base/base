@@ -10,9 +10,9 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{
-    BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, OpEngineApiBuilder,
-    test_utils::get_available_port,
+    BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, test_utils::get_available_port,
 };
+use base_client_node::BaseNode;
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{
@@ -27,12 +27,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::{
-    OpNode,
-    args::RollupArgs,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
-};
-use reth_optimism_rpc::OpEthApiBuilder;
+use reth_optimism_node::{args::RollupArgs, node::OpPoolBuilder};
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::TaskManager;
 use url::Url;
@@ -133,19 +128,18 @@ impl InProcessBuilder {
 
         let rollup_args = RollupArgs::default();
 
-        let addons: OpAddOns<
+        let base_node = BaseNode::new(rollup_args.clone());
+
+        let addons: base_client_node::BaseAddOns<
             _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
+            reth_optimism_rpc::OpEthApiBuilder,
+            reth_optimism_node::OpEngineValidatorBuilder,
+        > = base_node
+            .add_ons_builder()
             .with_sequencer(rollup_args.sequencer.clone())
-            .with_enable_tx_conditional(false)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .build();
-
-        let op_node = OpNode::new(rollup_args.clone());
 
         let (db, db_path) = create_test_db(&data_path)?;
 
@@ -155,9 +149,9 @@ impl InProcessBuilder {
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(exec.clone())
-            .with_types::<OpNode>()
+            .with_types::<BaseNode>()
             .with_components(
-                op_node
+                base_node
                     .components()
                     .pool(pool_component(&rollup_args))
                     .payload(FlashblocksServiceBuilder(builder_config)),

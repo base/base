@@ -44,8 +44,7 @@ fn main() {
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
 
-        let handle = runner.run(builder);
-        handle.await
+        runner.run(builder).await
     })
     .unwrap();
 }

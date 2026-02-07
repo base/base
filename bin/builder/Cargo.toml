@@ -18,15 +18,14 @@ workspace = true
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
+base-client-node.workspace = true
 base-builder-core.workspace = true
 base-builder-metering.workspace = true
 
 # reth
-reth-cli-util.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-txpool.workspace = true
 reth-optimism-cli = { workspace = true, features = ["otlp"] }
-reth-optimism-rpc = { workspace = true, features = ["client"] }
+reth-optimism-node.workspace = true
+reth-cli-util.workspace = true
 
 # cli
 clap.workspace = true

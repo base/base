@@ -1,10 +1,17 @@
 use std::sync::Arc;
 
+use base_client_node::{BaseNode, OpNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder};
 use derive_more::Debug;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
-use reth_node_builder::{BuilderContext, components::PayloadServiceBuilder};
+use reth_node_builder::{
+    BuilderContext,
+    components::{ComponentsBuilder, PayloadServiceBuilder},
+};
 use reth_optimism_evm::OpEvmConfig;
+use reth_optimism_node::{
+    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, node::OpPoolBuilder,
+};
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
@@ -20,7 +27,7 @@ use crate::{
 
 /// Builder for the flashblocks payload service.
 ///
-/// Wraps [`BuilderConfig`] and implements [`PayloadServiceBuilder`] to spawn
+/// Wraps [`BuilderConfig`] and implements [`BasePayloadServiceBuilder`] to spawn
 /// the flashblocks payload builder service, which produces sub-block chunks
 /// (flashblocks) at sub-second intervals during block construction.
 #[derive(Debug)]
@@ -90,5 +97,20 @@ where
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         self.spawn_payload_builder_service(ctx, pool)
+    }
+}
+
+impl BasePayloadServiceBuilder for FlashblocksServiceBuilder {
+    type ComponentsBuilder = ComponentsBuilder<
+        OpNodeTypes,
+        OpPoolBuilder,
+        Self,
+        OpNetworkBuilder,
+        OpExecutorBuilder,
+        OpConsensusBuilder,
+    >;
+
+    fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
+        base_node.components::<OpNodeTypes>().payload(self)
     }
 }

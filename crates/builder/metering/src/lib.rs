@@ -6,5 +6,8 @@
 mod ext;
 pub use ext::{BaseApiExtServer, MeteringStoreExt};
 
+mod extension;
+pub use extension::MeteringStoreExtension;
+
 mod store;
 pub use store::MeteringStore;

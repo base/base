@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
@@ -42,8 +42,8 @@ impl TxPoolExtension {
 }
 
 impl BaseNodeExtension for TxPoolExtension {
-    /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    /// Applies the extension to the supplied hooks.
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let config = self.config;
 
         // Extend with RPC modules and optionally start tracing subscription
@@ -52,7 +52,7 @@ impl BaseNodeExtension for TxPoolExtension {
         let logs_enabled = config.tracing_logs_enabled;
         let flashblocks_config = config.flashblocks_config;
 
-        builder.add_rpc_module(move |ctx| {
+        hooks.add_rpc_module(move |ctx| {
             info!(message = "Starting Transaction Status RPC");
             let proxy_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
                 .expect("Failed to create transaction status proxy");
