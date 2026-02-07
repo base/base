@@ -127,7 +127,6 @@ base-flashblocks = { path = "crates/client/flashblocks" }
 base-client-engine = { path = "crates/client/engine" }
 
 # Builder
-base-builder-cli = { path = "crates/builder/cli" }
 base-builder-core = { path = "crates/builder/core" }
 
 # Kona

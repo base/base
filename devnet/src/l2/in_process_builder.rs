@@ -5,13 +5,13 @@
 //! and easier debugging while maintaining the same external interface as [`BuilderContainer`].
 
 use core::net::{Ipv4Addr, SocketAddr};
-use std::{any::Any, path::PathBuf, sync::Arc};
+use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_cli::BuilderArgs;
 use base_builder_core::{
-    BuilderConfig, FlashblocksServiceBuilder, OpEngineApiBuilder, test_utils::get_available_port,
+    BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, OpEngineApiBuilder,
+    test_utils::get_available_port,
 };
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
@@ -29,6 +29,7 @@ use reth_node_core::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{
     OpNode,
+    args::RollupArgs,
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
@@ -112,14 +113,25 @@ impl InProcessBuilder {
 
         let chain_spec = parse_genesis(&config.genesis_json)?;
 
-        let args = default_args(&config);
+        let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
+        let builder_config = BuilderConfig {
+            block_time: Duration::from_millis(2000),
+            flashblocks: FlashblocksConfig {
+                ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
+                interval: Duration::from_millis(200),
+                disable_state_root: true,
+                compute_state_root_on_finalize: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-        let builder_config = BuilderConfig::try_from(args.clone())
-            .wrap_err("Failed to convert args to builder config")?;
         let flashblocks_ws_addr = builder_config.flashblocks.ws_addr;
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
+
+        let rollup_args = RollupArgs::default();
 
         let addons: OpAddOns<
             _,
@@ -127,13 +139,13 @@ impl InProcessBuilder {
             OpEngineValidatorBuilder,
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()
-            .with_sequencer(args.rollup_args.sequencer.clone())
+            .with_sequencer(rollup_args.sequencer.clone())
             .with_enable_tx_conditional(false)
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .build();
 
-        let op_node = OpNode::new(args.rollup_args.clone());
+        let op_node = OpNode::new(rollup_args.clone());
 
         let (db, db_path) = create_test_db(&data_path)?;
 
@@ -147,7 +159,7 @@ impl InProcessBuilder {
             .with_components(
                 op_node
                     .components()
-                    .pool(pool_component(&args))
+                    .pool(pool_component(&rollup_args))
                     .payload(FlashblocksServiceBuilder(builder_config)),
             )
             .with_add_ons(addons)
@@ -261,18 +273,6 @@ fn parse_genesis(genesis_json: &[u8]) -> Result<Arc<OpChainSpec>> {
     Ok(Arc::new(OpChainSpec::from_genesis(genesis)))
 }
 
-fn default_args(config: &InProcessBuilderConfig) -> BuilderArgs {
-    let mut args = BuilderArgs::default();
-
-    args.flashblocks.flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
-    args.flashblocks.flashblocks_block_time = 200;
-    args.flashblocks.flashblocks_disable_state_root = true;
-    args.flashblocks.flashblocks_compute_state_root_on_finalize = true;
-    args.chain_block_time = 2000;
-
-    args
-}
-
 fn create_node_config(
     chain_spec: Arc<OpChainSpec>,
     data_path: &std::path::Path,
@@ -363,8 +363,7 @@ fn create_test_db(
     Ok((Arc::new(TempDatabase::new(db, db_path.clone())), db_path))
 }
 
-fn pool_component(args: &BuilderArgs) -> OpPoolBuilder<OpPooledTransaction> {
-    let rollup_args = &args.rollup_args;
+fn pool_component(rollup_args: &RollupArgs) -> OpPoolBuilder<OpPooledTransaction> {
     OpPoolBuilder::<OpPooledTransaction>::default()
         .with_enable_tx_conditional(false)
         .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)

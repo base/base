@@ -24,7 +24,6 @@ base-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
 base-flashtypes.workspace = true
 base-txpool.workspace = true
-base-builder-cli.workspace = true
 base-builder-core = { workspace = true, features = ["test-utils"] }
 # Async runtime
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
