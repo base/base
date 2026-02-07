@@ -132,3 +132,11 @@ explicit-iter-loop = "warn"
 iter-with-drain = "warn"
 needless-pass-by-ref-mut = "warn"
 string-lit-as-bytes = "warn"
+
+# Release profile optimizations for EIF builds
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = "z"
+panic = "abort"
