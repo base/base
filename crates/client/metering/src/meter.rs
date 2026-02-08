@@ -223,6 +223,10 @@ where
         bundle_update.state().values().map(|account| account.storage.len()).sum();
     metrics.storage_slots_modified.record(storage_slots_modified as f64);
 
+    // Gets the number of accounts modified
+    let accounts_modified: usize = bundle_update.state().len();
+    metrics.accounts_modified.record(accounts_modified as f64);
+
     let state_provider = db.database.as_ref();
 
     let state_root_start = Instant::now();

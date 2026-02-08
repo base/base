@@ -25,4 +25,8 @@ pub(crate) struct Metrics {
     /// Number of storage slots modified.
     #[metric(describe = "Number of storage slots modified")]
     pub storage_slots_modified: Histogram,
+
+    /// Number of accounts modified.
+    #[metric(describe = "Number of accounts modified")]
+    pub accounts_modified: Histogram,
 }
