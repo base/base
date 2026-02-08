@@ -61,6 +61,6 @@ impl BaseNodeRunner {
                 Ok(())
             });
 
-        builder.launch_with_fn(|builder| builder.launch()).await
+        builder.launch().await
     }
 }

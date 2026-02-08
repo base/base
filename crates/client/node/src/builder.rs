@@ -5,13 +5,14 @@ use std::fmt;
 use eyre::Result;
 use reth_exex::ExExContext;
 use reth_node_builder::{
-    NodeAdapter, NodeComponentsBuilder,
+    NodeAdapter, NodeComponentsBuilder, NodeHandleFor,
     node::FullNode,
     rpc::{RethRpcAddOns, RpcContext},
 };
 
 use crate::{
     OpBuilder,
+    node::BaseNode,
     types::{OpAddOns, OpComponentsBuilder, OpNodeTypes},
 };
 
@@ -112,6 +113,11 @@ impl BaseBuilder {
         L: FnOnce(OpBuilder) -> R,
     {
         launcher(self.build())
+    }
+
+    /// Launches the node using the default Reth launcher.
+    pub async fn launch(self) -> eyre::Result<NodeHandleFor<BaseNode>> {
+        self.build().launch().await
     }
 
     /// Installs an `ExEx` extension with the given name and closure.
