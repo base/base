@@ -1796,6 +1796,7 @@ dependencies = [
  "base-builder-metering",
  "base-cli-utils",
  "base-client-node",
+ "base-txpool-rpc",
  "clap",
  "eyre",
  "reth-cli-util",
@@ -2420,7 +2421,8 @@ dependencies = [
  "base-flashblocks-node",
  "base-metering",
  "base-proofs-extension",
- "base-txpool",
+ "base-txpool-rpc",
+ "base-txpool-tracing",
  "clap",
  "reth-cli-util",
  "reth-optimism-cli",
@@ -2436,7 +2438,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-txpool"
+name = "base-txpool-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-client-node",
+ "eyre",
+ "httpmock",
+ "jsonrpsee",
+ "reth-transaction-pool",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-txpool-tracing"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
@@ -2451,8 +2469,6 @@ dependencies = [
  "derive_more",
  "eyre",
  "futures",
- "httpmock",
- "jsonrpsee",
  "lru 0.16.3",
  "metrics",
  "metrics-derive",
@@ -2465,8 +2481,6 @@ dependencies = [
  "reth-tracing",
  "reth-transaction-pool",
  "revm-database 10.0.0",
- "serde",
- "serde_json",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -3975,7 +3989,8 @@ dependencies = [
  "base-flashblocks-node",
  "base-primitives",
  "base-protocol",
- "base-txpool",
+ "base-txpool-rpc",
+ "base-txpool-tracing",
  "clap",
  "eyre",
  "futures-util",

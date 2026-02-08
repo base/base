@@ -1,6 +1,6 @@
 [package]
-name = "base-txpool"
-description = "Txpool extensions for Base"
+name = "base-txpool-tracing"
+description = "Transaction tracing extensions for Base"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -26,26 +26,18 @@ reth-transaction-pool.workspace = true
 # alloy
 alloy-primitives.workspace = true
 
-# tokio
+# async
 tokio.workspace = true
 tokio-stream.workspace = true
-
-# async
 futures.workspace = true
-
-# rpc
-jsonrpsee.workspace = true
-
-# metrics
-metrics.workspace = true
-metrics-derive.workspace = true
 
 # misc
 lru.workspace = true
-serde.workspace = true
 chrono.workspace = true
-tracing.workspace = true
+metrics.workspace = true
 derive_more = { workspace = true, features = ["display"] }
+tracing.workspace = true
+metrics-derive.workspace = true
 
 [dev-dependencies]
 # workspace
@@ -72,5 +64,3 @@ op-alloy-rpc-types.workspace = true
 
 # misc
 eyre.workspace = true
-httpmock.workspace = true
-serde_json.workspace = true

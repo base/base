@@ -1,4 +1,4 @@
-//! RPC implementation for transaction status queries.
+//! RPC implementation for transaction status queries and pool management.
 
 use alloy_primitives::{Address, TxHash};
 use jsonrpsee::{
@@ -10,7 +10,7 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::TransactionPool;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -69,10 +69,10 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiImpl<Pool> {
         pool: Pool,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let sequencer_client = if let Some(ref url) = sequencer_url {
-            info!("fetching transaction status from sequencer");
+            debug!("fetching transaction status from sequencer");
             Some(HttpClientBuilder::default().build(url)?)
         } else {
-            info!("fetching transaction status from local transaction pool");
+            debug!("fetching transaction status from local transaction pool");
             None
         };
 
@@ -128,21 +128,21 @@ impl<Pool: TransactionPool + 'static> TxPoolManagementApiServer for TxPoolManage
         let all_hashes = self.pool.all_transaction_hashes();
         let count = all_hashes.len();
         self.pool.remove_transactions(all_hashes);
-        info!(message = "transaction pool reset", removed_count = count);
+        debug!(message = "transaction pool reset", removed_count = count);
         Ok(count)
     }
 
     async fn remove_sender(&self, sender: Address) -> RpcResult<Vec<TxHash>> {
         let removed = self.pool.remove_transactions_by_sender(sender);
         let hashes: Vec<TxHash> = removed.iter().map(|tx| *tx.hash()).collect();
-        info!(message = "removed transactions by sender", sender = %sender, count = hashes.len());
+        debug!(message = "removed transactions by sender", sender = %sender, count = hashes.len());
         Ok(hashes)
     }
 
     async fn remove_transaction(&self, tx_hash: TxHash) -> RpcResult<bool> {
         let removed = self.pool.remove_transactions(vec![tx_hash]);
         let was_removed = !removed.is_empty();
-        info!(message = "remove transaction", tx_hash = %tx_hash, removed = was_removed);
+        debug!(message = "remove transaction", tx_hash = %tx_hash, removed = was_removed);
         Ok(was_removed)
     }
 }

@@ -21,6 +21,7 @@ base-cli-utils.workspace = true
 base-client-node.workspace = true
 base-builder-core.workspace = true
 base-builder-metering.workspace = true
+base-txpool-rpc.workspace = true
 
 # reth
 reth-optimism-cli = { workspace = true, features = ["otlp"] }

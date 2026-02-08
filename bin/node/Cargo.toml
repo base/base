@@ -13,7 +13,8 @@ workspace = true
 
 [dependencies]
 # workspace
-base-txpool.workspace = true
+base-txpool-rpc.workspace = true
+base-txpool-tracing.workspace = true
 base-metering.workspace = true
 base-cli-utils.workspace = true
 base-flashblocks.workspace = true

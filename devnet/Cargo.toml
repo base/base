@@ -17,7 +17,8 @@ workspace = true
 
 [dependencies]
 # workspace
-base-txpool.workspace = true
+base-txpool-rpc.workspace = true
+base-txpool-tracing.workspace = true
 base-flashblocks.workspace = true
 base-primitives = { workspace = true, features = ["flashblocks"] }
 base-flashblocks-node.workspace = true

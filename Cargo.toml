@@ -116,14 +116,15 @@ base-access-lists = { path = "crates/shared/access-lists" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
+base-txpool-rpc = { path = "crates/shared/txpool-rpc" }
 
 # Client
-base-txpool = { path = "crates/client/txpool" }
 base-metering = { path = "crates/client/metering" }
 base-client-cli = { path = "crates/client/cli" }
 base-client-node = { path = "crates/shared/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-client-engine = { path = "crates/client/engine" }
+base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }

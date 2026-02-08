@@ -6,10 +6,11 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_client_node::{BaseNode, BaseNodeExtension, NodeHooks};
+use base_client_node::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_txpool::{TxPoolExtension, TxpoolConfig};
+use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use eyre::{Context, Result, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
@@ -236,10 +237,15 @@ impl InProcessClient {
 
         let flashblocks_config = FlashblocksConfig::new(flashblocks_url, 3);
 
+        // TxPool RPC extension (management + status APIs)
+        let txpool_rpc_config =
+            TxPoolRpcConfig { sequencer_rpc: Some(config.builder_rpc_url.clone()) };
+        extensions.push(Box::new(TxPoolRpcExtension::from_config(txpool_rpc_config)));
+
+        // TxPool tracing extension (tracing disabled for client)
         let txpool_config = TxpoolConfig {
             tracing_enabled: false,
             tracing_logs_enabled: false,
-            sequencer_rpc: Some(config.builder_rpc_url.clone()),
             flashblocks_config: Some(flashblocks_config.clone()),
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));

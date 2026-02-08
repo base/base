@@ -8,6 +8,7 @@ pub mod cli;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_client_node::BaseNodeRunner;
+use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
 
 type BuilderCli = Cli<OpChainSpecParser, cli::Args>;
@@ -29,6 +30,7 @@ fn main() {
         let mut runner = BaseNodeRunner::new(builder_args.rollup_args.clone())
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_store);
+        runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
 
         runner.run(builder).await
     })
