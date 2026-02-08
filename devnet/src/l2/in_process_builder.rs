@@ -20,7 +20,7 @@ use reth_db::{
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
     test_utils::TempDatabase,
 };
-use reth_node_builder::{EngineNodeLauncher, NodeBuilder, NodeConfig, NodeHandle, TreeConfig};
+use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
@@ -153,24 +153,8 @@ impl InProcessBuilder {
             .with_add_ons(addons)
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let NodeHandle { node: node_handle, node_exit_future } = node_builder
-            .launch_with_fn(|builder| {
-                let engine_tree_config = TreeConfig::default()
-                    .with_persistence_threshold(builder.config().engine.persistence_threshold)
-                    .with_memory_block_buffer_target(
-                        builder.config().engine.memory_block_buffer_target,
-                    );
-
-                let launcher = EngineNodeLauncher::new(
-                    builder.task_executor().clone(),
-                    builder.config().datadir(),
-                    engine_tree_config,
-                );
-
-                builder.launch_with(launcher)
-            })
-            .await
-            .wrap_err("Failed to launch builder node")?;
+        let NodeHandle { node: node_handle, node_exit_future } =
+            node_builder.launch().await.wrap_err("Failed to launch builder node")?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()

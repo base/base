@@ -14,9 +14,7 @@ use eyre::{Context, Result, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
-use reth_node_builder::{
-    EngineNodeLauncher, Node, NodeBuilder, NodeConfig, NodeHandle, TreeConfig,
-};
+use reth_node_builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
     args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
     dirs::{DataDirPath, MaybePlatformPath},
@@ -170,24 +168,7 @@ impl InProcessClient {
             .into_iter()
             .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
 
-        // Launch with EngineNodeLauncher
-        let NodeHandle { node: node_handle, node_exit_future } = builder
-            .launch_with_fn(|builder| {
-                let engine_tree_config = TreeConfig::default()
-                    .with_persistence_threshold(builder.config().engine.persistence_threshold)
-                    .with_memory_block_buffer_target(
-                        builder.config().engine.memory_block_buffer_target,
-                    );
-
-                let launcher = EngineNodeLauncher::new(
-                    builder.task_executor().clone(),
-                    builder.config().datadir(),
-                    engine_tree_config,
-                );
-
-                builder.launch_with(launcher)
-            })
-            .await?;
+        let NodeHandle { node: node_handle, node_exit_future } = builder.launch().await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
