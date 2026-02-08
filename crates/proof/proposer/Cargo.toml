@@ -17,6 +17,9 @@ repository = "https://github.com/base/base"
 # Workspace crates
 base-proposer = { path = "crates/proposer" }
 
+# Base
+base-cli-utils = { git = "https://github.com/base/base.git", package = "base-cli-utils" }
+
 # Alloy
 alloy = { version = "1.4.3", features = ["full"] }
 alloy-primitives = "1.4.3"

@@ -1,35 +1,30 @@
 //! Proposer binary entry point.
 
-use base_proposer::Cli;
+use base_proposer::{Cli, ProposerConfig};
 use clap::Parser;
 use eyre::Result;
 use tracing::info;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing with JSON support when RUST_LOG_FORMAT=json
-    let json_format = std::env::var("RUST_LOG_FORMAT")
-        .map(|v| v.eq_ignore_ascii_case("json"))
-        .unwrap_or(false);
-
-    if json_format {
-        tracing_subscriber::registry()
-            .with(fmt::layer().json())
-            .with(EnvFilter::from_default_env())
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
-            .init();
-    }
-
-    // Parse CLI
+    // Parse CLI arguments
     let cli = Cli::parse();
 
-    info!(version = env!("CARGO_PKG_VERSION"), "Proposer initialized");
-    info!(poll_interval = ?cli.poll_interval, "Configuration loaded");
+    // Validate configuration
+    let config = ProposerConfig::from_cli(cli)?;
+
+    // Initialize tracing with base-cli-utils
+    config.log.init_tracing_subscriber()?;
+
+    info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
+    info!(
+        poll_interval = ?config.poll_interval,
+        min_proposal_interval = config.min_proposal_interval,
+        allow_non_finalized = config.allow_non_finalized,
+        "Configuration loaded"
+    );
+
+    // TODO: Initialize driver and start main loop
 
     Ok(())
 }

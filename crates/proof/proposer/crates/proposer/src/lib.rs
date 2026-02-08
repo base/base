@@ -6,6 +6,7 @@
 //! - Enclave client for TEE proof generation
 //! - Driver loop for coordinating proposal generation
 //! - Metrics collection and exposition
+//! - CLI argument parsing and configuration validation
 
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
@@ -13,6 +14,7 @@
 #![deny(rust_2018_idioms)]
 
 pub mod cli;
+pub mod config;
 pub mod constants;
 pub mod contracts;
 pub mod driver;
@@ -22,5 +24,6 @@ pub mod metrics;
 pub mod rpc;
 
 pub use cli::Cli;
+pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig};
 pub use constants::*;
 pub use error::*;
