@@ -1,0 +1,68 @@
+# justfile for proposer
+
+# Default recipe
+default:
+    @just --list
+
+# Build all workspace crates
+build:
+    cargo build --workspace
+
+# Build in release mode
+build-release:
+    cargo build --workspace --release
+
+# Run all tests
+test:
+    cargo test --workspace
+
+# Run tests with nextest
+test-nextest:
+    cargo nextest run --workspace
+
+# Run clippy lints
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
+# Format code
+fmt:
+    cargo +nightly fmt --all
+
+# Check formatting
+fmt-check:
+    cargo +nightly fmt --all -- --check
+
+# Run cargo deny
+deny:
+    cargo deny check
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Run the proposer binary
+run *ARGS:
+    cargo run --bin proposer -- {{ARGS}}
+
+# Show help for the proposer binary
+help:
+    cargo run --bin proposer -- --help
+
+# Build Docker image
+docker-build:
+    docker build -t proposer:local -f docker/Dockerfile .
+
+# Run all checks (CI)
+ci: fmt-check clippy test deny
+
+# Generate documentation
+doc:
+    cargo doc --workspace --no-deps --open
+
+# Update dependencies
+update:
+    cargo update
+
+# Check for outdated dependencies
+outdated:
+    cargo outdated -R
