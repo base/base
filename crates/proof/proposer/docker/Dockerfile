@@ -20,6 +20,7 @@ FROM chef AS builder
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    libclang-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy recipe and build dependencies first (cached layer)
