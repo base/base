@@ -26,7 +26,7 @@ edition = "2021"
 authors = ["ratankaliani", "zachobront", "fakedev9999", "yuwen01"]
 homepage = "https://succinctlabs.github.io/op-succinct/"
 repository = "https://github.com/succinctlabs/op-succinct"
-version = "4.0.0"
+version = "4.0.1"
 
 [workspace.dependencies]
 # general
@@ -238,25 +238,15 @@ k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k2
 # v1.9.3-kona branch contains the backported fix from paradigmxyz/reth
 [patch."https://github.com/paradigmxyz/reth"]
 reth-chainspec = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-chain-state = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-consensus = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-errors = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-ethereum-forks = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-ethereum-primitives = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-execution-errors = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-execution-types = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-chainspec = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-consensus = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-evm = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-forks = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-payload-builder = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-primitives = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-optimism-txpool = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-primitives = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-primitives-traits = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-revm = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-storage-api = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-storage-errors = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
-reth-transaction-pool = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-trie = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
 reth-trie-common = { git = "https://github.com/succinctlabs/reth", branch = "v1.9.3-kona" }
