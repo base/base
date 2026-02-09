@@ -13,6 +13,7 @@ use crate::{
         fetch_initial_backlog_with_progress, fetch_sync_status, run_block_fetcher,
         run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_batcher_watcher,
     },
+    tui::Toast,
 };
 
 pub async fn run_app(config: ChainConfig) -> Result<()> {
@@ -41,20 +42,19 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
     let (block_req_tx, block_req_rx) = mpsc::channel::<u64>(100);
     let (block_res_tx, block_res_rx) = mpsc::channel::<BlockDaInfo>(100);
     let (blob_tx, blob_rx) = mpsc::channel::<BlobSubmission>(100);
+    let (toast_tx, toast_rx) = mpsc::channel::<Toast>(50);
 
     resources.flash.set_channel(fb_rx);
     resources.da.set_channels(da_fb_rx, sync_rx, backlog_rx, block_req_tx, block_res_rx, blob_rx);
+    resources.toasts.set_channel(toast_rx);
 
     let ws_url = config.flashblocks_ws.to_string();
     let ws_url2 = config.flashblocks_ws.to_string();
 
-    tokio::spawn(async move {
-        let _ = run_flashblock_ws_timestamped(ws_url, fb_tx).await;
-    });
+    let toast_tx_clone = toast_tx.clone();
+    tokio::spawn(run_flashblock_ws_timestamped(ws_url, fb_tx, Some(toast_tx_clone)));
 
-    tokio::spawn(async move {
-        let _ = run_flashblock_ws(ws_url2, da_fb_tx).await;
-    });
+    tokio::spawn(run_flashblock_ws(ws_url2, da_fb_tx, Some(toast_tx)));
 
     let rpc_url = config.rpc.to_string();
     tokio::spawn(async move {

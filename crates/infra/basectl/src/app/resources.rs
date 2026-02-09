@@ -8,6 +8,7 @@ use crate::{
     config::ChainConfig,
     l1_client::FullSystemConfig,
     rpc::{BacklogFetchResult, BlobSubmission, BlockDaInfo, TimestampedFlashblock},
+    tui::ToastState,
 };
 
 const MAX_FLASHBLOCKS: usize = 100;
@@ -17,6 +18,7 @@ pub struct Resources {
     pub config: ChainConfig,
     pub da: DaState,
     pub flash: FlashState,
+    pub toasts: ToastState,
     pub system_config: Option<FullSystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<FullSystemConfig>>,
 }
@@ -53,6 +55,7 @@ impl Resources {
             config,
             da: DaState::new(has_op_node),
             flash: FlashState::new(),
+            toasts: ToastState::new(),
             system_config: None,
             sys_config_rx: None,
         }

@@ -45,6 +45,7 @@ impl App {
         loop {
             self.resources.da.poll();
             self.resources.flash.poll();
+            self.resources.toasts.poll();
             self.resources.poll_sys_config();
 
             let action = current_view.tick(&mut self.resources);
@@ -61,6 +62,7 @@ impl App {
                     self.resources.chain_name(),
                     current_view.keybindings(),
                 );
+                self.resources.toasts.render(frame, frame.area());
             })?;
 
             if event::poll(EVENT_POLL_TIMEOUT)?
