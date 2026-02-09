@@ -33,7 +33,7 @@ jobs:
           save-if: false
       - name: Install just
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
-      - run: just build-all-targets
+      - run: just build-ci
 
   test:
     name: Test
@@ -63,7 +63,7 @@ jobs:
         with:
           version: stable
       - name: Run tests
-        run: just test
+        run: just test-ci
 
   docker-check:
     name: Docker Check

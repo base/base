@@ -46,7 +46,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
         with:
           version: stable
-      - run: just build-all-targets
+      - run: just build-ci
 
   test:
     name: Test
@@ -83,7 +83,7 @@ jobs:
         with:
           version: stable
       - name: Run tests
-        run: just test
+        run: just test-ci
 
   fmt:
     name: Format
@@ -138,7 +138,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
         with:
           version: stable
-      - run: just check-clippy
+      - run: just check-clippy-ci
 
   docker:
     name: Docker
@@ -286,4 +286,4 @@ jobs:
         run: just system-tests-pull-images
 
       - name: Run devnet tests
-        run: just devnet-tests
+        run: just devnet-tests-ci
