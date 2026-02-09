@@ -158,7 +158,7 @@ jobs:
             --config ../node-reth/.github/benchmark/transfer-only.yml \
             --root-dir ${{ runner.temp }}/data-dir \
             --output-dir ${{ runner.temp }}/output \
-            --rbuilder-bin ${{ runner.temp }}/bin/base-builder \
+            --builder-bin ${{ runner.temp }}/bin/base-builder \
             --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node
 
       - name: Setup Node.js
