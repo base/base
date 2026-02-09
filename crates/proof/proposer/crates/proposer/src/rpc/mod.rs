@@ -1,83 +1,77 @@
 //! RPC client implementations for L1, L2, and Rollup nodes.
+//!
+//! This module provides async RPC clients for interacting with:
+//! - L1 Ethereum nodes
+//! - L2 OP Stack nodes (standard and reth-specific)
+//! - OP Stack rollup nodes
+//!
+//! All clients include LRU caching with metrics for observability.
 
-use alloy::primitives::B256;
-use async_trait::async_trait;
-use eyre::Result;
-use url::Url;
+use alloy::network::Ethereum;
+use alloy::providers::RootProvider;
 
-/// L1 RPC client for interacting with Ethereum.
-#[derive(Debug)]
-pub struct L1Client {
-    endpoint: Url,
-}
+/// Shared type alias for the HTTP provider.
+/// Uses `RootProvider` directly since these clients only perform read operations.
+pub(crate) type HttpProvider = RootProvider<Ethereum>;
 
-impl L1Client {
-    /// Creates a new L1 client.
-    pub const fn new(endpoint: Url) -> Self {
-        Self { endpoint }
-    }
+mod cache;
+mod error;
+mod l1_client;
+mod l2_client;
+mod reth_client;
+mod rollup_client;
+mod traits;
+mod types;
 
-    /// Returns the endpoint URL.
-    pub const fn endpoint(&self) -> &Url {
-        &self.endpoint
-    }
-}
+// Re-export cache types
+pub use cache::{CacheMetrics, MeteredCache};
 
-/// L2 RPC client for interacting with the OP Stack chain.
-#[derive(Debug)]
-pub struct L2Client {
-    endpoint: Url,
-    is_reth: bool,
-}
+// Re-export error types
+pub use error::{RpcError, RpcResult};
 
-impl L2Client {
-    /// Creates a new L2 client.
-    pub const fn new(endpoint: Url, is_reth: bool) -> Self {
-        Self { endpoint, is_reth }
-    }
+// Re-export client configurations
+pub use l1_client::{L1ClientConfig, L1ClientImpl};
+pub use l2_client::{L2ClientConfig, L2ClientImpl, ProofCacheKey};
+pub use reth_client::RethL2Client;
+pub use rollup_client::{RollupClientConfig, RollupClientImpl};
 
-    /// Returns the endpoint URL.
-    pub const fn endpoint(&self) -> &Url {
-        &self.endpoint
-    }
+// Re-export traits
+pub use traits::{L1Client, L2Client, RollupClient};
 
-    /// Returns whether this client uses reth-specific methods.
-    pub const fn is_reth(&self) -> bool {
-        self.is_reth
-    }
-}
+// Re-export custom types
+pub use types::{
+    GenesisConfig, L1BlockRef, L2BlockRef, RethExecutionWitness, RollupConfig, SyncStatus,
+};
 
-/// Rollup RPC client for interacting with the OP Stack rollup node.
-#[derive(Debug)]
-pub struct RollupClient {
-    endpoint: Url,
-}
-
-impl RollupClient {
-    /// Creates a new rollup client.
-    pub const fn new(endpoint: Url) -> Self {
-        Self { endpoint }
-    }
-
-    /// Returns the endpoint URL.
-    pub const fn endpoint(&self) -> &Url {
-        &self.endpoint
+/// Creates an L2 client based on the configuration.
+///
+/// If `is_reth` is true, returns a [`RethL2Client`] that handles reth-specific
+/// witness format conversion. Otherwise, returns a standard [`L2ClientImpl`].
+pub fn create_l2_client(config: L2ClientConfig, is_reth: bool) -> RpcResult<Box<dyn L2Client>> {
+    if is_reth {
+        Ok(Box::new(RethL2Client::new(config)?))
+    } else {
+        Ok(Box::new(L2ClientImpl::new(config)?))
     }
 }
 
-/// Trait for block data providers.
-#[async_trait]
-pub trait BlockProvider {
-    /// Gets the latest block number.
-    async fn get_block_number(&self) -> Result<u64>;
+#[cfg(test)]
+mod tests {
+    use url::Url;
 
-    /// Gets a block hash by number.
-    async fn get_block_hash(&self, number: u64) -> Result<Option<B256>>;
-}
+    use super::*;
 
-/// Trait for output root providers.
-#[async_trait]
-pub trait OutputRootProvider {
-    /// Gets the output root at a given block number.
-    async fn get_output_root(&self, block_number: u64) -> Result<B256>;
+    #[test]
+    fn test_create_l2_client_standard() {
+        let config = L2ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
+        let client = create_l2_client(config, false);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_create_l2_client_reth() {
+        let config = L2ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
+        let client = create_l2_client(config, true);
+        assert!(client.is_ok());
+    }
 }

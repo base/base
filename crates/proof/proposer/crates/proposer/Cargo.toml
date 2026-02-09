@@ -54,8 +54,12 @@ moka.workspace = true
 op-enclave-client.workspace = true
 op-enclave-core.workspace = true
 
+# Retry
+backon.workspace = true
+
 # Misc
 bytes.workspace = true
+hex.workspace = true
 url.workspace = true
 
 # CLI

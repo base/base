@@ -2,12 +2,14 @@
 
 use thiserror::Error;
 
+use crate::rpc::RpcError;
+
 /// Main error type for the proposer.
 #[derive(Debug, Error)]
 pub enum ProposerError {
     /// RPC connection error.
     #[error("RPC error: {0}")]
-    Rpc(String),
+    Rpc(#[from] RpcError),
 
     /// Enclave communication error.
     #[error("Enclave error: {0}")]

@@ -3,11 +3,12 @@
 use std::{net::IpAddr, time::Duration};
 
 use alloy_primitives::Address;
+use backon::ExponentialBuilder;
 use base_cli_utils::LogConfig;
 use thiserror::Error;
 use url::Url;
 
-use crate::cli::{Cli, LogArgs, MetricsArgs, RpcServerArgs};
+use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
 
 /// Errors that can occur during configuration validation.
 #[derive(Debug, Error)]
@@ -57,6 +58,8 @@ pub struct ProposerConfig {
     pub onchain_verifier_addr: Address,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
+    /// RPC request timeout.
+    pub rpc_timeout: Duration,
     /// URL of the rollup RPC endpoint (optional).
     pub rollup_rpc: Option<Url>,
     /// Skip TLS certificate verification.
@@ -69,6 +72,8 @@ pub struct ProposerConfig {
     pub metrics: MetricsConfig,
     /// RPC server configuration.
     pub rpc: RpcServerConfig,
+    /// RPC retry configuration.
+    pub retry: RetryConfig,
 }
 
 impl ProposerConfig {
@@ -115,6 +120,9 @@ impl ProposerConfig {
             ));
         }
 
+        // Extract retry config before moving other proposer fields
+        let retry = RetryConfig::from(&cli.proposer);
+
         Ok(Self {
             allow_non_finalized: cli.proposer.allow_non_finalized,
             enclave_rpc: cli.proposer.enclave_rpc,
@@ -124,6 +132,8 @@ impl ProposerConfig {
             min_proposal_interval: cli.proposer.min_proposal_interval,
             onchain_verifier_addr: cli.proposer.onchain_verifier_addr,
             poll_interval: cli.proposer.poll_interval,
+            rpc_timeout: cli.proposer.rpc_timeout,
+            retry,
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
@@ -235,6 +245,51 @@ impl Default for RpcServerConfig {
     }
 }
 
+/// Validated RPC retry configuration.
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts.
+    pub max_attempts: u32,
+    /// Initial delay for exponential backoff.
+    pub initial_delay: Duration,
+    /// Maximum delay between retries.
+    pub max_delay: Duration,
+}
+
+impl From<&ProposerArgs> for RetryConfig {
+    fn from(args: &ProposerArgs) -> Self {
+        Self {
+            max_attempts: args.rpc_max_retries,
+            initial_delay: args.rpc_retry_initial_delay,
+            max_delay: args.rpc_retry_max_delay,
+        }
+    }
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        use crate::constants::{
+            DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY, DEFAULT_RPC_MAX_RETRIES,
+        };
+        Self {
+            max_attempts: DEFAULT_RPC_MAX_RETRIES,
+            initial_delay: DEFAULT_RETRY_INITIAL_DELAY,
+            max_delay: DEFAULT_RETRY_MAX_DELAY,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Creates a `backon` [`ExponentialBuilder`] from this configuration.
+    pub fn to_backoff_builder(&self) -> ExponentialBuilder {
+        ExponentialBuilder::default()
+            .with_min_delay(self.initial_delay)
+            .with_max_delay(self.max_delay)
+            .with_max_times(self.max_attempts as usize)
+            .with_jitter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use base_cli_utils::LogFormat;
@@ -256,9 +311,13 @@ mod tests {
                     .parse()
                     .unwrap(),
                 poll_interval: Duration::from_secs(12),
+                rpc_timeout: Duration::from_secs(30),
                 rollup_rpc: None,
                 skip_tls_verify: false,
                 wait_node_sync: false,
+                rpc_max_retries: 5,
+                rpc_retry_initial_delay: Duration::from_millis(100),
+                rpc_retry_max_delay: Duration::from_secs(10),
             },
             logging: LogArgs {
                 level: 3,
@@ -285,6 +344,7 @@ mod tests {
         assert!(!config.allow_non_finalized);
         assert_eq!(config.min_proposal_interval, 512);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
+        assert_eq!(config.rpc_timeout, Duration::from_secs(30));
     }
 
     #[test]
@@ -453,5 +513,33 @@ mod tests {
             error.to_string(),
             "invalid RPC config: RPC port must be non-zero"
         );
+    }
+
+    #[test]
+    fn test_retry_config_from_args() {
+        let cli = minimal_cli();
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.retry.max_attempts, 5);
+        assert_eq!(config.retry.initial_delay, Duration::from_millis(100));
+        assert_eq!(config.retry.max_delay, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_retry_config_default() {
+        let config = RetryConfig::default();
+        assert_eq!(config.max_attempts, 5);
+        assert_eq!(config.initial_delay, Duration::from_millis(100));
+        assert_eq!(config.max_delay, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_retry_config_to_backoff_builder() {
+        let config = RetryConfig {
+            max_attempts: 10,
+            initial_delay: Duration::from_millis(50),
+            max_delay: Duration::from_secs(5),
+        };
+        // Just verify it can be built without panicking
+        let _ = config.to_backoff_builder();
     }
 }

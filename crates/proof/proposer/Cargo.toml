@@ -74,6 +74,9 @@ moka = { version = "0.12", features = ["future"] }
 op-enclave-client = { git = "https://github.com/jackchuma/op-enclave", rev = "f83b102072c21cd43b504151b1e36a3c2ac7020d", package = "op-enclave-client" }
 op-enclave-core = { git = "https://github.com/jackchuma/op-enclave", rev = "f83b102072c21cd43b504151b1e36a3c2ac7020d", package = "op-enclave-core" }
 
+# Retry
+backon = { version = "1", features = ["tokio-sleep"] }
+
 # Misc
 url = "2.5.4"
 hex = "0.4.3"

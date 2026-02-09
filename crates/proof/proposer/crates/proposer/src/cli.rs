@@ -99,6 +99,15 @@ pub struct ProposerArgs {
     )]
     pub poll_interval: Duration,
 
+    /// RPC request timeout (e.g., "30s", "1m").
+    #[arg(
+        long = "rpc-timeout",
+        env = "BASE_PROPOSER_RPC_TIMEOUT",
+        default_value = "30s",
+        value_parser = parse_duration
+    )]
+    pub rpc_timeout: Duration,
+
     /// URL of the rollup RPC endpoint (optional).
     #[arg(
         long = "rollup-rpc",
@@ -122,6 +131,32 @@ pub struct ProposerArgs {
         default_value = "false"
     )]
     pub wait_node_sync: bool,
+
+    /// Maximum number of retry attempts for RPC operations.
+    #[arg(
+        long = "rpc-max-retries",
+        env = "BASE_PROPOSER_RPC_MAX_RETRIES",
+        default_value = "5"
+    )]
+    pub rpc_max_retries: u32,
+
+    /// Initial delay for exponential backoff (e.g., "100ms", "1s").
+    #[arg(
+        long = "rpc-retry-initial-delay",
+        env = "BASE_PROPOSER_RPC_RETRY_INITIAL_DELAY",
+        default_value = "100ms",
+        value_parser = parse_duration
+    )]
+    pub rpc_retry_initial_delay: Duration,
+
+    /// Maximum delay between retry attempts (e.g., "10s", "1m").
+    #[arg(
+        long = "rpc-retry-max-delay",
+        env = "BASE_PROPOSER_RPC_RETRY_MAX_DELAY",
+        default_value = "10s",
+        value_parser = parse_duration
+    )]
+    pub rpc_retry_max_delay: Duration,
 }
 
 /// Logging configuration arguments.
@@ -291,6 +326,7 @@ mod tests {
         assert!(!cli.proposer.l2_reth);
         assert_eq!(cli.proposer.min_proposal_interval, 512);
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
+        assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert!(cli.proposer.rollup_rpc.is_none());
         assert!(!cli.proposer.skip_tls_verify);
         assert!(!cli.proposer.wait_node_sync);
@@ -306,6 +342,14 @@ mod tests {
         assert!(!cli.rpc.enable_admin);
         assert_eq!(cli.rpc.addr, "127.0.0.1".parse::<IpAddr>().unwrap());
         assert_eq!(cli.rpc.port, 8545);
+
+        // Check retry defaults
+        assert_eq!(cli.proposer.rpc_max_retries, 5);
+        assert_eq!(
+            cli.proposer.rpc_retry_initial_delay,
+            Duration::from_millis(100)
+        );
+        assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
     }
 
     #[test]

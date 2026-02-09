@@ -28,3 +28,16 @@ pub const DEFAULT_MIN_PROPOSAL_INTERVAL: u64 = 512;
 
 /// Default LRU cache size for RPC responses.
 pub const DEFAULT_CACHE_SIZE: usize = 1000;
+
+// ============================================================================
+// Retry Configuration Constants
+// ============================================================================
+
+/// Default maximum number of retry attempts for RPC operations.
+pub const DEFAULT_RPC_MAX_RETRIES: u32 = 5;
+
+/// Default initial delay for exponential backoff.
+pub const DEFAULT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+
+/// Default maximum delay between retry attempts.
+pub const DEFAULT_RETRY_MAX_DELAY: Duration = Duration::from_secs(10);
