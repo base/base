@@ -3,14 +3,12 @@
 
 use std::sync::Arc;
 
-use base_client_engine::BaseEngineValidatorBuilder;
 use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
     FlashblocksSubscriber,
 };
 use reth_chain_state::CanonStateSubscriptions;
-use reth_optimism_node::OpEngineValidatorBuilder;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::info;
 
@@ -30,7 +28,7 @@ impl FlashblocksExtension {
 
 impl BaseNodeExtension for FlashblocksExtension {
     /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, mut builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
         let Some(cfg) = self.config else {
             info!(message = "flashblocks integration is disabled");
             return builder;
@@ -38,15 +36,6 @@ impl BaseNodeExtension for FlashblocksExtension {
 
         let state = cfg.state;
         let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), cfg.websocket_url);
-
-        let engine_validator_state = Arc::clone(&state);
-
-        builder = builder.map_add_ons(move |add_ons| {
-            add_ons.with_engine_validator(
-                BaseEngineValidatorBuilder::<OpEngineValidatorBuilder>::default()
-                    .with_flashblocks_state(engine_validator_state),
-            )
-        });
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);

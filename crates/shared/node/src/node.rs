@@ -1,10 +1,10 @@
 //! Base Node types config.
 
-use base_client_engine::BaseEngineValidatorBuilder;
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
     node::{FullNodeTypes, NodeTypes},
+    rpc::BasicEngineValidatorBuilder,
 };
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{
@@ -149,7 +149,7 @@ where
         OpEthApiBuilder,
         OpEngineValidatorBuilder,
         OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        BaseEngineValidatorBuilder<OpEngineValidatorBuilder>,
+        BasicEngineValidatorBuilder<OpEngineValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {

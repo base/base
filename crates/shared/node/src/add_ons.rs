@@ -1,14 +1,13 @@
 use std::marker::PhantomData;
 
-use base_client_engine::BaseEngineValidatorBuilder;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
     node::NodeTypes,
     rpc::{
-        EngineApiBuilder, EngineValidatorAddOn, EngineValidatorBuilder, EthApiBuilder, Identity,
-        PayloadValidatorBuilder, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns,
-        RpcContext, RpcHandle,
+        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
+        EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns,
+        RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
 use reth_optimism_forks::OpHardforks;
@@ -39,7 +38,7 @@ pub struct BaseAddOns<
     EthB: EthApiBuilder<N>,
     PVB,
     EB = OpEngineApiBuilder<PVB>,
-    EVB = BaseEngineValidatorBuilder<PVB>,
+    EVB = BasicEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers

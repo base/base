@@ -122,7 +122,7 @@ base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-txpool = { path = "crates/client/txpool" }
 base-metering = { path = "crates/client/metering" }
 base-client-cli = { path = "crates/client/cli" }
-base-client-node = { path = "crates/client/node" }
+base-client-node = { path = "crates/shared/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-client-engine = { path = "crates/client/engine" }
 
