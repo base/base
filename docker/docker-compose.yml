@@ -438,5 +438,7 @@ services:
       - --min-balance
       - ${CONTENDER_MIN_BALANCE}
       - --optimistic-nonces
-      - ${CONTENDER_GEN_REPORT:+--gen-report} 
-    restart: no
+      - --ignore-receipts
+      - --forever
+      - ${CONTENDER_GEN_REPORT:+--gen-report}
+    restart: always
