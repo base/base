@@ -199,7 +199,6 @@ services:
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
-      - --flashblocks.disable-state-root
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --color=never
@@ -210,6 +209,8 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+    environment:
+      - FLASHBLOCKS_DISABLE_STATE_ROOT=true
     restart: unless-stopped
 
   rollup-boost:
@@ -220,6 +221,8 @@ services:
     depends_on:
       base-builder:
         condition: service_healthy
+      base-client:
+        condition: service_healthy
     ports:
       - "${ROLLUP_BOOST_RPC_PORT}:${ROLLUP_BOOST_RPC_PORT}"           # Engine API proxy
       - "${ROLLUP_BOOST_METRICS_PORT}:${ROLLUP_BOOST_METRICS_PORT}"   # Metrics
@@ -227,7 +230,7 @@ services:
       - ../.devnet/l1/configs:/genesis:ro
     command:
       - --l2-url
-      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - http://base-client:${L2_CLIENT_AUTH_PORT}
       - --builder-url
       - http://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2-jwt-path
@@ -247,7 +250,9 @@ services:
       - --flashblocks
       - --flashblocks-builder-url
       - ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
-      - --external-state-root
+    environment:
+      - EXTERNAL_STATE_ROOT=true
+      - LOG_LEVEL=debug
     restart: unless-stopped
 
   base-builder-cl:
@@ -404,7 +409,7 @@ services:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     container_name: base-client-cl
     depends_on:
-      base-client:
+      base-builder:
         condition: service_healthy
     ports:
       - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
@@ -422,7 +427,7 @@ services:
       - --l1.beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2
-      - http://base-client:${L2_CLIENT_AUTH_PORT}
+      - http://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2.jwt-secret
       - /genesis/jwt.hex
       - --rollup.config
