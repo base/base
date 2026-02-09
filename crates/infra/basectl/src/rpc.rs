@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
@@ -132,7 +133,7 @@ pub async fn fetch_initial_backlog(l2_rpc: &str, op_node_rpc: &str) -> Result<In
                         block
                             .transactions
                             .txns()
-                            .map(|tx| tx.inner.input().len() as u64)
+                            .map(|tx| tx.inner.encode_2718_len() as u64)
                             .sum::<u64>()
                     })
                     .unwrap_or(0)
@@ -181,7 +182,7 @@ pub async fn fetch_initial_backlog_with_progress(
                                 block
                                     .transactions
                                     .txns()
-                                    .map(|tx| tx.inner.input().len() as u64)
+                                    .map(|tx| tx.inner.encode_2718_len() as u64)
                                     .sum::<u64>()
                             })
                             .unwrap_or(0)
@@ -246,7 +247,7 @@ pub async fn run_block_fetcher(
             provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
         {
             let da_bytes: u64 =
-                block.transactions.txns().map(|tx| tx.inner.input().len() as u64).sum();
+                block.transactions.txns().map(|tx| tx.inner.encode_2718_len() as u64).sum();
 
             let info = BlockDaInfo {
                 block_number: block_num,

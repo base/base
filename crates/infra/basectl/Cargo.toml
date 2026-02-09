@@ -21,6 +21,7 @@ serde_yaml = { workspace = true }
 dirs = { workspace = true }
 alloy-provider = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
+alloy-eips = { workspace = true }
 base-flashtypes = { workspace = true }
 url = { workspace = true }
 alloy-primitives = { workspace = true }
