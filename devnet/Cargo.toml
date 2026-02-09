@@ -1,7 +1,6 @@
 [package]
 name = "devnet"
 description = "System/E2E tests for Base node infrastructure"
-
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,77 +16,70 @@ path = "src/bin/devnet.rs"
 workspace = true
 
 [dependencies]
+# workspace
+base-txpool.workspace = true
+base-flashblocks.workspace = true
+base-flashtypes.workspace = true
+base-flashblocks-node.workspace = true
 base-protocol = { workspace = true, features = ["serde"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-client-node = { workspace = true, features = ["test-utils"] }
-base-flashblocks.workspace = true
-base-flashblocks-node.workspace = true
-base-flashtypes.workspace = true
-base-txpool.workspace = true
 base-builder-core = { workspace = true, features = ["test-utils"] }
-# Async runtime
-tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
+base-client-node = { workspace = true, features = ["test-utils"] }
 
-# Container orchestration
-testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+# reth
+reth-tasks.workspace = true
+reth-provider.workspace = true
+reth-node-core.workspace = true
+reth-optimism-rpc.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-txpool.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-db = { workspace = true, features = ["op"] }
+reth-node-builder = { workspace = true, features = ["test-utils"] }
 
-# Ethereum/Alloy
+# alloy
+alloy-genesis.workspace = true
+alloy-network.workspace = true
+alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
-alloy-signer-local = { workspace = true, features = ["mnemonic"] }
-alloy-rpc-types-engine.workspace = true
-
-# Serialization
-serde_json.workspace = true
-
-# Error handling
-eyre.workspace = true
-
-# Utilities
-hex.workspace = true
-rand.workspace = true
-tempfile.workspace = true
-tracing.workspace = true
-url.workspace = true
-nanoid.workspace = true
-
-# CLI
-clap.workspace = true
-
-# Serialization (for URLs JSON)
-serde = { workspace = true, features = ["derive"] }
-
-# WebSocket client (for flashblocks)
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
-futures-util.workspace = true
-
-# RPC client (moved from dev-dependencies for CLI)
-alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-rpc-client.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
-# OP Alloy network types (for Optimism providers)
+# op-alloy
 op-alloy-network.workspace = true
 
-# RPC (jsonrpsee for sync status client)
+# tokio
+tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+
+# async
+futures-util.workspace = true
+
+# rpc
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
-# Reth node dependencies (for in-process builder)
-reth-node-builder = { workspace = true, features = ["test-utils"] }
-reth-node-core.workspace = true
-reth-tasks.workspace = true
-reth-db = { workspace = true, features = ["op"] }
-reth-optimism-chainspec.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-rpc.workspace = true
-reth-optimism-txpool.workspace = true
+# cli
+url.workspace = true
+clap.workspace = true
 
-reth-provider.workspace = true
-alloy-genesis.workspace = true
-alloy-rpc-types.workspace = true
-alloy-network.workspace = true
+# misc
+hex.workspace = true
+eyre.workspace = true
+rand.workspace = true
+nanoid.workspace = true
+tracing.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
 [dev-dependencies]
-alloy-consensus.workspace = true
+# alloy
 alloy-eips.workspace = true
 alloy-signer.workspace = true
+alloy-consensus.workspace = true
 
+# op-alloy
 op-alloy-rpc-types.workspace = true

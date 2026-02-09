@@ -1,34 +1,50 @@
 [package]
 name = "base-access-lists"
+description = "FBAL library crate"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "FBAL library crate"
 
 [lints]
 workspace = true
 
 [dependencies]
+# alloy
 alloy-primitives.workspace = true
-alloy-eip7928 = {workspace = true, features = ["serde", "rlp"]}
-alloy-rlp = {workspace = true, features = ["derive"]}
-tracing.workspace = true
+alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-eip7928 = { workspace = true, features = ["serde", "rlp"] }
+
+# revm
 revm.workspace = true
+
+# tracing
+tracing.workspace = true
+
+# misc
 serde.workspace = true
 
 [dev-dependencies]
-op-revm.workspace = true
-eyre.workspace = true
+# workspace
+base-primitives = { workspace = true, features = ["test-utils"] }
+
+# reth
+reth-evm.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
-alloy-consensus.workspace = true
+
+# revm
+op-revm.workspace = true
+
+# alloy
 alloy-contract.workspace = true
+alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
-reth-evm.workspace = true
-base-primitives = { workspace = true, features = ["test-utils"] }
+
+# misc
+eyre.workspace = true
 
 [[test]]
 name = "builder"

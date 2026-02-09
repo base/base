@@ -1,12 +1,12 @@
 [package]
 name = "base-metering"
+description = "Metering RPC for Base node"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Metering RPC for Base node"
 
 [lints]
 workspace = true
@@ -14,56 +14,71 @@ workspace = true
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-client-node.workspace = true
 base-flashblocks.workspace = true
+base-client-node.workspace = true
 
 # reth
-reth-provider.workspace = true
-reth-primitives-traits.workspace = true
 reth-evm.workspace = true
+reth-revm.workspace = true
+reth-provider.workspace = true
+reth-trie-common.workspace = true
 reth-optimism-evm.workspace = true
+reth-primitives-traits.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
-reth-revm.workspace = true
-reth-trie-common.workspace = true
 
 # revm
 revm-database.workspace = true
 
-# op
+# op-revm
 op-revm.workspace = true
-op-alloy-consensus.workspace = true
 
 # alloy
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true
 alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+
+# op-alloy
+op-alloy-consensus.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
 
-# misc
-arc-swap.workspace = true
+# metrics
 metrics.workspace = true
 metrics-derive.workspace = true
-tracing.workspace = true
+
+# misc
 eyre.workspace = true
 serde.workspace = true
+tracing.workspace = true
+arc-swap.workspace = true
 derive_more.workspace = true
 
 [dev-dependencies]
-base-client-node = { workspace = true, features = ["test-utils"] }
+# workspace
 base-flashblocks.workspace = true
-reth-db = { workspace = true, features = ["op", "test-utils"] }
+base-flashtypes.workspace = true
+base-client-node = { workspace = true, features = ["test-utils"] }
+
+# reth
 reth-db-common.workspace = true
 reth-optimism-node.workspace = true
+reth-db = { workspace = true, features = ["op", "test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
+# revm
+revm-context-interface.workspace = true
+
+# alloy
 alloy-genesis.workspace = true
 alloy-rpc-client.workspace = true
+
+# op-alloy
+op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
+
+# misc
+url.workspace = true
 rand.workspace = true
 tokio.workspace = true
-op-alloy-network.workspace = true
-revm-context-interface.workspace = true
-base-flashtypes.workspace = true
-url.workspace = true

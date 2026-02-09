@@ -16,62 +16,62 @@ workspace = true
 base-flashtypes.workspace = true
 
 # reth
-reth-evm.workspace = true
-reth-primitives.workspace = true
 reth-rpc.workspace = true
-reth-rpc-eth-api.workspace = true
+reth-evm.workspace = true
+reth-revm.workspace = true
+reth-chainspec.workspace = true
+reth-provider.workspace = true
+reth-primitives.workspace = true
 reth-rpc-convert.workspace = true
-reth-optimism-rpc.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-eth-types.workspace = true
 reth-optimism-evm.workspace = true
+reth-optimism-rpc.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
-reth-provider.workspace = true
-reth-chainspec.workspace = true
-reth-revm.workspace = true
-reth-rpc-eth-types.workspace = true
+
+# revm
+revm.workspace = true
+revm-database.workspace = true
 
 # alloy
 alloy-eips.workspace = true
+alloy-consensus.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 
 # op-alloy
 op-alloy-network.workspace = true
+op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-rpc-types-engine.workspace = true
-op-alloy-consensus.workspace = true
 
 # tokio
 tokio.workspace = true
-tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 tokio-stream.workspace = true
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 # async
 futures-util.workspace = true
 
-# revm
-revm.workspace = true
-
 # rpc
+serde.workspace = true
 jsonrpsee.workspace = true
 jsonrpsee-types.workspace = true
-serde.workspace = true
 
-# revm
-revm-database.workspace = true
+# metrics
+metrics.workspace = true
+metrics-derive.workspace = true
 
 # misc
 url.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-metrics.workspace = true
-arc-swap.workspace = true
-metrics-derive.workspace = true
 rayon.workspace = true
+tracing.workspace = true
+arc-swap.workspace = true
+thiserror.workspace = true
 derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]

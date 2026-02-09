@@ -36,24 +36,27 @@ arbitrary = [
 ]
 
 [dependencies]
-# Alloy
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true
+# alloy
 alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 
 # op-alloy
 op-alloy-rpc-types-engine.workspace = true
 
-# General
-derive_more = { workspace = true, features = ["display"] }
+# misc
 thiserror.workspace = true
+derive_more = { workspace = true, features = ["display"] }
 
-# Optional
-serde = { workspace = true, optional = true }
+# optional
 arbitrary = { version = "1", optional = true }
+serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+# op-alloy
 op-alloy-consensus.workspace = true
-serde_json.workspace = true
+
+# misc
 rand.workspace = true
+serde_json.workspace = true
