@@ -1,8 +1,0 @@
-name: devnet
-rpc: http://localhost:8545
-l1_rpc: http://localhost:4545
-op_node_rpc: http://localhost:8549
-flashblocks_ws: "ws://localhost:7111/ws"
-# Dynamically allocated, you can access this from .devnet/
-system_config: "0x0000000000000000000000000000000000000000"
-batcher_address: "0x976ea74026e726554db657fa54763abd0c3a0aa9"
