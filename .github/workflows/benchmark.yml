@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BENCHMARK_REPO: "base/benchmark"
-  BENCHMARK_REF: "main"
+  BENCHMARK_REF: "6a757e9bbaa68f5fb9d149ff43cc0c9aa5b9e01f"
 
 permissions:
   contents: read
@@ -152,7 +152,7 @@ jobs:
             --config ../node-reth/.github/benchmark/transfer-only.yml \
             --root-dir ${{ runner.temp }}/data-dir \
             --output-dir ${{ runner.temp }}/output \
-            --rbuilder-bin ${{ runner.temp }}/bin/base-builder \
+            --builder-bin ${{ runner.temp }}/bin/base-builder \
             --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node
 
       - name: Setup Node.js
