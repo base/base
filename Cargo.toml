@@ -90,6 +90,17 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+# CI profile: optimized for minimal disk usage in CI environments
+# - Inherits from dev for fast compilation
+# - No debug info to minimize artifact size
+# - No split-debuginfo to avoid extra files
+# - Incremental disabled to reduce cache size
+[profile.ci]
+inherits = "dev"
+debug = false
+split-debuginfo = "off"
+incremental = false
+
 [workspace.dependencies]
 # Consensus
 base-protocol = { path = "crates/consensus/protocol" }

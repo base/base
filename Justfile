@@ -54,9 +54,17 @@ install-nextest:
 test: install-nextest build-contracts
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet
 
+# Runs tests with ci profile for minimal disk usage
+test-ci: install-nextest build-contracts
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
+
 # Runs devnet tests (requires Docker)
 devnet-tests: install-nextest build-contracts
     cargo nextest run -p devnet
+
+# Runs devnet tests with ci profile for minimal disk usage
+devnet-tests-ci: install-nextest build-contracts
+    cargo nextest run -p devnet --cargo-profile ci
 
 # Pre-pulls Docker images needed for system tests
 system-tests-pull-images:
@@ -83,6 +91,10 @@ format-fix:
 check-clippy: build-contracts
     cargo clippy --workspace --all-targets -- -D warnings
 
+# Checks clippy with ci profile for minimal disk usage
+check-clippy-ci: build-contracts
+    cargo clippy --workspace --all-targets --profile ci -- -D warnings
+
 # Fixes any clippy issues
 clippy-fix:
     cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
@@ -94,6 +106,10 @@ build:
 # Builds all targets in debug mode
 build-all-targets: build-contracts
     cargo build --workspace --all-targets
+
+# Builds all targets with ci profile (minimal disk usage for CI)
+build-ci: build-contracts
+    cargo build --workspace --all-targets --profile ci
 
 # Builds the workspace with maxperf
 build-maxperf:
