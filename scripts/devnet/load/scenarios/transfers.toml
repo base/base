@@ -1,0 +1,9 @@
+# Simple ETH transfers for consistent baseline load
+# No contract deployment required - just direct ETH transfers
+
+[[spam]]
+[spam.tx]
+kind = "transfer"
+to = "0x0000000000000000000000000000000000000001"
+value = "0.0001 ether"
+from_pool = "signers"

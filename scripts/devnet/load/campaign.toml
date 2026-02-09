@@ -11,46 +11,57 @@ seed = 1
 #
 # The main components of the contract include initializing storage/accounts,
 # load/update/delete/create storage slots and accounts, and precompiles.
+# Includes simple transfers for consistent baseline load.
 [[spam.stage]]
 name = "simulator-load"
 rate = 200
 duration = 600
   [[spam.stage.mix]]
+  scenario  = "/load/scenarios/transfers.toml"
+  share_pct = 20.0
+  [[spam.stage.mix]]
   scenario  = "erc20"
-  share_pct = 25.0
+  share_pct = 20.0
   [[spam.stage.mix]]
   scenario  = "/load/scenarios/create_slots.toml"
-  share_pct = 25.0
+  share_pct = 20.0
   [[spam.stage.mix]]
   scenario  = "/load/scenarios/precompiles.toml"
-  share_pct = 25.0
+  share_pct = 20.0
   [[spam.stage.mix]]
   scenario  = "/load/scenarios/slot_contention.toml"
-  share_pct = 25.0
+  share_pct = 20.0
 
 
 # This load attempts to mimic what a trading volume would look like by interacting
-# with Uniswap pools, transferring tokens, and interacting with the mempool
+# with Uniswap pools, transferring tokens, and interacting with the mempool.
+# Includes simple transfers for consistent baseline load.
 [[spam.stage]]
 name = "trading-load"
 rate = 200
 duration = 600
   [[spam.stage.mix]]
+  scenario  = "/load/scenarios/transfers.toml"
+  share_pct = 25.0
+  [[spam.stage.mix]]
   scenario  = "erc20"
-  share_pct = 30.0
+  share_pct = 25.0
   [[spam.stage.mix]]
   scenario  = "scenario:uniV3.toml"
-  share_pct = 40.0
+  share_pct = 25.0
   [[spam.stage.mix]]
   scenario  = "scenario:mempool.toml"
-  share_pct = 30.0
+  share_pct = 25.0
 
 
-# This load is just a pure spam (i.e., XEN).
+# This load is just a pure spam (i.e., XEN) with baseline transfers.
 [[spam.stage]]
 name = "spam-load"
 rate = 200
 duration = 600
   [[spam.stage.mix]]
+  scenario  = "/load/scenarios/transfers.toml"
+  share_pct = 30.0
+  [[spam.stage.mix]]
   scenario  = "scenario:xen.toml"
-  share_pct = 100.0
+  share_pct = 70.0
