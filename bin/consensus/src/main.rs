@@ -9,8 +9,7 @@ pub mod metrics;
 fn main() {
     use clap::Parser;
 
-    base_cli_utils::Backtracing::enable();
-    base_cli_utils::SigsegvHandler::install();
+    base_cli_utils::init_common!();
 
     if let Err(err) = cli::Cli::parse().run() {
         eprintln!("Error: {err:?}");

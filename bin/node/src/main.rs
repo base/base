@@ -19,13 +19,11 @@ type NodeCli = Cli<OpChainSpecParser, cli::Args>;
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
 
 fn main() {
-    // Step 1: Initialize versioning so logs / telemetry report the right build info.
-    base_cli_utils::init_reth_version!();
+    base_cli_utils::init_common!();
+    base_cli_utils::init_reth!();
 
-    // Step 2: Parse CLI arguments and hand execution to the Optimism node runner.
     let cli = base_cli_utils::parse_cli!(NodeCli);
 
-    // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
         let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
 

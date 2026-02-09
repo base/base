@@ -47,7 +47,7 @@ impl Version {
 ///
 /// This macro must be called from the binary crate to capture the correct package metadata.
 #[macro_export]
-macro_rules! init_reth_version {
+macro_rules! init_reth {
     () => {
         $crate::Version::init_reth(env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_NAME"))
     };

@@ -1792,35 +1792,16 @@ dependencies = [
 name = "base-builder-bin"
 version = "0.0.0"
 dependencies = [
- "base-builder-cli",
- "base-cli-utils",
- "clap",
- "reth-cli-util",
-]
-
-[[package]]
-name = "base-builder-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
  "base-builder-core",
  "base-cli-utils",
  "clap",
  "eyre",
- "reth-cli-commands",
- "reth-db",
- "reth-node-builder",
- "reth-optimism-chainspec",
+ "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
  "reth-optimism-rpc",
  "reth-optimism-txpool",
- "reth-tracing-otlp",
  "rstest",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.22",
- "url",
 ]
 
 [[package]]
@@ -3971,7 +3952,6 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
- "base-builder-cli",
  "base-builder-core",
  "base-client-node",
  "base-consensus-rpc",

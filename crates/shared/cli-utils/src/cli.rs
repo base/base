@@ -1,23 +1,15 @@
 //! CLI parsing utilities.
 
+/// Initializes common process-level setup: backtraces and signal handlers.
+#[macro_export]
+macro_rules! init_common {
+    () => {
+        $crate::Backtracing::enable();
+        $crate::SigsegvHandler::install();
+    };
+}
+
 /// Parses CLI arguments with package version and description from the calling crate.
-///
-/// This macro customizes the CLI with the binary's package name, version, and description
-/// from `Cargo.toml`, ensuring `--version` and `--help` show the correct information.
-///
-/// # Example
-///
-/// ```ignore
-/// use reth_optimism_cli::Cli;
-///
-/// // Basic usage
-/// let cli = base_cli_utils::parse_cli!(Cli<ChainSpecParser, Args>);
-///
-/// // With additional command customization
-/// let cli = base_cli_utils::parse_cli!(Cli<ChainSpecParser, Args>, |cmd| {
-///     cmd.mut_arg("some_arg", |arg| arg.default_value("value"))
-/// });
-/// ```
 #[macro_export]
 macro_rules! parse_cli {
     ($cli_type:ty) => {{ $crate::parse_cli!($cli_type, |cmd| cmd) }};
