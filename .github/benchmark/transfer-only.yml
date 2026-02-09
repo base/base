@@ -16,7 +16,7 @@ benchmarks:
           - transfer-only
       - type: node_type
         values:
-          - rbuilder
+          - builder
       - type: validator_node_type
         values:
           - base-reth-node
