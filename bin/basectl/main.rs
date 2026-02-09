@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 #[command(name = "basectl")]
 #[command(about = "Base infrastructure control CLI")]
 struct Cli {
-    /// Chain configuration (mainnet, sepolia, or path to config file)
+    /// Chain configuration (mainnet, sepolia, devnet, or path to config file)
     #[arg(short = 'c', long = "config", default_value = "mainnet", global = true)]
     config: String,
 
@@ -36,7 +36,7 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let chain_config = ChainConfig::load(&cli.config)?;
+    let chain_config = ChainConfig::load(&cli.config).await?;
 
     match cli.command {
         Some(Commands::Config) => run_app_with_view(chain_config, ViewId::Config).await,
