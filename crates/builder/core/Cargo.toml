@@ -128,7 +128,6 @@ shellexpand.workspace = true
 moka.workspace = true
 http.workspace = true
 sha3.workspace = true
-reqwest.workspace = true
 k256.workspace = true
 
 nanoid = { workspace = true, optional = true }

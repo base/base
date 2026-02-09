@@ -162,6 +162,18 @@ skip = [
 
     # jsonrpsee (older rustc-hash) vs other deps (newer rustc-hash)
     "rustc-hash",
+
+    # mach2 version mismatch: tracing-samply uses 0.5.0, metrics-process uses 0.6.0
+    "mach2",
+
+    # reqwest version mismatch: alloy/kona use 0.12.x, newer deps use 0.13.x
+    "reqwest",
+
+    # rlimit version mismatch: base-builder-core uses 0.10.x, metrics-process uses 0.11.x
+    "rlimit",
+
+    # rustls-platform-verifier version mismatch: jsonrpsee uses 0.5.x, reqwest uses 0.6.x
+    "rustls-platform-verifier",
 ]
 
 [sources]
