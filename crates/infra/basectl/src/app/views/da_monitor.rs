@@ -99,13 +99,19 @@ impl View for DaMonitorView {
             .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(0)])
             .split(area);
 
+        let highlighted_block = if self.selected_panel == Panel::Blocks {
+            resources.da.tracker.block_contributions.get(self.selected_row).map(|c| c.block_number)
+        } else {
+            None
+        };
+
         render_da_backlog_bar(
             frame,
             chunks[0],
             &resources.da.tracker,
             resources.da.loading.as_ref(),
             resources.da.loaded,
-            None,
+            highlighted_block,
         );
 
         render_stats_panel(frame, chunks[1], resources);

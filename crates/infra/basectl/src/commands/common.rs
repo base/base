@@ -605,11 +605,12 @@ pub fn render_da_backlog_bar(
         let char_count = char_count.min(bar_width - chars_used);
 
         if char_count > 0 {
-            let (glyph, style) = if is_highlighted {
-                ("▒", Style::default().fg(Color::White).bg(color))
+            let style = if is_highlighted {
+                Style::default().fg(Color::White).bg(color)
             } else {
-                ("█", Style::default().fg(color))
+                Style::default().fg(color)
             };
+            let glyph = if is_highlighted { "⣿" } else { "█" };
             spans.push(Span::styled(glyph.repeat(char_count), style));
             chars_used += char_count;
         }
@@ -640,7 +641,11 @@ pub fn render_da_backlog_bar(
 pub fn time_diff_color(ms: i64) -> Color {
     if (150..=250).contains(&ms) {
         Color::Green
-    } else if (100..150).contains(&ms) || (250..300).contains(&ms) {
+    } else if (100..150).contains(&ms) {
+        Color::Blue
+    } else if ms < 100 {
+        Color::Magenta
+    } else if (250..300).contains(&ms) {
         Color::Yellow
     } else {
         Color::Red

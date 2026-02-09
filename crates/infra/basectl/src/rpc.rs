@@ -1,14 +1,16 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use anyhow::Result;
 use base_flashtypes::Flashblock;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, stream};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
+
+const CONCURRENT_BLOCK_FETCHES: usize = 16;
 
 use crate::{config::ChainConfig, l1_client::fetch_system_config_params};
 
@@ -113,18 +115,32 @@ pub async fn fetch_initial_backlog(l2_rpc: &str, op_node_rpc: &str) -> Result<In
         return Ok(InitialBacklog { safe_block, unsafe_block, da_bytes: 0 });
     }
 
-    let provider = ProviderBuilder::new().connect(l2_rpc).await?;
-    let mut total_da_bytes: u64 = 0;
+    let provider = Arc::new(ProviderBuilder::new().connect(l2_rpc).await?);
 
-    for block_num in (safe_block + 1)..=unsafe_block {
-        if let Ok(Some(block)) =
-            provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-        {
-            for tx in block.transactions.txns() {
-                total_da_bytes = total_da_bytes.saturating_add(tx.inner.input().len() as u64);
+    let block_numbers: Vec<u64> = ((safe_block + 1)..=unsafe_block).collect();
+    let total_da_bytes: u64 = stream::iter(block_numbers)
+        .map(|block_num| {
+            let provider = Arc::clone(&provider);
+            async move {
+                provider
+                    .get_block_by_number(BlockNumberOrTag::Number(block_num))
+                    .full()
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|block| {
+                        block
+                            .transactions
+                            .txns()
+                            .map(|tx| tx.inner.input().len() as u64)
+                            .sum::<u64>()
+                    })
+                    .unwrap_or(0)
             }
-        }
-    }
+        })
+        .buffer_unordered(CONCURRENT_BLOCK_FETCHES)
+        .fold(0u64, |acc, bytes| async move { acc.saturating_add(bytes) })
+        .await;
 
     Ok(InitialBacklog { safe_block, unsafe_block, da_bytes: total_da_bytes })
 }
@@ -145,21 +161,44 @@ pub async fn fetch_initial_backlog_with_progress(
         }
 
         let total_blocks = unsafe_block - safe_block;
-        let provider = ProviderBuilder::new().connect(&l2_rpc).await?;
+        let provider = Arc::new(ProviderBuilder::new().connect(&l2_rpc).await?);
         let mut total_da_bytes: u64 = 0;
+        let mut blocks_processed: u64 = 0;
 
-        for (idx, block_num) in ((safe_block + 1)..=unsafe_block).enumerate() {
-            if let Ok(Some(block)) =
-                provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
-            {
-                for tx in block.transactions.txns() {
-                    total_da_bytes = total_da_bytes.saturating_add(tx.inner.input().len() as u64);
-                }
+        let block_numbers: Vec<u64> = ((safe_block + 1)..=unsafe_block).collect();
+        for chunk in block_numbers.chunks(CONCURRENT_BLOCK_FETCHES) {
+            let chunk_results: Vec<u64> = stream::iter(chunk.iter().copied())
+                .map(|block_num| {
+                    let provider = Arc::clone(&provider);
+                    async move {
+                        provider
+                            .get_block_by_number(BlockNumberOrTag::Number(block_num))
+                            .full()
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|block| {
+                                block
+                                    .transactions
+                                    .txns()
+                                    .map(|tx| tx.inner.input().len() as u64)
+                                    .sum::<u64>()
+                            })
+                            .unwrap_or(0)
+                    }
+                })
+                .buffer_unordered(CONCURRENT_BLOCK_FETCHES)
+                .collect()
+                .await;
+
+            for bytes in chunk_results {
+                total_da_bytes = total_da_bytes.saturating_add(bytes);
+                blocks_processed += 1;
             }
 
             let _ = progress_tx
                 .send(BacklogFetchResult::Progress(BacklogProgress {
-                    current_block: idx as u64 + 1,
+                    current_block: blocks_processed,
                     total_blocks,
                     da_bytes_so_far: total_da_bytes,
                 }))
