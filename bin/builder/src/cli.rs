@@ -2,7 +2,7 @@
 
 use core::{convert::TryFrom, net::SocketAddr, time::Duration};
 
-use base_builder_core::{BuilderConfig, FlashblocksConfig, ResourceMeteringMode, TxDataStore};
+use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig, TxDataStore};
 use reth_optimism_node::args::RollupArgs;
 
 /// Parameters for Flashblocks configuration.
@@ -104,9 +104,9 @@ pub struct Args {
     #[arg(long = "builder.block-state-root-time-budget-us")]
     pub block_state_root_time_budget_us: Option<u128>,
 
-    /// Resource metering mode: off, dry-run, or enforce
-    #[arg(long = "builder.resource-metering-mode", value_enum, default_value = "off")]
-    pub resource_metering_mode: ResourceMeteringMode,
+    /// Execution metering mode: off, dry-run, or enforce
+    #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
+    pub execution_metering_mode: ExecutionMeteringMode,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
@@ -139,7 +139,7 @@ impl Default for Args {
             max_state_root_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
             block_state_root_time_budget_us: None,
-            resource_metering_mode: ResourceMeteringMode::Off,
+            execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             tx_data_store_buffer_size: 10000,
@@ -165,9 +165,9 @@ impl TryFrom<Args> for BuilderConfig {
             max_state_root_time_per_tx_us: args.max_state_root_time_per_tx_us,
             flashblock_execution_time_budget_us: args.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: args.block_state_root_time_budget_us,
-            resource_metering_mode: args.resource_metering_mode,
+            execution_metering_mode: args.execution_metering_mode,
             tx_data_store: TxDataStore::new(
-                args.enable_resource_metering || args.resource_metering_mode.is_enabled(),
+                args.enable_resource_metering || args.execution_metering_mode.is_enabled(),
                 args.tx_data_store_buffer_size,
             ),
             flashblocks,

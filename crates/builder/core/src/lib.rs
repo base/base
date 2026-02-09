@@ -15,12 +15,12 @@ pub use metrics::BuilderMetrics;
 
 mod execution;
 pub use execution::{
-    ExecutionInfo, ResourceLimits, ResourceMeteringLimitExceeded, TxResources, TxnExecutionError,
+    ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources, TxnExecutionError,
     TxnOutcome,
 };
 
-mod resource_metering_mode;
-pub use resource_metering_mode::ResourceMeteringMode;
+mod execution_metering_mode;
+pub use execution_metering_mode::ExecutionMeteringMode;
 
 mod traits;
 pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};

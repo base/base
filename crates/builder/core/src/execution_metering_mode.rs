@@ -1,12 +1,13 @@
 use clap::ValueEnum;
 
-/// Resource metering mode for transaction time limits.
+/// Mode for execution metering limits (execution time and state root time).
 ///
-/// Controls how the builder handles time-based resource limits
-/// (execution time and state root calculation time).
+/// Controls how the builder handles execution metering limits that depend on
+/// metering service predictions. These limits can be gradually rolled out
+/// via dry-run mode before enforcement.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-pub enum ResourceMeteringMode {
-    /// Resource metering is disabled. No time limit checks are performed.
+pub enum ExecutionMeteringMode {
+    /// Execution metering limits are disabled. No time limit checks are performed.
     #[default]
     Off,
     /// Dry-run mode: collect metrics about transactions that would exceed time limits,
@@ -16,7 +17,7 @@ pub enum ResourceMeteringMode {
     Enforce,
 }
 
-impl ResourceMeteringMode {
+impl ExecutionMeteringMode {
     /// Returns true if metering data should be collected (dry-run or enforce mode).
     pub const fn is_enabled(&self) -> bool {
         matches!(self, Self::DryRun | Self::Enforce)

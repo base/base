@@ -38,27 +38,29 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    BuilderMetrics, ExecutionInfo, PayloadTxsBounds, ResourceLimits, ResourceMeteringLimitExceeded,
-    ResourceMeteringMode, TxData, TxDataStore, TxResources, TxnExecutionError, TxnOutcome,
+    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
+    PayloadTxsBounds, ResourceLimits, TxData, TxDataStore, TxResources, TxnExecutionError,
+    TxnOutcome,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
     let r = match reason {
-        TxnExecutionError::TransactionDALimitExceeded => "transaction_da_limit_exceeded",
-        TxnExecutionError::BlockDALimitExceeded { .. } => "block_da_limit_exceeded",
+        TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
+        TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
+        TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
         TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
-        TxnExecutionError::ResourceMeteringLimitExceeded(inner) => match inner {
-            ResourceMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
+        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
+            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 "tx_execution_time_exceeded"
             }
-            ResourceMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
                 "flashblock_execution_time_exceeded"
             }
-            ResourceMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
+            ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
                 "tx_state_root_time_exceeded"
             }
-            ResourceMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
+            ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
                 "block_state_root_time_exceeded"
             }
         },
@@ -160,8 +162,8 @@ pub struct OpPayloadBuilderCtx {
     pub flashblock_execution_time_budget_us: Option<u128>,
     /// Block-level state root calculation time budget in microseconds.
     pub block_state_root_time_budget_us: Option<u128>,
-    /// Resource metering mode: off, dry-run, or enforce.
-    pub resource_metering_mode: ResourceMeteringMode,
+    /// Execution metering mode: off, dry-run, or enforce.
+    pub execution_metering_mode: ExecutionMeteringMode,
     /// Transaction data store for resource metering
     pub tx_data_store: TxDataStore,
 }
@@ -513,7 +515,7 @@ impl OpPayloadBuilderCtx {
             block_gas_limit = ?block_gas_limit,
             flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
             block_state_root_time_limit_us = ?block_state_root_time_limit_us,
-            resource_metering_mode = ?self.resource_metering_mode,
+            execution_metering_mode = ?self.execution_metering_mode,
         );
 
         while let Some(tx) = best_txs.next(()) {
@@ -555,17 +557,17 @@ impl OpPayloadBuilderCtx {
 
             // ensure we still have capacity for this transaction
             if let Err(err) = info.is_tx_over_limits(&tx_resources, &limits) {
-                // Check if this is a resource metering limit that should be handled
+                // Check if this is an execution metering limit that should be handled
                 // according to the metering mode (dry-run vs enforce)
-                if let TxnExecutionError::ResourceMeteringLimitExceeded(ref limit_err) = err {
+                if let TxnExecutionError::ExecutionMeteringLimitExceeded(ref limit_err) = err {
                     // Record metrics for the exceeded limit
                     self.record_resource_limit_exceeded(limit_err);
 
-                    if self.resource_metering_mode.is_dry_run() {
+                    if self.execution_metering_mode.is_dry_run() {
                         // In dry-run mode, log but don't reject
                         warn!(
                             target: "payload_builder",
-                            message = "Resource metering limit would reject transaction (dry-run mode)",
+                            message = "Execution metering limit would reject transaction (dry-run mode)",
                             tx_hash = ?tx_hash,
                             limit = %limit_err,
                         );
@@ -580,7 +582,23 @@ impl OpPayloadBuilderCtx {
                         continue;
                     }
                 } else {
-                    // Protocol-enforced limits (DA, gas) are always enforced
+                    // DA size limits, DA footprint, and gas limits are always enforced
+                    match &err {
+                        TxnExecutionError::TransactionDASizeExceeded(_, _) => {
+                            self.metrics.tx_da_size_exceeded_total.increment(1);
+                        }
+                        TxnExecutionError::BlockDASizeExceeded { .. } => {
+                            self.metrics.block_da_size_exceeded_total.increment(1);
+                        }
+                        TxnExecutionError::DAFootprintLimitExceeded { .. } => {
+                            self.metrics.da_footprint_exceeded_total.increment(1);
+                        }
+                        TxnExecutionError::TransactionGasLimitExceeded { .. } => {
+                            self.metrics.gas_limit_exceeded_total.increment(1);
+                        }
+                        _ => {}
+                    }
+
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
 
@@ -750,20 +768,20 @@ impl OpPayloadBuilderCtx {
         Ok(None)
     }
 
-    /// Record metrics for a resource metering limit that was exceeded.
-    fn record_resource_limit_exceeded(&self, limit: &ResourceMeteringLimitExceeded) {
+    /// Record metrics for an execution metering limit that was exceeded.
+    fn record_resource_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
         self.metrics.resource_limit_would_reject_total.increment(1);
         match limit {
-            ResourceMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
+            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 self.metrics.tx_execution_time_exceeded_total.increment(1);
             }
-            ResourceMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
                 self.metrics.flashblock_execution_time_exceeded_total.increment(1);
             }
-            ResourceMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
+            ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
                 self.metrics.tx_state_root_time_exceeded_total.increment(1);
             }
-            ResourceMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
+            ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
                 self.metrics.block_state_root_time_exceeded_total.increment(1);
             }
         }

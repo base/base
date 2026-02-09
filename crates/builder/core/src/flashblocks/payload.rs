@@ -209,7 +209,7 @@ where
             max_state_root_time_per_tx_us: self.config.max_state_root_time_per_tx_us,
             flashblock_execution_time_budget_us: self.config.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
-            resource_metering_mode: self.config.resource_metering_mode,
+            execution_metering_mode: self.config.execution_metering_mode,
             tx_data_store: self.config.tx_data_store.clone(),
         })
     }

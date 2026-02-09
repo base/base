@@ -101,8 +101,20 @@ pub struct BuilderMetrics {
     /// Count of the number of times we were unable to resolve metering information due to locking
     pub metering_locked_transaction: Counter,
 
-    // === Resource Metering Observation Metrics ===
-    /// Transactions that would be rejected by time-based resource limits
+    // === DA Size Limit Metrics (always enforced, operator-configured) ===
+    /// Transactions rejected by per-tx DA size limit
+    pub tx_da_size_exceeded_total: Counter,
+    /// Transactions rejected by block DA size limit
+    pub block_da_size_exceeded_total: Counter,
+
+    // === Protocol-Enforced Limit Metrics ===
+    /// Transactions rejected by DA footprint limit (post-Jovian, protocol-enforced)
+    pub da_footprint_exceeded_total: Counter,
+    /// Transactions rejected by gas limit (protocol-enforced)
+    pub gas_limit_exceeded_total: Counter,
+
+    // === Execution Metering Limit Metrics (metering-service-dependent) ===
+    /// Transactions that would be rejected by execution metering limits
     pub resource_limit_would_reject_total: Counter,
     /// Transactions that exceeded per-tx execution time limit
     pub tx_execution_time_exceeded_total: Counter,
@@ -128,7 +140,7 @@ pub struct BuilderMetrics {
     pub block_predicted_state_root_time_us: Histogram,
 
     // === State Root Time / Gas Ratio (Anomaly Detection) ===
-    /// Ratio of state_root_time_us / gas_used for each transaction.
+    /// Ratio of `state_root_time_us` / `gas_used` for each transaction.
     pub state_root_time_per_gas_ratio: Histogram,
 }
 

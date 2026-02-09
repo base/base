@@ -4,7 +4,7 @@ use core::time::Duration;
 
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
-use crate::{FlashblocksConfig, ResourceMeteringMode, TxDataStore};
+use crate::{ExecutionMeteringMode, FlashblocksConfig, TxDataStore};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -45,8 +45,8 @@ pub struct BuilderConfig {
     /// Block-level state root calculation time budget in microseconds.
     pub block_state_root_time_budget_us: Option<u128>,
 
-    /// Resource metering mode: off, dry-run, or enforce.
-    pub resource_metering_mode: ResourceMeteringMode,
+    /// Execution metering mode: off, dry-run, or enforce.
+    pub execution_metering_mode: ExecutionMeteringMode,
 
     /// Transaction data store for resource metering
     pub tx_data_store: TxDataStore,
@@ -66,7 +66,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_state_root_time_per_tx_us", &self.max_state_root_time_per_tx_us)
             .field("flashblock_execution_time_budget_us", &self.flashblock_execution_time_budget_us)
             .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
-            .field("resource_metering_mode", &self.resource_metering_mode)
+            .field("execution_metering_mode", &self.execution_metering_mode)
             .field("tx_data_store", &self.tx_data_store)
             .finish()
     }
@@ -86,7 +86,7 @@ impl Default for BuilderConfig {
             max_state_root_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
             block_state_root_time_budget_us: None,
-            resource_metering_mode: ResourceMeteringMode::Off,
+            execution_metering_mode: ExecutionMeteringMode::Off,
             tx_data_store: TxDataStore::default(),
         }
     }

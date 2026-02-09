@@ -61,10 +61,10 @@ pub struct TxResources {
     pub state_root_time_us: Option<u128>,
 }
 
-/// Resource metering limits that are optionally enforced for performance/business goals.
-/// These are out-of-protocol limits that can operate in dry-run or enforcement mode.
+/// Execution metering limits that depend on metering service predictions.
+/// These can operate in dry-run or enforcement mode via the execution metering mode setting.
 #[derive(Debug, Error, Clone)]
-pub enum ResourceMeteringLimitExceeded {
+pub enum ExecutionMeteringLimitExceeded {
     #[error("transaction execution time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionExecutionTime(u128, u128),
     #[error(
@@ -73,31 +73,43 @@ pub enum ResourceMeteringLimitExceeded {
     FlashblockExecutionTime(u128, u128, u128),
     #[error("transaction state root time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionStateRootTime(u128, u128),
-    #[error(
-        "block state root time exceeded: cumulative_us={0} tx_time_us={1} block_limit_us={2}"
-    )]
+    #[error("block state root time exceeded: cumulative_us={0} tx_time_us={1} block_limit_us={2}")]
     BlockStateRootTime(u128, u128, u128),
 }
 
 /// Error returned when a transaction fails execution or exceeds block limits.
 #[derive(Debug, Error, Clone)]
 pub enum TxnExecutionError {
-    // Protocol-enforced limits (always rejected)
-    /// Transaction data availability size exceeds the per-transaction limit.
-    #[error("transaction DA limit exceeded")]
-    TransactionDALimitExceeded,
+    // DA size limits (always enforced, operator-configured)
+    /// Transaction DA size exceeds the per-transaction limit.
+    #[error("transaction DA size exceeded: tx_da_size={0} limit={1}")]
+    TransactionDASizeExceeded(u64, u64),
 
-    /// Block data availability limit exceeded.
+    /// Block DA size limit exceeded.
     #[error(
-        "block DA limit exceeded: total_da_used={total_da_used} tx_da_size={tx_da_size} block_da_limit={block_da_limit}"
+        "block DA size exceeded: total_da_used={total_da_used} tx_da_size={tx_da_size} block_da_limit={block_da_limit}"
     )]
-    BlockDALimitExceeded {
+    BlockDASizeExceeded {
         /// Total DA bytes used before this transaction.
         total_da_used: u64,
         /// DA size of this transaction.
         tx_da_size: u64,
         /// Block DA limit.
         block_da_limit: u64,
+    },
+
+    // Protocol-enforced limits (always rejected)
+    /// DA footprint limit exceeded (post-Jovian, protocol-enforced).
+    #[error(
+        "DA footprint limit exceeded: total_da_used={total_da_used} tx_da_size={tx_da_size} da_footprint={da_footprint}"
+    )]
+    DAFootprintLimitExceeded {
+        /// Total DA bytes used before this transaction.
+        total_da_used: u64,
+        /// DA size of this transaction.
+        tx_da_size: u64,
+        /// Computed DA footprint that exceeded the limit.
+        da_footprint: u64,
     },
 
     /// Transaction gas limit exceeds remaining block gas.
@@ -113,10 +125,10 @@ pub enum TxnExecutionError {
         block_gas_limit: u64,
     },
 
-    // Resource metering limits (optionally enforced)
-    /// Resource metering limit exceeded (execution time or state root time).
+    // Execution metering limits (optionally enforced, depend on metering service predictions)
+    /// Execution metering limit exceeded (execution time or state root time).
     #[error("{0}")]
-    ResourceMeteringLimitExceeded(ResourceMeteringLimitExceeded),
+    ExecutionMeteringLimitExceeded(ExecutionMeteringLimitExceeded),
 
     // Transaction status
     /// Transaction is a sequencer transaction (skipped).
@@ -144,9 +156,9 @@ pub enum TxnExecutionError {
     MaxGasUsageExceeded,
 }
 
-impl From<ResourceMeteringLimitExceeded> for TxnExecutionError {
-    fn from(err: ResourceMeteringLimitExceeded) -> Self {
-        Self::ResourceMeteringLimitExceeded(err)
+impl From<ExecutionMeteringLimitExceeded> for TxnExecutionError {
+    fn from(err: ExecutionMeteringLimitExceeded) -> Self {
+        Self::ExecutionMeteringLimitExceeded(err)
     }
 }
 
@@ -224,32 +236,36 @@ impl ExecutionInfo {
         tx: &TxResources,
         limits: &ResourceLimits,
     ) -> Result<(), TxnExecutionError> {
-        use ResourceMeteringLimitExceeded::*;
+        use ExecutionMeteringLimitExceeded::*;
 
-        // Check per-transaction DA limit
-        if limits.tx_data_limit.is_some_and(|da_limit| tx.da_size > da_limit) {
-            return Err(TxnExecutionError::TransactionDALimitExceeded);
+        // Check per-transaction DA size limit (always enforced, operator-configured)
+        if let Some(da_limit) = limits.tx_data_limit
+            && tx.da_size > da_limit
+        {
+            return Err(TxnExecutionError::TransactionDASizeExceeded(tx.da_size, da_limit));
         }
 
-        // Check block DA limit
+        // Check block DA size limit (always enforced, operator-configured)
         let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx.da_size);
-        if limits.block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
-            return Err(TxnExecutionError::BlockDALimitExceeded {
+        if let Some(da_limit) = limits.block_data_limit
+            && total_da_bytes_used > da_limit
+        {
+            return Err(TxnExecutionError::BlockDASizeExceeded {
                 total_da_used: self.cumulative_da_bytes_used,
                 tx_da_size: tx.da_size,
-                block_da_limit: limits.block_data_limit.unwrap_or_default(),
+                block_da_limit: da_limit,
             });
         }
 
-        // Post Jovian: the tx DA footprint must be less than the block gas limit
+        // Post Jovian: the tx DA footprint must be less than the block gas limit (protocol-enforced)
         if let Some(da_footprint_gas_scalar) = limits.da_footprint_gas_scalar {
             let tx_da_footprint =
                 total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
             if tx_da_footprint > limits.block_da_footprint_limit.unwrap_or(limits.block_gas_limit) {
-                return Err(TxnExecutionError::BlockDALimitExceeded {
+                return Err(TxnExecutionError::DAFootprintLimitExceeded {
                     total_da_used: total_da_bytes_used,
                     tx_da_size: tx.da_size,
-                    block_da_limit: tx_da_footprint,
+                    da_footprint: tx_da_footprint,
                 });
             }
         }
@@ -366,7 +382,7 @@ mod tests {
         let tx = TxResources { da_size: 1001, gas_limit: 21_000, ..Default::default() };
 
         let result = info.is_tx_over_limits(&tx, &limits);
-        assert!(matches!(result, Err(TxnExecutionError::TransactionDALimitExceeded)));
+        assert!(matches!(result, Err(TxnExecutionError::TransactionDASizeExceeded(1001, 1000))));
     }
 
     #[test]
@@ -378,7 +394,7 @@ mod tests {
         let tx = TxResources { da_size: 600, gas_limit: 21_000, ..Default::default() };
 
         let result = info.is_tx_over_limits(&tx, &limits);
-        assert!(matches!(result, Err(TxnExecutionError::BlockDALimitExceeded { .. })));
+        assert!(matches!(result, Err(TxnExecutionError::BlockDASizeExceeded { .. })));
     }
 
     #[test]
@@ -395,7 +411,7 @@ mod tests {
         let tx = TxResources { da_size: 500_000, gas_limit: 21_000, ..Default::default() };
 
         let result = info.is_tx_over_limits(&tx, &limits);
-        assert!(matches!(result, Err(TxnExecutionError::BlockDALimitExceeded { .. })));
+        assert!(matches!(result, Err(TxnExecutionError::DAFootprintLimitExceeded { .. })));
     }
 
     // ==================== Execution Time Tests ====================
@@ -414,8 +430,8 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
-                ResourceMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000)
+            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000)
             ))
         ));
     }
@@ -438,8 +454,8 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
-                ResourceMeteringLimitExceeded::FlashblockExecutionTime(
+            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::FlashblockExecutionTime(
                     4_000_000, 2_000_000, 5_000_000
                 )
             ))
@@ -495,8 +511,8 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
-                ResourceMeteringLimitExceeded::TransactionStateRootTime(600_000, 500_000)
+            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::TransactionStateRootTime(600_000, 500_000)
             ))
         ));
     }
@@ -519,8 +535,10 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
-                ResourceMeteringLimitExceeded::BlockStateRootTime(8_000_000, 3_000_000, 10_000_000)
+            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::BlockStateRootTime(
+                    8_000_000, 3_000_000, 10_000_000
+                )
             ))
         ));
     }
@@ -626,8 +644,8 @@ mod tests {
         let result = info.is_tx_over_limits(&tx, &limits);
         assert!(matches!(
             result,
-            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
-                ResourceMeteringLimitExceeded::BlockStateRootTime(_, _, _)
+            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _)
             ))
         ));
     }
@@ -653,8 +671,8 @@ mod tests {
         };
 
         let result = info.is_tx_over_limits(&tx, &limits);
-        // DA limit is checked first
-        assert!(matches!(result, Err(TxnExecutionError::TransactionDALimitExceeded)));
+        // DA size limit is checked first
+        assert!(matches!(result, Err(TxnExecutionError::TransactionDASizeExceeded(200, 100))));
     }
 
     #[test]
