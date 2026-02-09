@@ -12,9 +12,77 @@ use thiserror::Error;
 
 use crate::flashblocks::FlashblocksExecutionInfo;
 
+/// Resource limits configuration for transaction and block constraints.
+///
+/// This struct encapsulates all the resource limit parameters used to determine
+/// whether a transaction can be included in a block without exceeding various
+/// resource budgets (gas, DA, execution time).
+#[derive(Debug, Clone, Default)]
+pub struct ResourceLimits {
+    /// The block gas limit.
+    pub block_gas_limit: u64,
+    /// Maximum DA bytes per transaction (optional).
+    pub tx_data_limit: Option<u64>,
+    /// Maximum DA bytes per block (optional).
+    pub block_data_limit: Option<u64>,
+    /// DA footprint scalar for Jovian (optional).
+    pub da_footprint_gas_scalar: Option<u16>,
+    /// Maximum DA footprint for the block (optional).
+    pub block_da_footprint_limit: Option<u64>,
+    /// Maximum execution time per transaction in microseconds (optional).
+    pub tx_execution_time_limit_us: Option<u128>,
+    /// Maximum execution time budget for the current flashblock in microseconds (optional).
+    ///
+    /// This is a "use it or lose it" budget - unused time does not carry over between
+    /// flashblocks. The budget resets at the start of each flashblock.
+    pub flashblock_execution_time_limit_us: Option<u128>,
+    /// Maximum state root calculation time per transaction in microseconds (optional).
+    pub tx_state_root_time_limit_us: Option<u128>,
+    /// Maximum cumulative state root calculation time for the block in microseconds (optional).
+    ///
+    /// Unlike execution time, state root time is cumulative across the entire block because
+    /// state root is calculated once at the end of the block, not per-flashblock.
+    pub block_state_root_time_limit_us: Option<u128>,
+}
+
+/// Resource usage for a single transaction.
+///
+/// This struct contains the resource consumption values for a transaction,
+/// both predicted (from metering data) and declared (from tx fields).
+#[derive(Debug, Clone, Default)]
+pub struct TxResources {
+    /// Estimated DA size for the transaction.
+    pub da_size: u64,
+    /// Declared gas limit from the transaction.
+    pub gas_limit: u64,
+    /// Predicted execution time in microseconds (from metering data, if available).
+    pub execution_time_us: Option<u128>,
+    /// Predicted state root calculation time in microseconds (from metering data, if available).
+    pub state_root_time_us: Option<u128>,
+}
+
+/// Resource metering limits that are optionally enforced for performance/business goals.
+/// These are out-of-protocol limits that can operate in dry-run or enforcement mode.
+#[derive(Debug, Error, Clone)]
+pub enum ResourceMeteringLimitExceeded {
+    #[error("transaction execution time exceeded: tx_time_us={0} limit_us={1}")]
+    TransactionExecutionTime(u128, u128),
+    #[error(
+        "flashblock execution time exceeded: flashblock_used_us={0} tx_time_us={1} limit_us={2}"
+    )]
+    FlashblockExecutionTime(u128, u128, u128),
+    #[error("transaction state root time exceeded: tx_time_us={0} limit_us={1}")]
+    TransactionStateRootTime(u128, u128),
+    #[error(
+        "block state root time exceeded: cumulative_us={0} tx_time_us={1} block_limit_us={2}"
+    )]
+    BlockStateRootTime(u128, u128, u128),
+}
+
 /// Error returned when a transaction fails execution or exceeds block limits.
 #[derive(Debug, Error, Clone)]
 pub enum TxnExecutionError {
+    // Protocol-enforced limits (always rejected)
     /// Transaction data availability size exceeds the per-transaction limit.
     #[error("transaction DA limit exceeded")]
     TransactionDALimitExceeded,
@@ -45,6 +113,12 @@ pub enum TxnExecutionError {
         block_gas_limit: u64,
     },
 
+    // Resource metering limits (optionally enforced)
+    /// Resource metering limit exceeded (execution time or state root time).
+    #[error("{0}")]
+    ResourceMeteringLimitExceeded(ResourceMeteringLimitExceeded),
+
+    // Transaction status
     /// Transaction is a sequencer transaction (skipped).
     #[error("sequencer transaction")]
     SequencerTransaction,
@@ -70,6 +144,12 @@ pub enum TxnExecutionError {
     MaxGasUsageExceeded,
 }
 
+impl From<ResourceMeteringLimitExceeded> for TxnExecutionError {
+    fn from(err: ResourceMeteringLimitExceeded) -> Self {
+        Self::ResourceMeteringLimitExceeded(err)
+    }
+}
+
 /// Outcome of transaction execution for logging purposes.
 #[derive(Debug, Display, Clone, Copy)]
 pub enum TxnOutcome {
@@ -93,6 +173,12 @@ pub struct ExecutionInfo {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Execution time used in the current flashblock in microseconds.
+    /// Reset at the start of each flashblock (see [`ResourceLimits::flashblock_execution_time_limit_us`]).
+    pub flashblock_execution_time_us: u128,
+    /// Cumulative state root calculation time in microseconds across the block
+    /// (see [`ResourceLimits::block_state_root_time_limit_us`]).
+    pub cumulative_state_root_time_us: u128,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Extra execution information for the Flashblocks builder
@@ -110,10 +196,17 @@ impl ExecutionInfo {
             receipts: Vec::with_capacity(capacity),
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            flashblock_execution_time_us: 0,
+            cumulative_state_root_time_us: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
         }
+    }
+
+    /// Reset the flashblock-scoped execution time budget for a new flashblock.
+    pub const fn reset_flashblock_execution_time(&mut self) {
+        self.flashblock_execution_time_us = 0;
     }
 
     /// Returns true if the transaction would exceed the block limits:
@@ -122,49 +215,521 @@ impl ExecutionInfo {
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
-    #[allow(clippy::too_many_arguments)]
+    /// - execution time limits: if configured with metering data, ensures the transaction's
+    ///   predicted execution time does not exceed per-tx or per-flashblock limits.
+    /// - state root time limits: if configured with metering data, ensures the transaction's
+    ///   predicted state root time does not exceed per-tx or per-block limits.
     pub fn is_tx_over_limits(
         &self,
-        tx_da_size: u64,
-        block_gas_limit: u64,
-        tx_data_limit: Option<u64>,
-        block_data_limit: Option<u64>,
-        tx_gas_limit: u64,
-        da_footprint_gas_scalar: Option<u16>,
-        block_da_footprint_limit: Option<u64>,
+        tx: &TxResources,
+        limits: &ResourceLimits,
     ) -> Result<(), TxnExecutionError> {
-        if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
+        use ResourceMeteringLimitExceeded::*;
+
+        // Check per-transaction DA limit
+        if limits.tx_data_limit.is_some_and(|da_limit| tx.da_size > da_limit) {
             return Err(TxnExecutionError::TransactionDALimitExceeded);
         }
-        let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
-        if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
+
+        // Check block DA limit
+        let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx.da_size);
+        if limits.block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
             return Err(TxnExecutionError::BlockDALimitExceeded {
                 total_da_used: self.cumulative_da_bytes_used,
-                tx_da_size,
-                block_da_limit: block_data_limit.unwrap_or_default(),
+                tx_da_size: tx.da_size,
+                block_da_limit: limits.block_data_limit.unwrap_or_default(),
             });
         }
 
         // Post Jovian: the tx DA footprint must be less than the block gas limit
-        if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
+        if let Some(da_footprint_gas_scalar) = limits.da_footprint_gas_scalar {
             let tx_da_footprint =
                 total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
-            if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
+            if tx_da_footprint > limits.block_da_footprint_limit.unwrap_or(limits.block_gas_limit) {
                 return Err(TxnExecutionError::BlockDALimitExceeded {
                     total_da_used: total_da_bytes_used,
-                    tx_da_size,
+                    tx_da_size: tx.da_size,
                     block_da_limit: tx_da_footprint,
                 });
             }
         }
 
-        if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
+        // Check gas limit
+        if self.cumulative_gas_used + tx.gas_limit > limits.block_gas_limit {
             return Err(TxnExecutionError::TransactionGasLimitExceeded {
                 cumulative_gas_used: self.cumulative_gas_used,
-                tx_gas_limit,
-                block_gas_limit,
+                tx_gas_limit: tx.gas_limit,
+                block_gas_limit: limits.block_gas_limit,
             });
         }
+
+        // Check execution time limits (if metering data is available)
+        if let Some(tx_time) = tx.execution_time_us {
+            // Check per-transaction execution time limit
+            if let Some(tx_limit) = limits.tx_execution_time_limit_us
+                && tx_time > tx_limit
+            {
+                return Err(TransactionExecutionTime(tx_time, tx_limit).into());
+            }
+
+            // Check flashblock execution time limit
+            if let Some(flashblock_limit) = limits.flashblock_execution_time_limit_us {
+                let total_time = self.flashblock_execution_time_us.saturating_add(tx_time);
+                if total_time > flashblock_limit {
+                    return Err(FlashblockExecutionTime(
+                        self.flashblock_execution_time_us,
+                        tx_time,
+                        flashblock_limit,
+                    )
+                    .into());
+                }
+            }
+        }
+
+        // Check state root time limits (if metering data is available)
+        if let Some(tx_time) = tx.state_root_time_us {
+            // Check per-transaction state root time limit
+            if let Some(tx_limit) = limits.tx_state_root_time_limit_us
+                && tx_time > tx_limit
+            {
+                return Err(TransactionStateRootTime(tx_time, tx_limit).into());
+            }
+
+            // Check block state root time limit (cumulative across the block)
+            if let Some(block_limit) = limits.block_state_root_time_limit_us {
+                let total_time = self.cumulative_state_root_time_us.saturating_add(tx_time);
+                if total_time > block_limit {
+                    return Err(BlockStateRootTime(
+                        self.cumulative_state_root_time_us,
+                        tx_time,
+                        block_limit,
+                    )
+                    .into());
+                }
+            }
+        }
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create default limits with block gas limit set
+    fn default_limits() -> ResourceLimits {
+        ResourceLimits { block_gas_limit: 30_000_000, ..Default::default() }
+    }
+
+    // ==================== Basic Limit Tests ====================
+
+    #[test]
+    fn test_tx_within_all_limits() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = default_limits();
+        let tx = TxResources { da_size: 100, gas_limit: 21_000, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_gas_limit_exceeded() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_gas_used = 29_990_000;
+
+        let limits = default_limits();
+        let tx = TxResources { gas_limit: 21_000, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(result, Err(TxnExecutionError::TransactionGasLimitExceeded { .. })));
+    }
+
+    #[test]
+    fn test_gas_limit_exactly_at_limit() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_gas_used = 29_979_000;
+
+        let limits = default_limits();
+        let tx = TxResources { gas_limit: 21_000, ..Default::default() };
+
+        // 29_979_000 + 21_000 = 30_000_000, exactly at limit
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== DA Limit Tests ====================
+
+    #[test]
+    fn test_tx_da_limit_exceeded() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits { tx_data_limit: Some(1000), ..default_limits() };
+        let tx = TxResources { da_size: 1001, gas_limit: 21_000, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(result, Err(TxnExecutionError::TransactionDALimitExceeded)));
+    }
+
+    #[test]
+    fn test_block_da_limit_exceeded() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_da_bytes_used = 9500;
+
+        let limits = ResourceLimits { block_data_limit: Some(10_000), ..default_limits() };
+        let tx = TxResources { da_size: 600, gas_limit: 21_000, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(result, Err(TxnExecutionError::BlockDALimitExceeded { .. })));
+    }
+
+    #[test]
+    fn test_da_footprint_limit_exceeded() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_da_bytes_used = 1_000_000;
+
+        let limits = ResourceLimits {
+            da_footprint_gas_scalar: Some(16),
+            block_da_footprint_limit: Some(20_000_000),
+            ..default_limits()
+        };
+        // 1_000_000 + 500_000 = 1_500_000, * 16 = 24_000_000 > 20_000_000
+        let tx = TxResources { da_size: 500_000, gas_limit: 21_000, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(result, Err(TxnExecutionError::BlockDALimitExceeded { .. })));
+    }
+
+    // ==================== Execution Time Tests ====================
+
+    #[test]
+    fn test_tx_execution_time_exceeded() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits =
+            ResourceLimits { tx_execution_time_limit_us: Some(1_000_000), ..default_limits() };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(1_500_000), // 1.5s > 1s limit
+            ..Default::default()
+        };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(
+            result,
+            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000)
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_flashblock_execution_time_exceeded() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.flashblock_execution_time_us = 4_000_000; // 4s already used
+
+        let limits = ResourceLimits {
+            flashblock_execution_time_limit_us: Some(5_000_000), // 5s limit
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(2_000_000), // 2s would exceed
+            ..Default::default()
+        };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(
+            result,
+            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::FlashblockExecutionTime(
+                    4_000_000, 2_000_000, 5_000_000
+                )
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_execution_time_within_limits() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.flashblock_execution_time_us = 2_000_000;
+
+        let limits = ResourceLimits {
+            tx_execution_time_limit_us: Some(1_000_000),
+            flashblock_execution_time_limit_us: Some(5_000_000),
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(500_000), // 0.5s within both limits
+            ..Default::default()
+        };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_execution_time_no_metering_data_skips_check() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits {
+            tx_execution_time_limit_us: Some(1_000),
+            flashblock_execution_time_limit_us: Some(1_000),
+            ..default_limits()
+        };
+        // No execution_time_us set - should skip the check
+        let tx = TxResources { gas_limit: 21_000, execution_time_us: None, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== State Root Time Tests ====================
+
+    #[test]
+    fn test_tx_state_root_time_exceeded() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits =
+            ResourceLimits { tx_state_root_time_limit_us: Some(500_000), ..default_limits() };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            state_root_time_us: Some(600_000), // 0.6s > 0.5s limit
+            ..Default::default()
+        };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(
+            result,
+            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::TransactionStateRootTime(600_000, 500_000)
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_block_state_root_time_exceeded() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_state_root_time_us = 8_000_000; // 8s already used
+
+        let limits = ResourceLimits {
+            block_state_root_time_limit_us: Some(10_000_000), // 10s block limit
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            state_root_time_us: Some(3_000_000), // 3s would exceed (8 + 3 > 10)
+            ..Default::default()
+        };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(
+            result,
+            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::BlockStateRootTime(8_000_000, 3_000_000, 10_000_000)
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_state_root_time_within_limits() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_state_root_time_us = 5_000_000;
+
+        let limits = ResourceLimits {
+            tx_state_root_time_limit_us: Some(1_000_000),
+            block_state_root_time_limit_us: Some(10_000_000),
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            state_root_time_us: Some(500_000),
+            ..Default::default()
+        };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_state_root_time_no_metering_data_skips_check() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits {
+            tx_state_root_time_limit_us: Some(1),
+            block_state_root_time_limit_us: Some(1),
+            ..default_limits()
+        };
+        let tx = TxResources { gas_limit: 21_000, state_root_time_us: None, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== Reset Behavior Tests ====================
+
+    #[test]
+    fn test_reset_flashblock_execution_time() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.flashblock_execution_time_us = 5_000_000;
+        info.cumulative_state_root_time_us = 3_000_000;
+        info.cumulative_gas_used = 1_000_000;
+        info.cumulative_da_bytes_used = 50_000;
+
+        info.reset_flashblock_execution_time();
+
+        // Only execution time should be reset
+        assert_eq!(info.flashblock_execution_time_us, 0);
+        // Other cumulative values should remain
+        assert_eq!(info.cumulative_state_root_time_us, 3_000_000);
+        assert_eq!(info.cumulative_gas_used, 1_000_000);
+        assert_eq!(info.cumulative_da_bytes_used, 50_000);
+    }
+
+    #[test]
+    fn test_execution_time_resets_between_flashblocks() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits {
+            flashblock_execution_time_limit_us: Some(5_000_000),
+            ..default_limits()
+        };
+
+        // First flashblock: use 4s
+        info.flashblock_execution_time_us = 4_000_000;
+
+        // This tx (2s) would exceed in current flashblock
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(2_000_000),
+            ..Default::default()
+        };
+        assert!(info.is_tx_over_limits(&tx, &limits).is_err());
+
+        // Reset for new flashblock
+        info.reset_flashblock_execution_time();
+
+        // Same tx now fits
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_state_root_time_cumulative_across_flashblocks() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        let limits =
+            ResourceLimits { block_state_root_time_limit_us: Some(10_000_000), ..default_limits() };
+
+        // Simulate multiple flashblocks accumulating state root time
+        info.cumulative_state_root_time_us = 3_000_000;
+        info.reset_flashblock_execution_time();
+
+        info.cumulative_state_root_time_us = 6_000_000;
+        info.reset_flashblock_execution_time();
+
+        // Flashblock 3: try to add 5s (would be 11s > 10s limit)
+        let tx = TxResources {
+            gas_limit: 21_000,
+            state_root_time_us: Some(5_000_000),
+            ..Default::default()
+        };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(
+            result,
+            Err(TxnExecutionError::ResourceMeteringLimitExceeded(
+                ResourceMeteringLimitExceeded::BlockStateRootTime(_, _, _)
+            ))
+        ));
+    }
+
+    // ==================== Combined Resource Tests ====================
+
+    #[test]
+    fn test_multiple_limits_first_exceeded_wins() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits {
+            tx_data_limit: Some(100),
+            tx_execution_time_limit_us: Some(1_000_000),
+            tx_state_root_time_limit_us: Some(500_000),
+            ..default_limits()
+        };
+
+        // DA limit exceeded first (checked before execution time)
+        let tx = TxResources {
+            da_size: 200,
+            gas_limit: 21_000,
+            execution_time_us: Some(2_000_000),
+            state_root_time_us: Some(1_000_000),
+        };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        // DA limit is checked first
+        assert!(matches!(result, Err(TxnExecutionError::TransactionDALimitExceeded)));
+    }
+
+    #[test]
+    fn test_all_limits_configured_tx_passes() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits {
+            block_gas_limit: 30_000_000,
+            tx_data_limit: Some(10_000),
+            block_data_limit: Some(1_000_000),
+            tx_execution_time_limit_us: Some(1_000_000),
+            flashblock_execution_time_limit_us: Some(10_000_000),
+            tx_state_root_time_limit_us: Some(500_000),
+            block_state_root_time_limit_us: Some(5_000_000),
+            ..Default::default()
+        };
+
+        let tx = TxResources {
+            da_size: 500,
+            gas_limit: 100_000,
+            execution_time_us: Some(100_000),
+            state_root_time_us: Some(50_000),
+        };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== Edge Cases ====================
+
+    #[test]
+    fn test_zero_limits() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits = ResourceLimits {
+            block_gas_limit: 0,
+            tx_execution_time_limit_us: Some(0),
+            ..Default::default()
+        };
+        let tx = TxResources { gas_limit: 1, execution_time_us: Some(1), ..Default::default() };
+
+        // Should fail on gas limit
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(result, Err(TxnExecutionError::TransactionGasLimitExceeded { .. })));
+    }
+
+    #[test]
+    fn test_saturating_add_prevents_overflow() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.flashblock_execution_time_us = u128::MAX - 100;
+
+        let limits = ResourceLimits {
+            flashblock_execution_time_limit_us: Some(u128::MAX),
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(200), // Would overflow without saturating_add
+            ..Default::default()
+        };
+
+        // Should not panic, saturating add caps at u128::MAX
+        let result = info.is_tx_over_limits(&tx, &limits);
+        // u128::MAX - 100 + 200 saturates to u128::MAX, which equals the limit
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_with_capacity_initializes_correctly() {
+        let info = ExecutionInfo::with_capacity(100);
+
+        assert_eq!(info.cumulative_gas_used, 0);
+        assert_eq!(info.cumulative_da_bytes_used, 0);
+        assert_eq!(info.flashblock_execution_time_us, 0);
+        assert_eq!(info.cumulative_state_root_time_us, 0);
+        assert_eq!(info.total_fees, U256::ZERO);
+        assert!(info.executed_transactions.is_empty());
+        assert!(info.executed_senders.is_empty());
+        assert!(info.receipts.is_empty());
     }
 }
