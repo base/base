@@ -1,32 +1,68 @@
 //! Enclave RPC client.
 
-use alloy_consensus::{Header, ReceiptEnvelope};
+use std::sync::Arc;
+
 use alloy_primitives::{B256, Bytes};
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use serde::{Deserialize, Serialize};
 
-use op_enclave_core::Proposal;
-use op_enclave_core::executor::ExecutionWitness;
-use op_enclave_core::types::account::AccountResult;
-use op_enclave_core::types::config::PerChainConfig;
+use op_enclave_core::{ExecuteStatelessRequest, Proposal};
 
 use crate::client_error::ClientError;
 
-/// Request for the `executeStateless` RPC method.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExecuteStatelessRequest {
-    config: PerChainConfig,
-    l1_origin: Header,
-    l1_receipts: Vec<ReceiptEnvelope>,
-    previous_block_txs: Vec<Bytes>,
-    block_header: Header,
-    sequenced_txs: Vec<Bytes>,
-    witness: ExecutionWitness,
-    message_account: AccountResult,
-    prev_message_account_hash: B256,
+/// Module for insecure TLS configuration that skips certificate verification.
+mod danger {
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use rustls::{DigitallySignedStruct, Error, SignatureScheme};
+
+    #[derive(Debug)]
+    pub(super) struct NoCertificateVerification;
+
+    impl ServerCertVerifier for NoCertificateVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, Error> {
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            vec![
+                SignatureScheme::RSA_PKCS1_SHA256,
+                SignatureScheme::RSA_PKCS1_SHA384,
+                SignatureScheme::RSA_PKCS1_SHA512,
+                SignatureScheme::ECDSA_NISTP256_SHA256,
+                SignatureScheme::ECDSA_NISTP384_SHA384,
+                SignatureScheme::ECDSA_NISTP521_SHA512,
+                SignatureScheme::ED25519,
+            ]
+        }
+    }
 }
 
 /// Request for the `aggregate` RPC method.
@@ -77,6 +113,49 @@ impl EnclaveClient {
             .max_request_size(max_request_size)
             .build(url)
             .map_err(|e| ClientError::ClientCreation(e.to_string()))?;
+
+        Ok(Self { inner })
+    }
+
+    /// Create a new enclave client with TLS verification optionally disabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL of the enclave RPC server
+    /// * `max_request_size` - Maximum request body size in bytes
+    /// * `skip_tls_verify` - Whether to skip TLS certificate verification
+    ///
+    /// # Warning
+    ///
+    /// Setting `skip_tls_verify` to `true` disables TLS certificate verification,
+    /// making the connection vulnerable to man-in-the-middle attacks.
+    /// This should ONLY be used in development/testing environments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created.
+    pub fn with_tls_config(
+        url: &str,
+        max_request_size: u32,
+        skip_tls_verify: bool,
+    ) -> Result<Self, ClientError> {
+        let builder = HttpClientBuilder::default().max_request_size(max_request_size);
+
+        let inner = if skip_tls_verify {
+            let tls_config = rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(danger::NoCertificateVerification))
+                .with_no_client_auth();
+
+            builder
+                .with_custom_cert_store(tls_config)
+                .build(url)
+                .map_err(|e| ClientError::ClientCreation(e.to_string()))?
+        } else {
+            builder
+                .build(url)
+                .map_err(|e| ClientError::ClientCreation(e.to_string()))?
+        };
 
         Ok(Self { inner })
     }
@@ -166,33 +245,12 @@ impl EnclaveClient {
     /// # Errors
     ///
     /// Returns an error if the RPC call fails or block validation fails.
-    #[allow(clippy::too_many_arguments)]
     pub async fn execute_stateless(
         &self,
-        config: PerChainConfig,
-        l1_origin: Header,
-        l1_receipts: Vec<ReceiptEnvelope>,
-        previous_block_txs: Vec<Bytes>,
-        block_header: Header,
-        sequenced_txs: Vec<Bytes>,
-        witness: ExecutionWitness,
-        message_account: AccountResult,
-        prev_message_account_hash: B256,
+        req: ExecuteStatelessRequest,
     ) -> Result<Proposal, ClientError> {
-        let request = ExecuteStatelessRequest {
-            config,
-            l1_origin,
-            l1_receipts,
-            previous_block_txs,
-            block_header,
-            sequenced_txs,
-            witness,
-            message_account,
-            prev_message_account_hash,
-        };
-
         self.inner
-            .request("enclave_executeStateless", rpc_params![request])
+            .request("enclave_executeStateless", rpc_params![req])
             .await
             .map_err(Into::into)
     }

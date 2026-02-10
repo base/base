@@ -3555,6 +3555,8 @@ dependencies = [
  "async-trait",
  "jsonrpsee",
  "op-enclave-core",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
