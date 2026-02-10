@@ -21,6 +21,7 @@ pub mod driver;
 pub mod enclave;
 pub mod error;
 pub mod metrics;
+pub mod prover;
 pub mod rpc;
 
 pub use cli::Cli;

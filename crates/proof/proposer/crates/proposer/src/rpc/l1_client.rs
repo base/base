@@ -34,6 +34,8 @@ pub struct L1ClientConfig {
     pub cache_size: usize,
     /// Retry configuration.
     pub retry_config: RetryConfig,
+    /// Skip TLS certificate verification.
+    pub skip_tls_verify: bool,
 }
 
 impl L1ClientConfig {
@@ -44,6 +46,7 @@ impl L1ClientConfig {
             timeout: Duration::from_secs(30),
             cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
+            skip_tls_verify: false,
         }
     }
 
@@ -62,6 +65,12 @@ impl L1ClientConfig {
     /// Sets the retry configuration.
     pub const fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
+        self
+    }
+
+    /// Sets whether to skip TLS certificate verification.
+    pub const fn with_skip_tls_verify(mut self, skip: bool) -> Self {
+        self.skip_tls_verify = skip;
         self
     }
 }
@@ -91,8 +100,14 @@ impl L1ClientImpl {
     /// Creates a new L1 client from the given configuration.
     pub fn new(config: L1ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
-        let client = Client::builder()
-            .timeout(config.timeout)
+        let mut builder = Client::builder().timeout(config.timeout);
+
+        if config.skip_tls_verify {
+            tracing::warn!("TLS certificate verification is disabled for L1 RPC connection");
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        let client = builder
             .build()
             .map_err(|e| RpcError::Connection(format!("Failed to build HTTP client: {e}")))?;
 

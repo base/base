@@ -60,8 +60,8 @@ pub struct ProposerConfig {
     pub poll_interval: Duration,
     /// RPC request timeout.
     pub rpc_timeout: Duration,
-    /// URL of the rollup RPC endpoint (optional).
-    pub rollup_rpc: Option<Url>,
+    /// URL of the rollup RPC endpoint.
+    pub rollup_rpc: Url,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
     /// Wait for node sync before starting.
@@ -84,9 +84,7 @@ impl ProposerConfig {
         validate_url(&cli.proposer.l1_eth_rpc, "l1-eth-rpc")?;
         validate_url(&cli.proposer.l2_eth_rpc, "l2-eth-rpc")?;
 
-        if let Some(ref rollup_rpc) = cli.proposer.rollup_rpc {
-            validate_url(rollup_rpc, "rollup-rpc")?;
-        }
+        validate_url(&cli.proposer.rollup_rpc, "rollup-rpc")?;
 
         // Validate poll_interval > 0
         if cli.proposer.poll_interval.is_zero() {
@@ -312,7 +310,7 @@ mod tests {
                     .unwrap(),
                 poll_interval: Duration::from_secs(12),
                 rpc_timeout: Duration::from_secs(30),
-                rollup_rpc: None,
+                rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
                 skip_tls_verify: false,
                 wait_node_sync: false,
                 rpc_max_retries: 5,
@@ -392,14 +390,6 @@ mod tests {
         // Should be fine since metrics are disabled
         let result = ProposerConfig::from_cli(cli);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_optional_rollup_rpc() {
-        let mut cli = minimal_cli();
-        cli.proposer.rollup_rpc = Some(Url::parse("http://localhost:7545").unwrap());
-        let config = ProposerConfig::from_cli(cli).unwrap();
-        assert!(config.rollup_rpc.is_some());
     }
 
     #[test]

@@ -108,13 +108,13 @@ pub struct ProposerArgs {
     )]
     pub rpc_timeout: Duration,
 
-    /// URL of the rollup RPC endpoint (optional).
+    /// URL of the rollup RPC endpoint.
     #[arg(
         long = "rollup-rpc",
         env = "BASE_PROPOSER_ROLLUP_RPC",
         value_parser = parse_url
     )]
-    pub rollup_rpc: Option<Url>,
+    pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
     #[arg(
@@ -318,6 +318,8 @@ mod tests {
             "http://localhost:9545",
             "--onchain-verifier-addr",
             "0x1234567890123456789012345678901234567890",
+            "--rollup-rpc",
+            "http://localhost:7545",
         ];
         let cli = Cli::try_parse_from(args).unwrap();
 
@@ -327,7 +329,7 @@ mod tests {
         assert_eq!(cli.proposer.min_proposal_interval, 512);
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
-        assert!(cli.proposer.rollup_rpc.is_none());
+        assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
         assert!(!cli.proposer.skip_tls_verify);
         assert!(!cli.proposer.wait_node_sync);
 
@@ -360,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_with_optional_rollup_rpc() {
+    fn test_cli_missing_rollup_rpc() {
         let args = vec![
             "proposer",
             "--enclave-rpc",
@@ -371,14 +373,7 @@ mod tests {
             "http://localhost:9545",
             "--onchain-verifier-addr",
             "0x1234567890123456789012345678901234567890",
-            "--rollup-rpc",
-            "http://localhost:7545",
         ];
-        let cli = Cli::try_parse_from(args).unwrap();
-        assert!(cli.proposer.rollup_rpc.is_some());
-        assert_eq!(
-            cli.proposer.rollup_rpc.unwrap().as_str(),
-            "http://localhost:7545/"
-        );
+        assert!(Cli::try_parse_from(args).is_err());
     }
 }

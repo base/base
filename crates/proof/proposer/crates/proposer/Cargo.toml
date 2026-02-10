@@ -18,10 +18,13 @@ alloy-transport-http.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-network.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
 
 # OP Alloy
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
+op-alloy-consensus.workspace = true
 
 # Async runtime
 tokio.workspace = true

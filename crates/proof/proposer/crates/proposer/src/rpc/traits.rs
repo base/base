@@ -1,13 +1,14 @@
 //! Async trait definitions for RPC clients.
 
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_rpc_types_eth::{Block, Header, TransactionReceipt};
+use alloy_rpc_types_eth::{Header, TransactionReceipt};
 use async_trait::async_trait;
+use op_enclave_core::types::config::RollupConfig;
 use op_enclave_core::{AccountResult, executor::ExecutionWitness};
 
 use super::{
     error::RpcResult,
-    types::{RollupConfig, SyncStatus},
+    types::{OpBlock, SyncStatus},
 };
 
 /// L1 RPC client trait for interacting with Ethereum.
@@ -55,13 +56,16 @@ pub trait L2Client: Send + Sync {
 
     /// Gets a block by number with full transactions.
     /// If `number` is `None`, returns the latest block.
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<Block>;
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock>;
 
     /// Gets a block by hash with full transactions.
-    async fn block_by_hash(&self, hash: B256) -> RpcResult<Block>;
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock>;
 
     /// Gets the execution witness for a block via `debug_executionWitness`.
     async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness>;
+
+    /// Gets a raw DB value by key via `debug_dbGet`.
+    async fn db_get(&self, key: B256) -> RpcResult<Bytes>;
 }
 
 /// Rollup RPC client trait for interacting with OP Stack rollup nodes.
@@ -72,4 +76,36 @@ pub trait RollupClient: Send + Sync {
 
     /// Gets the sync status via `optimism_syncStatus`.
     async fn sync_status(&self) -> RpcResult<SyncStatus>;
+}
+
+// Blanket implementation for Box<dyn L2Client> to support dynamic dispatch.
+#[async_trait]
+impl L2Client for Box<dyn L2Client> {
+    async fn chain_config(&self) -> RpcResult<serde_json::Value> {
+        (**self).chain_config().await
+    }
+
+    async fn get_proof(&self, address: Address, block_hash: B256) -> RpcResult<AccountResult> {
+        (**self).get_proof(address, block_hash).await
+    }
+
+    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
+        (**self).header_by_number(number).await
+    }
+
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
+        (**self).block_by_number(number).await
+    }
+
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
+        (**self).block_by_hash(hash).await
+    }
+
+    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
+        (**self).execution_witness(block_number).await
+    }
+
+    async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
+        (**self).db_get(key).await
+    }
 }
