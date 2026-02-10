@@ -86,7 +86,7 @@ impl BlockAssembler {
         // OpExecutionPayloadV4 sets withdrawals_root directly instead of computing from list.
         let execution_payload = OpExecutionPayloadV4 {
             payload_inner: ExecutionPayloadV3 {
-                blob_gas_used: 0,
+                blob_gas_used: latest_flashblock.diff.blob_gas_used.unwrap_or_default(),
                 excess_blob_gas: 0,
                 payload_inner: ExecutionPayloadV2 {
                     withdrawals,
@@ -199,6 +199,18 @@ mod tests {
 
         let assembled = result.unwrap();
         assert_eq!(assembled.flashblocks.len(), 3);
+    }
+
+    #[test]
+    fn test_assemble_propagates_blob_gas_used_from_latest_flashblock() {
+        let mut fb0 = create_test_flashblock(0, true);
+        fb0.diff.blob_gas_used = Some(10);
+
+        let mut fb1 = create_test_flashblock(1, false);
+        fb1.diff.blob_gas_used = Some(42_000);
+
+        let assembled = BlockAssembler::assemble(&[fb0, fb1]).unwrap();
+        assert_eq!(assembled.block.header.blob_gas_used, Some(42_000));
     }
 
     #[test]
