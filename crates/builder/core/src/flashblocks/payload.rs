@@ -869,11 +869,8 @@ where
         })?;
     let logs_bloom = execution_outcome.block_logs_bloom(block_number).ok_or_else(|| {
         PayloadBuilderError::Other(
-            eyre::eyre!(
-                "logs bloom and block number not in range, block number {}",
-                block_number
-            )
-            .into(),
+            eyre::eyre!("logs bloom and block number not in range, block number {}", block_number)
+                .into(),
         )
     })?;
 
