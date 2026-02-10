@@ -46,7 +46,7 @@ op-alloy-consensus.workspace = true
 
 # tokio
 tokio.workspace = true
-tokio-tungstenite.workspace = true
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 tokio-stream.workspace = true
 
 # async
