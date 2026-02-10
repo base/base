@@ -7,18 +7,15 @@ license.workspace = true
 [lints]
 workspace = true
 
-[[bin]]
-name = "sidecrush"
-path = "src/bin/sidecrush.rs"
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tokio = { workspace = true }
-cadence = { workspace = true }
-async-trait = { workspace = true }
 anyhow = { workspace = true }
-clap = { workspace = true }
+async-trait = { workspace = true }
+cadence = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
 
 # Ethereum client deps (will be used for header fetching)
 alloy-provider = { workspace = true }

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use alloy_rpc_types::txpool::TxpoolContent;
-use mempool_rebroadcaster::rebroadcaster::Rebroadcaster;
+use mempool_rebroadcaster::Rebroadcaster;
 
 fn load_static_mempool_content<P: AsRef<Path>>(
     filepath: P,

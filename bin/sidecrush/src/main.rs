@@ -3,10 +3,8 @@ use std::net::UdpSocket;
 use cadence::{StatsdClient, UdpMetricSink};
 use clap::Parser;
 use sidecrush::{
-    blockbuilding_healthcheck::{
-        BlockProductionHealthChecker, HealthcheckConfig, Node, alloy_client::AlloyEthClient,
-    },
-    metrics::HealthcheckMetrics,
+    BlockProductionHealthChecker, HealthcheckConfig, HealthcheckMetrics, Node,
+    alloy_client::AlloyEthClient,
 };
 use tracing::Level;
 

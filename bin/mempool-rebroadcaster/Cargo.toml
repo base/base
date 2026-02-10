@@ -1,0 +1,16 @@
+[package]
+name = "mempool-rebroadcaster-bin"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mempool-rebroadcaster"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+dotenvy = "0.15.7"
+mempool-rebroadcaster = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }

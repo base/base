@@ -1,6 +1,6 @@
 use clap::Parser;
 use dotenvy::dotenv;
-use mempool_rebroadcaster::rebroadcaster::Rebroadcaster;
+use mempool_rebroadcaster::Rebroadcaster;
 use tracing::{Level, error, info};
 use tracing_subscriber::EnvFilter;
 

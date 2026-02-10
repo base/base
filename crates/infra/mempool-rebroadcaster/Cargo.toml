@@ -7,18 +7,14 @@ license.workspace = true
 [lints]
 workspace = true
 
-[[bin]]
-name = "mempool-rebroadcaster"
-path = "src/main.rs"
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
-clap = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-dotenvy = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
 
 # alloy
 alloy-primitives.workspace = true
@@ -28,4 +24,3 @@ alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-trie.workspace = true
 alloy-provider = { workspace = true, features = ["txpool-api"] }
-
