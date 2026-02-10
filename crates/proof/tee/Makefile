@@ -1,5 +1,5 @@
 .PHONY: all build check test lint fmt fmt-check clean doc help build-go-server test-integration \
-        build-eif musl-release verify-pcr0 verify-reproducible clean-eif
+        build-eif musl-release verify-pcr0 verify-reproducible clean-eif run-server
 
 # Default target
 all: fmt-check lint build test
@@ -32,6 +32,11 @@ test-integration: build-go-server
 # Run tests with output
 test-verbose:
 	cargo test --all-targets -- --nocapture
+
+# Run the enclave server locally (HTTP mode on port 1234)
+run-server:
+	RUST_LOG=info OP_ENCLAVE_SIGNER_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+		cargo run --package op-enclave-server --bin enclave
 
 # Run clippy linter
 lint:
@@ -74,6 +79,7 @@ help:
 	@echo "  test             - Run all tests"
 	@echo "  test-verbose     - Run tests with output"
 	@echo "  test-integration - Run Go interop tests (builds Go server first)"
+	@echo "  run-server       - Run enclave server locally (HTTP on port 1234)"
 	@echo "  build-go-server  - Build the Go enclave server"
 	@echo "  lint             - Run clippy linter"
 	@echo "  fmt              - Format code"

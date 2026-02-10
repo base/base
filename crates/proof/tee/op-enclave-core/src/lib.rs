@@ -16,6 +16,7 @@ pub use types::config::{
 };
 pub use types::output::output_root_v0;
 pub use types::proposal::Proposal;
+pub use types::rpc::ExecuteStatelessRequest;
 
 // Re-export error types
 pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderError, Result};
@@ -35,7 +36,7 @@ pub use op_alloy_consensus::OpReceiptEnvelope;
 
 // Re-export kona_genesis types for ecosystem compatibility
 pub use alloy_eips::eip1898::BlockNumHash;
-pub use kona_genesis::{ChainGenesis, HardForkConfig, L1ChainConfig, SystemConfig};
+pub use kona_genesis::{ChainConfig, ChainGenesis, HardForkConfig, L1ChainConfig, SystemConfig};
 
 // Re-export provider types
 pub use providers::{
