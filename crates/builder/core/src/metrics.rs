@@ -100,6 +100,48 @@ pub struct BuilderMetrics {
     pub metering_unknown_transaction: Counter,
     /// Count of the number of times we were unable to resolve metering information due to locking
     pub metering_locked_transaction: Counter,
+
+    // === DA Size Limit Metrics (always enforced, operator-configured) ===
+    /// Transactions rejected by per-tx DA size limit
+    pub tx_da_size_exceeded_total: Counter,
+    /// Transactions rejected by block DA size limit
+    pub block_da_size_exceeded_total: Counter,
+
+    // === Protocol-Enforced Limit Metrics ===
+    /// Transactions rejected by DA footprint limit (post-Jovian, protocol-enforced)
+    pub da_footprint_exceeded_total: Counter,
+    /// Transactions rejected by gas limit (protocol-enforced)
+    pub gas_limit_exceeded_total: Counter,
+
+    // === Execution Metering Limit Metrics (metering-service-dependent) ===
+    /// Transactions that would be rejected by execution metering limits
+    pub resource_limit_would_reject_total: Counter,
+    /// Transactions that exceeded per-tx execution time limit
+    pub tx_execution_time_exceeded_total: Counter,
+    /// Transactions that exceeded flashblock execution time budget
+    pub flashblock_execution_time_exceeded_total: Counter,
+    /// Transactions that exceeded per-tx state root time limit
+    pub tx_state_root_time_exceeded_total: Counter,
+    /// Transactions that exceeded block state root time budget
+    pub block_state_root_time_exceeded_total: Counter,
+
+    // === Execution Time Prediction Accuracy ===
+    /// Histogram of (predicted - actual) execution time per transaction in microseconds.
+    pub execution_time_prediction_error_us: Histogram,
+    /// Distribution of predicted execution times from metering service (microseconds)
+    pub tx_predicted_execution_time_us: Histogram,
+    /// Distribution of actual execution times (microseconds)
+    pub tx_actual_execution_time_us: Histogram,
+
+    // === State Root Time Prediction Distribution ===
+    /// Distribution of predicted state root times from metering service (microseconds)
+    pub tx_predicted_state_root_time_us: Histogram,
+    /// Cumulative predicted state root time per block (microseconds)
+    pub block_predicted_state_root_time_us: Histogram,
+
+    // === State Root Time / Gas Ratio (Anomaly Detection) ===
+    /// Ratio of `state_root_time_us` / `gas_used` for each transaction.
+    pub state_root_time_per_gas_ratio: Histogram,
 }
 
 impl BuilderMetrics {

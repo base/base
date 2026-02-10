@@ -4,7 +4,7 @@ use core::time::Duration;
 
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
-use crate::{FlashblocksConfig, TxDataStore};
+use crate::{ExecutionMeteringMode, FlashblocksConfig, TxDataStore};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -33,6 +33,21 @@ pub struct BuilderConfig {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
+    /// Maximum execution time per transaction in microseconds.
+    pub max_execution_time_per_tx_us: Option<u128>,
+
+    /// Maximum state root calculation time per transaction in microseconds.
+    pub max_state_root_time_per_tx_us: Option<u128>,
+
+    /// Flashblock-level execution time budget in microseconds.
+    pub flashblock_execution_time_budget_us: Option<u128>,
+
+    /// Block-level state root calculation time budget in microseconds.
+    pub block_state_root_time_budget_us: Option<u128>,
+
+    /// Execution metering mode: off, dry-run, or enforce.
+    pub execution_metering_mode: ExecutionMeteringMode,
+
     /// Transaction data store for resource metering
     pub tx_data_store: TxDataStore,
 }
@@ -47,6 +62,11 @@ impl core::fmt::Debug for BuilderConfig {
             .field("sampling_ratio", &self.sampling_ratio)
             .field("flashblocks", &self.flashblocks)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
+            .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
+            .field("max_state_root_time_per_tx_us", &self.max_state_root_time_per_tx_us)
+            .field("flashblock_execution_time_budget_us", &self.flashblock_execution_time_budget_us)
+            .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
+            .field("execution_metering_mode", &self.execution_metering_mode)
             .field("tx_data_store", &self.tx_data_store)
             .finish()
     }
@@ -62,6 +82,11 @@ impl Default for BuilderConfig {
             flashblocks: FlashblocksConfig::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
+            max_execution_time_per_tx_us: None,
+            max_state_root_time_per_tx_us: None,
+            flashblock_execution_time_budget_us: None,
+            block_state_root_time_budget_us: None,
+            execution_metering_mode: ExecutionMeteringMode::Off,
             tx_data_store: TxDataStore::default(),
         }
     }
