@@ -280,7 +280,7 @@ op-revm = { version = "15.0.0", default-features = false }
 tokio = "1.48.0"
 tokio-util = "0.7.4"
 tokio-stream = "0.1.17"
-tokio-tungstenite = "0.28.0"
+tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
 
 # async
 futures = "0.3.31"
