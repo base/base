@@ -1,7 +1,21 @@
 //! Custom RPC response types for Optimism rollup nodes.
 
 use alloy_primitives::{B256, Bytes};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserializes a vector while treating JSON `null` as an empty vector.
+fn deserialize_null_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+/// OP Stack block type with Optimism-specific transactions.
+///
+/// Uses `op_alloy_rpc_types::Transaction` which can deserialize deposit transactions (type 0x7E).
+pub type OpBlock = alloy_rpc_types_eth::Block<op_alloy_rpc_types::Transaction>;
 
 /// L1 block reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,10 +43,33 @@ pub struct L2BlockRef {
     pub parent_hash: B256,
     /// Block timestamp.
     pub timestamp: u64,
-    /// L1 origin reference.
-    pub l1origin: L1BlockRef,
+    /// L1 origin reference (only hash and number are provided by the RPC).
+    pub l1origin: L1BlockId,
     /// Sequence number within the epoch.
     pub sequence_number: u64,
+}
+
+/// Minimal L1 block identifier containing only hash and number.
+/// Used for `L2BlockRef`.l1origin and genesis config where the full `L1BlockRef` fields
+/// (parentHash, timestamp) are not provided by the RPC response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct L1BlockId {
+    /// Block hash.
+    pub hash: B256,
+    /// Block number.
+    pub number: u64,
+}
+
+/// Minimal L2 block reference for genesis config.
+/// Unlike `L2BlockRef`, this only contains hash and number as returned by `optimism_rollupConfig`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisL2BlockRef {
+    /// Block hash.
+    pub hash: B256,
+    /// Block number.
+    pub number: u64,
 }
 
 /// Sync status from `optimism_syncStatus`.
@@ -61,50 +98,6 @@ pub struct SyncStatus {
     pub pending_safe_l2: Option<L2BlockRef>,
 }
 
-/// Genesis configuration for rollup.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenesisConfig {
-    /// L1 genesis block reference.
-    pub l1: L1BlockRef,
-    /// L2 genesis block reference.
-    pub l2: L2BlockRef,
-    /// L2 genesis timestamp.
-    pub l2_time: u64,
-    /// System config.
-    #[serde(default)]
-    pub system_config: Option<serde_json::Value>,
-}
-
-/// Rollup configuration from `optimism_rollupConfig`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RollupConfig {
-    /// Genesis configuration.
-    pub genesis: GenesisConfig,
-    /// Block time in seconds.
-    pub block_time: u64,
-    /// Maximum sequencer drift.
-    pub max_sequencer_drift: u64,
-    /// Sequencer window size.
-    pub seq_window_size: u64,
-    /// Channel timeout.
-    pub channel_timeout: u64,
-    /// L1 chain ID.
-    pub l1_chain_id: u64,
-    /// L2 chain ID.
-    pub l2_chain_id: u64,
-    /// Batch inbox address (hex string).
-    #[serde(default)]
-    pub batch_inbox_address: Option<String>,
-    /// Deposit contract address (hex string).
-    #[serde(default)]
-    pub deposit_contract_address: Option<String>,
-    /// L1 system config address (hex string).
-    #[serde(default)]
-    pub l1_system_config_address: Option<String>,
-}
-
 /// Reth-specific execution witness format.
 ///
 /// Reth returns arrays instead of maps for codes and state.
@@ -112,13 +105,13 @@ pub struct RollupConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RethExecutionWitness {
     /// State trie node preimages.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
     pub state: Vec<Bytes>,
     /// Contract bytecodes.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
     pub codes: Vec<Bytes>,
     /// MPT keys/paths.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_vec")]
     pub keys: Vec<Bytes>,
 }
 
@@ -160,9 +153,7 @@ mod tests {
                 "timestamp": 1234567900,
                 "l1origin": {
                     "hash": "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    "number": 100,
-                    "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "timestamp": 1234567890
+                    "number": 100
                 },
                 "sequenceNumber": 0
             },
@@ -173,9 +164,7 @@ mod tests {
                 "timestamp": 1234567900,
                 "l1origin": {
                     "hash": "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    "number": 100,
-                    "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "timestamp": 1234567890
+                    "number": 100
                 },
                 "sequenceNumber": 0
             },
@@ -186,9 +175,7 @@ mod tests {
                 "timestamp": 1234567900,
                 "l1origin": {
                     "hash": "0x0000000000000000000000000000000000000000000000000000000000000001",
-                    "number": 100,
-                    "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    "timestamp": 1234567890
+                    "number": 100
                 },
                 "sequenceNumber": 0
             }
@@ -210,6 +197,20 @@ mod tests {
 
         let witness: RethExecutionWitness = serde_json::from_str(json).unwrap();
         assert_eq!(witness.state.len(), 2);
+        assert_eq!(witness.codes.len(), 1);
+        assert!(witness.keys.is_empty());
+    }
+
+    #[test]
+    fn test_reth_witness_deserialize_with_null_arrays() {
+        let json = r#"{
+            "state": null,
+            "codes": ["0xabcd"],
+            "keys": null
+        }"#;
+
+        let witness: RethExecutionWitness = serde_json::from_str(json).unwrap();
+        assert!(witness.state.is_empty());
         assert_eq!(witness.codes.len(), 1);
         assert!(witness.keys.is_empty());
     }

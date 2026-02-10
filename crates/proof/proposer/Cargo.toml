@@ -33,6 +33,7 @@ alloy-contract = "1.4.3"
 alloy-network = "1.4.3"
 alloy-signer = "1.4.3"
 alloy-consensus = "1.4.3"
+alloy-eips = "1.4.3"
 
 # OP Alloy
 op-alloy-rpc-types = "0.23.1"
@@ -71,8 +72,8 @@ jsonrpsee = { version = "0.26.0", features = ["http-client", "ws-client"] }
 moka = { version = "0.12", features = ["future"] }
 
 # Enclave
-op-enclave-client = { git = "https://github.com/jackchuma/op-enclave", rev = "f83b102072c21cd43b504151b1e36a3c2ac7020d", package = "op-enclave-client" }
-op-enclave-core = { git = "https://github.com/jackchuma/op-enclave", rev = "f83b102072c21cd43b504151b1e36a3c2ac7020d", package = "op-enclave-core" }
+op-enclave-client = { git = "https://github.com/jackchuma/op-enclave.git", rev = "c1ffea9022e367ef566d51215fbf89e202054ed6", package = "op-enclave-client" }
+op-enclave-core = { git = "https://github.com/jackchuma/op-enclave.git", rev = "c1ffea9022e367ef566d51215fbf89e202054ed6", package = "op-enclave-core" }
 
 # Retry
 backon = { version = "1", features = ["tokio-sleep"] }

@@ -9,10 +9,15 @@
 
 use alloy::network::Ethereum;
 use alloy::providers::RootProvider;
+use op_alloy_network::Optimism;
 
-/// Shared type alias for the HTTP provider.
+/// Shared type alias for the L1 HTTP provider.
 /// Uses `RootProvider` directly since these clients only perform read operations.
 pub(crate) type HttpProvider = RootProvider<Ethereum>;
+
+/// L2-specific provider type using Optimism network.
+/// Required for deserializing OP Stack deposit transactions (type 0x7E).
+pub(crate) type L2HttpProvider = RootProvider<Optimism>;
 
 mod cache;
 mod error;
@@ -40,7 +45,7 @@ pub use traits::{L1Client, L2Client, RollupClient};
 
 // Re-export custom types
 pub use types::{
-    GenesisConfig, L1BlockRef, L2BlockRef, RethExecutionWitness, RollupConfig, SyncStatus,
+    GenesisL2BlockRef, L1BlockId, L1BlockRef, L2BlockRef, OpBlock, RethExecutionWitness, SyncStatus,
 };
 
 /// Creates an L2 client based on the configuration.

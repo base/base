@@ -7,17 +7,18 @@ use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::client::RpcClient;
 use alloy::transports::http::{Http, reqwest::Client};
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types_eth::{Block, BlockId, Header};
+use alloy_rpc_types_eth::{BlockId, Header};
 use async_trait::async_trait;
 use backon::Retryable;
 use op_enclave_core::{AccountResult, executor::ExecutionWitness};
 use url::Url;
 
 use super::{
-    HttpProvider,
+    L2HttpProvider,
     cache::MeteredCache,
     error::{RpcError, RpcResult},
     traits::L2Client,
+    types::OpBlock,
 };
 use crate::config::RetryConfig;
 use crate::constants::DEFAULT_CACHE_SIZE;
@@ -52,6 +53,8 @@ pub struct L2ClientConfig {
     pub cache_size: usize,
     /// Retry configuration.
     pub retry_config: RetryConfig,
+    /// Skip TLS certificate verification.
+    pub skip_tls_verify: bool,
 }
 
 impl L2ClientConfig {
@@ -62,6 +65,7 @@ impl L2ClientConfig {
             timeout: Duration::from_secs(30),
             cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
+            skip_tls_verify: false,
         }
     }
 
@@ -82,14 +86,20 @@ impl L2ClientConfig {
         self.retry_config = retry_config;
         self
     }
+
+    /// Sets whether to skip TLS certificate verification.
+    pub const fn with_skip_tls_verify(mut self, skip: bool) -> Self {
+        self.skip_tls_verify = skip;
+        self
+    }
 }
 
 /// L2 RPC client implementation using Alloy.
 pub struct L2ClientImpl {
-    /// The underlying HTTP provider.
-    provider: HttpProvider,
+    /// The underlying HTTP provider (Optimism network for deposit tx support).
+    provider: L2HttpProvider,
     /// Cache for blocks by hash.
-    blocks_cache: MeteredCache<B256, Block>,
+    blocks_cache: MeteredCache<B256, OpBlock>,
     /// Cache for headers by hash.
     headers_cache: MeteredCache<B256, Header>,
     /// Cache for account proofs.
@@ -112,8 +122,14 @@ impl L2ClientImpl {
     /// Creates a new L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
-        let client = Client::builder()
-            .timeout(config.timeout)
+        let mut builder = Client::builder().timeout(config.timeout);
+
+        if config.skip_tls_verify {
+            tracing::warn!("TLS certificate verification is disabled for L2 RPC connection");
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        let client = builder
             .build()
             .map_err(|e| RpcError::Connection(format!("Failed to build HTTP client: {e}")))?;
 
@@ -134,7 +150,7 @@ impl L2ClientImpl {
     }
 
     /// Returns the blocks cache.
-    pub const fn blocks_cache(&self) -> &MeteredCache<B256, Block> {
+    pub const fn blocks_cache(&self) -> &MeteredCache<B256, OpBlock> {
         &self.blocks_cache
     }
 
@@ -149,7 +165,7 @@ impl L2ClientImpl {
     }
 
     /// Returns a reference to the underlying provider.
-    pub(crate) const fn provider(&self) -> &HttpProvider {
+    pub(crate) const fn provider(&self) -> &L2HttpProvider {
         &self.provider
     }
 
@@ -241,7 +257,7 @@ impl L2Client for L2ClientImpl {
         Ok(header)
     }
 
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<Block> {
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
         let block_id: BlockId = number
             .map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number)
             .into();
@@ -251,6 +267,7 @@ impl L2Client for L2ClientImpl {
         let block = (|| async {
             self.provider
                 .get_block(block_id)
+                .full()
                 .await
                 .map_err(RpcError::from)
         })
@@ -273,7 +290,7 @@ impl L2Client for L2ClientImpl {
         Ok(block)
     }
 
-    async fn block_by_hash(&self, hash: B256) -> RpcResult<Block> {
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
         // Check cache first
         if let Some(block) = self.blocks_cache.get(&hash).await {
             return Ok(block);
@@ -284,6 +301,7 @@ impl L2Client for L2ClientImpl {
         let block = (|| async {
             self.provider
                 .get_block(BlockId::Hash(hash.into()))
+                .full()
                 .await
                 .map_err(RpcError::from)
         })
@@ -318,6 +336,23 @@ impl L2Client for L2ClientImpl {
         .when(|e| e.is_retryable())
         .notify(|err, dur| {
             tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::execution_witness");
+        })
+        .await
+    }
+
+    async fn db_get(&self, key: B256) -> RpcResult<alloy_primitives::Bytes> {
+        let backoff = self.retry_config.to_backoff_builder();
+
+        (|| async {
+            self.provider
+                .raw_request::<_, alloy_primitives::Bytes>("debug_dbGet".into(), (key,))
+                .await
+                .map_err(|e| RpcError::InvalidResponse(format!("Failed to db_get key {key}: {e}")))
+        })
+        .retry(backoff)
+        .when(|e| e.is_retryable())
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::db_get");
         })
         .await
     }

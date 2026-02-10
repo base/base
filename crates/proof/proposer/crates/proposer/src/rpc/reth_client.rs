@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use alloy::eips::BlockNumberOrTag;
 use alloy::providers::Provider;
-use alloy_primitives::{Address, B256, keccak256};
-use alloy_rpc_types_eth::{Block, Header};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use backon::Retryable;
 use futures::stream::{self, StreamExt};
@@ -19,7 +19,7 @@ use super::{
     error::{RpcError, RpcResult},
     l2_client::{L2ClientConfig, L2ClientImpl},
     traits::L2Client,
-    types::RethExecutionWitness,
+    types::{OpBlock, RethExecutionWitness},
 };
 
 /// Reth-specific L2 client that wraps the standard L2 client.
@@ -174,11 +174,11 @@ impl L2Client for RethL2Client {
         self.inner.header_by_number(number).await
     }
 
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<Block> {
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
         self.inner.block_by_number(number).await
     }
 
-    async fn block_by_hash(&self, hash: B256) -> RpcResult<Block> {
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
         self.inner.block_by_hash(hash).await
     }
 
@@ -208,6 +208,10 @@ impl L2Client for RethL2Client {
 
         // Populate headers for BLOCKHASH support
         self.populate_headers(block_number, witness).await
+    }
+
+    async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
+        self.inner.db_get(key).await
     }
 }
 
