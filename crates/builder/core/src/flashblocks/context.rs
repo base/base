@@ -561,7 +561,7 @@ impl OpPayloadBuilderCtx {
                 // according to the metering mode (dry-run vs enforce)
                 if let TxnExecutionError::ExecutionMeteringLimitExceeded(ref limit_err) = err {
                     // Record metrics for the exceeded limit
-                    self.record_resource_limit_exceeded(limit_err);
+                    self.record_execution_metering_limit_exceeded(limit_err);
 
                     if self.execution_metering_mode.is_dry_run() {
                         // In dry-run mode, log but don't reject
@@ -583,21 +583,7 @@ impl OpPayloadBuilderCtx {
                     }
                 } else {
                     // DA size limits, DA footprint, and gas limits are always enforced
-                    match &err {
-                        TxnExecutionError::TransactionDASizeExceeded(_, _) => {
-                            self.metrics.tx_da_size_exceeded_total.increment(1);
-                        }
-                        TxnExecutionError::BlockDASizeExceeded { .. } => {
-                            self.metrics.block_da_size_exceeded_total.increment(1);
-                        }
-                        TxnExecutionError::DAFootprintLimitExceeded { .. } => {
-                            self.metrics.da_footprint_exceeded_total.increment(1);
-                        }
-                        TxnExecutionError::TransactionGasLimitExceeded { .. } => {
-                            self.metrics.gas_limit_exceeded_total.increment(1);
-                        }
-                        _ => {}
-                    }
+                    self.record_static_limit_exceeded(&err);
 
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
@@ -768,8 +754,27 @@ impl OpPayloadBuilderCtx {
         Ok(None)
     }
 
-    /// Record metrics for an execution metering limit that was exceeded.
-    fn record_resource_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
+    /// Record metrics for a limit that can be evaluated via static analysis (always enforced).
+    fn record_static_limit_exceeded(&self, err: &TxnExecutionError) {
+        match err {
+            TxnExecutionError::TransactionDASizeExceeded(_, _) => {
+                self.metrics.tx_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionError::BlockDASizeExceeded { .. } => {
+                self.metrics.block_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionError::DAFootprintLimitExceeded { .. } => {
+                self.metrics.da_footprint_exceeded_total.increment(1);
+            }
+            TxnExecutionError::TransactionGasLimitExceeded { .. } => {
+                self.metrics.gas_limit_exceeded_total.increment(1);
+            }
+            _ => {}
+        }
+    }
+
+    /// Record metrics for a limit that requires execution data (enforcement is configurable).
+    fn record_execution_metering_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
         self.metrics.resource_limit_would_reject_total.increment(1);
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
