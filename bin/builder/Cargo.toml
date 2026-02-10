@@ -1,7 +1,6 @@
 [package]
 name = "base-builder-bin"
 description = "Base Builder Binary"
-
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,25 +16,28 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-# Workspace
-base-builder-core.workspace = true
+# workspace
 base-cli-utils.workspace = true
-
-# CLI
-clap.workspace = true
+base-builder-core.workspace = true
 
 # reth
-reth-optimism-cli = { workspace = true, features = ["otlp"] }
-reth-optimism-node.workspace = true
-reth-optimism-rpc = { workspace = true, features = ["client"] }
-reth-optimism-txpool.workspace = true
 reth-cli-util.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-txpool.workspace = true
+reth-optimism-cli = { workspace = true, features = ["otlp"] }
+reth-optimism-rpc = { workspace = true, features = ["client"] }
+
+# cli
+clap.workspace = true
 
 # misc
 eyre.workspace = true
 
 [dev-dependencies]
+# workspace
 base-builder-core = { workspace = true, features = ["test-utils"] }
+
+# misc
 rstest.workspace = true
 
 [features]

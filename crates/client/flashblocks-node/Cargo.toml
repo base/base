@@ -8,6 +8,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [features]
 test-utils = [
 	"base-client-node/test-utils",
@@ -19,22 +22,20 @@ test-utils = [
 	"dep:derive_more",
 	"dep:eyre",
 	"dep:op-alloy-consensus",
+	"dep:reth-chainspec",
 	"dep:reth-optimism-chainspec",
 	"dep:reth-optimism-primitives",
 	"dep:reth-primitives-traits",
+	"dep:reth-provider",
+	"dep:reth-transaction-pool",
 	"reth-chain-state/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-evm/test-utils",
-	"reth-optimism-node/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
 	"reth-revm/test-utils",
 	"reth-transaction-pool/test-utils",
 ]
-
-
-[lints]
-workspace = true
 
 [dependencies]
 # workspace
@@ -42,62 +43,82 @@ base-flashblocks.workspace = true
 base-client-node.workspace = true
 # reth
 reth-chain-state.workspace = true
-
-tokio-stream.workspace = true
-tracing.workspace = true
-tokio.workspace = true
-
-# test-utils
-derive_more = { workspace = true, features = ["deref"], optional = true }
-eyre = { workspace = true, optional = true }
-base-flashtypes = { workspace = true, optional = true }
-reth-optimism-chainspec = { workspace = true, optional = true }
-alloy-eips = { workspace = true, optional = true }
 reth-provider = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, optional = true }
-reth-optimism-primitives = { workspace = true, optional = true }
-op-alloy-consensus = { workspace = true, optional = true }
-alloy-consensus = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
+reth-optimism-chainspec = { workspace = true, optional = true }
+reth-optimism-primitives = { workspace = true, optional = true }
 reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
 
+# alloy
+alloy-eips = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+
+# op-alloy
+op-alloy-consensus = { workspace = true, optional = true }
+
+# tokio
+tokio.workspace = true
+tokio-stream.workspace = true
+
+# tracing
+tracing.workspace = true
+
+# test-utils (optional)
+eyre = { workspace = true, optional = true }
+base-flashtypes = { workspace = true, optional = true }
+derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]
+# workspace
 base-client-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
-rand.workspace = true
-eyre.workspace = true
-revm = { workspace = true, features = ["std"] }
-reth-db = { workspace = true, features = ["op"] }
-once_cell.workspace = true
-reth-db-common.workspace = true
-alloy-rpc-client.workspace = true
-alloy-genesis.workspace = true
-alloy-sol-macro = { workspace = true, features = ["json"] }
-alloy-sol-types.workspace = true
-alloy-contract.workspace = true
-reth-tracing.workspace = true
-reth-optimism-node.workspace = true
-reth-testing-utils.workspace = true
-tokio-tungstenite.workspace = true
-tracing-subscriber.workspace = true
-serde_json.workspace = true
-futures-util.workspace = true
-criterion = { workspace = true, features = ["async_tokio"] }
-alloy-provider.workspace = true
-op-alloy-network.workspace = true
-rayon.workspace = true
-alloy-rpc-types.workspace = true
-alloy-rpc-types-eth.workspace = true
-op-alloy-rpc-types.workspace = true
-reth-rpc-eth-api.workspace = true
 
+# reth
 reth-evm.workspace = true
-reth-primitives.workspace = true
 reth-revm.workspace = true
+reth-db-common.workspace = true
+reth-tracing.workspace = true
+reth-primitives.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-testing-utils.workspace = true
+reth-optimism-node = { workspace = true, features = ["test-utils"] }
+reth-db = { workspace = true, features = ["op"] }
 
+# revm
+revm = { workspace = true, features = ["std"] }
+
+# alloy
+alloy-genesis.workspace = true
+alloy-contract.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-client.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-sol-macro = { workspace = true, features = ["json"] }
+
+# op-alloy
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
+
+# tokio
+tokio-tungstenite.workspace = true
+
+# async
+futures-util.workspace = true
+
+# tracing
+tracing-subscriber.workspace = true
+
+# misc
+rand.workspace = true
+rayon.workspace = true
+once_cell.workspace = true
+serde_json.workspace = true
+criterion = { workspace = true, features = ["async_tokio"] }
 
 [[bench]]
 name = "pending_state"

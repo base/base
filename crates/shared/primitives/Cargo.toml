@@ -11,29 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[dependencies]
-eyre = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-alloy-eips = { workspace = true, optional = true }
-alloy-signer = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
-alloy-contract = { workspace = true, optional = true }
-alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
-alloy-sol-types = { workspace = true, optional = true }
-alloy-consensus = { workspace = true, features = ["std"], optional = true }
-alloy-primitives = { workspace = true, features = ["serde"], optional = true }
-op-alloy-network = { workspace = true, optional = true }
-alloy-signer-local = { workspace = true, optional = true }
-op-alloy-rpc-types = { workspace = true, optional = true }
-
-# Engine API dependencies
-alloy-provider = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
-alloy-rpc-types-eth = { workspace = true, optional = true }
-kona-genesis = { workspace = true, optional = true }
-op-alloy-rpc-types-engine = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
-
 [features]
 default = []
 engine = [
@@ -62,3 +39,31 @@ test-utils = [
 	"dep:op-alloy-rpc-types",
 	"dep:serde_json",
 ]
+
+[dependencies]
+# kona
+kona-genesis = { workspace = true, optional = true }
+
+# alloy
+alloy-eips = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+alloy-contract = { workspace = true, optional = true }
+alloy-provider = { workspace = true, optional = true }
+alloy-sol-types = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, features = ["serde"], optional = true }
+alloy-consensus = { workspace = true, features = ["std"], optional = true }
+alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
+
+# op-alloy
+op-alloy-network = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+op-alloy-rpc-types-engine = { workspace = true, optional = true }
+
+# misc
+eyre = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }

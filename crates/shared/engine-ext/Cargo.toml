@@ -13,9 +13,9 @@ workspace = true
 
 [dependencies]
 # reth
-reth-engine-primitives.workspace = true
-reth-optimism-node.workspace = true
 reth-payload-builder.workspace = true
+reth-optimism-node.workspace = true
+reth-engine-primitives.workspace = true
 reth-payload-primitives.workspace = true
 
 # alloy
@@ -27,5 +27,5 @@ alloy-rpc-types-engine.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 
 # misc
-thiserror.workspace = true
 tracing.workspace = true
+thiserror.workspace = true

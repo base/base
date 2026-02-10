@@ -1,7 +1,6 @@
 [package]
 name = "base-consensus"
 description = "Base Consensus Binary"
-
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,34 +12,33 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
+# workspace
 base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
-# Kona
-kona-disc = { workspace = true, features = ["metrics"] }
-kona-derive = { workspace = true, features = ["metrics"] }
-kona-engine = { workspace = true, features = ["metrics"] }
+# kona
+rollup-boost.workspace = true
 kona-genesis.workspace = true
+kona-derive = { workspace = true, features = ["metrics"] }
+kona-disc = { workspace = true, features = ["metrics"] }
 kona-gossip = { workspace = true, features = ["metrics"] }
+kona-engine = { workspace = true, features = ["metrics"] }
 kona-node-service = { workspace = true, features = ["metrics"] }
 kona-providers-alloy = { workspace = true, features = ["metrics"] }
-rollup-boost.workspace = true
 
-# Alloy
+# alloy
 alloy-rpc-types-engine.workspace = true
 
-# Misc
+# cli
 url.workspace = true
-
-# CLI
-clap.workspace = true
-eyre.workspace = true
 strum.workspace = true
+clap.workspace = true
 
-# Tracing
+# tracing
 tracing.workspace = true
 
-# Metrics
+# metrics
 metrics.workspace = true
 
+# misc
+eyre.workspace = true

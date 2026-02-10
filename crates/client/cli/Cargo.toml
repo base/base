@@ -12,44 +12,48 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Shared
+# workspace
 base-jwt = { workspace = true, features = ["engine-validation"] }
 
-# Kona
+# kona
 kona-rpc.workspace = true
-kona-node-service.workspace = true
-kona-genesis.workspace = true
-kona-derive.workspace = true
 kona-disc.workspace = true
-kona-gossip.workspace = true
 kona-peers.workspace = true
+kona-derive.workspace = true
+kona-gossip.workspace = true
 kona-sources.workspace = true
+kona-genesis.workspace = true
+kona-registry.workspace = true
+kona-node-service.workspace = true
 kona-providers-alloy.workspace = true
 kona-cli = { workspace = true, features = ["secrets"] }
-kona-registry.workspace = true
 
-# Serde
-serde_json.workspace = true
-
-# Alloy
+# alloy
 alloy-chains.workspace = true
-alloy-primitives.workspace = true
-alloy-provider.workspace = true
 alloy-signer.workspace = true
+alloy-provider.workspace = true
+alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
-# Networking
-libp2p = { workspace = true, features = ["secp256k1", "macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
-discv5 = { workspace = true, features = ["libp2p"] }
+# networking
 reqwest.workspace = true
+discv5 = { workspace = true, features = ["libp2p"] }
+libp2p = { workspace = true, features = ["secp256k1", "macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
 
-# CLI
+# cli
 url.workspace = true
 clap.workspace = true
-thiserror.workspace = true
-eyre.workspace = true
-tracing.workspace = true
+
+# tokio
 tokio.workspace = true
+
+# tracing
+tracing.workspace = true
+
+# misc
+eyre.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true

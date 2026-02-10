@@ -1,41 +1,45 @@
 [package]
 name = "base-cli-utils"
+description = "CLI Utilities"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "CLI Utilities"
 
 [lints]
 workspace = true
 
 [dependencies]
-# General
-eyre.workspace = true
-tokio = { workspace = true, features = ["full"] }
-clap = { workspace = true, features = ["derive"] }
-serde = { workspace = true, features = ["derive"] }
-dirs-next.workspace = true
-
-# Alloy
-alloy-primitives.workspace = true
-alloy-chains.workspace = true
-
-# Kona
+# kona
 kona-registry.workspace = true
 
-# Tracing
-tracing.workspace = true
+# reth
 reth-node-core.workspace = true
+
+# alloy
+alloy-chains.workspace = true
+alloy-primitives.workspace = true
+
+# cli
+clap = { workspace = true, features = ["derive"] }
+
+# tracing
+tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "tracing-log"] }
 
-# Metrics
+# metrics
 metrics.workspace = true
 metrics-process = { workspace = true, features = ["metrics-rs"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
+
+# misc
+eyre.workspace = true
+dirs-next.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 rstest.workspace = true

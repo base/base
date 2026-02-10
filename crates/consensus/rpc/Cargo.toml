@@ -11,13 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[dependencies]
-# workspace
-base-protocol = { workspace = true, features = ["serde"] }
-
-# rpc
-jsonrpsee = { workspace = true, features = ["macros", "server"] }
-
 [features]
 default = [ "std" ]
 std = [ "base-protocol/std" ]
@@ -26,3 +19,10 @@ client = [
 	"jsonrpsee/client",
 	"jsonrpsee/http-client",
 ]
+
+[dependencies]
+# workspace
+base-protocol = { workspace = true, features = ["serde"] }
+
+# rpc
+jsonrpsee = { workspace = true, features = ["macros", "server"] }
