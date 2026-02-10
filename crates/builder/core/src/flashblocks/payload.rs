@@ -733,7 +733,11 @@ where
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
             - self.config.flashblocks.leeway_time;
         let now = std::time::SystemTime::now();
-        let Ok(time_drift) = target_time.duration_since(now) else {
+        let Some(time_drift) = target_time
+            .duration_since(now)
+            .ok()
+            .filter(|duration| duration.as_millis() > 0)
+        else {
             error!(
                 target: "payload_builder",
                 message = "FCU arrived too late or system clock are unsynced",
