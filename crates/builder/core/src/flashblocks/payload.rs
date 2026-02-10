@@ -733,10 +733,8 @@ where
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
             - self.config.flashblocks.leeway_time;
         let now = std::time::SystemTime::now();
-        let Some(time_drift) = target_time
-            .duration_since(now)
-            .ok()
-            .filter(|duration| duration.as_millis() > 0)
+        let Some(time_drift) =
+            target_time.duration_since(now).ok().filter(|duration| duration.as_millis() > 0)
         else {
             error!(
                 target: "payload_builder",
