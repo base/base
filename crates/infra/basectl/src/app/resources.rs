@@ -7,7 +7,7 @@ use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
     config::ChainConfig,
     l1_client::FullSystemConfig,
-    rpc::{BacklogFetchResult, BlobSubmission, BlockDaInfo, TimestampedFlashblock},
+    rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo, L1ConnectionMode, TimestampedFlashblock},
     tui::ToastState,
 };
 
@@ -28,13 +28,17 @@ pub struct DaState {
     pub tracker: DaTracker,
     pub loading: Option<LoadingState>,
     pub loaded: bool,
+    pub l1_connection_mode: Option<L1ConnectionMode>,
     buffered_flashblocks: Vec<Flashblock>,
+    buffered_safe_heads: Vec<u64>,
+    buffered_l1_blocks: Vec<L1BlockInfo>,
     fb_rx: Option<mpsc::Receiver<Flashblock>>,
     sync_rx: Option<mpsc::Receiver<u64>>,
     backlog_rx: Option<mpsc::Receiver<BacklogFetchResult>>,
     block_req_tx: Option<mpsc::Sender<u64>>,
     block_res_rx: Option<mpsc::Receiver<BlockDaInfo>>,
-    blob_rx: Option<mpsc::Receiver<BlobSubmission>>,
+    l1_block_rx: Option<mpsc::Receiver<L1BlockInfo>>,
+    l1_mode_rx: Option<mpsc::Receiver<L1ConnectionMode>>,
 }
 
 #[derive(Debug)]
@@ -44,16 +48,17 @@ pub struct FlashState {
     pub current_gas_limit: u64,
     pub current_base_fee: Option<u128>,
     pub message_count: u64,
+    pub missed_flashblocks: u64,
     pub paused: bool,
+    last_flashblock: Option<(u64, u64)>,
     fb_rx: Option<mpsc::Receiver<TimestampedFlashblock>>,
 }
 
 impl Resources {
     pub fn new(config: ChainConfig) -> Self {
-        let has_op_node = config.op_node_rpc.is_some();
         Self {
             config,
-            da: DaState::new(has_op_node),
+            da: DaState::new(),
             flash: FlashState::new(),
             toasts: ToastState::new(),
             system_config: None,
@@ -78,19 +83,29 @@ impl Resources {
     }
 }
 
+impl Default for DaState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DaState {
-    pub fn new(has_op_node: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             tracker: DaTracker::new(),
             loading: None,
-            loaded: !has_op_node,
+            loaded: false,
+            l1_connection_mode: None,
             buffered_flashblocks: Vec::new(),
+            buffered_safe_heads: Vec::new(),
+            buffered_l1_blocks: Vec::new(),
             fb_rx: None,
             sync_rx: None,
             backlog_rx: None,
             block_req_tx: None,
             block_res_rx: None,
-            blob_rx: None,
+            l1_block_rx: None,
+            l1_mode_rx: None,
         }
     }
 
@@ -101,14 +116,18 @@ impl DaState {
         backlog_rx: mpsc::Receiver<BacklogFetchResult>,
         block_req_tx: mpsc::Sender<u64>,
         block_res_rx: mpsc::Receiver<BlockDaInfo>,
-        blob_rx: mpsc::Receiver<BlobSubmission>,
+        l1_block_rx: mpsc::Receiver<L1BlockInfo>,
     ) {
         self.fb_rx = Some(fb_rx);
         self.sync_rx = Some(sync_rx);
         self.backlog_rx = Some(backlog_rx);
         self.block_req_tx = Some(block_req_tx);
         self.block_res_rx = Some(block_res_rx);
-        self.blob_rx = Some(blob_rx);
+        self.l1_block_rx = Some(l1_block_rx);
+    }
+
+    pub fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
+        self.l1_mode_rx = Some(rx);
     }
 
     pub fn poll(&mut self) {
@@ -126,17 +145,20 @@ impl DaState {
                         total_blocks: progress.total_blocks,
                     });
                 }
+                BacklogFetchResult::Block(block) => {
+                    self.tracker.add_backlog_block(
+                        block.block_number,
+                        block.da_bytes,
+                        block.timestamp,
+                    );
+                }
                 BacklogFetchResult::Complete(initial) => {
                     self.tracker.set_initial_backlog(initial.safe_block, initial.da_bytes);
-                    for fb in std::mem::take(&mut self.buffered_flashblocks) {
-                        self.process_flashblock(&fb);
-                    }
+                    self.flush_buffers();
                     self.loaded = true;
                 }
                 BacklogFetchResult::Error(_) => {
-                    for fb in std::mem::take(&mut self.buffered_flashblocks) {
-                        self.process_flashblock(&fb);
-                    }
+                    self.flush_buffers();
                     self.loaded = true;
                 }
             }
@@ -163,7 +185,7 @@ impl DaState {
             .unwrap_or_default();
 
         for info in block_infos {
-            self.tracker.update_block_da(info.block_number, info.da_bytes);
+            self.tracker.update_block_info(info.block_number, info.da_bytes, info.timestamp);
         }
 
         let safe_blocks: Vec<_> = self
@@ -173,36 +195,63 @@ impl DaState {
             .unwrap_or_default();
 
         for safe_block in safe_blocks {
-            self.tracker.update_safe_head(safe_block);
+            if self.loaded {
+                self.tracker.update_safe_head(safe_block);
+            } else {
+                self.buffered_safe_heads.push(safe_block);
+            }
         }
 
-        let blob_subs: Vec<_> = self
-            .blob_rx
+        let l1_blocks: Vec<_> = self
+            .l1_block_rx
             .as_mut()
             .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).collect())
             .unwrap_or_default();
 
-        for blob_sub in blob_subs {
-            self.tracker.record_l1_blob_submission(&blob_sub);
+        for l1_block in l1_blocks {
+            if self.loaded {
+                self.tracker.record_l1_block(l1_block);
+            } else {
+                self.buffered_l1_blocks.push(l1_block);
+            }
+        }
+
+        if let Some(mode) = self.l1_mode_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
+            self.l1_connection_mode = Some(mode);
+        }
+    }
+
+    fn flush_buffers(&mut self) {
+        for fb in std::mem::take(&mut self.buffered_flashblocks) {
+            self.process_flashblock(&fb);
+        }
+        for safe_block in std::mem::take(&mut self.buffered_safe_heads) {
+            self.tracker.update_safe_head(safe_block);
+        }
+        for l1_block in std::mem::take(&mut self.buffered_l1_blocks) {
+            self.tracker.record_l1_block(l1_block);
         }
     }
 
     fn process_flashblock(&mut self, fb: &Flashblock) {
         let block_number = fb.metadata.block_number;
         let da_bytes: u64 = fb.diff.transactions.iter().map(|tx| tx.len() as u64).sum();
+        let timestamp = fb.base.as_ref().map(|b| b.timestamp).unwrap_or(0);
 
         if fb.index == 0 {
-            let prev = self
+            let prev_block = self
                 .tracker
                 .block_contributions
                 .front()
                 .map(|c| c.block_number)
                 .filter(|&prev| prev < block_number);
 
-            self.tracker.add_block(block_number, da_bytes);
+            self.tracker.add_block(block_number, da_bytes, timestamp);
 
-            if let (Some(prev_block), Some(tx)) = (prev, &self.block_req_tx) {
-                let _: Result<(), _> = tx.try_send(prev_block);
+            if let (Some(prev), Some(tx)) = (prev_block, &self.block_req_tx) {
+                for missing in (prev..block_number).rev() {
+                    let _ = tx.try_send(missing);
+                }
             }
         } else if let Some(contrib) =
             self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
@@ -231,7 +280,9 @@ impl FlashState {
             current_gas_limit: 0,
             current_base_fee: None,
             message_count: 0,
+            missed_flashblocks: 0,
             paused: false,
+            last_flashblock: None,
             fb_rx: None,
         }
     }
@@ -260,6 +311,17 @@ impl FlashState {
         let TimestampedFlashblock { flashblock: fb, received_at } = tsf;
 
         self.message_count += 1;
+
+        let block_number = fb.metadata.block_number;
+        let index = fb.index;
+        if let Some((last_block, last_index)) = self.last_flashblock {
+            if block_number == last_block && index > last_index + 1 {
+                self.missed_flashblocks += index - last_index - 1;
+            } else if block_number > last_block && index > 0 {
+                self.missed_flashblocks += index;
+            }
+        }
+        self.last_flashblock = Some((block_number, index));
 
         let base_fee =
             fb.base.as_ref().map(|base| base.base_fee_per_gas.try_into().unwrap_or(u128::MAX));

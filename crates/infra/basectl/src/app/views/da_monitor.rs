@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -8,8 +10,9 @@ use ratatui::{
 use crate::{
     app::{Action, Resources, View},
     commands::common::{
-        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S,
-        format_duration, format_rate, render_batches_table, render_da_backlog_bar,
+        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1BlockFilter, RATE_WINDOW_2M, RATE_WINDOW_5M,
+        RATE_WINDOW_30S, format_duration, format_rate, render_da_backlog_bar,
+        render_l1_blocks_table, truncate_block_number,
     },
     tui::Keybinding,
 };
@@ -20,18 +23,20 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "↑/k ↓/j", description: "Navigate" },
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
+    Keybinding { key: "f", description: "Filter L1 blocks" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
-    Blocks,
-    Batches,
+    L2Blocks,
+    L1Blocks,
 }
 
 #[derive(Debug)]
 pub struct DaMonitorView {
     selected_panel: Panel,
     selected_row: usize,
+    l1_filter: L1BlockFilter,
 }
 
 impl Default for DaMonitorView {
@@ -42,21 +47,22 @@ impl Default for DaMonitorView {
 
 impl DaMonitorView {
     pub const fn new() -> Self {
-        Self { selected_panel: Panel::Blocks, selected_row: 0 }
+        Self { selected_panel: Panel::L2Blocks, selected_row: 0, l1_filter: L1BlockFilter::All }
     }
 
-    const fn next_panel(&mut self) {
+    #[allow(clippy::missing_const_for_fn)]
+    fn next_panel(&mut self) {
         self.selected_panel = match self.selected_panel {
-            Panel::Blocks => Panel::Batches,
-            Panel::Batches => Panel::Blocks,
+            Panel::L2Blocks => Panel::L1Blocks,
+            Panel::L1Blocks => Panel::L2Blocks,
         };
         self.selected_row = 0;
     }
 
     fn panel_len(&self, panel: Panel, resources: &Resources) -> usize {
         match panel {
-            Panel::Blocks => resources.da.tracker.block_contributions.len(),
-            Panel::Batches => resources.da.tracker.batch_submissions.len(),
+            Panel::L2Blocks => resources.da.tracker.block_contributions.len(),
+            Panel::L1Blocks => resources.da.tracker.filtered_l1_blocks(self.l1_filter).count(),
         }
     }
 }
@@ -89,6 +95,11 @@ impl View for DaMonitorView {
                 self.next_panel();
                 Action::None
             }
+            KeyCode::Char('f') => {
+                self.l1_filter = self.l1_filter.next();
+                self.selected_row = 0;
+                Action::None
+            }
             _ => Action::None,
         }
     }
@@ -99,7 +110,7 @@ impl View for DaMonitorView {
             .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(0)])
             .split(area);
 
-        let highlighted_block = if self.selected_panel == Panel::Blocks {
+        let highlighted_block = if self.selected_panel == Panel::L2Blocks {
             resources.da.tracker.block_contributions.get(self.selected_row).map(|c| c.block_number)
         } else {
             None
@@ -114,7 +125,7 @@ impl View for DaMonitorView {
             highlighted_block,
         );
 
-        render_stats_panel(frame, chunks[1], resources);
+        render_stats_panel(frame, chunks[1], resources, self.l1_filter);
 
         let panel_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -125,25 +136,28 @@ impl View for DaMonitorView {
             frame,
             panel_chunks[0],
             resources,
-            self.selected_panel == Panel::Blocks,
+            self.selected_panel == Panel::L2Blocks,
             self.selected_row,
         );
 
-        let has_op_node = resources.config.op_node_rpc.is_some();
-        render_batches_table(
+        render_l1_blocks_table(
             frame,
             panel_chunks[1],
-            &resources.da.tracker.batch_submissions,
-            self.selected_panel == Panel::Batches,
-            if self.selected_panel == Panel::Batches { self.selected_row } else { 0 },
-            None,
-            has_op_node,
-            "L1 Batch Submissions",
+            resources.da.tracker.filtered_l1_blocks(self.l1_filter),
+            self.selected_panel == Panel::L1Blocks,
+            if self.selected_panel == Panel::L1Blocks { self.selected_row } else { 0 },
+            self.l1_filter,
+            "L1 Blocks",
+            resources.da.l1_connection_mode,
         );
     }
 }
 
-fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
+fn format_share(share: Option<f64>) -> String {
+    share.map_or_else(|| "-".to_string(), |s| format!("{:.0}%", s * 100.0))
+}
+
+fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources, filter: L1BlockFilter) {
     let tracker = &resources.da.tracker;
 
     let growth_30s = tracker.growth_tracker.rate_over(RATE_WINDOW_30S);
@@ -154,7 +168,11 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
     let burn_2m = tracker.burn_tracker.rate_over(RATE_WINDOW_2M);
     let burn_5m = tracker.burn_tracker.rate_over(RATE_WINDOW_5M);
 
-    let time_since = tracker.last_blob_time.map(|t| t.elapsed());
+    let base_share_2m = tracker.base_blob_share(RATE_WINDOW_2M);
+    let target_usage_2m =
+        tracker.blob_target_usage(RATE_WINDOW_2M, resources.config.l1_blob_target);
+
+    let time_since = tracker.last_base_blob_time.map(|t| t.elapsed());
 
     let lines = vec![
         Line::from(vec![
@@ -180,11 +198,20 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
             Span::styled(format_rate(burn_5m), Style::default().fg(COLOR_BURN)),
         ]),
         Line::from(vec![
-            Span::styled("Last batch: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("L1 Target: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format_share(target_usage_2m), Style::default().fg(Color::Yellow)),
+            Span::raw("  "),
+            Span::styled("Base: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format_share(base_share_2m), Style::default().fg(COLOR_BASE_BLUE)),
+            Span::raw("  "),
+            Span::styled("Last: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 time_since.map(format_duration).unwrap_or_else(|| "-".to_string()),
                 Style::default().fg(Color::White),
             ),
+            Span::raw("  "),
+            Span::styled("Filter: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(filter.label(), Style::default().fg(Color::Cyan)),
         ]),
     ];
 
@@ -214,12 +241,16 @@ fn render_blocks_panel(
     let border_color = if is_active { Color::Rgb(100, 255, 100) } else { Color::Green };
 
     let block = Block::default()
-        .title(" L2 Blocks (DA↑) ")
+        .title(format!(" L2 Blocks (DA↑) [{}] ", tracker.block_contributions.len()))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
+
+    // DA(8) + Age(6) + spacing(3) = 17
+    let fixed_cols_width = 8 + 6 + 3;
+    let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
@@ -250,15 +281,16 @@ fn render_blocks_panel(
             };
 
             Row::new(vec![
-                Cell::from(contrib.block_number.to_string()).style(block_style),
+                Cell::from(truncate_block_number(contrib.block_number, block_col_width))
+                    .style(block_style),
                 Cell::from(fmt_bytes(contrib.da_bytes)),
-                Cell::from(fmt_dur(contrib.timestamp.elapsed())),
+                Cell::from(fmt_dur(Duration::from_secs(contrib.age_seconds()))),
             ])
             .style(style)
         })
         .collect();
 
-    let widths = [Constraint::Length(10), Constraint::Length(8), Constraint::Min(6)];
+    let widths = [Constraint::Max(10), Constraint::Length(8), Constraint::Min(6)];
     let table = Table::new(rows, widths).header(header);
     f.render_widget(table, inner);
 }

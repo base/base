@@ -18,6 +18,12 @@ pub struct ChainConfig {
     pub system_config: Address,
     #[serde(default, skip_serializing_if = "Option::is_none", with = "option_address_serde")]
     pub batcher_address: Option<Address>,
+    #[serde(default = "default_blob_target")]
+    pub l1_blob_target: u64,
+}
+
+const fn default_blob_target() -> u64 {
+    14
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -31,6 +37,7 @@ struct ChainConfigOverride {
     system_config: Option<Address>,
     #[serde(default, with = "option_address_serde")]
     batcher_address: Option<Address>,
+    l1_blob_target: Option<u64>,
 }
 
 mod address_serde {
@@ -113,6 +120,7 @@ impl ChainConfig {
             op_node_rpc: None,
             system_config: "0x73a79Fab69143498Ed3712e519A88a918e1f4072".parse().unwrap(),
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
+            l1_blob_target: 14,
         }
     }
 
@@ -124,7 +132,8 @@ impl ChainConfig {
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             op_node_rpc: None,
             system_config: "0xf272670eb55e895584501d564AfEB048bEd26194".parse().unwrap(),
-            batcher_address: Some("0x6CDEbe940BC0F26850285cacA097C11c33103E47".parse().unwrap()),
+            batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
+            l1_blob_target: 14,
         }
     }
 
@@ -146,6 +155,7 @@ impl ChainConfig {
             // These will be populated by fetch_rollup_config
             system_config: Address::ZERO,
             batcher_address: None,
+            l1_blob_target: 14,
         }
     }
 
@@ -247,6 +257,7 @@ impl ChainConfig {
             op_node_rpc: overrides.op_node_rpc.or(base.op_node_rpc),
             system_config: overrides.system_config.unwrap_or(base.system_config),
             batcher_address: overrides.batcher_address.or(base.batcher_address),
+            l1_blob_target: overrides.l1_blob_target.unwrap_or(base.l1_blob_target),
         })
     }
 

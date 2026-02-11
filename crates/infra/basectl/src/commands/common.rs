@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::rpc::BlobSubmission;
+use crate::rpc::{L1BlockInfo, L1ConnectionMode};
 
 pub const BLOB_SIZE: u64 = 128 * 1024;
 pub const MAX_HISTORY: usize = 1000;
@@ -92,63 +92,114 @@ pub struct FlashblockEntry {
 pub struct BlockContribution {
     pub block_number: u64,
     pub da_bytes: u64,
-    pub timestamp: Instant,
+    pub timestamp: u64,
+}
+
+impl BlockContribution {
+    pub fn age_seconds(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(self.timestamp)
+    }
 }
 
 #[derive(Clone, Debug)]
-pub struct BatchSubmission {
-    pub da_bytes: u64,
-    pub estimated_blobs: u64,
-    pub actual_blobs: Option<u64>,
-    pub l1_blob_bytes: Option<u64>,
-    pub blocks_submitted: u64,
-    pub timestamp: Instant,
-    pub block_range: (u64, u64),
-    pub l1_block_number: Option<u64>,
-    pub l1_block_hash: Option<B256>,
+pub struct L1Block {
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub timestamp: u64,
+    pub total_blobs: u64,
+    pub base_blobs: u64,
+    pub l2_blocks_submitted: Option<u64>,
+    pub l2_da_bytes: Option<u64>,
+    pub l2_block_range: Option<(u64, u64)>,
 }
 
-impl BatchSubmission {
-    pub fn new(da_bytes: u64, blocks_submitted: u64, block_range: (u64, u64)) -> Self {
+impl L1Block {
+    pub const fn from_info(info: L1BlockInfo) -> Self {
         Self {
-            da_bytes,
-            estimated_blobs: da_bytes.div_ceil(BLOB_SIZE),
-            actual_blobs: None,
-            l1_blob_bytes: None,
-            blocks_submitted,
-            timestamp: Instant::now(),
-            block_range,
-            l1_block_number: None,
-            l1_block_hash: None,
+            block_number: info.block_number,
+            block_hash: info.block_hash,
+            timestamp: info.timestamp,
+            total_blobs: info.total_blobs,
+            base_blobs: info.base_blobs,
+            l2_blocks_submitted: None,
+            l2_da_bytes: None,
+            l2_block_range: None,
         }
     }
 
-    pub const fn record_l1_submission(&mut self, blob_sub: &BlobSubmission) {
-        self.actual_blobs = Some(blob_sub.blob_count);
-        self.l1_blob_bytes = Some(blob_sub.l1_blob_bytes);
-        self.l1_block_number = Some(blob_sub.block_number);
-        self.l1_block_hash = Some(blob_sub.block_hash);
+    pub const fn has_blobs(&self) -> bool {
+        self.total_blobs > 0
     }
 
-    pub const fn has_l1_data(&self) -> bool {
-        self.actual_blobs.is_some()
+    pub const fn has_base_blobs(&self) -> bool {
+        self.base_blobs > 0
+    }
+
+    pub fn blobs_display(&self) -> String {
+        format!("{}/{}", self.base_blobs, self.total_blobs)
+    }
+
+    pub fn block_display(&self, max_width: usize) -> String {
+        truncate_block_number(self.block_number, max_width)
+    }
+
+    pub fn l2_blocks_display(&self) -> String {
+        self.l2_blocks_submitted.map_or_else(|| "-".to_string(), |n| n.to_string())
     }
 
     pub fn compression_ratio(&self) -> Option<f64> {
-        self.l1_blob_bytes.filter(|&b| b > 0).map(|l1_bytes| self.da_bytes as f64 / l1_bytes as f64)
-    }
-
-    pub fn blob_count_display(&self) -> String {
-        self.actual_blobs
-            .map_or_else(|| format!("~{}", self.estimated_blobs), |actual| actual.to_string())
-    }
-
-    pub fn l1_block_display(&self) -> String {
-        self.l1_block_number.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())
+        let da_bytes = self.l2_da_bytes?;
+        if self.base_blobs == 0 {
+            return None;
+        }
+        let l1_bytes = self.base_blobs * BLOB_SIZE;
+        Some(da_bytes as f64 / l1_bytes as f64)
     }
 
     pub fn compression_display(&self) -> String {
-        self.compression_ratio().map(|r| format!("{r:.2}x")).unwrap_or_else(|| "-".to_string())
+        self.compression_ratio().map_or_else(|| "-".to_string(), |r| format!("{r:.2}x"))
+    }
+
+    pub fn age_seconds(&self) -> u64 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        now.saturating_sub(self.timestamp)
+    }
+
+    pub fn age_display(&self) -> String {
+        format_duration(Duration::from_secs(self.age_seconds()))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum L1BlockFilter {
+    #[default]
+    All,
+    WithBlobs,
+    WithBaseBlobs,
+}
+
+impl L1BlockFilter {
+    pub const fn next(self) -> Self {
+        match self {
+            Self::All => Self::WithBlobs,
+            Self::WithBlobs => Self::WithBaseBlobs,
+            Self::WithBaseBlobs => Self::All,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::WithBlobs => "Blobs",
+            Self::WithBaseBlobs => "Base",
+        }
     }
 }
 
@@ -180,14 +231,23 @@ impl RateTracker {
     pub fn rate_over(&self, duration: Duration) -> Option<f64> {
         let now = Instant::now();
         let cutoff = now - duration;
-        let samples_in_window: Vec<_> = self.samples.iter().filter(|(t, _)| *t >= cutoff).collect();
 
-        if samples_in_window.len() < 2 {
+        let (count, total, earliest) = self.samples.iter().filter(|(t, _)| *t >= cutoff).fold(
+            (0usize, 0u64, None::<Instant>),
+            |(count, total, earliest), (t, b)| {
+                (count + 1, total + b, Some(earliest.map_or(*t, |e: Instant| e.min(*t))))
+            },
+        );
+
+        if count < 2 {
             return None;
         }
 
-        let total: u64 = samples_in_window.iter().map(|(_, b)| *b).sum();
-        let elapsed = duration.as_secs_f64();
+        let elapsed = now.duration_since(earliest?).as_secs_f64();
+        if elapsed <= 0.0 {
+            return None;
+        }
+
         Some(total as f64 / elapsed)
     }
 }
@@ -207,10 +267,15 @@ pub struct DaTracker {
     pub safe_l2_block: u64,
     pub da_backlog_bytes: u64,
     pub block_contributions: VecDeque<BlockContribution>,
-    pub batch_submissions: VecDeque<BatchSubmission>,
+    pub l1_blocks: VecDeque<L1Block>,
     pub growth_tracker: RateTracker,
     pub burn_tracker: RateTracker,
-    pub last_blob_time: Option<Instant>,
+    pub total_blob_tracker: RateTracker,
+    pub base_blob_tracker: RateTracker,
+    pub last_base_blob_time: Option<Instant>,
+    /// Safe L2 block at the time of last L1→L2 attribution.
+    /// Used to compute the delta of L2 blocks to attribute to the next L1 blob block.
+    last_attributed_safe_l2: u64,
 }
 
 impl Default for DaTracker {
@@ -225,19 +290,31 @@ impl DaTracker {
             safe_l2_block: 0,
             da_backlog_bytes: 0,
             block_contributions: VecDeque::with_capacity(MAX_HISTORY),
-            batch_submissions: VecDeque::with_capacity(MAX_HISTORY),
+            l1_blocks: VecDeque::with_capacity(MAX_HISTORY),
             growth_tracker: RateTracker::new(),
             burn_tracker: RateTracker::new(),
-            last_blob_time: None,
+            total_blob_tracker: RateTracker::new(),
+            base_blob_tracker: RateTracker::new(),
+            last_base_blob_time: None,
+            last_attributed_safe_l2: 0,
         }
     }
 
     pub const fn set_initial_backlog(&mut self, safe_block: u64, da_bytes: u64) {
         self.safe_l2_block = safe_block;
         self.da_backlog_bytes = da_bytes;
+        self.last_attributed_safe_l2 = safe_block;
     }
 
-    pub fn add_block(&mut self, block_number: u64, da_bytes: u64) {
+    pub fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
+        let contribution = BlockContribution { block_number, da_bytes, timestamp };
+        self.block_contributions.push_front(contribution);
+        if self.block_contributions.len() > MAX_HISTORY {
+            self.block_contributions.pop_back();
+        }
+    }
+
+    pub fn add_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
         if block_number <= self.safe_l2_block {
             return;
         }
@@ -245,18 +322,19 @@ impl DaTracker {
         self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
         self.growth_tracker.add_sample(da_bytes);
 
-        let contribution = BlockContribution { block_number, da_bytes, timestamp: Instant::now() };
+        let contribution = BlockContribution { block_number, da_bytes, timestamp };
         self.block_contributions.push_front(contribution);
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
         }
     }
 
-    pub fn update_block_da(&mut self, block_number: u64, accurate_da_bytes: u64) {
+    pub fn update_block_info(&mut self, block_number: u64, accurate_da_bytes: u64, timestamp: u64) {
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
                 let diff = accurate_da_bytes as i64 - contrib.da_bytes as i64;
                 contrib.da_bytes = accurate_da_bytes;
+                contrib.timestamp = timestamp;
 
                 if block_number > self.safe_l2_block {
                     if diff > 0 {
@@ -266,55 +344,177 @@ impl DaTracker {
                             self.da_backlog_bytes.saturating_sub((-diff) as u64);
                     }
                 }
-                break;
+                return;
             }
+        }
+
+        // Block not found - insert it in sorted position (gap fill)
+        let contribution =
+            BlockContribution { block_number, da_bytes: accurate_da_bytes, timestamp };
+
+        if block_number > self.safe_l2_block {
+            self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(accurate_da_bytes);
+        }
+
+        let insert_pos = self
+            .block_contributions
+            .iter()
+            .position(|c| c.block_number < block_number)
+            .unwrap_or(self.block_contributions.len());
+        self.block_contributions.insert(insert_pos, contribution);
+
+        if self.block_contributions.len() > MAX_HISTORY {
+            self.block_contributions.pop_back();
         }
     }
 
-    pub fn update_safe_head(&mut self, safe_block: u64) -> Option<BatchSubmission> {
+    pub fn update_safe_head(&mut self, safe_block: u64) {
         if safe_block <= self.safe_l2_block {
-            return None;
+            return;
         }
 
         let old_safe = self.safe_l2_block;
         self.safe_l2_block = safe_block;
 
-        let mut submitted_bytes: u64 = 0;
-        let mut blocks_submitted: u64 = 0;
-        let mut min_block = u64::MAX;
-        let mut max_block = 0u64;
+        let submitted_bytes: u64 = self
+            .block_contributions
+            .iter()
+            .filter(|c| c.block_number > old_safe && c.block_number <= safe_block)
+            .map(|c| c.da_bytes)
+            .sum();
 
-        for contrib in &self.block_contributions {
-            if contrib.block_number > old_safe && contrib.block_number <= safe_block {
-                submitted_bytes = submitted_bytes.saturating_add(contrib.da_bytes);
-                blocks_submitted += 1;
-                min_block = min_block.min(contrib.block_number);
-                max_block = max_block.max(contrib.block_number);
-            }
-        }
+        self.da_backlog_bytes = self.da_backlog_bytes.saturating_sub(submitted_bytes);
+        self.burn_tracker.add_sample(submitted_bytes);
 
-        if submitted_bytes > 0 {
-            self.da_backlog_bytes = self.da_backlog_bytes.saturating_sub(submitted_bytes);
-            self.burn_tracker.add_sample(submitted_bytes);
-            self.last_blob_time = Some(Instant::now());
-
-            let submission =
-                BatchSubmission::new(submitted_bytes, blocks_submitted, (min_block, max_block));
-            self.batch_submissions.push_front(submission.clone());
-            if self.batch_submissions.len() > MAX_HISTORY {
-                self.batch_submissions.pop_back();
-            }
-            Some(submission)
-        } else {
-            None
-        }
+        self.try_attribute_l2_to_l1();
     }
 
-    pub fn record_l1_blob_submission(&mut self, blob_sub: &BlobSubmission) {
-        if let Some(submission) = self.batch_submissions.iter_mut().rev().find(|s| !s.has_l1_data())
-        {
-            submission.record_l1_submission(blob_sub);
+    pub fn record_l1_block(&mut self, info: L1BlockInfo) {
+        if self.l1_blocks.iter().any(|b| b.block_number == info.block_number) {
+            return;
         }
+
+        let l1_block = L1Block::from_info(info);
+
+        if l1_block.total_blobs > 0 {
+            self.total_blob_tracker.add_sample(l1_block.total_blobs);
+        }
+        if l1_block.base_blobs > 0 {
+            self.base_blob_tracker.add_sample(l1_block.base_blobs);
+            self.last_base_blob_time = Some(Instant::now());
+        }
+
+        self.l1_blocks.push_front(l1_block);
+        if self.l1_blocks.len() > MAX_HISTORY {
+            self.l1_blocks.pop_back();
+        }
+
+        self.try_attribute_l2_to_l1();
+    }
+
+    fn try_attribute_l2_to_l1(&mut self) {
+        if self.safe_l2_block <= self.last_attributed_safe_l2 {
+            return;
+        }
+
+        let mut unmatched: Vec<usize> = self
+            .l1_blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.base_blobs > 0 && b.l2_blocks_submitted.is_none())
+            .map(|(i, _)| i)
+            .collect();
+
+        if unmatched.is_empty() {
+            return;
+        }
+
+        // Process oldest first (l1_blocks is newest-first, so reverse)
+        unmatched.reverse();
+
+        let total_blobs: u64 = unmatched.iter().map(|&i| self.l1_blocks[i].base_blobs).sum();
+        if total_blobs == 0 {
+            return;
+        }
+
+        let l2_delta = self.safe_l2_block - self.last_attributed_safe_l2;
+        let mut cursor = self.last_attributed_safe_l2;
+
+        // Integer apportionment: each entry gets floor(l2_delta * blobs / total_blobs),
+        // then distribute remainders by largest fractional part.
+        let mut shares: Vec<u64> = Vec::with_capacity(unmatched.len());
+        let mut remainders: Vec<(usize, u64)> = Vec::with_capacity(unmatched.len());
+        let mut allocated: u64 = 0;
+
+        for (nth, &idx) in unmatched.iter().enumerate() {
+            let blobs = self.l1_blocks[idx].base_blobs;
+            let floor = l2_delta * blobs / total_blobs;
+            // Fractional remainder scaled by total_blobs to avoid floats:
+            // remainder = (l2_delta * blobs) % total_blobs
+            let frac = (l2_delta * blobs) % total_blobs;
+            shares.push(floor);
+            remainders.push((nth, frac));
+            allocated += floor;
+        }
+
+        // Distribute the leftover (l2_delta - allocated) to entries with largest remainders
+        let mut leftover = l2_delta - allocated;
+        remainders.sort_by(|a, b| b.1.cmp(&a.1));
+        for &(nth, _) in &remainders {
+            if leftover == 0 {
+                break;
+            }
+            shares[nth] += 1;
+            leftover -= 1;
+        }
+
+        for (nth, &idx) in unmatched.iter().enumerate() {
+            let share = shares[nth];
+            if share == 0 {
+                // Skip zero-share entries — don't write invalid ranges
+                continue;
+            }
+
+            let range_start = cursor + 1;
+            let range_end = cursor + share;
+
+            let da_bytes: u64 = self
+                .block_contributions
+                .iter()
+                .filter(|c| c.block_number >= range_start && c.block_number <= range_end)
+                .map(|c| c.da_bytes)
+                .sum();
+
+            let block = &mut self.l1_blocks[idx];
+            block.l2_blocks_submitted = Some(share);
+            block.l2_da_bytes = Some(da_bytes);
+            block.l2_block_range = Some((range_start, range_end));
+
+            cursor += share;
+        }
+
+        self.last_attributed_safe_l2 = self.safe_l2_block;
+    }
+
+    pub fn filtered_l1_blocks(&self, filter: L1BlockFilter) -> impl Iterator<Item = &L1Block> {
+        self.l1_blocks.iter().filter(move |b| match filter {
+            L1BlockFilter::All => true,
+            L1BlockFilter::WithBlobs => b.has_blobs(),
+            L1BlockFilter::WithBaseBlobs => b.has_base_blobs(),
+        })
+    }
+
+    pub fn base_blob_share(&self, window: Duration) -> Option<f64> {
+        let total = self.total_blob_tracker.rate_over(window)?;
+        let base = self.base_blob_tracker.rate_over(window)?;
+        if total > 0.0 { Some(base / total) } else { None }
+    }
+
+    pub fn blob_target_usage(&self, window: Duration, l1_blob_target: u64) -> Option<f64> {
+        let blob_rate = self.total_blob_tracker.rate_over(window)?;
+        let blocks_per_sec = 1.0 / 12.0;
+        let target_rate = l1_blob_target as f64 * blocks_per_sec;
+        Some(blob_rate / target_rate)
     }
 }
 
@@ -342,6 +542,11 @@ pub fn format_gas(gas: u64) -> String {
     } else {
         gas.to_string()
     }
+}
+
+pub fn truncate_block_number(block_number: u64, max_width: usize) -> String {
+    let s = block_number.to_string();
+    if s.len() <= max_width { s } else { format!("…{}", &s[s.len() - (max_width - 1)..]) }
 }
 
 pub fn format_duration(d: Duration) -> String {
@@ -443,85 +648,82 @@ pub fn build_gas_bar(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn render_batches_table(
+pub fn render_l1_blocks_table<'a>(
     f: &mut Frame,
     area: Rect,
-    batches: &VecDeque<BatchSubmission>,
+    l1_blocks: impl Iterator<Item = &'a L1Block>,
     is_active: bool,
     selected_row: usize,
-    highlighted_batch_idx: Option<usize>,
-    has_op_node: bool,
+    filter: L1BlockFilter,
     title: &str,
+    connection_mode: Option<L1ConnectionMode>,
 ) {
     let border_color = if is_active { Color::Rgb(255, 100, 100) } else { Color::Red };
 
+    let filter_label = filter.label();
+    let mode_label = match connection_mode {
+        Some(L1ConnectionMode::WebSocket) => " WS",
+        Some(L1ConnectionMode::Polling) => " Poll",
+        None => "",
+    };
     let block = Block::default()
-        .title(format!(" {title} "))
+        .title(format!(" {title} [{filter_label}]{mode_label} "))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if !has_op_node {
-        let lines = vec![
-            Line::from(""),
-            Line::from(Span::styled("op_node_rpc required", Style::default().fg(Color::Yellow))),
-            Line::from(Span::styled("Set in config file:", Style::default().fg(Color::DarkGray))),
-            Line::from(Span::styled(
-                "~/.base/config/<name>.yaml",
-                Style::default().fg(Color::Yellow),
-            )),
-        ];
-        let para = Paragraph::new(lines).alignment(Alignment::Center);
-        f.render_widget(para, inner);
-        return;
-    }
-
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
         Cell::from("L1 Blk").style(header_style),
-        Cell::from("DA").style(header_style),
         Cell::from("Blobs").style(header_style),
+        Cell::from("L2").style(header_style),
         Cell::from("Ratio").style(header_style),
-        Cell::from("Blks").style(header_style),
         Cell::from("Age").style(header_style),
     ]);
 
-    let rows: Vec<Row> = batches
-        .iter()
+    // Calculate available width for L1 block column
+    // Other columns need: Blobs(5) + L2(4) + Ratio(6) + Age(5) + spacing(4) = 24
+    let fixed_cols_width = 5 + 4 + 6 + 5 + 4;
+    let l1_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 9) as usize;
+
+    let rows: Vec<Row> = l1_blocks
         .take(inner.height.saturating_sub(1) as usize)
         .enumerate()
-        .map(|(idx, batch)| {
+        .map(|(idx, l1_block)| {
             let is_selected = is_active && idx == selected_row;
-            let is_highlighted = highlighted_batch_idx == Some(idx);
 
             let style = if is_selected {
                 Style::default().fg(Color::White).bg(COLOR_ROW_SELECTED)
-            } else if is_highlighted {
-                Style::default().fg(Color::White).bg(COLOR_ROW_HIGHLIGHTED)
             } else {
                 Style::default().fg(Color::White)
             };
 
+            let blobs_style = if l1_block.base_blobs > 0 {
+                Style::default().fg(COLOR_BASE_BLUE)
+            } else if l1_block.total_blobs > 0 {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
             Row::new(vec![
-                Cell::from(batch.l1_block_display()),
-                Cell::from(format_bytes(batch.da_bytes)),
-                Cell::from(batch.blob_count_display()),
-                Cell::from(batch.compression_display()),
-                Cell::from(batch.blocks_submitted.to_string()),
-                Cell::from(format_duration(batch.timestamp.elapsed())),
+                Cell::from(l1_block.block_display(l1_col_width)),
+                Cell::from(l1_block.blobs_display()).style(blobs_style),
+                Cell::from(l1_block.l2_blocks_display()),
+                Cell::from(l1_block.compression_display()),
+                Cell::from(l1_block.age_display()),
             ])
             .style(style)
         })
         .collect();
 
     let widths = [
-        Constraint::Length(9),
-        Constraint::Length(7),
-        Constraint::Length(6),
-        Constraint::Length(6),
+        Constraint::Max(9),
         Constraint::Length(5),
+        Constraint::Length(4),
+        Constraint::Length(6),
         Constraint::Min(5),
     ];
 

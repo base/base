@@ -10,7 +10,7 @@ use crate::{
     app::{Action, Resources, View},
     commands::common::{
         COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, build_gas_bar, format_gas,
-        format_gwei, time_diff_color,
+        format_gwei, time_diff_color, truncate_block_number,
     },
     tui::Keybinding,
 };
@@ -133,10 +133,12 @@ impl View for FlashblocksView {
     fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources) {
         let flash = &resources.flash;
 
+        let missed = resources.flash.missed_flashblocks;
+        let missed_str = if missed > 0 { format!(" | {missed} missed") } else { String::new() };
         let title = if flash.paused {
-            format!(" Flashblocks [PAUSED] - {} msgs ", flash.message_count)
+            format!(" Flashblocks [PAUSED] - {} msgs{missed_str} ", flash.message_count)
         } else {
-            format!(" Flashblocks - {} msgs ", flash.message_count)
+            format!(" Flashblocks - {} msgs{missed_str} ", flash.message_count)
         };
 
         let border_color = if flash.paused { Color::Yellow } else { COLOR_ACTIVE_BORDER };
@@ -154,6 +156,10 @@ impl View for FlashblocksView {
             .selected()
             .and_then(|idx| flash.entries.get(idx))
             .map(|e| e.block_number);
+
+        // Idx(4) + Txs(4) + Gas(7) + BaseFee(12) + Delta(8) + Dt(8) + Fill(42) + Time(8) + spacing = ~100
+        let fixed_cols_width = 4 + 4 + 7 + 12 + 8 + 8 + (GAS_BAR_CHARS as u16 + 2) + 8 + 9;
+        let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
         let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
         let header = Row::new(vec![
@@ -236,7 +242,8 @@ impl View for FlashblocksView {
                 let time_str = entry.timestamp.format("%H:%M:%S").to_string();
 
                 Row::new(vec![
-                    Cell::from(entry.block_number.to_string()).style(first_fb_style),
+                    Cell::from(truncate_block_number(entry.block_number, block_col_width))
+                        .style(first_fb_style),
                     Cell::from(entry.index.to_string()).style(first_fb_style),
                     Cell::from(entry.tx_count.to_string()).style(first_fb_style),
                     Cell::from(format_gas(entry.gas_used)),
@@ -251,7 +258,7 @@ impl View for FlashblocksView {
             .collect();
 
         let widths = [
-            Constraint::Length(10),
+            Constraint::Max(10),
             Constraint::Length(4),
             Constraint::Length(4),
             Constraint::Length(7),

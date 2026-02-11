@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -9,9 +11,9 @@ use ratatui::{
 use crate::{
     app::{Action, Resources, View},
     commands::common::{
-        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, RATE_WINDOW_2M, backlog_size_color,
-        build_gas_bar, format_bytes, format_duration, format_gwei, format_rate,
-        render_batches_table, render_da_backlog_bar, time_diff_color,
+        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1BlockFilter, RATE_WINDOW_2M,
+        backlog_size_color, build_gas_bar, format_bytes, format_duration, format_gwei, format_rate,
+        render_da_backlog_bar, render_l1_blocks_table, time_diff_color, truncate_block_number,
     },
     tui::Keybinding,
 };
@@ -23,13 +25,14 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "↑/↓", description: "Navigate" },
     Keybinding { key: "Space", description: "Pause flashblocks" },
     Keybinding { key: "y", description: "Copy block number" },
+    Keybinding { key: "f", description: "Filter L1 blocks" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
     Flashblocks,
     Da,
-    Batches,
+    L1Blocks,
 }
 
 #[derive(Debug)]
@@ -37,8 +40,9 @@ pub struct CommandCenterView {
     focused_panel: Panel,
     da_selected_row: usize,
     flash_selected_row: usize,
-    batch_selected_row: usize,
+    l1_selected_row: usize,
     highlighted_block: Option<u64>,
+    l1_filter: L1BlockFilter,
 }
 
 impl Default for CommandCenterView {
@@ -53,24 +57,25 @@ impl CommandCenterView {
             focused_panel: Panel::Flashblocks,
             da_selected_row: 0,
             flash_selected_row: 0,
-            batch_selected_row: 0,
+            l1_selected_row: 0,
             highlighted_block: None,
+            l1_filter: L1BlockFilter::All,
         }
     }
 
     const fn next_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
             Panel::Flashblocks => Panel::Da,
-            Panel::Da => Panel::Batches,
-            Panel::Batches => Panel::Flashblocks,
+            Panel::Da => Panel::L1Blocks,
+            Panel::L1Blocks => Panel::Flashblocks,
         };
     }
 
     const fn prev_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
-            Panel::Flashblocks => Panel::Batches,
+            Panel::Flashblocks => Panel::L1Blocks,
             Panel::Da => Panel::Flashblocks,
-            Panel::Batches => Panel::Da,
+            Panel::L1Blocks => Panel::Da,
         };
     }
 
@@ -85,7 +90,7 @@ impl CommandCenterView {
                 .block_contributions
                 .get(self.da_selected_row)
                 .map(|c| c.block_number),
-            Panel::Batches => None,
+            Panel::L1Blocks => None,
         };
     }
 
@@ -102,12 +107,12 @@ impl CommandCenterView {
                 .block_contributions
                 .get(self.da_selected_row)
                 .map(|c| c.block_number.to_string()),
-            Panel::Batches => resources
+            Panel::L1Blocks => resources
                 .da
                 .tracker
-                .batch_submissions
-                .get(self.batch_selected_row)
-                .and_then(|b| b.l1_block_number.map(|n| n.to_string())),
+                .filtered_l1_blocks(self.l1_filter)
+                .nth(self.l1_selected_row)
+                .map(|b| b.block_number.to_string()),
         }
     }
 }
@@ -140,8 +145,13 @@ impl View for CommandCenterView {
                 Action::None
             }
             KeyCode::Char('3') => {
-                self.focused_panel = Panel::Batches;
+                self.focused_panel = Panel::L1Blocks;
                 self.update_highlighted_block(resources);
+                Action::None
+            }
+            KeyCode::Char('f') => {
+                self.l1_filter = self.l1_filter.next();
+                self.l1_selected_row = 0;
                 Action::None
             }
             KeyCode::Char(' ') => {
@@ -160,9 +170,9 @@ impl View for CommandCenterView {
                             self.flash_selected_row -= 1;
                         }
                     }
-                    Panel::Batches => {
-                        if self.batch_selected_row > 0 {
-                            self.batch_selected_row -= 1;
+                    Panel::L1Blocks => {
+                        if self.l1_selected_row > 0 {
+                            self.l1_selected_row -= 1;
                         }
                     }
                 }
@@ -183,10 +193,15 @@ impl View for CommandCenterView {
                             self.flash_selected_row += 1;
                         }
                     }
-                    Panel::Batches => {
-                        let max = resources.da.tracker.batch_submissions.len().saturating_sub(1);
-                        if self.batch_selected_row < max {
-                            self.batch_selected_row += 1;
+                    Panel::L1Blocks => {
+                        let max = resources
+                            .da
+                            .tracker
+                            .filtered_l1_blocks(self.l1_filter)
+                            .count()
+                            .saturating_sub(1);
+                        if self.l1_selected_row < max {
+                            self.l1_selected_row += 1;
                         }
                     }
                 }
@@ -209,7 +224,7 @@ impl View for CommandCenterView {
         let at_top = match self.focused_panel {
             Panel::Flashblocks => self.flash_selected_row == 0,
             Panel::Da => self.da_selected_row == 0,
-            Panel::Batches => self.batch_selected_row == 0,
+            Panel::L1Blocks => self.l1_selected_row == 0,
         };
         if at_top {
             self.update_highlighted_block(resources);
@@ -267,16 +282,15 @@ impl View for CommandCenterView {
             self.highlighted_block,
         );
 
-        let has_op_node = resources.config.op_node_rpc.is_some();
-        render_batches_table(
+        render_l1_blocks_table(
             frame,
             panel_chunks[2],
-            &resources.da.tracker.batch_submissions,
-            self.focused_panel == Panel::Batches,
-            self.batch_selected_row,
-            None,
-            has_op_node,
-            "L1 Batches",
+            resources.da.tracker.filtered_l1_blocks(self.l1_filter),
+            self.focused_panel == Panel::L1Blocks,
+            self.l1_selected_row,
+            self.l1_filter,
+            "L1 Blocks",
+            resources.da.l1_connection_mode,
         );
     }
 }
@@ -349,7 +363,9 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
     let backlog_color = backlog_size_color(tracker.da_backlog_bytes);
     let growth_rate = tracker.growth_tracker.rate_over(RATE_WINDOW_2M);
     let burn_rate = tracker.burn_tracker.rate_over(RATE_WINDOW_2M);
-    let time_since = tracker.last_blob_time.map(|t| t.elapsed());
+    let time_since = tracker.last_base_blob_time.map(|t| t.elapsed());
+    let base_share = tracker.base_blob_share(RATE_WINDOW_2M);
+    let target_usage = tracker.blob_target_usage(RATE_WINDOW_2M, resources.config.l1_blob_target);
 
     let flash_status = if resources.flash.paused { " [PAUSED]" } else { "" };
 
@@ -366,9 +382,21 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
             Span::raw(" "),
             Span::styled("↓", Style::default().fg(COLOR_BURN)),
             Span::styled(format_rate(burn_rate), Style::default().fg(COLOR_BURN)),
+            Span::raw("  "),
+            Span::styled("L1: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                target_usage.map_or_else(|| "-".to_string(), |u| format!("{:.0}%", u * 100.0)),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw(" "),
+            Span::styled("Base: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                base_share.map_or_else(|| "-".to_string(), |s| format!("{:.0}%", s * 100.0)),
+                Style::default().fg(COLOR_BASE_BLUE),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("Last batch: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Last: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 time_since.map(format_duration).unwrap_or_else(|| "-".to_string()),
                 Style::default().fg(Color::White),
@@ -378,6 +406,16 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
             Span::styled(
                 resources.flash.message_count.to_string(),
                 Style::default().fg(Color::White),
+            ),
+            Span::raw("  "),
+            Span::styled("Missed: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                resources.flash.missed_flashblocks.to_string(),
+                Style::default().fg(if resources.flash.missed_flashblocks > 0 {
+                    Color::Red
+                } else {
+                    Color::Green
+                }),
             ),
             Span::styled(flash_status, Style::default().fg(Color::Yellow)),
         ]),
@@ -418,6 +456,10 @@ fn render_da_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // DA(8) + Age(6) + spacing(3) = 17
+    let fixed_cols_width = 8 + 6 + 3;
+    let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
+
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
         Cell::from("Block").style(header_style),
@@ -450,15 +492,16 @@ fn render_da_panel(
             };
 
             Row::new(vec![
-                Cell::from(contrib.block_number.to_string()).style(block_style),
+                Cell::from(truncate_block_number(contrib.block_number, block_col_width))
+                    .style(block_style),
                 Cell::from(fmt_bytes(contrib.da_bytes)),
-                Cell::from(fmt_dur(contrib.timestamp.elapsed())),
+                Cell::from(fmt_dur(Duration::from_secs(contrib.age_seconds()))),
             ])
             .style(style)
         })
         .collect();
 
-    let widths = [Constraint::Length(10), Constraint::Length(8), Constraint::Min(6)];
+    let widths = [Constraint::Max(10), Constraint::Length(8), Constraint::Min(6)];
     let table = Table::new(rows, widths).header(header);
     f.render_widget(table, inner);
 }
@@ -490,6 +533,10 @@ fn render_flash_panel(
 
     let inner = block.inner(area);
     f.render_widget(block, area);
+
+    // Idx(4) + Txs(4) + Gas(22) + BaseFee(14) + Dt(8) + spacing(6) = 58
+    let fixed_cols_width = 4 + 4 + (GAS_BAR_CHARS as u16 + 2) + 14 + 8 + 6;
+    let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
@@ -545,7 +592,8 @@ fn render_flash_panel(
             };
 
             Row::new(vec![
-                Cell::from(entry.block_number.to_string()).style(first_fb_style),
+                Cell::from(truncate_block_number(entry.block_number, block_col_width))
+                    .style(first_fb_style),
                 Cell::from(entry.index.to_string()).style(first_fb_style),
                 Cell::from(entry.tx_count.to_string()).style(first_fb_style),
                 Cell::from(gas_bar),
@@ -557,7 +605,7 @@ fn render_flash_panel(
         .collect();
 
     let widths = [
-        Constraint::Length(10),
+        Constraint::Max(10),
         Constraint::Length(4),
         Constraint::Length(4),
         Constraint::Length(GAS_BAR_CHARS as u16 + 2),
