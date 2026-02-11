@@ -1831,6 +1831,7 @@ dependencies = [
  "async-trait",
  "base-access-lists",
  "base-builder-core",
+ "base-builder-publish",
  "base-bundles",
  "base-client-node",
  "base-primitives",
@@ -1944,6 +1945,21 @@ dependencies = [
  "concurrent-queue",
  "dashmap 6.1.0",
  "jsonrpsee",
+ "tracing",
+]
+
+[[package]]
+name = "base-builder-publish"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "metrics",
+ "rstest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
  "tracing",
 ]
 

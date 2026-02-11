@@ -14,8 +14,6 @@ pub struct BuilderMetrics {
     pub block_synced_success: Counter,
     /// Number of flashblocks added to block (Total per block)
     pub flashblock_count: Histogram,
-    /// Number of messages sent
-    pub messages_sent_count: Counter,
     /// Histogram of the time taken to build a block
     pub total_block_built_duration: Histogram,
     /// Latest time taken to build a block

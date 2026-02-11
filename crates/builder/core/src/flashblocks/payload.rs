@@ -12,6 +12,7 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
+use base_builder_publish::WebSocketPublisher;
 use base_primitives::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -42,7 +43,6 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
-use super::wspub::WebSocketPublisher;
 use crate::{
     BuilderConfig, ExecutionInfo,
     flashblocks::{
