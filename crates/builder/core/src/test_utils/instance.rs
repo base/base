@@ -10,6 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use base_client_node::BaseNode;
 use base_primitives::FlashblocksPayloadV1;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
@@ -21,11 +22,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::{
-    OpNode,
-    args::RollupArgs,
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
-};
+use reth_optimism_node::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::TaskManager;
@@ -35,7 +32,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BuilderConfig, OpEngineApiBuilder, SharedMeteringProvider,
+    BuilderConfig, SharedMeteringProvider,
     flashblocks::FlashblocksServiceBuilder,
     test_utils::{EngineApi, Ipc, TransactionPoolObserver, create_test_db, driver::ChainDriver},
 };
@@ -93,7 +90,7 @@ impl LocalInstance {
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         let task_manager = task_manager();
-        let op_node = OpNode::new(RollupArgs::default());
+        let base_node = BaseNode::new(RollupArgs::default());
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
@@ -103,24 +100,19 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: OpAddOns<
-            _,
-            OpEthApiBuilder,
-            OpEngineValidatorBuilder,
-            OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        > = OpAddOnsBuilder::default()
-            .with_sequencer(None)
-            .with_enable_tx_conditional(false)
-            .with_da_config(da_config.clone())
-            .with_gas_limit_config(gas_limit_config.clone())
-            .build();
+        let addons: base_client_node::BaseAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+            base_node
+                .add_ons_builder()
+                .with_da_config(da_config.clone())
+                .with_gas_limit_config(gas_limit_config.clone())
+                .build();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(node_config.clone())
             .with_database(create_test_db(node_config.clone()))
             .with_launch_context(task_manager.executor())
-            .with_types::<OpNode>()
+            .with_types::<BaseNode>()
             .with_components(
-                op_node
+                base_node
                     .components()
                     .pool(pool_component())
                     .payload(FlashblocksServiceBuilder(builder_config.clone())),

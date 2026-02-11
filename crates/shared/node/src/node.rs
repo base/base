@@ -105,10 +105,10 @@ impl BaseNode {
     ///
     /// ```no_run
     /// use reth_optimism_chainspec::BASE_MAINNET;
-    /// use reth_optimism_node::OpNode;
+    /// use base_client_node::BaseNode;
     ///
     /// let factory =
-    ///     OpNode::provider_factory_builder().open_read_only(BASE_MAINNET.clone(), "datadir").unwrap();
+    ///     BaseNode::provider_factory_builder().open_read_only(BASE_MAINNET.clone(), "datadir").unwrap();
     /// ```
     ///
     /// # Open a Providerfactory manually with all required components
@@ -116,11 +116,11 @@ impl BaseNode {
     /// ```no_run
     /// use reth_db::open_db_read_only;
     /// use reth_optimism_chainspec::OpChainSpecBuilder;
-    /// use reth_optimism_node::OpNode;
+    /// use base_client_node::BaseNode;
     /// use reth_provider::providers::{RocksDBProvider, StaticFileProvider};
     /// use std::sync::Arc;
     ///
-    /// let factory = OpNode::provider_factory_builder()
+    /// let factory = BaseNode::provider_factory_builder()
     ///     .db(Arc::new(open_db_read_only("db", Default::default()).unwrap()))
     ///     .chainspec(OpChainSpecBuilder::base_mainnet().build().into())
     ///     .static_file(StaticFileProvider::read_only("db/static_files", false).unwrap())

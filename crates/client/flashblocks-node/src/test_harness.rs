@@ -19,7 +19,7 @@ use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use base_client_node::{
-    BaseBuilder, BaseNodeExtension,
+    BaseNodeExtension, NodeHooks,
     test_utils::{
         Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode,
         LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
@@ -132,7 +132,7 @@ impl FlashblocksTestExtension {
 }
 
 impl BaseNodeExtension for FlashblocksTestExtension {
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder {
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         let state = Arc::clone(&self.inner.state);
         let receiver = Arc::clone(&self.inner.receiver);
         let process_canonical = self.inner.process_canonical;
@@ -141,7 +141,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
         let state_for_rpc = state;
 
         // Start state processor and subscriptions after node is started
-        let builder = builder.add_node_started_hook(move |ctx| {
+        let hooks = hooks.add_node_started_hook(move |ctx| {
             let provider = ctx.provider().clone();
 
             // Start the state processor with the provider
@@ -177,7 +177,7 @@ impl BaseNodeExtension for FlashblocksTestExtension {
             Ok(())
         });
 
-        builder.add_rpc_module(move |ctx| {
+        hooks.add_rpc_module(move |ctx| {
             let fb = state_for_rpc;
 
             let api_ext = EthApiExt::new(

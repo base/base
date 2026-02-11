@@ -6,7 +6,7 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_client_node::{BaseBuilder, BaseNode, BaseNodeExtension};
+use base_client_node::{BaseNode, BaseNodeExtension, NodeHooks};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_txpool::{TxPoolExtension, TxpoolConfig};
@@ -160,15 +160,13 @@ impl InProcessClient {
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        // Build extensions
         let extensions: Vec<Box<dyn BaseNodeExtension>> = Self::build_extensions(&config)?;
-
-        // Apply all extensions
-        let builder = extensions
+        let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
-            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
-
-        let NodeHandle { node: node_handle, node_exit_future } = builder.launch().await?;
+            .fold(NodeHooks::new(), |b, ext| ext.apply(b))
+            .apply_to(builder)
+            .launch()
+            .await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()

@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use base_client_node::{BaseBuilder, BaseNodeExtension, FromExtensionConfig};
+use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
 use reth_optimism_exex::OpProofsExEx;
@@ -32,9 +32,9 @@ impl ProofsHistoryExtension {
 }
 
 impl BaseNodeExtension for ProofsHistoryExtension {
-    /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, mut builder: BaseBuilder) -> BaseBuilder {
-        // TODO: if BaseBuilder exposes the underlying OpBuilder, we can call launch_node_with_proof_history
+    /// Applies the extension to the supplied hooks.
+    fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
+        // TODO: if NodeHooks exposes the underlying OpBuilder, we can call launch_node_with_proof_history
         let args = self.config;
         let proofs_history_enabled = args.proofs_history;
         let proofs_history_window = args.proofs_history_window;
@@ -53,7 +53,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 Ok(mdbx) => mdbx,
                 Err(e) => {
                     error!(target: "reth::cli", "Failed to create MdbxProofsStorage: {:?}, continuing without proofs history", e);
-                    return builder;
+                    return hooks;
                 }
             };
             let mdbx = Arc::new(mdbx);
@@ -62,7 +62,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
             let storage_exec = storage.clone();
 
             // ignore unused if metrics feature is disabled
-            builder = builder.add_node_started_hook(move |node| {
+            hooks = hooks.add_node_started_hook(move |node| {
                 spawn_proofs_db_metrics(
                     node.task_executor,
                     mdbx,
@@ -71,7 +71,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 Ok(())
             });
 
-            builder = builder
+            hooks = hooks
                 .install_exex("proofs-history", async move |exex_context| {
                     Ok(OpProofsExEx::builder(exex_context, storage_exec)
                         .with_proofs_history_prune_interval(proofs_history_prune_interval)
@@ -94,7 +94,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                     Ok(())
                 });
         }
-        builder
+        hooks
     }
 }
 

@@ -21,7 +21,7 @@ use reth_provider::providers::BlockchainProvider;
 use reth_tasks::TaskManager;
 
 use crate::{
-    BaseBuilder, BaseNodeExtension, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
+    BaseNodeExtension, NodeHooks, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
 };
 
 /// Convenience alias for the local blockchain provider type.
@@ -102,12 +102,12 @@ impl LocalNode {
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        // Apply all extensions
-        let builder = extensions
+        let NodeHandle { node: node_handle, node_exit_future } = extensions
             .into_iter()
-            .fold(BaseBuilder::new(builder), |builder, extension| extension.apply(builder));
-
-        let NodeHandle { node: node_handle, node_exit_future } = builder.launch().await?;
+            .fold(NodeHooks::new(), |b, ext| ext.apply(b))
+            .apply_to(builder)
+            .launch()
+            .await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()

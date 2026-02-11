@@ -4,19 +4,19 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod builder;
-pub use builder::{BaseBuilder, BaseRpcContext};
+pub use builder::{BaseRpcContext, NodeHooks};
 
 mod extension;
 pub use extension::{BaseNodeExtension, FromExtensionConfig};
 
-mod handle;
-pub use handle::BaseNodeHandle;
-
 mod runner;
 pub use runner::BaseNodeRunner;
 
+mod service;
+pub use service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder};
+
 mod types;
-pub use types::{BaseNodeBuilder, OpBuilder, OpProvider};
+pub use types::{BaseNodeBuilder, OpNodeTypes, OpProvider};
 
 mod node;
 pub use node::BaseNode;

@@ -1,7 +1,7 @@
 //! Trait bounds for OP Stack builder components.
 
 use alloy_consensus::Header;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeTypes};
+use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
@@ -19,24 +19,6 @@ pub trait NodeBounds:
 
 impl<T> NodeBounds for T where
     T: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = OpEngineTypes,
-            ChainSpec = OpChainSpec,
-            Primitives = OpPrimitives,
-        >,
-    >
-{
-}
-
-pub trait NodeComponents:
-    FullNodeComponents<
-    Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = OpChainSpec, Primitives = OpPrimitives>,
->
-{
-}
-
-impl<T> NodeComponents for T where
-    T: FullNodeComponents<
         Types: NodeTypes<
             Payload = OpEngineTypes,
             ChainSpec = OpChainSpec,

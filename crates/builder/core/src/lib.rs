@@ -7,9 +7,6 @@
 mod config;
 pub use config::BuilderConfig;
 
-mod engine;
-pub use engine::OpEngineApiBuilder;
-
 mod metrics;
 pub use metrics::BuilderMetrics;
 
@@ -23,7 +20,7 @@ mod execution_metering_mode;
 pub use execution_metering_mode::ExecutionMeteringMode;
 
 mod traits;
-pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
+pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};

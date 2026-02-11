@@ -2,14 +2,14 @@
 
 use std::fmt::Debug;
 
-use crate::BaseBuilder;
+use crate::NodeHooks;
 
 /// Customizes the node builder before launch.
 ///
 /// Register extensions via [`BaseNodeRunner::install_ext`].
 pub trait BaseNodeExtension: Send + Sync + Debug {
-    /// Applies the extension to the supplied builder.
-    fn apply(self: Box<Self>, builder: BaseBuilder) -> BaseBuilder;
+    /// Applies the extension to the supplied hooks.
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks;
 }
 
 /// An extension that can be built from a config.
