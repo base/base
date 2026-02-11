@@ -8,7 +8,7 @@ pub mod cli;
 use base_execution_cli::{Cli, chainspec::OpChainSpecParser};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_metering::{MeteringConfig, MeteringExtension};
+use base_metering::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 use base_node_runner::BaseNodeRunner;
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::TxForwardingExtension;
@@ -41,10 +41,21 @@ fn main() {
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
             flashblocks_config: flashblocks_config.clone(),
         });
+        let resource_limits = MeteringResourceLimits {
+            gas_limit: args.metering_gas_limit,
+            execution_time_us: args.metering_execution_time_us,
+            state_root_time_us: args.metering_state_root_time_us,
+            da_bytes: args.metering_da_bytes,
+        };
         let metering_config = if args.enable_metering {
-            flashblocks_config
+            let mut config = flashblocks_config
                 .clone()
                 .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
+                .with_resource_limits(resource_limits);
+            if let Some(target_flashblocks_per_block) = args.metering_target_flashblocks_per_block {
+                config = config.with_target_flashblocks_per_block(target_flashblocks_per_block);
+            }
+            config
         } else {
             MeteringConfig::disabled()
         };

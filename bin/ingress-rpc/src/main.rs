@@ -94,6 +94,11 @@ async fn main() -> anyhow::Result<()> {
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
+    info!(
+        builder_rpcs = ?config.builder_rpcs,
+        send_to_builder = config.send_to_builder,
+        "Configuring builder connectors"
+    );
     config.builder_rpcs.iter().for_each(|builder_rpc| {
         let metering_rx = builder_tx.subscribe();
         BuilderConnector::connect(metering_rx, builder_rpc.clone());

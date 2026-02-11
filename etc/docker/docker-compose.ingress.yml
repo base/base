@@ -96,7 +96,9 @@ services:
       - TIPS_INGRESS_METRICS_PORT=${L2_INGRESS_METRICS_PORT}
       - TIPS_INGRESS_RPC_MEMPOOL=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - TIPS_INGRESS_RPC_SIMULATION=http://base-client:${L2_CLIENT_HTTP_PORT}
-      - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      # Fan out metering data to both builder and client; both expose
+      # `base_setMeteringInformation` for trusted ingestion.
+      - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT},http://base-client:${L2_CLIENT_HTTP_PORT}
       # proxyd routes transactions to the builder and optimistically forwards a
       # copy to ingress-rpc, matching the production topology. Ingress does not
       # need to submit transactions itself.
