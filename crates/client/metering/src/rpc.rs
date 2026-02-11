@@ -1,10 +1,13 @@
 //! Implementation of the metering RPC API.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, TxHash, U256};
 use base_alloy_flz::flz_compress_len;
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_execution_chainspec::OpChainSpec;
@@ -17,16 +20,17 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
-use tracing::{debug, error};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PendingTrieCache,
-    PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse, block::meter_block,
-    meter::meter_bundle, traits::MeteringApiServer,
+    AnnotatorCommand, MeterBlockResponse, MeteredPriorityFeeResponse, MeteredTransaction,
+    PendingState, PendingTrieCache, PriorityFeeEstimator, ResourceDemand,
+    ResourceFeeEstimateResponse, block::meter_block, meter::meter_bundle,
+    traits::MeteringApiServer,
 };
 
 /// Implementation of the metering RPC API.
-#[derive(Debug)]
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
     flashblocks_api: Arc<FB>,
@@ -35,6 +39,20 @@ pub struct MeteringApiImpl<Provider, FB> {
     pending_trie_cache: PendingTrieCache,
     /// Optional priority fee estimator for `meteredPriorityFeePerGas`.
     priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
+    /// Channel to send metered transactions to the annotator.
+    tx_sender: Option<mpsc::UnboundedSender<MeteredTransaction>>,
+    /// Channel to send commands to the annotator.
+    command_sender: Option<mpsc::UnboundedSender<AnnotatorCommand>>,
+    /// Whether metering data collection is enabled.
+    metering_enabled: Arc<AtomicBool>,
+}
+
+impl<Provider, FB> std::fmt::Debug for MeteringApiImpl<Provider, FB> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeteringApiImpl")
+            .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl<Provider, FB> MeteringApiImpl<Provider, FB>
@@ -54,6 +72,9 @@ where
             flashblocks_api,
             pending_trie_cache: PendingTrieCache::new(),
             priority_fee_estimator: None,
+            tx_sender: None,
+            command_sender: None,
+            metering_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -62,12 +83,17 @@ where
         provider: Provider,
         flashblocks_api: Arc<FB>,
         estimator: Arc<PriorityFeeEstimator>,
+        tx_sender: mpsc::UnboundedSender<MeteredTransaction>,
+        command_sender: mpsc::UnboundedSender<AnnotatorCommand>,
     ) -> Self {
         Self {
             provider,
             flashblocks_api,
             pending_trie_cache: PendingTrieCache::new(),
             priority_fee_estimator: Some(estimator),
+            tx_sender: Some(tx_sender),
+            command_sender: Some(command_sender),
+            metering_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -409,6 +435,84 @@ where
             blocks_sampled: rolling_estimate.blocks_sampled as u64,
             resource_estimates,
         })
+    }
+
+    async fn set_metering_info(
+        &self,
+        tx_hash: TxHash,
+        meter: MeterBundleResponse,
+    ) -> RpcResult<()> {
+        // Check if metering is enabled
+        if !self.metering_enabled.load(Ordering::Relaxed) {
+            debug!(tx_hash = %tx_hash, "Ignoring metering info - metering disabled");
+            return Ok(());
+        }
+
+        // Check if we have a sender
+        let Some(sender) = &self.tx_sender else {
+            warn!("set_metering_info called but no annotator configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Metering data collection not configured".to_string(),
+                None::<()>,
+            ));
+        };
+
+        // Extract priority fee from the first transaction result
+        let priority_fee = meter
+            .results
+            .first()
+            .map(|r| r.gas_price.saturating_sub(U256::from(meter.bundle_gas_price)))
+            .unwrap_or(U256::ZERO);
+
+        let metered_tx = MeteredTransaction {
+            tx_hash,
+            priority_fee_per_gas: priority_fee,
+            gas_used: meter.total_gas_used,
+            execution_time_us: meter.total_execution_time_us,
+            state_root_time_us: meter.state_root_time_us,
+            // DA bytes are computed from raw tx bytes in the annotator
+            data_availability_bytes: 0,
+        };
+
+        sender.send(metered_tx).map_err(|_| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Failed to send metering data to annotator".to_string(),
+                None::<()>,
+            )
+        })?;
+
+        debug!(tx_hash = %tx_hash, "Metering info stored");
+        Ok(())
+    }
+
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()> {
+        self.metering_enabled.store(enabled, Ordering::Relaxed);
+        info!(enabled = enabled, "Metering data collection enabled state changed");
+        Ok(())
+    }
+
+    async fn clear_metering_info(&self) -> RpcResult<()> {
+        let Some(sender) = &self.command_sender else {
+            warn!("clear_metering_info called but no annotator configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Metering data collection not configured".to_string(),
+                None::<()>,
+            ));
+        };
+
+        sender.send(AnnotatorCommand::ClearPending).map_err(|_| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Failed to send clear command to annotator".to_string(),
+                None::<()>,
+            )
+        })?;
+
+        info!("Cleared pending metering info");
+        Ok(())
     }
 }
 

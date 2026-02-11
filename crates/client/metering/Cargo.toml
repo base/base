@@ -57,6 +57,8 @@ tracing = { workspace = true, features = ["std"] }
 arc-swap.workspace = true
 derive_more.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+indexmap.workspace = true
 
 [dev-dependencies]
 # workspace

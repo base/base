@@ -3,14 +3,17 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::U256;
-use base_flashblocks::{FlashblocksConfig, FlashblocksState};
+use alloy_primitives::{U256, keccak256};
+use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use parking_lot::RwLock;
+use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::{
-    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceLimits,
+    AnnotatorCommand, FlashblockInclusion, IncludedTransaction, MeteredTransaction,
+    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceAnnotator,
+    ResourceLimits,
 };
 
 /// Resource limits configuration for priority fee estimation.
@@ -147,13 +150,80 @@ impl BaseNodeExtension for MeteringExtension {
 
                 let cache = Arc::new(RwLock::new(MeteringCache::new(cache_size)));
                 let estimator = Arc::new(PriorityFeeEstimator::new(
-                    cache,
+                    Arc::clone(&cache),
                     percentile,
                     resource_limits,
                     default_fee,
                 ));
 
-                MeteringApiImpl::with_estimator(ctx.provider().clone(), fb_state, estimator)
+                // Create channels for the annotator
+                let (tx_sender, tx_receiver) = mpsc::unbounded_channel::<MeteredTransaction>();
+                let (flashblock_sender, flashblock_receiver) =
+                    mpsc::unbounded_channel::<FlashblockInclusion>();
+                let (cmd_sender, cmd_receiver) = mpsc::unbounded_channel::<AnnotatorCommand>();
+
+                // Spawn the annotator
+                let annotator =
+                    ResourceAnnotator::new(cache, tx_receiver, flashblock_receiver, cmd_receiver);
+                tokio::spawn(annotator.run());
+
+                // Bridge flashblocks broadcast to the annotator
+                if let Some(ref cfg) = flashblocks_config {
+                    let fb_state = Arc::clone(&cfg.state);
+                    let sender = flashblock_sender;
+                    tokio::spawn(async move {
+                        let mut receiver = fb_state.subscribe_to_flashblocks();
+                        let mut last_block = 0u64;
+                        let mut last_fb_idx = 0u64;
+
+                        while let Ok(pending) = receiver.recv().await {
+                            for fb in pending.get_flashblocks() {
+                                let block_num = fb.metadata.block_number;
+                                let fb_idx = fb.index;
+
+                                // Skip already-processed flashblocks
+                                if block_num < last_block
+                                    || (block_num == last_block && fb_idx <= last_fb_idx)
+                                {
+                                    continue;
+                                }
+
+                                let transactions = fb
+                                    .diff
+                                    .transactions
+                                    .iter()
+                                    .map(|raw_tx| IncludedTransaction {
+                                        tx_hash: keccak256(raw_tx),
+                                        raw_tx: raw_tx.clone(),
+                                    })
+                                    .collect();
+
+                                let inclusion = FlashblockInclusion {
+                                    block_number: block_num,
+                                    flashblock_index: fb_idx,
+                                    transactions,
+                                };
+
+                                if sender.send(inclusion).is_err() {
+                                    break; // Channel closed
+                                }
+
+                                last_block = block_num;
+                                last_fb_idx = fb_idx;
+                            }
+                        }
+                    });
+                } else {
+                    drop(flashblock_sender);
+                }
+
+                MeteringApiImpl::with_estimator(
+                    ctx.provider().clone(),
+                    fb_state,
+                    estimator,
+                    tx_sender,
+                    cmd_sender,
+                )
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state)

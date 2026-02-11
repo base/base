@@ -3700,6 +3700,7 @@ dependencies = [
  "base-revm",
  "derive_more",
  "eyre",
+ "indexmap 2.13.0",
  "jsonrpsee",
  "metrics",
  "metrics-derive",
