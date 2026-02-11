@@ -6,9 +6,12 @@ use std::sync::Arc;
 use alloy_primitives::U256;
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use parking_lot::RwLock;
 use tracing::info;
 
-use crate::{MeteringApiImpl, MeteringApiServer, ResourceLimits};
+use crate::{
+    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceLimits,
+};
 
 /// Resource limits configuration for priority fee estimation.
 #[derive(Debug, Clone, Default)]
@@ -25,17 +28,11 @@ pub struct MeteringResourceLimits {
 
 impl MeteringResourceLimits {
     /// Converts to the internal [`ResourceLimits`] type.
-    pub const fn to_resource_limits(&self) -> ResourceLimits {
+    pub fn to_resource_limits(&self) -> ResourceLimits {
         ResourceLimits {
             gas_used: self.gas_limit,
-            execution_time_us: match self.execution_time_us {
-                Some(v) => Some(v as u128),
-                None => None,
-            },
-            state_root_time_us: match self.state_root_time_us {
-                Some(v) => Some(v as u128),
-                None => None,
-            },
+            execution_time_us: self.execution_time_us.map(|v| v as u128),
+            state_root_time_us: self.state_root_time_us.map(|v| v as u128),
             data_availability_bytes: self.da_bytes,
         }
     }
@@ -54,6 +51,8 @@ pub struct MeteringExtension {
     pub priority_fee_percentile: f64,
     /// Default priority fee when resources are uncongested (in wei).
     pub uncongested_priority_fee: u64,
+    /// Number of blocks to retain in the metering cache.
+    pub cache_size: usize,
 }
 
 impl Default for MeteringExtension {
@@ -64,6 +63,7 @@ impl Default for MeteringExtension {
             resource_limits: MeteringResourceLimits::default(),
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000, // 1 Mwei (0.001 gwei) default
+            cache_size: 12,
         }
     }
 }
@@ -82,6 +82,7 @@ impl MeteringExtension {
             },
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
         }
     }
 
@@ -100,6 +101,12 @@ impl MeteringExtension {
     /// Sets the uncongested priority fee.
     pub const fn with_uncongested_fee(mut self, fee: u64) -> Self {
         self.uncongested_priority_fee = fee;
+        self
+    }
+
+    /// Sets the cache size.
+    pub const fn with_cache_size(mut self, size: usize) -> Self {
+        self.cache_size = size;
         self
     }
 
@@ -124,6 +131,7 @@ impl BaseNodeExtension for MeteringExtension {
         let resource_limits = self.resource_limits.to_resource_limits();
         let percentile = self.priority_fee_percentile;
         let default_fee = U256::from(self.uncongested_priority_fee);
+        let cache_size = self.cache_size;
 
         hooks.add_rpc_module(move |ctx| {
             // Get flashblocks state from config, or create a default one if not configured
@@ -133,15 +141,19 @@ impl BaseNodeExtension for MeteringExtension {
             let metering_api = if has_estimator {
                 info!(
                     message = "Starting Metering RPC with priority fee estimation",
+                    cache_size = cache_size,
                     percentile = percentile,
                 );
-                MeteringApiImpl::with_estimator_config(
-                    ctx.provider().clone(),
-                    fb_state,
-                    resource_limits,
+
+                let cache = Arc::new(RwLock::new(MeteringCache::new(cache_size)));
+                let estimator = Arc::new(PriorityFeeEstimator::new(
+                    cache,
                     percentile,
+                    resource_limits,
                     default_fee,
-                )
+                ));
+
+                MeteringApiImpl::with_estimator(ctx.provider().clone(), fb_state, estimator)
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state)
@@ -167,6 +179,8 @@ pub struct MeteringConfig {
     pub priority_fee_percentile: f64,
     /// Default priority fee when uncongested.
     pub uncongested_priority_fee: u64,
+    /// Number of blocks to retain in the metering cache.
+    pub cache_size: usize,
 }
 
 impl MeteringConfig {
@@ -188,6 +202,7 @@ impl MeteringConfig {
             },
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
         }
     }
 
@@ -204,6 +219,7 @@ impl MeteringConfig {
             },
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
         }
     }
 
@@ -224,6 +240,12 @@ impl MeteringConfig {
         self.uncongested_priority_fee = fee;
         self
     }
+
+    /// Sets the cache size.
+    pub const fn with_cache_size(mut self, size: usize) -> Self {
+        self.cache_size = size;
+        self
+    }
 }
 
 impl FromExtensionConfig for MeteringExtension {
@@ -236,6 +258,7 @@ impl FromExtensionConfig for MeteringExtension {
             resource_limits: config.resource_limits,
             priority_fee_percentile: config.priority_fee_percentile,
             uncongested_priority_fee: config.uncongested_priority_fee,
+            cache_size: config.cache_size,
         }
     }
 }
