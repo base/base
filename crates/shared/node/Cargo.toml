@@ -21,9 +21,7 @@ test-utils = [
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
-	"dep:alloy-signer",
 	"dep:base-primitives",
-	"dep:chrono",
 	"dep:jsonrpsee",
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types-engine",
@@ -38,12 +36,10 @@ test-utils = [
 	"dep:url",
 	"reth-chainspec/test-utils",
 	"reth-db/test-utils",
-	"reth-evm/test-utils",
 	"reth-node-builder/test-utils",
 	"reth-optimism-node/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
-	"reth-transaction-pool/test-utils",
 ]
 
 [dependencies]
@@ -79,7 +75,6 @@ reth-primitives-traits = { workspace = true, optional = true }
 
 # alloy
 alloy-eips = { workspace = true, optional = true }
-alloy-signer = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, optional = true }
@@ -104,6 +99,5 @@ tracing.workspace = true
 futures-util.workspace = true
 url = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"] }
 tracing-subscriber = { workspace = true, optional = true }

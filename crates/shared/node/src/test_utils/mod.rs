@@ -9,8 +9,8 @@
 // Re-export from base-primitives for backwards compatibility
 pub use base_primitives::{
     AccessListContract, Account, ContractFactory, DEVNET_CHAIN_ID, DoubleCounter,
-    GENESIS_GAS_LIMIT, Logic, Logic2, Minimal7702Account, MockERC20, Proxy, SimpleStorage,
-    TransparentUpgradeableProxy, build_test_genesis,
+    GENESIS_GAS_LIMIT, Logic, Logic2, Minimal7702Account, MockERC20, Proxy, SignerSync,
+    SimpleStorage, TransparentUpgradeableProxy, build_test_genesis,
 };
 
 mod constants;
@@ -33,6 +33,4 @@ mod node;
 pub use node::{LocalNode, LocalNodeProvider};
 
 mod tracing;
-// Re-export signer traits for use in tests
-pub use alloy_signer::SignerSync;
 pub use tracing::init_silenced_tracing;
