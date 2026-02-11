@@ -101,6 +101,16 @@ MINIO_CONSOLE_PORT=7001
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
 
+# Metering Resource Limits
+# Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.
+# These preserve the builder's current 10-flashblock targets: 30M gas / block,
+# ~786KB DA / block, ~200ms state root / block, and 2s execution / flashblock.
+METERING_GAS_LIMIT=30000000
+METERING_EXECUTION_TIME_US=2000000
+METERING_STATE_ROOT_TIME_US=200000
+METERING_DA_BYTES=786430
+METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
+
 # Contender
 CONTENDER_MIN_BALANCE="3010699257314954000"
 CONTENDER_GEN_REPORT=true
