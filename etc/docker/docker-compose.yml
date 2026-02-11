@@ -360,7 +360,7 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_CLIENT_HTTP_PORT}
-      - --http.api=admin,eth,web3,net,rpc,debug,txpool
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
@@ -380,6 +380,10 @@ services:
       - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-metering
+      - --metering.gas-limit=${METERING_GAS_LIMIT}
+      - --metering.execution-time-us=${METERING_EXECUTION_TIME_US}
+      - --metering.state-root-time-us=${METERING_STATE_ROOT_TIME_US}
+      - --metering.da-bytes=${METERING_DA_BYTES}
       - --color=never
       - -vvv
     healthcheck:

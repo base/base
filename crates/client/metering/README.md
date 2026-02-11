@@ -147,3 +147,8 @@ The ingestion pipeline works as follows:
 Note: The `FlashblockInclusion` must include raw transaction bytes (`IncludedTransaction.raw_tx`)
 for accurate DA-based priority fee estimation. These bytes are used to compute the compressed
 transaction size via `flz_compress_len`.
+
+## DA Size Configuration
+
+The DA limit for priority fee estimation is configured via `MeteringResourceLimits::da_bytes`.
+The `miner_getMaxDASize` RPC can be used to query the sequencer's current DA budget.
