@@ -110,7 +110,6 @@ base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-jwt = { path = "crates/shared/jwt" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
-base-flashtypes = { path = "crates/shared/flashtypes" }
 base-engine-ext = { path = "crates/shared/engine-ext" }
 base-primitives = { path = "crates/shared/primitives" }
 base-access-lists = { path = "crates/shared/access-lists" }

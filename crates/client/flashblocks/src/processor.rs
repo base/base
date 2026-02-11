@@ -10,7 +10,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
-use base_flashtypes::Flashblock;
+use base_primitives::Flashblock;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use rayon::prelude::*;

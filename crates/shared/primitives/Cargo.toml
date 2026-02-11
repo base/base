@@ -24,6 +24,17 @@ engine = [
 	"dep:op-alloy-rpc-types-engine",
 	"dep:thiserror",
 ]
+flashblocks = [
+	"dep:alloy-primitives",
+	"dep:alloy-rpc-types-engine",
+	"dep:alloy-rpc-types-eth",
+	"dep:alloy-serde",
+	"dep:brotli",
+	"dep:bytes",
+	"dep:serde",
+	"dep:serde_json",
+	"dep:thiserror",
+]
 test-utils = [
 	"dep:alloy-consensus",
 	"dep:alloy-contract",
@@ -46,6 +57,7 @@ kona-genesis = { workspace = true, optional = true }
 
 # alloy
 alloy-eips = { workspace = true, optional = true }
+alloy-serde = { workspace = true, optional = true }
 alloy-signer = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
 alloy-contract = { workspace = true, optional = true }
@@ -65,5 +77,11 @@ op-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # misc
 eyre = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+brotli = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest.workspace = true

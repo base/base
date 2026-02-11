@@ -10,7 +10,7 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
-use base_flashtypes::{ExecutionPayloadBaseV1, Flashblock};
+use base_primitives::{ExecutionPayloadBaseV1, Flashblock};
 use op_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
 };
@@ -135,7 +135,7 @@ impl BlockAssembler {
 mod tests {
     use alloy_primitives::{Address, Bloom, U256};
     use alloy_rpc_types_engine::PayloadId;
-    use base_flashtypes::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata};
+    use base_primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata};
 
     use super::*;
     use crate::ProtocolError;

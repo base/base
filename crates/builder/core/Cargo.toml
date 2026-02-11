@@ -26,6 +26,7 @@ min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
+	"base-primitives/test-utils",
 	"ctor",
 	"http-body-util",
 	"hyper",
@@ -53,7 +54,7 @@ test-utils = [
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-flashtypes.workspace = true
+base-primitives = { workspace = true, features = ["flashblocks"] }
 base-access-lists.workspace = true
 
 # reth

@@ -1832,7 +1832,7 @@ dependencies = [
  "base-access-lists",
  "base-builder-core",
  "base-bundles",
- "base-flashtypes",
+ "base-primitives",
  "chrono",
  "clap",
  "clap_builder",
@@ -2163,7 +2163,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "arc-swap",
- "base-flashtypes",
+ "base-primitives",
  "derive_more",
  "futures-util",
  "jsonrpsee",
@@ -2219,7 +2219,7 @@ dependencies = [
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-flashtypes",
+ "base-primitives",
  "criterion",
  "derive_more",
  "eyre",
@@ -2256,22 +2256,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-flashtypes"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "brotli",
- "bytes",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
-]
-
-[[package]]
 name = "base-jwt"
 version = "0.0.0"
 dependencies = [
@@ -2302,7 +2286,7 @@ dependencies = [
  "base-bundles",
  "base-client-node",
  "base-flashblocks",
- "base-flashtypes",
+ "base-primitives",
  "derive_more",
  "eyre",
  "jsonrpsee",
@@ -2344,15 +2328,20 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-macro",
  "alloy-sol-types",
+ "brotli",
+ "bytes",
  "eyre",
  "kona-genesis",
  "op-alloy-network",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
+ "rstest",
+ "serde",
  "serde_json",
  "thiserror 2.0.17",
 ]
@@ -2428,7 +2417,7 @@ dependencies = [
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-flashtypes",
+ "base-primitives",
  "chrono",
  "derive_more",
  "eyre",
@@ -3955,7 +3944,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-flashtypes",
+ "base-primitives",
  "base-protocol",
  "base-txpool",
  "clap",

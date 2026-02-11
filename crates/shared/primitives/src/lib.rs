@@ -11,6 +11,14 @@ pub use engine::{
     EngineApiResult, LegacyPayloadSupport, ProofProvider, RollupConfigProvider, StorageKey,
 };
 
+#[cfg(feature = "flashblocks")]
+pub mod flashblocks;
+#[cfg(feature = "flashblocks")]
+pub use flashblocks::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, FlashblockDecodeError,
+    FlashblocksPayloadV1, Metadata,
+};
+
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 

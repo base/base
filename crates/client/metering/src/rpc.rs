@@ -765,7 +765,7 @@ mod tests {
         use alloy_consensus::Header;
         use alloy_primitives::{B256, Bloom};
         use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
-        use base_flashtypes::{
+        use base_primitives::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
         };
         use url::Url;
