@@ -2097,6 +2097,7 @@ dependencies = [
  "base-bundles",
  "base-client-node",
  "base-flashblocks",
+ "base-flashtypes",
  "derive_more",
  "eyre",
  "jsonrpsee",
@@ -2123,6 +2124,7 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
