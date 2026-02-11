@@ -22,6 +22,7 @@ use reth_evm::ConfigureEvm;
 use reth_primitives::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
+use reth_trie_common::TrieInput;
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
@@ -49,6 +50,7 @@ pub struct StateProcessor<Client> {
     rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     max_depth: u64,
+    simulate_state_root: bool,
     metrics: Metrics,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
@@ -68,6 +70,7 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_depth: u64,
+        simulate_state_root: bool,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
@@ -80,6 +83,7 @@ where
             pending_blocks,
             client,
             max_depth,
+            simulate_state_root,
             rx,
             sender,
             cache: Arc::new(Mutex::new(cache)),
@@ -457,8 +461,11 @@ where
             pending_state_builder
                 .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
 
+            let mut cached_trie = None;
+
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();
+                let is_deposit = transaction.is_deposit();
 
                 pending_blocks_builder.with_transaction_sender(tx_hash, sender);
                 pending_blocks_builder.increment_nonce(sender);
@@ -467,6 +474,37 @@ where
 
                 let executed_transaction =
                     pending_state_builder.execute_transaction(idx, recovered_transaction)?;
+
+                if let Some(time_us) = executed_transaction.execution_time_us {
+                    pending_blocks_builder.with_execution_time(tx_hash, time_us);
+                }
+
+                // Per-tx state root simulation: compute state root after each
+                // non-deposit transaction, accumulating trie nodes across txs.
+                if self.simulate_state_root && !is_deposit {
+                    let db = pending_state_builder.db_mut();
+                    db.merge_transitions(BundleRetention::Reverts);
+                    let state_provider = db.database.as_ref();
+                    let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
+
+                    let start = Instant::now();
+                    let (_, trie_updates) =
+                        if let Some((prev_updates, prev_hashed)) = cached_trie.take() {
+                            let mut trie_input = TrieInput::from_state(hashed_state.clone());
+                            trie_input.prepend_cached(prev_updates, prev_hashed);
+                            state_provider
+                                .state_root_from_nodes_with_updates(trie_input)
+                                .map_err(|e| ProviderError::StateProvider(e.to_string()))?
+                        } else {
+                            state_provider
+                                .state_root_with_updates(hashed_state.clone())
+                                .map_err(|e| ProviderError::StateProvider(e.to_string()))?
+                        };
+                    let state_root_time_us = start.elapsed().as_micros();
+
+                    cached_trie = Some((trie_updates, hashed_state));
+                    pending_blocks_builder.with_state_root_time(tx_hash, state_root_time_us);
+                }
 
                 for (address, account) in &executed_transaction.state {
                     if account.is_touched() {
@@ -485,7 +523,10 @@ where
             last_block_header = block_header;
         }
 
-        // Extract the accumulated bundle state for state root calculation
+        // Extract the accumulated bundle state for state root calculation.
+        // When simulate_state_root is enabled, transitions for non-deposit txs
+        // are already merged per-tx; this merge picks up any remaining deposit
+        // transitions and is otherwise a no-op.
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);

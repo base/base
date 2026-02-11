@@ -1,7 +1,7 @@
 //! Traits for the metering RPC module.
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, TxHash};
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
@@ -59,4 +59,21 @@ pub trait MeteringApi {
         &self,
         bundle: Bundle,
     ) -> RpcResult<MeteredPriorityFeeResponse>;
+
+    /// Sets metering information for a transaction. Called by tips-ingress to push
+    /// transaction resource usage data for priority fee estimation.
+    #[method(name = "setMeteringInformation")]
+    async fn set_metering_information(
+        &self,
+        tx_hash: TxHash,
+        meter: MeterBundleResponse,
+    ) -> RpcResult<()>;
+
+    /// Enables or disables metering data collection.
+    #[method(name = "setMeteringEnabled")]
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
+
+    /// Clears all pending metering information.
+    #[method(name = "clearMeteringInformation")]
+    async fn clear_metering_information(&self) -> RpcResult<()>;
 }

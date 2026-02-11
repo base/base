@@ -1,17 +1,17 @@
 //! Contains the [`MeteringExtension`] which wires up the metering RPC surface
 //! on the Base node builder.
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::{collections::HashMap, num::NonZeroUsize, sync::Arc};
 
-use alloy_primitives::U256;
-use base_flashblocks::{FlashblocksConfig, FlashblocksState};
+use alloy_primitives::{TxHash, U256};
+use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use parking_lot::RwLock;
 use tracing::info;
 
 use crate::{
-    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceLimits,
-    estimator::assert_valid_percentile,
+    MeteringApiImpl, MeteringApiServer, MeteringCache, MeteringCollector, PriorityFeeEstimator,
+    ResourceLimits, estimator::assert_valid_percentile,
 };
 
 const TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG: &str =
@@ -221,7 +221,25 @@ impl BaseNodeExtension for MeteringExtension {
                     target_flashblocks_per_block,
                 ));
 
-                MeteringApiImpl::with_estimator(ctx.provider().clone(), fb_state, estimator)
+                let state_root_cache = Arc::new(RwLock::new(HashMap::<TxHash, u128>::new()));
+
+                // Spawn the metering collector if flashblocks are configured
+                if let Some(ref cfg) = flashblocks_config {
+                    let flashblock_rx = cfg.state.subscribe_to_flashblocks();
+                    let collector = MeteringCollector::new(
+                        Arc::clone(&cache),
+                        Arc::clone(&state_root_cache),
+                        flashblock_rx,
+                    );
+                    tokio::spawn(collector.run());
+                }
+
+                MeteringApiImpl::with_estimator(
+                    ctx.provider().clone(),
+                    fb_state,
+                    estimator,
+                    state_root_cache,
+                )
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state)
