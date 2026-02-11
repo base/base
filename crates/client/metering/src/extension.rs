@@ -1,45 +1,59 @@
 //! Contains the [`MeteringExtension`] which wires up the metering RPC surface
 //! on the Base node builder.
 
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::U256;
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use parking_lot::RwLock;
 use tracing::info;
 
 use crate::{
-    MeteringApiImpl, MeteringApiServer, ResourceLimits, estimator::assert_valid_percentile,
+    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceLimits,
+    estimator::assert_valid_percentile,
 };
+
+const TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG: &str =
+    "target_flashblocks_per_block must be greater than 0";
+const CACHE_SIZE_NON_ZERO_MSG: &str = "cache_size must be greater than 0";
 
 /// Resource limits configuration for priority fee estimation.
 #[derive(Debug, Clone, Default)]
 pub struct MeteringResourceLimits {
-    /// Maximum gas per block.
+    /// Total gas budget for the block.
+    ///
+    /// The estimator mirrors the builder's flashblock loop and converts this into
+    /// cumulative per-flashblock gas targets.
     pub gas_limit: Option<u64>,
-    /// Maximum execution time per block in microseconds.
+    /// Execution time budget per flashblock in microseconds.
+    ///
+    /// This matches the builder's flashblock execution budget, which resets each
+    /// flashblock instead of accumulating across the block.
     pub execution_time_us: Option<u64>,
-    /// Maximum state root computation time per block in microseconds.
+    /// Total state root computation budget for the block in microseconds.
+    ///
+    /// Like the builder, the estimator treats this as a cumulative budget that
+    /// later flashblocks can consume if earlier ones underuse it.
     pub state_root_time_us: Option<u64>,
-    /// Maximum data availability bytes per block.
+    /// Total data-availability byte budget for the block.
     pub da_bytes: Option<u64>,
 }
 
 impl MeteringResourceLimits {
     /// Converts to the internal [`ResourceLimits`] type.
-    pub const fn to_resource_limits(&self) -> ResourceLimits {
+    pub fn to_resource_limits(&self) -> ResourceLimits {
         ResourceLimits {
             gas_used: self.gas_limit,
-            execution_time_us: match self.execution_time_us {
-                Some(v) => Some(v as u128),
-                None => None,
-            },
-            state_root_time_us: match self.state_root_time_us {
-                Some(v) => Some(v as u128),
-                None => None,
-            },
+            execution_time_us: self.execution_time_us.map(|v| v as u128),
+            state_root_time_us: self.state_root_time_us.map(|v| v as u128),
             data_availability_bytes: self.da_bytes,
         }
+    }
+
+    /// Returns true if any resource uses the builder's cumulative multi-flashblock budget.
+    const fn uses_accumulating_resource_limits(&self) -> bool {
+        self.gas_limit.is_some() || self.state_root_time_us.is_some() || self.da_bytes.is_some()
     }
 }
 
@@ -56,6 +70,16 @@ pub struct MeteringExtension {
     pub priority_fee_percentile: f64,
     /// Default priority fee when resources are uncongested (in wei).
     pub uncongested_priority_fee: u64,
+    /// Number of blocks to retain in the metering cache.
+    ///
+    /// Must be greater than zero when set on an estimator-enabled configuration.
+    pub cache_size: usize,
+    /// Target number of tx-pool flashblocks the builder budgets each block against.
+    ///
+    /// This excludes the initial base flashblock at index `0`.
+    /// Must be greater than zero when set. Required when gas, state root time,
+    /// or DA priority fee estimation is enabled.
+    pub target_flashblocks_per_block: Option<usize>,
 }
 
 impl Default for MeteringExtension {
@@ -65,7 +89,9 @@ impl Default for MeteringExtension {
             flashblocks_config: None,
             resource_limits: MeteringResourceLimits::default(),
             priority_fee_percentile: 0.5,
-            uncongested_priority_fee: 1_000_000, // 1 Mwei (0.001 gwei) default
+            uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
+            target_flashblocks_per_block: None,
         }
     }
 }
@@ -84,6 +110,8 @@ impl MeteringExtension {
             },
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
+            target_flashblocks_per_block: None,
         }
     }
 
@@ -106,12 +134,45 @@ impl MeteringExtension {
         self
     }
 
+    /// Sets the cache size.
+    pub const fn with_cache_size(mut self, size: usize) -> Self {
+        self.cache_size = size;
+        self
+    }
+
+    /// Sets the target number of tx-pool flashblocks the builder budgets per block.
+    pub const fn with_target_flashblocks_per_block(mut self, count: usize) -> Self {
+        self.target_flashblocks_per_block = Some(count);
+        self
+    }
+
     /// Returns true if priority fee estimation is configured (has resource limits).
     const fn has_estimator_config(&self) -> bool {
         self.resource_limits.gas_limit.is_some()
             || self.resource_limits.execution_time_us.is_some()
             || self.resource_limits.state_root_time_us.is_some()
             || self.resource_limits.da_bytes.is_some()
+    }
+
+    const fn resolved_cache_size(&self) -> usize {
+        NonZeroUsize::new(self.cache_size).expect(CACHE_SIZE_NON_ZERO_MSG).get()
+    }
+
+    const fn resolved_target_flashblocks_per_block(
+        &self,
+        requires_target_flashblocks: bool,
+    ) -> usize {
+        match self.target_flashblocks_per_block {
+            Some(count) => {
+                NonZeroUsize::new(count).expect(TARGET_FLASHBLOCKS_PER_BLOCK_NON_ZERO_MSG).get()
+            }
+            None if requires_target_flashblocks => {
+                panic!(
+                    "target_flashblocks_per_block must be configured when gas, state root time, or data availability priority fee estimation is enabled"
+                )
+            }
+            None => 1,
+        }
     }
 }
 
@@ -123,28 +184,44 @@ impl BaseNodeExtension for MeteringExtension {
         }
 
         let has_estimator = self.has_estimator_config();
-        let flashblocks_config = self.flashblocks_config;
+        let requires_target_flashblocks = self.resource_limits.uses_accumulating_resource_limits();
         let resource_limits = self.resource_limits.to_resource_limits();
         let percentile = self.priority_fee_percentile;
         let default_fee = U256::from(self.uncongested_priority_fee);
+        let cache_size = has_estimator.then(|| self.resolved_cache_size());
+        let target_flashblocks_per_block = has_estimator
+            .then(|| self.resolved_target_flashblocks_per_block(requires_target_flashblocks));
+        let flashblocks_config = self.flashblocks_config;
 
         hooks.add_rpc_module(move |ctx| {
-            // Get flashblocks state from config, or create a default one if not configured
             let fb_state: Arc<FlashblocksState> =
                 flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
 
             let metering_api = if has_estimator {
+                let cache_size = cache_size.expect("estimator configuration validated");
+                let target_flashblocks_per_block =
+                    target_flashblocks_per_block.expect("estimator configuration validated");
+
                 info!(
                     message = "Starting Metering RPC with priority fee estimation",
+                    cache_size = cache_size,
                     percentile = percentile,
+                    target_flashblocks_per_block = target_flashblocks_per_block,
                 );
-                MeteringApiImpl::with_estimator_config(
-                    ctx.provider().clone(),
-                    fb_state,
-                    resource_limits,
+
+                let cache = Arc::new(RwLock::new(MeteringCache::new(
+                    cache_size,
+                    target_flashblocks_per_block + 1,
+                )));
+                let estimator = Arc::new(PriorityFeeEstimator::new(
+                    Arc::clone(&cache),
                     percentile,
+                    resource_limits,
                     default_fee,
-                )
+                    target_flashblocks_per_block,
+                ));
+
+                MeteringApiImpl::with_estimator(ctx.provider().clone(), fb_state, estimator)
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state)
@@ -170,6 +247,15 @@ pub struct MeteringConfig {
     pub priority_fee_percentile: f64,
     /// Default priority fee when uncongested.
     pub uncongested_priority_fee: u64,
+    /// Number of blocks to retain in the metering cache.
+    ///
+    /// Must be greater than zero when used for priority fee estimation.
+    pub cache_size: usize,
+    /// Target number of tx-pool flashblocks the builder budgets per block.
+    ///
+    /// Must be greater than zero when set. Required when gas, state root time,
+    /// or DA priority fee estimation is enabled.
+    pub target_flashblocks_per_block: Option<usize>,
 }
 
 impl MeteringConfig {
@@ -191,6 +277,8 @@ impl MeteringConfig {
             },
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
+            target_flashblocks_per_block: None,
         }
     }
 
@@ -207,6 +295,8 @@ impl MeteringConfig {
             },
             priority_fee_percentile: 0.5,
             uncongested_priority_fee: 1_000_000,
+            cache_size: 12,
+            target_flashblocks_per_block: None,
         }
     }
 
@@ -228,6 +318,18 @@ impl MeteringConfig {
         self.uncongested_priority_fee = fee;
         self
     }
+
+    /// Sets the cache size.
+    pub const fn with_cache_size(mut self, size: usize) -> Self {
+        self.cache_size = size;
+        self
+    }
+
+    /// Sets the target number of tx-pool flashblocks the builder budgets per block.
+    pub const fn with_target_flashblocks_per_block(mut self, count: usize) -> Self {
+        self.target_flashblocks_per_block = Some(count);
+        self
+    }
 }
 
 impl FromExtensionConfig for MeteringExtension {
@@ -241,6 +343,53 @@ impl FromExtensionConfig for MeteringExtension {
             resource_limits: config.resource_limits,
             priority_fee_percentile: config.priority_fee_percentile,
             uncongested_priority_fee: config.uncongested_priority_fee,
+            cache_size: config.cache_size,
+            target_flashblocks_per_block: config.target_flashblocks_per_block,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_default_target_flashblocks_when_optional() {
+        let extension = MeteringExtension::default();
+
+        assert_eq!(extension.resolved_target_flashblocks_per_block(false), 1);
+    }
+
+    #[test]
+    fn resolves_configured_target_flashblocks() {
+        let extension = MeteringExtension::default().with_target_flashblocks_per_block(4);
+
+        assert_eq!(extension.resolved_target_flashblocks_per_block(true), 4);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "target_flashblocks_per_block must be configured when gas, state root time, or data availability priority fee estimation is enabled"
+    )]
+    fn missing_required_target_flashblocks_panics() {
+        let extension = MeteringExtension::default();
+
+        let _ = extension.resolved_target_flashblocks_per_block(true);
+    }
+
+    #[test]
+    #[should_panic(expected = "target_flashblocks_per_block must be greater than 0")]
+    fn zero_target_flashblocks_panics() {
+        let extension = MeteringExtension::default().with_target_flashblocks_per_block(0);
+
+        let _ = extension.resolved_target_flashblocks_per_block(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "cache_size must be greater than 0")]
+    fn zero_cache_size_panics() {
+        let extension = MeteringExtension::default().with_cache_size(0);
+
+        let _ = extension.resolved_cache_size();
     }
 }
