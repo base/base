@@ -53,7 +53,7 @@ Meters a bundle and returns a recommended priority fee based on recent block con
   "totalGasUsed": 21000,
   "totalExecutionTimeUs": 1234,
   "priorityFee": "0x5f5e100",
-  "blocksSampled": 1,
+  "blocksSampled": 12,
   "resourceEstimates": [
     {
       "resource": "gasUsed",
@@ -77,15 +77,17 @@ Meters a bundle and returns a recommended priority fee based on recent block con
 
 **Algorithm:**
 1. Meter the bundle to get resource consumption (gas, execution time, DA bytes)
-2. Use cached metering data from the latest block (populated by ingestion pipeline)
-3. For each flashblock within the block:
-   - For each resource type, run the estimation algorithm:
-     - Walk from highest-paying transactions, subtracting usage from remaining capacity
-     - Stop when adding another tx would leave less room than the bundle needs
-     - The last included tx's fee is the threshold
-   - For "use-it-or-lose-it" resources (execution time), aggregate usage across all flashblocks
-4. Take the maximum fee across all flashblocks for each resource
+2. Use cached metering data from recent blocks (populated by ingestion pipeline)
+3. For each block in the cache:
+   - For each flashblock within the block:
+     - For each resource type, run the estimation algorithm:
+       - Walk from highest-paying transactions, subtracting usage from remaining capacity
+       - Stop when adding another tx would leave less room than the bundle needs
+       - The last included tx's fee is the threshold
+     - For "use-it-or-lose-it" resources (execution time), aggregate usage across all flashblocks
+   - Take the maximum fee across all flashblocks for each resource
+4. Take the median fee across all blocks for each resource (upper median for even counts)
 5. Return the maximum fee across all resources as `priorityFee`
 
 Note: The cache must be populated by the ingestion pipeline for estimates to be available.
-Currently returns `blocksSampled: 1` since estimation uses a single block.
+The `blocksSampled` field indicates how many blocks were used in the rolling estimate.

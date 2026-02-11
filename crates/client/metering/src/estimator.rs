@@ -614,67 +614,6 @@ fn usage_extractor(resource: ResourceKind) -> fn(&MeteredTransaction) -> u128 {
     }
 }
 
-/// Estimates priority fees for all configured resources given a list of transactions.
-///
-/// This is a simple single-block estimation that treats all transactions as a single pool.
-///
-/// # Arguments
-///
-/// * `transactions` - Transactions from a block, will be sorted by priority fee descending
-/// * `demand` - Resource demand for the bundle being priced
-/// * `limits` - Configured resource limits
-/// * `percentile` - Percentile for recommended fee calculation
-/// * `default_fee` - Fee to return when resources are uncongested
-///
-/// Returns `Ok(None)` if no transactions are provided.
-/// Returns `Err` if bundle demand exceeds any resource limit.
-pub(crate) fn estimate_from_transactions(
-    transactions: &[MeteredTransaction],
-    demand: ResourceDemand,
-    limits: &ResourceLimits,
-    percentile: f64,
-    default_fee: U256,
-) -> Result<Option<(ResourceEstimates, U256)>, EstimateError> {
-    if transactions.is_empty() {
-        return Ok(None);
-    }
-
-    // Sort transactions by priority fee descending
-    let mut sorted: Vec<&MeteredTransaction> = transactions.iter().collect();
-    sorted.sort_by_key(|tx| Reverse(tx.priority_fee_per_gas));
-
-    let mut estimates = ResourceEstimates::default();
-    let mut max_fee = U256::ZERO;
-
-    for resource in ResourceKind::all() {
-        let Some(demand_value) = demand.demand_for(resource) else {
-            continue;
-        };
-        let Some(limit_value) = limits.limit_for(resource) else {
-            continue;
-        };
-
-        let estimate = compute_estimate(
-            resource,
-            &sorted,
-            demand_value,
-            limit_value,
-            usage_extractor(resource),
-            percentile,
-            default_fee,
-        )?;
-
-        max_fee = max_fee.max(estimate.recommended_priority_fee);
-        estimates.set(resource, estimate);
-    }
-
-    if estimates.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some((estimates, max_fee)))
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
@@ -704,8 +643,10 @@ mod tests {
         state_root_us: u128,
         da_bytes: u64,
     ) -> MeteredTransaction {
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[24..].copy_from_slice(&priority.to_be_bytes());
         MeteredTransaction {
-            tx_hash: B256::ZERO,
+            tx_hash: B256::new(hash_bytes),
             priority_fee_per_gas: U256::from(priority),
             gas_used: gas,
             execution_time_us: exec_us,
@@ -870,69 +811,6 @@ mod tests {
         assert_eq!(quote.recommended_priority_fee, DEFAULT_FEE);
     }
 
-    #[test]
-    fn estimate_from_transactions_basic() {
-        let txs = vec![tx(10, 10), tx(5, 10), tx(2, 10)];
-        let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };
-        let limits = ResourceLimits { gas_used: Some(30), ..Default::default() };
-
-        let result = estimate_from_transactions(&txs, demand, &limits, 0.5, DEFAULT_FEE)
-            .expect("no error")
-            .expect("has estimates");
-
-        let (estimates, max_fee) = result;
-        let gas_estimate = estimates.gas_used.expect("gas estimate present");
-        assert_eq!(gas_estimate.threshold_priority_fee, U256::from(10));
-        assert_eq!(max_fee, U256::from(10));
-    }
-
-    #[test]
-    fn estimate_independent_dimensions() {
-        // Demonstrate that each resource dimension is evaluated independently.
-        //
-        // Transactions have low gas but high execution time:
-        //   priority=10: gas=5,  exec_time=15
-        //   priority=5:  gas=5,  exec_time=15
-        //   priority=2:  gas=5,  exec_time=15
-        //
-        // Gas (limit 100, demand 10):
-        //   Total usage = 15, remaining = 85 >= 10 → uncongested → default fee
-        //
-        // Execution time (limit 30, demand 15):
-        //   Include priority=10: remaining = 30-15 = 15 >= 15 → ok
-        //   Include priority=5:  remaining = 15-15 = 0 < 15 → stop
-        //   Congested → threshold = 10
-        let txs =
-            vec![tx_multi(10, 5, 15, 0, 0), tx_multi(5, 5, 15, 0, 0), tx_multi(2, 5, 15, 0, 0)];
-        let demand = ResourceDemand {
-            gas_used: Some(10),
-            execution_time_us: Some(15),
-            ..Default::default()
-        };
-        let limits = ResourceLimits {
-            gas_used: Some(100),
-            execution_time_us: Some(30),
-            ..Default::default()
-        };
-
-        let (estimates, max_fee) =
-            estimate_from_transactions(&txs, demand, &limits, 0.5, DEFAULT_FEE)
-                .expect("no error")
-                .expect("has estimates");
-
-        // Gas is uncongested → default fee
-        let gas_est = estimates.gas_used.expect("gas estimate");
-        assert_eq!(gas_est.recommended_priority_fee, DEFAULT_FEE);
-
-        // Execution time is congested → fee driven by competition
-        let exec_est = estimates.execution_time.expect("exec estimate");
-        assert_eq!(exec_est.threshold_priority_fee, U256::from(10));
-        assert!(exec_est.recommended_priority_fee > DEFAULT_FEE);
-
-        // Max fee is driven by the congested dimension (execution time)
-        assert_eq!(max_fee, exec_est.recommended_priority_fee);
-    }
-
     const DEFAULT_LIMITS: ResourceLimits = ResourceLimits {
         gas_used: Some(25),
         execution_time_us: Some(100),
@@ -1016,84 +894,129 @@ mod tests {
         assert_eq!(rolling.priority_fee, U256::from(30));
     }
 
-    // === Per-Flashblock Estimation Tests ===
+    // === Rolling Estimate Tests ===
 
     #[test]
-    fn estimate_for_block_returns_none_for_empty_cache() {
+    fn estimate_rolling_returns_none_for_empty_cache() {
         let (_, estimator) = setup_estimator(DEFAULT_LIMITS);
         let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
 
-        let result = estimator.estimate_for_block(Some(1), demand).expect("no error");
+        let result = estimator.estimate_rolling(demand).expect("no error");
         assert!(result.is_none());
     }
 
     #[test]
-    fn estimate_for_block_returns_none_for_missing_block() {
+    fn estimate_rolling_computes_median_for_odd_blocks() {
         let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
         {
             let mut guard = cache.write();
+            // Block 1: threshold 10
             guard.push_transaction(1, 0, tx(10, 10));
+            guard.push_transaction(1, 0, tx(5, 10));
+            // Block 2: threshold 20
+            guard.push_transaction(2, 0, tx(20, 10));
+            guard.push_transaction(2, 0, tx(15, 10));
+            // Block 3: threshold 30
+            guard.push_transaction(3, 0, tx(30, 10));
+            guard.push_transaction(3, 0, tx(25, 10));
         }
-        let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
+        let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };
 
-        // Block 2 doesn't exist
-        let result = estimator.estimate_for_block(Some(2), demand).expect("no error");
-        assert!(result.is_none());
+        let result = estimator.estimate_rolling(demand).expect("no error").expect("has data");
+
+        assert_eq!(result.blocks_sampled, 3);
+        // Median of [10, 20, 30] = 20 (middle value)
+        let gas_estimate = result.estimates.gas_used.expect("gas estimate");
+        assert_eq!(gas_estimate.recommended_priority_fee, U256::from(20));
     }
 
     #[test]
-    fn estimate_for_block_multiple_flashblocks_computes_min_max() {
+    fn estimate_rolling_priority_fee_is_max_across_resources() {
         let limits = ResourceLimits {
             gas_used: Some(50),
-            execution_time_us: Some(200),
+            execution_time_us: Some(50),
             state_root_time_us: None,
-            data_availability_bytes: Some(200),
+            data_availability_bytes: Some(50),
         };
         let (cache, estimator) = setup_estimator(limits);
         {
             let mut guard = cache.write();
-            // Flashblock 0: high-fee transactions (congested)
+            // Add transactions - all resource types are set to same values
             guard.push_transaction(1, 0, tx(100, 10));
-            guard.push_transaction(1, 0, tx(90, 10));
-            guard.push_transaction(1, 0, tx(80, 10));
-            // Flashblock 1: low-fee transactions (less congested)
-            guard.push_transaction(1, 1, tx(30, 10));
-            guard.push_transaction(1, 1, tx(20, 10));
-            // Flashblock 2: medium-fee transactions
-            guard.push_transaction(1, 2, tx(60, 10));
-            guard.push_transaction(1, 2, tx(50, 10));
+            guard.push_transaction(1, 0, tx(50, 10));
         }
-        let demand = ResourceDemand { gas_used: Some(25), ..Default::default() };
+        let demand = ResourceDemand {
+            gas_used: Some(25),
+            execution_time_us: Some(25),
+            data_availability_bytes: Some(25),
+            ..Default::default()
+        };
+
+        let result = estimator.estimate_rolling(demand).expect("no error").expect("has data");
+
+        // priority_fee should be the max recommended fee across all resources
+        let gas_fee =
+            result.estimates.gas_used.map(|e| e.recommended_priority_fee).unwrap_or(U256::ZERO);
+        let exec_fee = result
+            .estimates
+            .execution_time
+            .map(|e| e.recommended_priority_fee)
+            .unwrap_or(U256::ZERO);
+        let da_fee = result
+            .estimates
+            .data_availability
+            .map(|e| e.recommended_priority_fee)
+            .unwrap_or(U256::ZERO);
+
+        let expected_max = gas_fee.max(exec_fee).max(da_fee);
+        assert_eq!(result.priority_fee, expected_max);
+    }
+
+    #[test]
+    fn estimate_independent_dimensions() {
+        // Demonstrate that each resource dimension is evaluated independently.
+        //
+        // Transactions have low gas but high execution time:
+        //   priority=10: gas=5,  exec_time=15
+        //   priority=5:  gas=5,  exec_time=15
+        //   priority=2:  gas=5,  exec_time=15
+        //
+        // Gas (limit 100, demand 10):
+        //   Total usage = 15, remaining = 85 >= 10 → uncongested → default fee
+        //
+        // Execution time (limit 30, demand 15):
+        //   Include priority=10: remaining = 30-15 = 15 >= 15 → ok
+        //   Include priority=5:  remaining = 15-15 = 0 < 15 → stop
+        //   Congested → threshold = 10
+        let limits = ResourceLimits {
+            gas_used: Some(100),
+            execution_time_us: Some(30),
+            state_root_time_us: None,
+            data_availability_bytes: None,
+        };
+        let (cache, estimator) = setup_estimator(limits);
+        {
+            let mut guard = cache.write();
+            guard.push_transaction(1, 0, tx_multi(10, 5, 15, 0, 0));
+            guard.push_transaction(1, 0, tx_multi(5, 5, 15, 0, 0));
+            guard.push_transaction(1, 0, tx_multi(2, 5, 15, 0, 0));
+        }
+        let demand = ResourceDemand {
+            gas_used: Some(10),
+            execution_time_us: Some(15),
+            ..Default::default()
+        };
 
         let result =
             estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
 
-        assert_eq!(result.block_number, 1);
-        assert_eq!(result.flashblocks.len(), 3);
+        // Gas is uncongested → default fee
+        let gas_est = result.max_across_flashblocks.gas_used.expect("gas estimate");
+        assert_eq!(gas_est.recommended_priority_fee, DEFAULT_FEE);
 
-        // min_across_flashblocks should have the lowest recommended fee
-        let min_gas = result.min_across_flashblocks.gas_used.expect("gas estimate");
-        // max_across_flashblocks should have the highest recommended fee
-        let max_gas = result.max_across_flashblocks.gas_used.expect("gas estimate");
-
-        assert!(min_gas.recommended_priority_fee <= max_gas.recommended_priority_fee);
-    }
-
-    #[test]
-    fn estimate_for_block_uses_most_recent_when_block_none() {
-        let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
-        {
-            let mut guard = cache.write();
-            guard.push_transaction(1, 0, tx(10, 10));
-            guard.push_transaction(2, 0, tx(20, 10));
-            guard.push_transaction(3, 0, tx(30, 10));
-        }
-        let demand = ResourceDemand { gas_used: Some(10), ..Default::default() };
-
-        // Pass None for block_number - should use most recent (block 3)
-        let result =
-            estimator.estimate_for_block(None, demand).expect("no error").expect("block exists");
-
-        assert_eq!(result.block_number, 3);
+        // Execution time is congested → fee driven by competition
+        let exec_est = result.max_across_flashblocks.execution_time.expect("exec estimate");
+        assert_eq!(exec_est.threshold_priority_fee, U256::from(10));
+        assert!(exec_est.recommended_priority_fee > DEFAULT_FEE);
     }
 }
