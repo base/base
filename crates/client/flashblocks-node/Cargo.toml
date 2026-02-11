@@ -18,7 +18,7 @@ test-utils = [
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
 	"dep:alloy-rpc-types-engine",
-	"dep:base-flashtypes",
+	"base-primitives/flashblocks",
 	"dep:derive_more",
 	"dep:eyre",
 	"dep:op-alloy-consensus",
@@ -68,7 +68,7 @@ tracing.workspace = true
 
 # test-utils (optional)
 eyre = { workspace = true, optional = true }
-base-flashtypes = { workspace = true, optional = true }
+base-primitives = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]

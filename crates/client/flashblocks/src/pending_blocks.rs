@@ -10,7 +10,7 @@ use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_flashtypes::Flashblock;
+use base_primitives::Flashblock;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_revm::db::BundleState;

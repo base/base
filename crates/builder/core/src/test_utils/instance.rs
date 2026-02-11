@@ -10,7 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
-use base_flashtypes::FlashblocksPayloadV1;
+use base_primitives::FlashblocksPayloadV1;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
 use op_alloy_network::Optimism;

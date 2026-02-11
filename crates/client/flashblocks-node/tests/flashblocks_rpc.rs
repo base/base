@@ -13,7 +13,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_client_node::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
 use base_flashblocks_node::test_harness::FlashblocksHarness;
-use base_flashtypes::{
+use base_primitives::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use eyre::Result;

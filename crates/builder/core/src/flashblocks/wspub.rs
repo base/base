@@ -5,7 +5,7 @@ use core::{
 };
 use std::{io, net::TcpListener, sync::Arc};
 
-use base_flashtypes::FlashblocksPayloadV1;
+use base_primitives::FlashblocksPayloadV1;
 use futures::SinkExt;
 use futures_util::StreamExt;
 use tokio::{

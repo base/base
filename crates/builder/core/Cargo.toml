@@ -53,7 +53,7 @@ test-utils = [
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-flashtypes.workspace = true
+base-primitives = { workspace = true, features = ["flashblocks"] }
 base-access-lists.workspace = true
 
 # reth

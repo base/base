@@ -19,7 +19,7 @@ workspace = true
 # workspace
 base-txpool.workspace = true
 base-flashblocks.workspace = true
-base-flashtypes.workspace = true
+base-primitives = { workspace = true, features = ["flashblocks"] }
 base-flashblocks-node.workspace = true
 base-protocol = { workspace = true, features = ["serde"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }

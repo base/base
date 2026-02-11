@@ -1,7 +1,8 @@
-#![doc = include_str!("../README.md")]
-#![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+//! Flashblocks Primitive Types.
+//!
+//! Low-level primitive types for flashblocks. Provides the core data structures
+//! for flashblock payloads, metadata, and delta encoding used in Base's
+//! pre-confirmation infrastructure.
 
 mod block;
 pub use block::Flashblock;

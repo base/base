@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::PayloadId;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use super::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockDecodeError,
     FlashblocksPayloadV1, Metadata,
 };

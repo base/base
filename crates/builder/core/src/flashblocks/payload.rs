@@ -12,7 +12,7 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
-use base_flashtypes::{
+use base_primitives::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use either::Either;
