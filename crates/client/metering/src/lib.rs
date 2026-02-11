@@ -6,10 +6,16 @@
 mod block;
 pub use block::meter_block;
 
+mod cache;
+pub use cache::{
+    BlockMetrics, FlashblockMetrics, MeteredTransaction, MeteringCache, ResourceTotals,
+};
+
 mod estimator;
 pub use estimator::{
-    EstimateError, MeteredTransaction, ResourceDemand, ResourceEstimate, ResourceEstimates,
-    ResourceKind, ResourceLimits,
+    BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
+    ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
+    RollingPriorityEstimate,
 };
 
 mod extension;

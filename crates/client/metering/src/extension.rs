@@ -25,11 +25,17 @@ pub struct MeteringResourceLimits {
 
 impl MeteringResourceLimits {
     /// Converts to the internal [`ResourceLimits`] type.
-    pub fn to_resource_limits(&self) -> ResourceLimits {
+    pub const fn to_resource_limits(&self) -> ResourceLimits {
         ResourceLimits {
             gas_used: self.gas_limit,
-            execution_time_us: self.execution_time_us.map(|v| v as u128),
-            state_root_time_us: self.state_root_time_us.map(|v| v as u128),
+            execution_time_us: match self.execution_time_us {
+                Some(v) => Some(v as u128),
+                None => None,
+            },
+            state_root_time_us: match self.state_root_time_us {
+                Some(v) => Some(v as u128),
+                None => None,
+            },
             data_availability_bytes: self.da_bytes,
         }
     }

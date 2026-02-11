@@ -3703,6 +3703,7 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "metrics-derive",
+ "parking_lot",
  "rand 0.9.2",
  "reth-db",
  "reth-db-common",
