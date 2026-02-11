@@ -17,6 +17,7 @@ pub use cache::{
 };
 
 mod estimator;
+pub use base_execution_payload_builder::config::OpDAConfig;
 pub use estimator::{
     BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
     ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,

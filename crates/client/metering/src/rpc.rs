@@ -621,7 +621,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{MeteringConfig, MeteringExtension};
+    use crate::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
         Bundle {
@@ -1062,6 +1062,102 @@ mod tests {
         assert_eq!(response.state_block_number, 2);
         // state_flashblock_index should be present and be 0
         assert_eq!(response.state_flashblock_index, Some(0));
+
+        Ok(())
+    }
+
+    // === Priority Fee Estimation RPC Tests (PR 1a) ===
+
+    async fn setup_with_estimator() -> eyre::Result<(TestHarness, RpcClient)> {
+        let config = MeteringConfig::enabled().with_resource_limits(MeteringResourceLimits {
+            gas_limit: Some(30_000_000),
+            execution_time_us: Some(1_000_000),
+            state_root_time_us: None,
+            da_bytes: Some(1_000_000),
+        });
+        let harness = TestHarness::builder().with_ext::<MeteringExtension>(config).build().await?;
+        let client = harness.rpc_client()?;
+        Ok((harness, client))
+    }
+
+    #[tokio::test]
+    async fn test_metered_priority_fee_per_gas_empty_bundle() -> eyre::Result<()> {
+        let (harness, client) = setup_with_estimator().await?;
+
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let bundle = create_bundle(vec![], 0, None);
+
+        // Use serde_json::Value to avoid u128 deserialization issues
+        let response: serde_json::Value =
+            client.request("base_meteredPriorityFeePerGas", (bundle,)).await?;
+
+        // Verify response structure
+        assert_eq!(response["results"].as_array().unwrap().len(), 0);
+        assert_eq!(response["priorityFee"].as_str().unwrap(), "0x0");
+        assert_eq!(response["blocksSampled"].as_u64().unwrap(), 0);
+        assert!(response["resourceEstimates"].as_array().unwrap().is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_metered_priority_fee_per_gas_single_transaction() -> eyre::Result<()> {
+        let (harness, client) = setup_with_estimator().await?;
+
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let sender_secret = Account::Alice.signer_b256();
+
+        let tx = TransactionBuilder::default()
+            .signer(sender_secret)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x1111111111111111111111111111111111111111"))
+            .value(1000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559();
+
+        let signed_tx =
+            OpTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
+        let envelope: OpTxEnvelope = signed_tx;
+        let tx_bytes = Bytes::from(envelope.encoded_2718());
+
+        let bundle = create_bundle(vec![tx_bytes], 0, None);
+
+        // Use serde_json::Value to avoid u128 deserialization issues
+        let response: serde_json::Value =
+            client.request("base_meteredPriorityFeePerGas", (bundle,)).await?;
+
+        // Should have meter_bundle results
+        assert_eq!(response["results"].as_array().unwrap().len(), 1);
+        assert_eq!(response["totalGasUsed"].as_u64().unwrap(), 21_000);
+
+        // With empty cache, priority_fee should be 0
+        assert_eq!(response["priorityFee"].as_str().unwrap(), "0x0");
+        assert_eq!(response["blocksSampled"].as_u64().unwrap(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_metered_priority_fee_per_gas_no_estimator_returns_error() -> eyre::Result<()> {
+        // Use setup() which doesn't configure resource limits (no estimator)
+        let (_harness, client) = setup().await?;
+
+        let bundle = create_bundle(vec![], 0, None);
+
+        let result: Result<serde_json::Value, _> =
+            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
+
+        // Should error because no estimator is configured
+        assert!(result.is_err());
 
         Ok(())
     }

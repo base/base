@@ -26,6 +26,7 @@ base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-primitives.workspace = true
+base-execution-payload-builder.workspace = true
 
 # revm
 revm-database.workspace = true
@@ -87,4 +88,5 @@ base-alloy-consensus.workspace = true
 # misc
 url.workspace = true
 rand.workspace = true
+serde_json.workspace = true
 tokio.workspace = true

@@ -6,6 +6,7 @@
 use std::{cmp::Reverse, sync::Arc};
 
 use alloy_primitives::U256;
+use base_execution_payload_builder::config::OpDAConfig;
 use parking_lot::RwLock;
 
 use crate::cache::{MeteredTransaction, MeteringCache};
@@ -251,6 +252,10 @@ pub struct PriorityFeeEstimator {
     percentile: f64,
     limits: ResourceLimits,
     default_priority_fee: U256,
+    /// Optional shared DA config from the miner RPC. When set, the estimator uses
+    /// `max_da_block_size` from this config instead of `limits.data_availability_bytes`.
+    /// This allows dynamic updates via `miner_setMaxDASize`.
+    da_config: Option<OpDAConfig>,
 }
 
 impl PriorityFeeEstimator {
@@ -262,18 +267,32 @@ impl PriorityFeeEstimator {
     ///   to use for the recommended fee.
     /// - `limits`: Configured resource capacity limits.
     /// - `default_priority_fee`: Fee to return when a resource is not congested.
+    /// - `da_config`: Optional shared DA config for dynamic DA limit updates.
     pub const fn new(
         cache: Arc<RwLock<MeteringCache>>,
         percentile: f64,
         limits: ResourceLimits,
         default_priority_fee: U256,
+        da_config: Option<OpDAConfig>,
     ) -> Self {
-        Self { cache, percentile, limits, default_priority_fee }
+        Self { cache, percentile, limits, default_priority_fee, da_config }
     }
 
-    /// Returns the limit for the given resource kind.
+    /// Returns the current DA block size limit, preferring the dynamic `OpDAConfig` value
+    /// if available, otherwise falling back to the static limit.
+    pub fn max_da_block_size(&self) -> Option<u64> {
+        self.da_config
+            .as_ref()
+            .and_then(|c| c.max_da_block_size())
+            .or(self.limits.data_availability_bytes)
+    }
+
+    /// Returns the limit for the given resource kind, using dynamic config where available.
     fn limit_for(&self, resource: ResourceKind) -> Option<u128> {
-        self.limits.limit_for(resource)
+        match resource {
+            ResourceKind::DataAvailability => self.max_da_block_size().map(|v| v as u128),
+            _ => self.limits.limit_for(resource),
+        }
     }
 
     /// Returns fee estimates for the provided block. If `block_number` is `None`
@@ -822,7 +841,8 @@ mod tests {
         limits: ResourceLimits,
     ) -> (Arc<RwLock<MeteringCache>>, PriorityFeeEstimator) {
         let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
-        let estimator = PriorityFeeEstimator::new(Arc::clone(&cache), 0.5, limits, DEFAULT_FEE);
+        let estimator =
+            PriorityFeeEstimator::new(Arc::clone(&cache), 0.5, limits, DEFAULT_FEE, None);
         (cache, estimator)
     }
 
@@ -892,6 +912,61 @@ mod tests {
         // Median across [10, 30] = 30 (upper median for even count)
         assert_eq!(gas_estimate.recommended_priority_fee, U256::from(30));
         assert_eq!(rolling.priority_fee, U256::from(30));
+    }
+
+    // === Dynamic DA Config Tests ===
+
+    #[test]
+    fn max_da_block_size_prefers_dynamic_config() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
+        let limits = ResourceLimits {
+            gas_used: Some(1000),
+            execution_time_us: None,
+            state_root_time_us: None,
+            data_availability_bytes: Some(1000), // Static limit
+        };
+        // Dynamic config with different DA limit
+        let da_config = OpDAConfig::new(100, 2000);
+        let estimator = PriorityFeeEstimator::new(cache, 0.5, limits, DEFAULT_FEE, Some(da_config));
+
+        // Should prefer dynamic config (2000) over static limit (1000)
+        assert_eq!(estimator.max_da_block_size(), Some(2000));
+    }
+
+    #[test]
+    fn max_da_block_size_falls_back_to_static_limit() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
+        let limits = ResourceLimits {
+            gas_used: Some(1000),
+            execution_time_us: None,
+            state_root_time_us: None,
+            data_availability_bytes: Some(1500), // Static limit
+        };
+        // Default OpDAConfig has no max_da_block_size set
+        let da_config = OpDAConfig::default();
+        let estimator = PriorityFeeEstimator::new(cache, 0.5, limits, DEFAULT_FEE, Some(da_config));
+
+        // Should fall back to static limit (1500)
+        assert_eq!(estimator.max_da_block_size(), Some(1500));
+    }
+
+    #[test]
+    fn limit_for_uses_dynamic_da_for_data_availability_only() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(4)));
+        let limits = ResourceLimits {
+            gas_used: Some(1000),
+            execution_time_us: Some(5000),
+            state_root_time_us: None,
+            data_availability_bytes: Some(1000), // Static limit
+        };
+        let da_config = OpDAConfig::new(100, 3000); // Dynamic DA limit
+        let estimator = PriorityFeeEstimator::new(cache, 0.5, limits, DEFAULT_FEE, Some(da_config));
+
+        // DataAvailability should use dynamic config
+        assert_eq!(estimator.limit_for(ResourceKind::DataAvailability), Some(3000));
+        // Other resources should use static limits
+        assert_eq!(estimator.limit_for(ResourceKind::GasUsed), Some(1000));
+        assert_eq!(estimator.limit_for(ResourceKind::ExecutionTime), Some(5000));
     }
 
     // === Rolling Estimate Tests ===

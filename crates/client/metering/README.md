@@ -147,3 +147,16 @@ The ingestion pipeline works as follows:
 Note: The `FlashblockInclusion` must include raw transaction bytes (`IncludedTransaction.raw_tx`)
 for accurate DA-based priority fee estimation. These bytes are used to compute the compressed
 transaction size via `flz_compress_len`.
+
+## Dynamic DA Size Configuration
+
+For accurate priority fee estimates, the estimator needs to know the sequencer's current DA
+limit. Since sequencers dynamically adjust their DA budget via `miner_setMaxDASize` based on
+L1 gas prices and network conditions, the estimator must read from the same shared config.
+
+When `OpDAConfig` is provided to the `PriorityFeeEstimator`, it reads `max_da_block_size`
+from this shared config on each estimation request. This ensures fee estimates reflect the
+actual DA capacity the sequencer is using, not a stale hardcoded value.
+
+The static `data_availability_bytes` in `ResourceLimits` serves as a fallback when
+`OpDAConfig` is not provided, but this configuration is not recommended for production use.
