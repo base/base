@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{
     Block, Header, TxReceipt,
@@ -43,6 +43,8 @@ pub struct ExecutedPendingTransaction {
     pub state: EvmState,
     /// The execution result of the transaction.
     pub result: ExecutionResult<OpHaltReason>,
+    /// Per-transaction EVM execution time. `None` when result was cached.
+    pub execution_time_us: Option<u128>,
 }
 
 /// Executes or fetches cached values for transactions in a flashblock.
@@ -93,6 +95,11 @@ where
     /// Consumes the builder and returns the database and state overrides.
     pub fn into_db_and_state_overrides(self) -> (DB, StateOverride) {
         (self.evm.into_db(), self.state_overrides)
+    }
+
+    /// Returns a mutable reference to the underlying database.
+    pub fn db_mut(&mut self) -> &mut DB {
+        self.evm.db_mut()
     }
 
     /// Executes a single transaction and updates internal state.
@@ -211,7 +218,13 @@ where
             .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
-        Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state, result })
+        Ok(ExecutedPendingTransaction {
+            rpc_transaction,
+            receipt,
+            state,
+            result,
+            execution_time_us: None,
+        })
     }
 
     fn jovian_da_footprint_estimation(
@@ -260,7 +273,11 @@ where
             0
         };
 
-        match self.evm.transact(&transaction) {
+        let start = Instant::now();
+        let transact_result = self.evm.transact(&transaction);
+        let elapsed_us = start.elapsed().as_micros();
+
+        match transact_result {
             Ok(ResultAndState { state, result }) => {
                 let gas_used = result.gas_used();
                 for (addr, acc) in &state {
@@ -353,6 +370,7 @@ where
                     receipt: op_receipt,
                     state,
                     result,
+                    execution_time_us: Some(elapsed_us),
                 })
             }
             Err(e) => Err(ExecutionError::TransactionFailed {
