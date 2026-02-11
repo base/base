@@ -25,13 +25,13 @@ engine = [
 	"dep:thiserror",
 ]
 flashblocks = [
-	"dep:alloy-serde",
 	"dep:alloy-primitives",
-	"dep:alloy-rpc-types-eth",
 	"dep:alloy-rpc-types-engine",
+	"dep:alloy-rpc-types-eth",
+	"dep:alloy-serde",
+	"dep:brotli",
 	"dep:bytes",
 	"dep:serde",
-	"dep:brotli",
 	"dep:serde_json",
 	"dep:thiserror",
 ]
