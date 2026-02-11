@@ -430,9 +430,11 @@ impl<T: Clone> BlockCell<T> {
     }
 
     pub(super) fn set(&self, value: T) {
-        let mut inner = self.inner.lock();
-        *inner = Some(value);
-        self.notify.notify_one();
+        {
+            let mut inner = self.inner.lock();
+            *inner = Some(value);
+        }
+        self.notify.notify_waiters();
     }
 
     pub(super) fn get(&self) -> Option<T> {
@@ -441,29 +443,43 @@ impl<T: Clone> BlockCell<T> {
     }
 
     // Return a future that resolves when value is set
-    pub(super) fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
+    pub(super) fn wait_for_value(&self) -> WaitForValue<T>
+    where
+        T: Send + 'static,
+    {
+        let cell = self.clone();
+        WaitForValue {
+            inner: Box::pin(async move {
+                loop {
+                    // Subscribe to notifications *before* checking the value so
+                    // that a `set()` racing between our `get()` and `await` is
+                    // not lost. `enable()` registers us with `notify_waiters()`
+                    // without polling to completion.
+                    let notified = cell.notify.notified();
+                    let mut notified = std::pin::pin!(notified);
+                    notified.as_mut().enable();
+
+                    if let Some(value) = cell.get() {
+                        return value;
+                    }
+
+                    notified.await;
+                }
+            }),
+        }
     }
 }
 
-#[derive(Clone)]
 // Future that resolves when a value is set in BlockCell
 pub(super) struct WaitForValue<T> {
-    cell: BlockCell<T>,
+    inner: Pin<Box<dyn Future<Output = T> + Send>>,
 }
 
-impl<T: Clone> Future for WaitForValue<T> {
+impl<T> Future for WaitForValue<T> {
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                // Instead of register, we use notified() to get a future
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner.as_mut().poll(cx)
     }
 }
 
@@ -577,6 +593,58 @@ mod tests {
         // Waiter should get the latest value
         let result = cell.wait_for_value().await;
         assert_eq!(result, 43);
+    }
+
+    /// Demonstrates the busy-wait spin loop bug in `WaitForValue::poll()`.
+    ///
+    /// `WaitForValue::poll()` calls `cx.waker().wake_by_ref()` immediately on
+    /// every poll when the value is not yet set, causing the tokio runtime to
+    /// re-poll the future in a tight loop. This burns CPU and starves other
+    /// tasks. The `BlockCell` already has a `Notify` that `set()` triggers via
+    /// `notify_one()`, but `WaitForValue` never subscribes to it.
+    ///
+    /// A correct implementation should poll fewer than ~10 times total: once on
+    /// initial spawn, and once more after the value is set. The current
+    /// implementation polls millions of times in 100 ms.
+    #[tokio::test]
+    async fn test_wait_for_value_does_not_spin() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let cell = BlockCell::new();
+        let poll_count = Arc::new(AtomicU64::new(0));
+
+        let poll_count_clone = poll_count.clone();
+        let cell_clone = cell.clone();
+        let handle = task::spawn(async move {
+            let mut fut = std::pin::pin!(cell_clone.wait_for_value());
+            std::future::poll_fn(|cx| {
+                poll_count_clone.fetch_add(1, Ordering::Relaxed);
+                fut.as_mut().poll(cx)
+            })
+            .await
+        });
+
+        // Give the runtime time to spin if the implementation is broken.
+        sleep(Duration::from_millis(100)).await;
+
+        let polls_before_set = poll_count.load(Ordering::Relaxed);
+
+        // Set the value so the future can resolve.
+        cell.set(42);
+
+        let result = handle.await.unwrap();
+        assert_eq!(result, 42);
+
+        // A properly-suspending future should be polled very few times:
+        //   1. initial poll  →  Pending (subscribes to Notify)
+        //   2. woken by set  →  Ready
+        //
+        // A spin loop will poll hundreds of thousands of times in 100 ms.
+        assert!(
+            polls_before_set < 10,
+            "WaitForValue was polled {polls_before_set} times in 100 ms while waiting — \
+             expected < 10 if properly suspending via Notify, indicating a busy-wait spin loop",
+        );
     }
 
     #[derive(Debug, Clone)]
