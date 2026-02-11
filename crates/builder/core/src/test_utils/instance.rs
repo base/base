@@ -35,7 +35,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    BuilderConfig, OpEngineApiBuilder, TxDataStore,
+    BuilderConfig, OpEngineApiBuilder, SharedMeteringProvider,
     flashblocks::FlashblocksServiceBuilder,
     test_utils::{EngineApi, Ipc, TransactionPoolObserver, create_test_db, driver::ChainDriver},
 };
@@ -69,7 +69,7 @@ pub struct LocalInstance {
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
-    tx_data_store: TxDataStore,
+    metering_provider: SharedMeteringProvider,
 }
 
 impl LocalInstance {
@@ -101,7 +101,7 @@ impl LocalInstance {
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
-        let tx_data_store = builder_config.tx_data_store.clone();
+        let metering_provider = Arc::clone(&builder_config.metering_provider);
 
         let addons: OpAddOns<
             _,
@@ -154,7 +154,7 @@ impl LocalInstance {
             _node_handle: node_handle,
             task_manager: Some(task_manager),
             pool_observer: TransactionPoolObserver::new(pool_monitor),
-            tx_data_store,
+            metering_provider,
         })
     }
 
@@ -204,8 +204,8 @@ impl LocalInstance {
         &self.pool_observer
     }
 
-    pub const fn tx_data_store(&self) -> &TxDataStore {
-        &self.tx_data_store
+    pub fn metering_provider(&self) -> &SharedMeteringProvider {
+        &self.metering_provider
     }
 
     pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {

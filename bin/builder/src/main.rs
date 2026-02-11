@@ -5,9 +5,10 @@
 
 pub mod cli;
 
-use base_builder_core::{
-    BaseApiExtServer, BuilderConfig, FlashblocksServiceBuilder, OpEngineApiBuilder, TxDataStoreExt,
-};
+use std::sync::Arc;
+
+use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, OpEngineApiBuilder};
+use base_builder_metering::{BaseApiExtServer, MeteringStoreExt};
 use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
 use reth_optimism_node::{
     OpNode,
@@ -30,12 +31,12 @@ fn main() {
     cli.run(|builder, builder_args| async move {
         let builder_config = BuilderConfig::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
+        let metering_provider = Arc::clone(&builder_config.metering_provider);
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
-        let tx_data_store = builder_config.tx_data_store.clone();
 
         let addons: OpAddOns<
             _,
@@ -65,9 +66,9 @@ fn main() {
             )
             .with_add_ons(addons)
             .extend_rpc_modules(move |ctx| {
-                let tx_data_store_ext = TxDataStoreExt::new(tx_data_store);
-                ctx.modules.add_or_replace_configured(tx_data_store_ext.into_rpc())?;
-
+                ctx.modules.add_or_replace_configured(
+                    MeteringStoreExt::new(metering_provider).into_rpc(),
+                )?;
                 Ok(())
             })
             .on_node_started(move |_ctx| {

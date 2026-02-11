@@ -39,7 +39,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::{
     BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
-    PayloadTxsBounds, ResourceLimits, TxData, TxDataStore, TxResources, TxnExecutionError,
+    PayloadTxsBounds, ResourceLimits, SharedMeteringProvider, TxResources, TxnExecutionError,
     TxnOutcome,
 };
 
@@ -164,8 +164,8 @@ pub struct OpPayloadBuilderCtx {
     pub block_state_root_time_budget_us: Option<u128>,
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
-    /// Transaction data store for resource metering
-    pub tx_data_store: TxDataStore,
+    /// Resource metering provider
+    pub metering_provider: SharedMeteringProvider,
 }
 
 impl OpPayloadBuilderCtx {
@@ -539,7 +539,7 @@ impl OpPayloadBuilderCtx {
 
             num_txs_considered += 1;
 
-            let TxData { metering: resource_usage, .. } = self.tx_data_store.get(&tx_hash);
+            let resource_usage = self.metering_provider.get(&tx_hash);
 
             // Extract predicted execution and state root times from metering data
             let predicted_execution_time_us =

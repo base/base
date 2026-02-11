@@ -1,8 +1,10 @@
 //! Contains the CLI arguments
 
 use core::{convert::TryFrom, net::SocketAddr, time::Duration};
+use std::sync::Arc;
 
-use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig, TxDataStore};
+use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig};
+use base_builder_metering::MeteringStore;
 use reth_optimism_node::args::RollupArgs;
 
 /// Parameters for Flashblocks configuration.
@@ -129,6 +131,16 @@ pub struct Args {
     pub flashblocks: FlashblocksArgs,
 }
 
+impl Args {
+    /// Creates a [`MeteringStore`] from the CLI arguments.
+    pub fn build_metering_store(&self) -> MeteringStore {
+        MeteringStore::new(
+            self.enable_resource_metering || self.execution_metering_mode.is_enabled(),
+            self.tx_data_store_buffer_size,
+        )
+    }
+}
+
 impl Default for Args {
     fn default() -> Self {
         Self {
@@ -154,6 +166,7 @@ impl TryFrom<Args> for BuilderConfig {
 
     fn try_from(args: Args) -> Result<Self, Self::Error> {
         let flashblocks = FlashblocksConfig::try_from(&args)?;
+        let metering_store = args.build_metering_store();
         Ok(Self {
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
@@ -166,10 +179,7 @@ impl TryFrom<Args> for BuilderConfig {
             flashblock_execution_time_budget_us: args.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: args.block_state_root_time_budget_us,
             execution_metering_mode: args.execution_metering_mode,
-            tx_data_store: TxDataStore::new(
-                args.enable_resource_metering || args.execution_metering_mode.is_enabled(),
-                args.tx_data_store_buffer_size,
-            ),
+            metering_provider: Arc::new(metering_store),
             flashblocks,
         })
     }

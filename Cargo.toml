@@ -127,6 +127,7 @@ base-client-engine = { path = "crates/client/engine" }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }
+base-builder-metering = { path = "crates/builder/metering" }
 
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }

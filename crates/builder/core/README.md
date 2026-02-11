@@ -9,7 +9,7 @@ Block builder library for Base. Provides flashblocks payload building infrastruc
 
 - **`flashblocks`**: Progressive block builder that produces block chunks at short intervals, publishing them via WebSocket before merging into full blocks.
 - **`launcher`**: Node launcher utilities for starting the builder.
-- **`tx_data_store`**: Transaction data storage and retrieval service with RPC extensions.
+- **`metering`**: Resource metering provider trait and types.
 
 ## Features
 

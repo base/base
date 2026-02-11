@@ -1793,6 +1793,7 @@ name = "base-builder-bin"
 version = "0.0.0"
 dependencies = [
  "base-builder-core",
+ "base-builder-metering",
  "base-cli-utils",
  "clap",
  "eyre",
@@ -1836,7 +1837,6 @@ dependencies = [
  "chrono",
  "clap",
  "clap_builder",
- "concurrent-queue",
  "ctor",
  "dashmap 6.1.0",
  "derive_more",
@@ -1931,6 +1931,19 @@ dependencies = [
  "tracing-subscriber 0.3.22",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "base-builder-metering"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-builder-core",
+ "base-bundles",
+ "concurrent-queue",
+ "dashmap 6.1.0",
+ "jsonrpsee",
+ "tracing",
 ]
 
 [[package]]

@@ -210,7 +210,7 @@ where
             flashblock_execution_time_budget_us: self.config.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
             execution_metering_mode: self.config.execution_metering_mode,
-            tx_data_store: self.config.tx_data_store.clone(),
+            metering_provider: Arc::clone(&self.config.metering_provider),
         })
     }
 

@@ -19,6 +19,7 @@ workspace = true
 # workspace
 base-cli-utils.workspace = true
 base-builder-core.workspace = true
+base-builder-metering.workspace = true
 
 # reth
 reth-cli-util.workspace = true
