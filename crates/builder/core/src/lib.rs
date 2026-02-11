@@ -25,8 +25,8 @@ pub use execution_metering_mode::ExecutionMeteringMode;
 mod traits;
 pub use traits::{ClientBounds, NodeBounds, NodeComponents, PayloadTxsBounds, PoolBounds};
 
-mod storage;
-pub use storage::{BaseApiExtServer, StoreData, TxData, TxDataStore, TxDataStoreExt};
+mod metering;
+pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
 mod flashblocks;
 pub use flashblocks::{

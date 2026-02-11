@@ -185,7 +185,6 @@ parking_lot.workspace = true
 derive_more.workspace = true
 shellexpand.workspace = true
 testcontainers.workspace = true
-concurrent-queue.workspace = true
 ctor = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }

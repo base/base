@@ -117,13 +117,14 @@ impl BaseNode {
     /// use reth_db::open_db_read_only;
     /// use reth_optimism_chainspec::OpChainSpecBuilder;
     /// use reth_optimism_node::OpNode;
-    /// use reth_provider::providers::StaticFileProvider;
+    /// use reth_provider::providers::{RocksDBProvider, StaticFileProvider};
     /// use std::sync::Arc;
     ///
     /// let factory = OpNode::provider_factory_builder()
     ///     .db(Arc::new(open_db_read_only("db", Default::default()).unwrap()))
     ///     .chainspec(OpChainSpecBuilder::base_mainnet().build().into())
     ///     .static_file(StaticFileProvider::read_only("db/static_files", false).unwrap())
+    ///     .rocksdb_provider(RocksDBProvider::new("db/rocksdb").unwrap())
     ///     .build_provider_factory();
     /// ```
     pub fn provider_factory_builder() -> ProviderFactoryBuilder<Self> {

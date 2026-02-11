@@ -1,10 +1,13 @@
 //! Builder Configuration
 
 use core::time::Duration;
+use std::sync::Arc;
 
 use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
-use crate::{ExecutionMeteringMode, FlashblocksConfig, TxDataStore};
+use crate::{
+    ExecutionMeteringMode, FlashblocksConfig, NoopMeteringProvider, SharedMeteringProvider,
+};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -48,8 +51,8 @@ pub struct BuilderConfig {
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
 
-    /// Transaction data store for resource metering
-    pub tx_data_store: TxDataStore,
+    /// Resource metering provider
+    pub metering_provider: SharedMeteringProvider,
 }
 
 impl core::fmt::Debug for BuilderConfig {
@@ -67,7 +70,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("flashblock_execution_time_budget_us", &self.flashblock_execution_time_budget_us)
             .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
             .field("execution_metering_mode", &self.execution_metering_mode)
-            .field("tx_data_store", &self.tx_data_store)
+            .field("metering_provider", &self.metering_provider)
             .finish()
     }
 }
@@ -87,7 +90,7 @@ impl Default for BuilderConfig {
             flashblock_execution_time_budget_us: None,
             block_state_root_time_budget_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
-            tx_data_store: TxDataStore::default(),
+            metering_provider: Arc::new(NoopMeteringProvider),
         }
     }
 }
