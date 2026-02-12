@@ -44,13 +44,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, ExecutionInfo,
+    BuilderConfig, ExecutionInfo, PayloadBuilder,
     flashblocks::{
         FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
-        generator::{BlockCell, BuildArguments, PayloadBuilder},
+        generator::{BlockCell, BuildArguments},
     },
     metrics::BuilderMetrics,
     traits::{ClientBounds, PoolBounds},

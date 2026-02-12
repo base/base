@@ -1,10 +1,15 @@
+//! An adapter over `BestPayloadTransactions`
+
 use std::{collections::HashSet, sync::Arc};
 
 use alloy_primitives::{Address, TxHash};
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 
-pub(super) struct BestFlashblocksTxs<T, I>
+/// An adapter over `BestPayloadTransactions` that allows to skip transactions that were already
+/// committed to the state. It also allows to refresh inner iterator on each flashblock building, to
+/// update priority boundaries.
+pub struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
@@ -15,18 +20,30 @@ where
     commited_transactions: HashSet<TxHash>,
 }
 
+impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
+where
+    T: PoolTransaction,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BestFlashblocksTxs")
+            .field("commited_transactions", &self.commited_transactions)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
+    pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self { inner, commited_transactions: Default::default() }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub(super) fn refresh_iterator(
+    pub fn refresh_iterator(
         &mut self,
         inner: reth_payload_util::BestPayloadTransactions<T, I>,
     ) {
@@ -34,7 +51,7 @@ where
     }
 
     /// Remove transaction from next iteration and it is already in the state
-    pub(super) fn mark_commited(&mut self, txs: Vec<TxHash>) {
+    pub fn mark_commited(&mut self, txs: Vec<TxHash>) {
         self.commited_transactions.extend(txs);
     }
 }
