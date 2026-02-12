@@ -1,6 +1,6 @@
 use std::{fmt, fmt::Debug, time::Instant};
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::TxHash;
 use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_s3::{
@@ -15,9 +15,7 @@ use tracing::info;
 use crate::{
     metrics::Metrics,
     reader::Event,
-    types::{
-        BundleEvent, BundleId, DropReason, TransactionId, UserOpDropReason, UserOpEvent, UserOpHash,
-    },
+    types::{BundleEvent, BundleId, DropReason, TransactionId},
 };
 
 /// S3 key types for storing different event types.
@@ -27,8 +25,6 @@ pub enum S3Key {
     Bundle(BundleId),
     /// Key for transaction lookups by hash.
     TransactionByHash(TxHash),
-    /// Key for user operation events.
-    UserOp(UserOpHash),
 }
 
 impl fmt::Display for S3Key {
@@ -36,7 +32,6 @@ impl fmt::Display for S3Key {
         match self {
             Self::Bundle(bundle_id) => write!(f, "bundles/{bundle_id}"),
             Self::TransactionByHash(hash) => write!(f, "transactions/by_hash/{hash}"),
-            Self::UserOp(user_op_hash) => write!(f, "userops/{user_op_hash}"),
         }
     }
 }
@@ -123,65 +118,6 @@ pub struct BundleHistory {
     pub history: Vec<BundleHistoryEvent>,
 }
 
-/// History event for a user operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "event", content = "data")]
-pub enum UserOpHistoryEvent {
-    /// User operation was added to the mempool.
-    AddedToMempool {
-        /// Event key.
-        key: String,
-        /// Event timestamp.
-        timestamp: i64,
-        /// Sender address.
-        sender: Address,
-        /// Entry point address.
-        entry_point: Address,
-        /// Nonce.
-        nonce: U256,
-    },
-    /// User operation was dropped.
-    Dropped {
-        /// Event key.
-        key: String,
-        /// Event timestamp.
-        timestamp: i64,
-        /// Drop reason.
-        reason: UserOpDropReason,
-    },
-    /// User operation was included in a block.
-    Included {
-        /// Event key.
-        key: String,
-        /// Event timestamp.
-        timestamp: i64,
-        /// Block number.
-        block_number: u64,
-        /// Transaction hash.
-        tx_hash: TxHash,
-    },
-}
-
-impl UserOpHistoryEvent {
-    /// Returns the event key.
-    pub fn key(&self) -> &str {
-        match self {
-            Self::AddedToMempool { key, .. }
-            | Self::Dropped { key, .. }
-            | Self::Included { key, .. } => key,
-        }
-    }
-}
-
-/// History of events for a user operation.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UserOpHistory {
-    /// List of history events.
-    pub history: Vec<UserOpHistoryEvent>,
-}
-
-pub(crate) use crate::reader::UserOpEventWrapper;
-
 fn update_bundle_history_transform(
     bundle_history: BundleHistory,
     event: &Event,
@@ -258,69 +194,11 @@ fn update_transaction_metadata_transform(
     Some(TransactionMetadata { bundle_ids })
 }
 
-fn update_userop_history_transform(
-    userop_history: UserOpHistory,
-    event: &UserOpEventWrapper,
-) -> Option<UserOpHistory> {
-    let mut history = userop_history.history;
-    let user_op_hash = event.event.user_op_hash();
-
-    if history.iter().any(|h| h.key() == event.key) {
-        info!(
-            user_op_hash = %user_op_hash,
-            event_key = %event.key,
-            "UserOp event already exists, skipping due to deduplication"
-        );
-        return None;
-    }
-
-    let history_event = match &event.event {
-        UserOpEvent::AddedToMempool { sender, entry_point, nonce, .. } => {
-            UserOpHistoryEvent::AddedToMempool {
-                key: event.key.clone(),
-                timestamp: event.timestamp,
-                sender: *sender,
-                entry_point: *entry_point,
-                nonce: *nonce,
-            }
-        }
-        UserOpEvent::Dropped { reason, .. } => UserOpHistoryEvent::Dropped {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-            reason: reason.clone(),
-        },
-        UserOpEvent::Included { block_number, tx_hash, .. } => UserOpHistoryEvent::Included {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-            block_number: *block_number,
-            tx_hash: *tx_hash,
-        },
-    };
-
-    history.push(history_event);
-    let userop_history = UserOpHistory { history };
-
-    info!(
-        user_op_hash = %user_op_hash,
-        event_count = userop_history.history.len(),
-        "Updated user op history"
-    );
-
-    Some(userop_history)
-}
-
 /// Trait for writing bundle events to storage.
 #[async_trait]
 pub trait EventWriter {
     /// Archives a bundle event.
     async fn archive_event(&self, event: Event) -> Result<()>;
-}
-
-/// Trait for writing user operation events to storage.
-#[async_trait]
-pub trait UserOpEventWriter {
-    /// Archives a user operation event.
-    async fn archive_userop_event(&self, event: UserOpEventWrapper) -> Result<()>;
 }
 
 /// Trait for reading bundle events from S3.
@@ -333,13 +211,6 @@ pub trait BundleEventS3Reader {
         &self,
         tx_hash: TxHash,
     ) -> Result<Option<TransactionMetadata>>;
-}
-
-/// Trait for reading user operation events from S3.
-#[async_trait]
-pub trait UserOpEventS3Reader {
-    /// Gets the user operation history for a given hash.
-    async fn get_userop_history(&self, user_op_hash: UserOpHash) -> Result<Option<UserOpHistory>>;
 }
 
 /// S3-backed event reader and writer.
@@ -375,15 +246,6 @@ impl S3EventReaderWriter {
 
         self.idempotent_write::<TransactionMetadata, _>(&key, |current_metadata| {
             update_transaction_metadata_transform(current_metadata, bundle_id)
-        })
-        .await
-    }
-
-    async fn update_userop_history(&self, event: UserOpEventWrapper) -> Result<()> {
-        let s3_key = S3Key::UserOp(event.event.user_op_hash()).to_string();
-
-        self.idempotent_write::<UserOpHistory, _>(&s3_key, |current_history| {
-            update_userop_history_transform(current_history, &event)
         })
         .await
     }
@@ -546,32 +408,16 @@ impl BundleEventS3Reader for S3EventReaderWriter {
     }
 }
 
-#[async_trait]
-impl UserOpEventWriter for S3EventReaderWriter {
-    async fn archive_userop_event(&self, event: UserOpEventWrapper) -> Result<()> {
-        self.update_userop_history(event).await
-    }
-}
-
-#[async_trait]
-impl UserOpEventS3Reader for S3EventReaderWriter {
-    async fn get_userop_history(&self, user_op_hash: UserOpHash) -> Result<Option<UserOpHistory>> {
-        let s3_key = S3Key::UserOp(user_op_hash).to_string();
-        let (userop_history, _) = self.get_object_with_etag::<UserOpHistory>(&s3_key).await?;
-        Ok(userop_history)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, TxHash, U256};
+    use alloy_primitives::TxHash;
     use tips_core::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use uuid::Uuid;
 
     use super::*;
     use crate::{
         reader::Event,
-        types::{BundleEvent, DropReason, UserOpDropReason, UserOpEvent},
+        types::{BundleEvent, DropReason},
     };
 
     fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
@@ -704,221 +550,5 @@ mod tests {
         assert_eq!(metadata.bundle_ids.len(), 2);
         assert!(metadata.bundle_ids.contains(&existing_bundle_id));
         assert!(metadata.bundle_ids.contains(&new_bundle_id));
-    }
-
-    fn create_test_userop_event(
-        key: &str,
-        timestamp: i64,
-        userop_event: UserOpEvent,
-    ) -> UserOpEventWrapper {
-        UserOpEventWrapper { key: key.to_string(), timestamp, event: userop_event }
-    }
-
-    #[test]
-    fn test_s3_key_userop_display() {
-        let hash = B256::from([1u8; 32]);
-        let key = S3Key::UserOp(hash);
-        let key_str = key.to_string();
-        assert!(key_str.starts_with("userops/"));
-        assert!(key_str.contains(&format!("{hash}")));
-    }
-
-    #[test]
-    fn test_update_userop_history_transform_adds_new_event() {
-        let userop_history = UserOpHistory { history: vec![] };
-        let user_op_hash = B256::from([1u8; 32]);
-        let sender = Address::from([2u8; 20]);
-        let entry_point = Address::from([3u8; 20]);
-        let nonce = U256::from(1);
-
-        let userop_event = UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce };
-        let event = create_test_userop_event("test-key", 1234567890, userop_event);
-
-        let result = update_userop_history_transform(userop_history, &event);
-
-        assert!(result.is_some());
-        let history = result.unwrap();
-        assert_eq!(history.history.len(), 1);
-
-        match &history.history[0] {
-            UserOpHistoryEvent::AddedToMempool {
-                key,
-                timestamp: ts,
-                sender: s,
-                entry_point: ep,
-                nonce: n,
-            } => {
-                assert_eq!(key, "test-key");
-                assert_eq!(*ts, 1234567890);
-                assert_eq!(*s, sender);
-                assert_eq!(*ep, entry_point);
-                assert_eq!(*n, nonce);
-            }
-            _ => panic!("Expected AddedToMempool event"),
-        }
-    }
-
-    #[test]
-    fn test_update_userop_history_transform_skips_duplicate_key() {
-        let user_op_hash = B256::from([1u8; 32]);
-        let sender = Address::from([2u8; 20]);
-        let entry_point = Address::from([3u8; 20]);
-        let nonce = U256::from(1);
-
-        let existing_event = UserOpHistoryEvent::AddedToMempool {
-            key: "duplicate-key".to_string(),
-            timestamp: 1111111111,
-            sender,
-            entry_point,
-            nonce,
-        };
-        let userop_history = UserOpHistory { history: vec![existing_event] };
-
-        let userop_event = UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce };
-        let event = create_test_userop_event("duplicate-key", 1234567890, userop_event);
-
-        let result = update_userop_history_transform(userop_history, &event);
-
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_update_userop_history_transform_handles_dropped_event() {
-        let userop_history = UserOpHistory { history: vec![] };
-        let user_op_hash = B256::from([1u8; 32]);
-        let reason = UserOpDropReason::Expired;
-
-        let userop_event = UserOpEvent::Dropped { user_op_hash, reason };
-        let event = create_test_userop_event("dropped-key", 1234567890, userop_event);
-
-        let result = update_userop_history_transform(userop_history, &event);
-
-        assert!(result.is_some());
-        let history = result.unwrap();
-        assert_eq!(history.history.len(), 1);
-
-        match &history.history[0] {
-            UserOpHistoryEvent::Dropped { key, timestamp, reason: r } => {
-                assert_eq!(key, "dropped-key");
-                assert_eq!(*timestamp, 1234567890);
-                match r {
-                    UserOpDropReason::Expired => {}
-                    _ => panic!("Expected Expired reason"),
-                }
-            }
-            _ => panic!("Expected Dropped event"),
-        }
-    }
-
-    #[test]
-    fn test_update_userop_history_transform_handles_included_event() {
-        let userop_history = UserOpHistory { history: vec![] };
-        let user_op_hash = B256::from([1u8; 32]);
-        let tx_hash = TxHash::from([4u8; 32]);
-        let block_number = 12345u64;
-
-        let userop_event = UserOpEvent::Included { user_op_hash, block_number, tx_hash };
-        let event = create_test_userop_event("included-key", 1234567890, userop_event);
-
-        let result = update_userop_history_transform(userop_history, &event);
-
-        assert!(result.is_some());
-        let history = result.unwrap();
-        assert_eq!(history.history.len(), 1);
-
-        match &history.history[0] {
-            UserOpHistoryEvent::Included { key, timestamp, block_number: bn, tx_hash: th } => {
-                assert_eq!(key, "included-key");
-                assert_eq!(*timestamp, 1234567890);
-                assert_eq!(*bn, 12345);
-                assert_eq!(*th, tx_hash);
-            }
-            _ => panic!("Expected Included event"),
-        }
-    }
-
-    #[test]
-    fn test_update_userop_history_transform_handles_all_event_types() {
-        let userop_history = UserOpHistory { history: vec![] };
-        let user_op_hash = B256::from([1u8; 32]);
-        let sender = Address::from([2u8; 20]);
-        let entry_point = Address::from([3u8; 20]);
-        let nonce = U256::from(1);
-
-        let userop_event = UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce };
-        let event = create_test_userop_event("key-1", 1234567890, userop_event);
-        let result = update_userop_history_transform(userop_history.clone(), &event);
-        assert!(result.is_some());
-
-        let userop_event = UserOpEvent::Dropped {
-            user_op_hash,
-            reason: UserOpDropReason::Invalid("test error".to_string()),
-        };
-        let event = create_test_userop_event("key-2", 1234567891, userop_event);
-        let result = update_userop_history_transform(userop_history.clone(), &event);
-        assert!(result.is_some());
-
-        let userop_event = UserOpEvent::Included {
-            user_op_hash,
-            block_number: 12345,
-            tx_hash: TxHash::from([4u8; 32]),
-        };
-        let event = create_test_userop_event("key-3", 1234567892, userop_event);
-        let result = update_userop_history_transform(userop_history, &event);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_userop_history_event_key_accessor() {
-        let sender = Address::from([2u8; 20]);
-        let entry_point = Address::from([3u8; 20]);
-        let nonce = U256::from(1);
-
-        let event1 = UserOpHistoryEvent::AddedToMempool {
-            key: "key-1".to_string(),
-            timestamp: 1234567890,
-            sender,
-            entry_point,
-            nonce,
-        };
-        assert_eq!(event1.key(), "key-1");
-
-        let event2 = UserOpHistoryEvent::Dropped {
-            key: "key-2".to_string(),
-            timestamp: 1234567890,
-            reason: UserOpDropReason::Expired,
-        };
-        assert_eq!(event2.key(), "key-2");
-
-        let event3 = UserOpHistoryEvent::Included {
-            key: "key-3".to_string(),
-            timestamp: 1234567890,
-            block_number: 12345,
-            tx_hash: TxHash::from([4u8; 32]),
-        };
-        assert_eq!(event3.key(), "key-3");
-    }
-
-    #[test]
-    fn test_userop_history_serialization() {
-        let sender = Address::from([2u8; 20]);
-        let entry_point = Address::from([3u8; 20]);
-        let nonce = U256::from(1);
-
-        let history = UserOpHistory {
-            history: vec![UserOpHistoryEvent::AddedToMempool {
-                key: "test-key".to_string(),
-                timestamp: 1234567890,
-                sender,
-                entry_point,
-                nonce,
-            }],
-        };
-
-        let json = serde_json::to_string(&history).unwrap();
-        let deserialized: UserOpHistory = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(deserialized.history.len(), 1);
-        assert_eq!(deserialized.history[0].key(), "test-key");
     }
 }

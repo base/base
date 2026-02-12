@@ -2,12 +2,9 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, B256, U256};
 use tips_audit_lib::{
     BundleEvent, BundleEventPublisher, BundleEventS3Reader, DropReason, KafkaAuditArchiver,
-    KafkaAuditLogReader, KafkaBundleEventPublisher, KafkaUserOpAuditLogReader,
-    KafkaUserOpEventPublisher, S3EventReaderWriter, UserOpEvent, UserOpEventPublisher,
-    UserOpEventReader,
+    KafkaAuditLogReader, KafkaBundleEventPublisher, S3EventReaderWriter,
 };
 use tips_core::{BundleExtensions, test_utils::create_bundle_from_txn_data};
 use uuid::Uuid;
@@ -67,47 +64,6 @@ async fn system_test_kafka_publisher_s3_archiver_integration() -> anyhow::Result
         }
         continue;
     }
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn system_test_userop_kafka_publisher_reader_integration() -> anyhow::Result<()> {
-    let harness = TestHarness::new().await?;
-    let topic = "test-userop-events";
-
-    let test_user_op_hash = B256::from_slice(&[1u8; 32]);
-    let test_sender = Address::from_slice(&[2u8; 20]);
-    let test_entry_point = Address::from_slice(&[3u8; 20]);
-    let test_nonce = U256::from(42);
-
-    let test_event = UserOpEvent::AddedToMempool {
-        user_op_hash: test_user_op_hash,
-        sender: test_sender,
-        entry_point: test_entry_point,
-        nonce: test_nonce,
-    };
-
-    let publisher = KafkaUserOpEventPublisher::new(harness.kafka_producer, topic.to_string());
-    publisher.publish(test_event.clone()).await?;
-
-    let mut reader = KafkaUserOpAuditLogReader::new(harness.kafka_consumer, topic.to_string())?;
-
-    let received = tokio::time::timeout(Duration::from_secs(10), reader.read_event()).await??;
-
-    assert_eq!(received.event.user_op_hash(), test_user_op_hash);
-
-    match received.event {
-        UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce } => {
-            assert_eq!(user_op_hash, test_user_op_hash);
-            assert_eq!(sender, test_sender);
-            assert_eq!(entry_point, test_entry_point);
-            assert_eq!(nonce, test_nonce);
-        }
-        _ => panic!("Expected AddedToMempool event"),
-    }
-
-    reader.commit().await?;
 
     Ok(())
 }
