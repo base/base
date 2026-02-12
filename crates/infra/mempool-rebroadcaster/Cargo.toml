@@ -1,0 +1,26 @@
+[package]
+name = "mempool-rebroadcaster"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+# alloy
+alloy-primitives.workspace = true
+alloy-eips.workspace = true
+alloy-rpc-types = { workspace = true, features = ["txpool"] }
+alloy-rpc-types-eth.workspace = true
+alloy-consensus.workspace = true
+alloy-trie.workspace = true
+alloy-provider = { workspace = true, features = ["txpool-api"] }
