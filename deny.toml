@@ -160,9 +160,6 @@ skip = [
     "if-addrs",
     "yamux",
 
-    # jsonrpsee (older rustc-hash) vs other deps (newer rustc-hash)
-    "rustc-hash",
-
     # mach2 version mismatch: tracing-samply uses 0.5.0, metrics-process uses 0.6.0
     "mach2",
 
