@@ -10,7 +10,8 @@ use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteringConfig, MeteringExtension};
 use base_proofs_extension::ProofsHistoryExtension;
-use base_txpool::{TxPoolExtension, TxpoolConfig};
+use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
 
 type NodeCli = Cli<OpChainSpecParser, cli::Args>;
@@ -31,10 +32,12 @@ fn main() {
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured)
+        runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
+            sequencer_rpc: args.rollup_args.sequencer.clone(),
+        });
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
             tracing_enabled: args.enable_transaction_tracing,
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
-            sequencer_rpc: args.rollup_args.sequencer.clone(),
             flashblocks_config: flashblocks_config.clone(),
         });
         runner.install_ext::<MeteringExtension>(MeteringConfig {
