@@ -1,10 +1,15 @@
+//! An adapter over `BestPayloadTransactions`
+
 use std::{collections::HashSet, sync::Arc};
 
 use alloy_primitives::{Address, TxHash};
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 
-pub(super) struct BestFlashblocksTxs<T, I>
+/// An adapter over `BestPayloadTransactions` that allows to skip transactions that were already
+/// committed to the state. It also allows to refresh inner iterator on each flashblock building, to
+/// update priority boundaries.
+pub struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
@@ -12,7 +17,19 @@ where
     inner: reth_payload_util::BestPayloadTransactions<T, I>,
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
-    commited_transactions: HashSet<TxHash>,
+    committed_transactions: HashSet<TxHash>,
+}
+
+impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
+where
+    T: PoolTransaction,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BestFlashblocksTxs")
+            .field("committed_transactions", &self.committed_transactions)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T, I> BestFlashblocksTxs<T, I>
@@ -20,22 +37,19 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
-        Self { inner, commited_transactions: Default::default() }
+    pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
+        Self { inner, committed_transactions: Default::default() }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub(super) fn refresh_iterator(
-        &mut self,
-        inner: reth_payload_util::BestPayloadTransactions<T, I>,
-    ) {
+    pub fn refresh_iterator(&mut self, inner: reth_payload_util::BestPayloadTransactions<T, I>) {
         self.inner = inner;
     }
 
-    /// Remove transaction from next iteration and it is already in the state
-    pub(super) fn mark_commited(&mut self, txs: Vec<TxHash>) {
-        self.commited_transactions.extend(txs);
+    /// Remove transaction from next iteration since it is already in the state
+    pub fn mark_committed(&mut self, txs: &[TxHash]) {
+        self.committed_transactions.extend(txs);
     }
 }
 
@@ -50,7 +64,7 @@ where
         loop {
             let tx = self.inner.next(ctx)?;
             // Skip transaction we already included
-            if self.commited_transactions.contains(tx.hash()) {
+            if self.committed_transactions.contains(tx.hash()) {
                 continue;
             }
 
@@ -105,7 +119,7 @@ mod tests {
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
         // Mark transaction as committed
-        iterator.mark_commited(vec![*tx1.hash(), *tx3.hash()]);
+        iterator.mark_committed(&[*tx1.hash(), *tx3.hash()]);
 
         // ### Second flashblock
         // It should not return txs 1 and 3, but should return 2
@@ -114,7 +128,7 @@ mod tests {
         // Check that it's empty
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
         // Mark transaction as committed
-        iterator.mark_commited(vec![*tx2.hash()]);
+        iterator.mark_committed(&[*tx2.hash()]);
 
         // ### Third flashblock
         iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));

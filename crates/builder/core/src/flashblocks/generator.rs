@@ -25,43 +25,11 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-/// A trait for building payloads that encapsulate Ethereum transactions.
-///
-/// This trait provides the `try_build` method to construct a transaction payload
-/// using `BuildArguments`. It returns a `Result` indicating success or a
-/// `PayloadBuilderError` if building fails.
-///
-/// Generic parameters `Pool` and `Client` represent the transaction pool and
-/// Ethereum client types.
-#[async_trait::async_trait]
-pub(super) trait PayloadBuilder: Send + Sync + Clone {
-    /// The payload attributes type to accept for building.
-    type Attributes: PayloadBuilderAttributes;
-    /// The type of the built payload.
-    type BuiltPayload: BuiltPayload;
-
-    /// Tries to build a transaction payload using provided arguments.
-    ///
-    /// Constructs a transaction payload based on the given arguments,
-    /// returning a `Result` indicating success or an error if building fails.
-    ///
-    /// # Arguments
-    ///
-    /// - `args`: Build arguments containing necessary components.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating the build outcome or an error.
-    async fn try_build(
-        &self,
-        args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
-    ) -> Result<(), PayloadBuilderError>;
-}
+use crate::PayloadBuilder;
 
 /// The generator type that creates new jobs that build empty blocks.
 #[derive(Debug)]
-pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
+pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// The client that can interact with the chain.
     client: Client,
     /// How to spawn building tasks
@@ -89,7 +57,7 @@ pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
 impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// Creates a new [`BlockPayloadJobGenerator`] with the given config and custom
     /// [`PayloadBuilder`]
-    pub(super) fn with_builder(
+    pub fn with_builder(
         client: Client,
         executor: Tasks,
         config: BasicPayloadJobGeneratorConfig,
@@ -242,7 +210,7 @@ use std::{
 };
 
 /// A [`PayloadJob`] that builds empty blocks.
-pub(super) struct BlockPayloadJob<Tasks, Builder>
+pub struct BlockPayloadJob<Tasks, Builder>
 where
     Builder: PayloadBuilder,
 {
@@ -271,6 +239,17 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+}
+
+impl<Tasks, Builder> std::fmt::Debug for BlockPayloadJob<Tasks, Builder>
+where
+    Builder: PayloadBuilder,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockPayloadJob")
+            .field("compute_state_root_on_finalize", &self.compute_state_root_on_finalize)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>
@@ -314,7 +293,9 @@ where
     }
 }
 
-pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
+/// Build arguments
+#[derive(Debug)]
+pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
     /// How to configure the payload.
@@ -337,7 +318,7 @@ where
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
 {
-    pub(super) fn spawn_build_job(&mut self) {
+    pub fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
@@ -396,13 +377,19 @@ where
     }
 }
 
-// A future that resolves when a payload becomes available in the BlockCell
-pub(super) struct ResolvePayload<T> {
+/// A future that resolves when a payload becomes available in the [`BlockCell`].
+pub struct ResolvePayload<T> {
     future: WaitForValue<T>,
 }
 
+impl<T> std::fmt::Debug for ResolvePayload<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvePayload").finish_non_exhaustive()
+    }
+}
+
 impl<T> ResolvePayload<T> {
-    pub(super) const fn new(future: WaitForValue<T>) -> Self {
+    pub const fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
 }
@@ -418,38 +405,47 @@ impl<T: Clone> Future for ResolvePayload<T> {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct BlockCell<T> {
+/// A cell that holds a value and allows waiting for it to be set.
+///
+/// Values can be overwritten by calling [`BlockCell::set`] multiple times.
+#[derive(Clone, Debug)]
+pub struct BlockCell<T> {
     inner: Arc<Mutex<Option<T>>>,
     notify: Arc<Notify>,
 }
 
 impl<T: Clone> BlockCell<T> {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
     }
 
-    pub(super) fn set(&self, value: T) {
+    pub fn set(&self, value: T) {
         let mut inner = self.inner.lock();
         *inner = Some(value);
         self.notify.notify_one();
     }
 
-    pub(super) fn get(&self) -> Option<T> {
+    pub fn get(&self) -> Option<T> {
         let inner = self.inner.lock();
         inner.clone()
     }
 
-    // Return a future that resolves when value is set
-    pub(super) fn wait_for_value(&self) -> WaitForValue<T> {
+    /// Return a future that resolves when a value is set.
+    pub fn wait_for_value(&self) -> WaitForValue<T> {
         WaitForValue { cell: self.clone() }
     }
 }
 
+/// Future that resolves when a value is set in [`BlockCell`].
 #[derive(Clone)]
-// Future that resolves when a value is set in BlockCell
-pub(super) struct WaitForValue<T> {
+pub struct WaitForValue<T> {
     cell: BlockCell<T>,
+}
+
+impl<T> std::fmt::Debug for WaitForValue<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WaitForValue").finish_non_exhaustive()
+    }
 }
 
 impl<T: Clone> Future for WaitForValue<T> {
@@ -458,7 +454,6 @@ impl<T: Clone> Future for WaitForValue<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.cell.get().map_or_else(
             || {
-                // Instead of register, we use notified() to get a future
                 cx.waker().wake_by_ref();
                 Poll::Pending
             },

@@ -44,13 +44,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, ExecutionInfo,
+    BuilderConfig, ExecutionInfo, PayloadBuilder,
     flashblocks::{
         FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
-        generator::{BlockCell, BuildArguments, PayloadBuilder},
+        generator::{BlockCell, BuildArguments},
     },
     metrics::BuilderMetrics,
     traits::{ClientBounds, PoolBounds},
@@ -554,7 +554,7 @@ where
             .iter()
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
-        best_txs.mark_commited(new_transactions);
+        best_txs.mark_committed(&new_transactions);
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
