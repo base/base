@@ -1,0 +1,45 @@
+[package]
+name = "tips-system-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+hex = "0.4.3"
+rand = "0.8"
+dashmap = "6.0"
+indicatif = "0.17"
+rand_chacha = "0.3"
+url = { workspace = true }
+tips-core = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+tips-audit-lib = { workspace = true }
+alloy-network = { workspace = true }
+op-alloy-network = { workspace = true }
+alloy-signer-local = { workspace = true }
+aws-credential-types = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["std"] }
+anyhow = { workspace = true, features = ["std"] }
+uuid = { workspace = true, features = ["v5", "serde"] }
+serde_json = { workspace = true, features = ["std"] }
+reqwest = { version = "0.12.12", features = ["json"] }
+rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-provider = { workspace = true, features = ["reqwest"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+clap = { version = "4.5", features = ["std", "derive", "env"] }
+op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
+tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
+aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
+
+[dev-dependencies]
+serial_test = "3"
+tokio = { workspace = true, features = ["full", "test-util"] }

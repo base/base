@@ -1,0 +1,6 @@
+[test-groups.system-tests]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'test(system_test_)'
+test-group = 'system-tests'

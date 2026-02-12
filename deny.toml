@@ -5,9 +5,9 @@ ignore = [
     # No safe upgrade available, waiting for upstream to migrate to rustls-pki-types
     "RUSTSEC-2025-0134",
 
-    # tokio-tar has a PAX header vulnerability but comes from testcontainers (dev dependency)
-    # No safe upgrade available, tokio-tar is archived
-    "RUSTSEC-2025-0111",
+    # number_prefix is unmaintained but comes from indicatif -> tips-system-tests (dev dependency)
+    # No safe upgrade available
+    "RUSTSEC-2025-0119",
 
     # backoff is unmaintained but comes from rollup-boost -> kona-engine (upstream dependency)
     # No safe upgrade available
@@ -177,6 +177,20 @@ skip = [
 
     # rustls-platform-verifier version mismatch: jsonrpsee uses 0.5.x, reqwest uses 0.6.x
     "rustls-platform-verifier",
+
+    # AWS SDK version mismatches from tips aws-sdk-s3 dependency
+    "aws-smithy-http",
+    "aws-smithy-json",
+
+    # TLS/HTTP stack version mismatches from aws-sdk/rdkafka deps
+    "h2",
+    "http",
+    "http-body",
+    "hyper",
+    "hyper-rustls",
+    "rustls",
+    "rustls-webpki",
+    "tokio-rustls",
 ]
 
 [sources]
