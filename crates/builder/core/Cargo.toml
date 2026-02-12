@@ -58,6 +58,7 @@ base-bundles.workspace = true
 base-client-node.workspace = true
 base-primitives = { workspace = true, features = ["flashblocks"] }
 base-access-lists.workspace = true
+base-builder-publish.workspace = true
 
 # reth
 reth-cli.workspace = true

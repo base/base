@@ -2,7 +2,6 @@
 
 pub(crate) mod best_txs;
 pub(crate) mod generator;
-pub(crate) mod wspub;
 
 mod handler;
 pub use handler::PayloadHandler;

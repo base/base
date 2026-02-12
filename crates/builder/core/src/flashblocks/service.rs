@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base_builder_publish::WebSocketPublisher;
 use base_client_node::{BaseNode, OpNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder};
 use derive_more::Debug;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
@@ -15,10 +16,7 @@ use reth_optimism_node::{
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
-use super::{
-    PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder,
-    wspub::WebSocketPublisher,
-};
+use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
 use crate::{
     BuilderConfig,
     metrics::BuilderMetrics,
@@ -47,7 +45,7 @@ impl FlashblocksServiceBuilder {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.0.flashblocks.ws_addr, Arc::clone(&metrics))?.into();
+            WebSocketPublisher::new(self.0.flashblocks.ws_addr)?.into();
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
