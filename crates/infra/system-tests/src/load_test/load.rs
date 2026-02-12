@@ -54,7 +54,7 @@ pub async fn run(args: LoadArgs) -> Result<()> {
     for (i, wallet) in wallets.into_iter().enumerate() {
         let rng = match args.seed {
             Some(seed) => ChaCha8Rng::seed_from_u64(seed + i as u64),
-            None => ChaCha8Rng::from_entropy(),
+            None => ChaCha8Rng::from_os_rng(),
         };
 
         let sender = SenderTask::new(

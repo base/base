@@ -53,7 +53,7 @@ op-alloy-network.workspace = true
 
 # tokio
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 # async
 futures-util.workspace = true

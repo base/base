@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-dotenvy = "0.15.7"
+dotenvy.workspace = true
 mempool-rebroadcaster = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

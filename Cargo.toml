@@ -397,5 +397,11 @@ aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 axum = { version = "0.8.3", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
+libc = "0.2"
+arbitrary = { version = "1", default-features = false }
+indicatif = "0.17"
+rand_chacha = "0.9"
+serial_test = "3"
+mockall = "0.13"
 wiremock = { version = "0.6.2", default-features = false }
 testcontainers-modules = { version = "0.14.0", default-features = false }
