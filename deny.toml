@@ -172,6 +172,9 @@ skip = [
     # rlimit version mismatch: base-builder-core uses 0.10.x, metrics-process uses 0.11.x
     "rlimit",
 
+    # quick-error version mismatch: proptest -> rusty-fork uses 1.x, other deps use 2.x
+    "quick-error",
+
     # rustls-platform-verifier version mismatch: jsonrpsee uses 0.5.x, reqwest uses 0.6.x
     "rustls-platform-verifier",
 ]

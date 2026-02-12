@@ -1,0 +1,15 @@
+[package]
+name = "basectl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "basectl"
+path = "main.rs"
+
+[dependencies]
+basectl-cli = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

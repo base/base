@@ -1,0 +1,26 @@
+[package]
+name = "sidecrush"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+cadence = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+
+# Ethereum client deps (will be used for header fetching)
+alloy-provider = { workspace = true }
+alloy-transport-http = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing = { workspace = true }

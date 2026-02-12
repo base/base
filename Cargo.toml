@@ -15,6 +15,7 @@ members = [
     "crates/consensus/*",
     "crates/shared/*",
     "crates/builder/*",
+    "crates/infra/*",
     "devnet"
 ]
 default-members = ["bin/node", "bin/consensus", "bin/builder"]
@@ -130,6 +131,11 @@ base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 base-builder-core = { path = "crates/builder/core" }
 base-builder-metering = { path = "crates/builder/metering" }
 base-builder-publish = { path = "crates/builder/publish" }
+
+# Infra
+basectl-cli = { path = "crates/infra/basectl" }
+sidecrush = { path = "crates/infra/sidecrush" }
+mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
@@ -372,4 +378,10 @@ testcontainers = "0.26.3"
 concurrent-queue = "2.5.0"
 tikv-jemallocator = "0.6"
 ethereum_ssz_derive = "0.9.0"
+dirs = "6.0.0"
+cadence = "1.7.0"
+arboard = "3.6.1"
+ratatui = "0.29.0"
+crossterm = "0.28.1"
+serde_yaml = "0.9.34"
 either = { version = "1.15.0", default-features = false }
