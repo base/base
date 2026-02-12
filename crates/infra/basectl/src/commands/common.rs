@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use chrono::{DateTime, Local};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
 use crate::rpc::{L1BlockInfo, L1ConnectionMode};
@@ -70,6 +70,7 @@ pub const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 pub const RATE_WINDOW_30S: Duration = Duration::from_secs(30);
 pub const RATE_WINDOW_2M: Duration = Duration::from_secs(120);
 pub const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
+pub const L1_BLOCK_WINDOW: usize = 10;
 
 // =============================================================================
 // Shared Data Types
@@ -270,8 +271,6 @@ pub struct DaTracker {
     pub l1_blocks: VecDeque<L1Block>,
     pub growth_tracker: RateTracker,
     pub burn_tracker: RateTracker,
-    pub total_blob_tracker: RateTracker,
-    pub base_blob_tracker: RateTracker,
     pub last_base_blob_time: Option<Instant>,
     /// Safe L2 block at the time of last L1→L2 attribution.
     /// Used to compute the delta of L2 blocks to attribute to the next L1 blob block.
@@ -293,8 +292,6 @@ impl DaTracker {
             l1_blocks: VecDeque::with_capacity(MAX_HISTORY),
             growth_tracker: RateTracker::new(),
             burn_tracker: RateTracker::new(),
-            total_blob_tracker: RateTracker::new(),
-            base_blob_tracker: RateTracker::new(),
             last_base_blob_time: None,
             last_attributed_safe_l2: 0,
         }
@@ -396,11 +393,7 @@ impl DaTracker {
 
         let l1_block = L1Block::from_info(info);
 
-        if l1_block.total_blobs > 0 {
-            self.total_blob_tracker.add_sample(l1_block.total_blobs);
-        }
         if l1_block.base_blobs > 0 {
-            self.base_blob_tracker.add_sample(l1_block.base_blobs);
             self.last_base_blob_time = Some(Instant::now());
         }
 
@@ -504,17 +497,24 @@ impl DaTracker {
         })
     }
 
-    pub fn base_blob_share(&self, window: Duration) -> Option<f64> {
-        let total = self.total_blob_tracker.rate_over(window)?;
-        let base = self.base_blob_tracker.rate_over(window)?;
-        if total > 0.0 { Some(base / total) } else { None }
+    pub fn base_blob_share(&self, n: usize) -> Option<f64> {
+        let blocks: Vec<_> = self.l1_blocks.iter().take(n).collect();
+        if blocks.is_empty() {
+            return None;
+        }
+        let total: u64 = blocks.iter().map(|b| b.total_blobs).sum();
+        let base: u64 = blocks.iter().map(|b| b.base_blobs).sum();
+        if total > 0 { Some(base as f64 / total as f64) } else { None }
     }
 
-    pub fn blob_target_usage(&self, window: Duration, l1_blob_target: u64) -> Option<f64> {
-        let blob_rate = self.total_blob_tracker.rate_over(window)?;
-        let blocks_per_sec = 1.0 / 12.0;
-        let target_rate = l1_blob_target as f64 * blocks_per_sec;
-        Some(blob_rate / target_rate)
+    pub fn blob_target_usage(&self, n: usize, l1_blob_target: u64) -> Option<f64> {
+        let blocks: Vec<_> = self.l1_blocks.iter().take(n).collect();
+        if blocks.is_empty() || l1_blob_target == 0 {
+            return None;
+        }
+        let total_blobs: u64 = blocks.iter().map(|b| b.total_blobs).sum();
+        let expected = blocks.len() as f64 * l1_blob_target as f64;
+        Some(total_blobs as f64 / expected)
     }
 }
 
@@ -574,27 +574,46 @@ pub fn format_gwei(wei: u128) -> String {
     if gwei >= 1.0 { format!("{gwei:.2} gwei") } else { format!("{gwei:.4} gwei") }
 }
 
-pub const fn backlog_size_color(bytes: u64) -> Color {
-    if bytes < 5_000_000 {
-        Color::Rgb(100, 200, 100)
-    } else if bytes < 10_000_000 {
-        Color::Rgb(150, 220, 100)
-    } else if bytes < 20_000_000 {
-        Color::Rgb(200, 220, 80)
-    } else if bytes < 30_000_000 {
-        Color::Rgb(240, 200, 60)
-    } else if bytes < 45_000_000 {
-        Color::Rgb(255, 160, 60)
-    } else if bytes < 60_000_000 {
-        Color::Rgb(255, 100, 80)
-    } else {
-        Color::Rgb(255, 80, 120)
-    }
+const BACKLOG_THRESHOLDS: &[(u64, Color)] = &[
+    (5_000_000, Color::Rgb(100, 200, 100)),
+    (10_000_000, Color::Rgb(150, 220, 100)),
+    (20_000_000, Color::Rgb(200, 220, 80)),
+    (30_000_000, Color::Rgb(240, 200, 60)),
+    (45_000_000, Color::Rgb(255, 160, 60)),
+    (60_000_000, Color::Rgb(255, 100, 80)),
+];
+
+pub fn backlog_size_color(bytes: u64) -> Color {
+    BACKLOG_THRESHOLDS
+        .iter()
+        .find(|(threshold, _)| bytes < *threshold)
+        .map_or(Color::Rgb(255, 80, 120), |(_, color)| *color)
 }
 
 pub const fn block_color(block_number: u64) -> Color {
     BLOCK_COLORS[(block_number as usize) % BLOCK_COLORS.len()]
 }
+
+pub const fn block_color_bright(block_number: u64) -> Color {
+    let Color::Rgb(r, g, b) = BLOCK_COLORS[(block_number as usize) % BLOCK_COLORS.len()] else {
+        unreachable!()
+    };
+    Color::Rgb(
+        r.saturating_add((255 - r) / 2),
+        g.saturating_add((255 - g) / 2),
+        b.saturating_add((255 - b) / 2),
+    )
+}
+
+const fn dim_color(color: Color, opacity: f64) -> Color {
+    let Color::Rgb(r, g, b) = color else {
+        return color;
+    };
+    Color::Rgb((r as f64 * opacity) as u8, (g as f64 * opacity) as u8, (b as f64 * opacity) as u8)
+}
+
+const GAS_COLOR_WARM: (u8, u8, u8) = (255, 200, 80);
+const GAS_COLOR_HOT: (u8, u8, u8) = (255, 60, 60);
 
 pub fn build_gas_bar(
     gas_used: u64,
@@ -610,34 +629,55 @@ pub fn build_gas_bar(
     let gas_target = gas_limit / elasticity;
     let target_char = ((gas_target as f64 / gas_limit as f64) * bar_chars as f64).round() as usize;
 
-    let filled_units = ((gas_used as f64 / gas_limit as f64) * bar_units as f64).round() as usize;
+    let filled_units = ((gas_used as f64 / gas_limit as f64) * bar_units as f64).ceil() as usize;
     let filled_units = filled_units.min(bar_units);
 
-    let fill_color = COLOR_GAS_FILL;
-    let target_color = COLOR_TARGET;
+    let target_units = target_char * 8;
+    let excess_chars = bar_chars.saturating_sub(target_char).max(1);
+
+    let excess_color = |char_idx: usize| -> Color {
+        let t = (char_idx - target_char) as f64 / excess_chars as f64;
+        lerp_rgb(GAS_COLOR_WARM, GAS_COLOR_HOT, t.clamp(0.0, 1.0))
+    };
 
     let mut spans = Vec::new();
     let mut current_units = 0;
 
     for char_idx in 0..bar_chars {
         let char_end_units = (char_idx + 1) * 8;
-        let is_target_char = char_idx == target_char;
 
-        if is_target_char {
-            if current_units >= filled_units {
-                spans.push(Span::styled("│", Style::default().fg(target_color)));
+        if char_idx == target_char {
+            if filled_units <= target_units {
+                spans.push(Span::styled("▏", Style::default().fg(COLOR_TARGET)));
             } else {
-                spans.push(Span::styled("│", Style::default().fg(target_color).bg(fill_color)));
+                let over_units = filled_units.saturating_sub(target_units).min(8);
+                let color = excess_color(char_idx);
+                if over_units >= 8 {
+                    spans.push(Span::styled("█", Style::default().fg(color)));
+                } else {
+                    let opacity = over_units as f64 / 8.0;
+                    let dimmed = dim_color(color, opacity);
+                    spans.push(Span::styled(
+                        EIGHTH_BLOCKS[over_units - 1].to_string(),
+                        Style::default().fg(dimmed),
+                    ));
+                }
             }
         } else if current_units >= filled_units {
-            spans.push(Span::styled(" ", Style::default()));
+            spans.push(Span::raw(" "));
         } else if char_end_units <= filled_units {
+            let fill_color =
+                if char_idx < target_char { COLOR_GAS_FILL } else { excess_color(char_idx) };
             spans.push(Span::styled("█", Style::default().fg(fill_color)));
         } else {
             let units_in_char = filled_units - current_units;
+            let opacity = units_in_char as f64 / 8.0;
+            let fill_color =
+                if char_idx < target_char { COLOR_GAS_FILL } else { excess_color(char_idx) };
+            let dimmed = dim_color(fill_color, opacity);
             spans.push(Span::styled(
                 EIGHTH_BLOCKS[units_in_char - 1].to_string(),
-                Style::default().fg(fill_color),
+                Style::default().fg(dimmed),
             ));
         }
 
@@ -653,7 +693,7 @@ pub fn render_l1_blocks_table<'a>(
     area: Rect,
     l1_blocks: impl Iterator<Item = &'a L1Block>,
     is_active: bool,
-    selected_row: usize,
+    table_state: &mut TableState,
     filter: L1BlockFilter,
     title: &str,
     connection_mode: Option<L1ConnectionMode>,
@@ -683,16 +723,15 @@ pub fn render_l1_blocks_table<'a>(
         Cell::from("Age").style(header_style),
     ]);
 
-    // Calculate available width for L1 block column
-    // Other columns need: Blobs(5) + L2(4) + Ratio(6) + Age(5) + spacing(4) = 24
     let fixed_cols_width = 5 + 4 + 6 + 5 + 4;
     let l1_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 9) as usize;
 
+    let selected_row = table_state.selected();
+
     let rows: Vec<Row> = l1_blocks
-        .take(inner.height.saturating_sub(1) as usize)
         .enumerate()
         .map(|(idx, l1_block)| {
-            let is_selected = is_active && idx == selected_row;
+            let is_selected = is_active && selected_row == Some(idx);
 
             let style = if is_selected {
                 Style::default().fg(Color::White).bg(COLOR_ROW_SELECTED)
@@ -728,7 +767,7 @@ pub fn render_l1_blocks_table<'a>(
     ];
 
     let table = Table::new(rows, widths).header(header);
-    f.render_widget(table, inner);
+    f.render_stateful_widget(table, inner, &mut table_state.clone());
 }
 
 pub fn render_da_backlog_bar(
@@ -840,14 +879,165 @@ pub fn render_da_backlog_bar(
     f.render_widget(para, inner);
 }
 
+pub fn render_gas_usage_bar(
+    f: &mut Frame,
+    area: Rect,
+    entries: &VecDeque<FlashblockEntry>,
+    elasticity: u64,
+    highlighted_block: Option<u64>,
+) {
+    let mut block_gas: Vec<(u64, u64)> = Vec::new();
+    for entry in entries {
+        if let Some(last) = block_gas.last_mut()
+            && last.0 == entry.block_number
+        {
+            last.1 = last.1.max(entry.gas_used);
+            continue;
+        }
+        block_gas.push((entry.block_number, entry.gas_used));
+    }
+
+    let n_label = block_gas.len();
+    let title_widget = Block::default()
+        .title(format!(" Gas Usage ({n_label} blocks) "))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let inner = title_widget.inner(area);
+    f.render_widget(title_widget, area);
+
+    if inner.width < 10 || inner.height < 1 {
+        return;
+    }
+
+    let bar_width = inner.width.saturating_sub(12) as usize;
+
+    if block_gas.is_empty() {
+        let empty_bar = "░".repeat(bar_width);
+        let text = format!("{empty_bar} {:>5}", "0%");
+        let para = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(para, inner);
+        return;
+    }
+
+    let n_blocks = block_gas.len() as u64;
+    let gas_limit = entries.front().map(|e| e.gas_limit).unwrap_or(0);
+    let per_block_target = if elasticity > 0 && gas_limit > 0 { gas_limit / elasticity } else { 0 };
+    let total_target = per_block_target * n_blocks;
+    let total_limit = gas_limit * n_blocks;
+    let total_gas: u64 = block_gas.iter().map(|(_, g)| *g).sum();
+
+    let half = bar_width / 2;
+    let target_char = half;
+
+    let gas_to_chars = |gas: u64| -> f64 {
+        if total_target == 0 {
+            return 0.0;
+        }
+        let g = gas as f64;
+        let t = total_target as f64;
+        let l = total_limit as f64;
+        if g <= t {
+            (g / t) * half as f64
+        } else {
+            half as f64 + ((g - t) / (l - t)) * (bar_width - half) as f64
+        }
+    };
+
+    let mut spans: Vec<Span> = Vec::new();
+    let mut chars_used = 0usize;
+    let mut cumulative_gas = 0u64;
+
+    for &(block_number, gas_used) in block_gas.iter().rev() {
+        if chars_used >= bar_width {
+            break;
+        }
+
+        let color = block_color(block_number);
+        let is_highlighted = highlighted_block == Some(block_number);
+
+        let pos_before = gas_to_chars(cumulative_gas).round() as usize;
+        cumulative_gas += gas_used;
+        let pos_after = gas_to_chars(cumulative_gas).round() as usize;
+        let char_count = pos_after.saturating_sub(pos_before).max(1).min(bar_width - chars_used);
+
+        if char_count > 0 {
+            let style = if is_highlighted {
+                Style::default().fg(Color::White).bg(color)
+            } else {
+                Style::default().fg(color)
+            };
+            let glyph = if is_highlighted { "⣿" } else { "█" };
+
+            if target_char > chars_used && target_char < chars_used + char_count {
+                let before = target_char - chars_used;
+                let after = char_count - before - 1;
+                if before > 0 {
+                    spans.push(Span::styled(glyph.repeat(before), style));
+                }
+                spans.push(Span::styled("│", Style::default().fg(COLOR_TARGET).bg(color)));
+                if after > 0 {
+                    spans.push(Span::styled(glyph.repeat(after), style));
+                }
+            } else {
+                spans.push(Span::styled(glyph.repeat(char_count), style));
+            }
+            chars_used += char_count;
+        }
+    }
+
+    while chars_used < bar_width {
+        if chars_used == target_char {
+            spans.push(Span::styled("│", Style::default().fg(COLOR_TARGET)));
+        } else {
+            spans.push(Span::styled("░", Style::default().fg(Color::DarkGray)));
+        }
+        chars_used += 1;
+    }
+
+    let usage_ratio = if total_target > 0 { total_gas as f64 / total_target as f64 } else { 0.0 };
+    spans.push(Span::styled(
+        format!(" {:>5.0}%", usage_ratio * 100.0),
+        Style::default().fg(target_usage_color(usage_ratio)).add_modifier(Modifier::BOLD),
+    ));
+
+    let line = Line::from(spans);
+    let para = Paragraph::new(line);
+    f.render_widget(para, inner);
+}
+
+const TARGET_USAGE_MAX: f64 = 1.5;
+
+pub fn target_usage_color(usage: f64) -> Color {
+    let t = usage.clamp(0.0, TARGET_USAGE_MAX);
+    if t <= 1.0 {
+        lerp_rgb((0, 100, 255), (255, 255, 0), t)
+    } else {
+        lerp_rgb((255, 255, 0), (255, 0, 0), (t - 1.0) / (TARGET_USAGE_MAX - 1.0))
+    }
+}
+
+const fn lerp_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f64) -> Color {
+    Color::Rgb(
+        (a.0 as f64 + (b.0 as f64 - a.0 as f64) * t) as u8,
+        (a.1 as f64 + (b.1 as f64 - a.1 as f64) * t) as u8,
+        (a.2 as f64 + (b.2 as f64 - a.2 as f64) * t) as u8,
+    )
+}
+
+const FLASHBLOCK_TARGET_MS: i64 = 200;
+const FLASHBLOCK_TOLERANCE_MS: i64 = 50;
+
 pub fn time_diff_color(ms: i64) -> Color {
-    if (150..=250).contains(&ms) {
+    let target = FLASHBLOCK_TARGET_MS;
+    let tol = FLASHBLOCK_TOLERANCE_MS;
+    if (target - tol..=target + tol).contains(&ms) {
         Color::Green
-    } else if (100..150).contains(&ms) {
+    } else if (target - 2 * tol..target - tol).contains(&ms) {
         Color::Blue
-    } else if ms < 100 {
+    } else if ms < target - 2 * tol {
         Color::Magenta
-    } else if (250..300).contains(&ms) {
+    } else if (target + tol..target + 2 * tol).contains(&ms) {
         Color::Yellow
     } else {
         Color::Red

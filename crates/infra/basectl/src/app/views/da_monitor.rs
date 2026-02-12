@@ -4,15 +4,15 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, TableState},
 };
 
 use crate::{
     app::{Action, Resources, View},
     commands::common::{
-        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1BlockFilter, RATE_WINDOW_2M, RATE_WINDOW_5M,
-        RATE_WINDOW_30S, format_duration, format_rate, render_da_backlog_bar,
-        render_l1_blocks_table, truncate_block_number,
+        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter, RATE_WINDOW_2M,
+        RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration, format_rate, render_da_backlog_bar,
+        render_l1_blocks_table, target_usage_color, truncate_block_number,
     },
     tui::Keybinding,
 };
@@ -21,6 +21,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
     Keybinding { key: "↑/k ↓/j", description: "Navigate" },
+    Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
@@ -35,7 +36,8 @@ enum Panel {
 #[derive(Debug)]
 pub struct DaMonitorView {
     selected_panel: Panel,
-    selected_row: usize,
+    l2_table_state: TableState,
+    l1_table_state: TableState,
     l1_filter: L1BlockFilter,
 }
 
@@ -46,17 +48,32 @@ impl Default for DaMonitorView {
 }
 
 impl DaMonitorView {
-    pub const fn new() -> Self {
-        Self { selected_panel: Panel::L2Blocks, selected_row: 0, l1_filter: L1BlockFilter::All }
+    pub fn new() -> Self {
+        let mut l2_table_state = TableState::default();
+        l2_table_state.select(Some(0));
+        let mut l1_table_state = TableState::default();
+        l1_table_state.select(Some(0));
+        Self {
+            selected_panel: Panel::L2Blocks,
+            l2_table_state,
+            l1_table_state,
+            l1_filter: L1BlockFilter::All,
+        }
     }
 
-    #[allow(clippy::missing_const_for_fn)]
+    const fn active_table_state(&mut self) -> &mut TableState {
+        match self.selected_panel {
+            Panel::L2Blocks => &mut self.l2_table_state,
+            Panel::L1Blocks => &mut self.l1_table_state,
+        }
+    }
+
     fn next_panel(&mut self) {
         self.selected_panel = match self.selected_panel {
             Panel::L2Blocks => Panel::L1Blocks,
             Panel::L1Blocks => Panel::L2Blocks,
         };
-        self.selected_row = 0;
+        self.active_table_state().select(Some(0));
     }
 
     fn panel_len(&self, panel: Panel, resources: &Resources) -> usize {
@@ -75,15 +92,21 @@ impl View for DaMonitorView {
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.selected_row > 0 {
-                    self.selected_row -= 1;
+                let state = self.active_table_state();
+                if let Some(selected) = state.selected()
+                    && selected > 0
+                {
+                    state.select(Some(selected - 1));
                 }
                 Action::None
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 let max = self.panel_len(self.selected_panel, resources).saturating_sub(1);
-                if self.selected_row < max {
-                    self.selected_row += 1;
+                let state = self.active_table_state();
+                if let Some(selected) = state.selected()
+                    && selected < max
+                {
+                    state.select(Some(selected + 1));
                 }
                 Action::None
             }
@@ -97,7 +120,16 @@ impl View for DaMonitorView {
             }
             KeyCode::Char('f') => {
                 self.l1_filter = self.l1_filter.next();
-                self.selected_row = 0;
+                self.l1_table_state.select(Some(0));
+                Action::None
+            }
+            KeyCode::Char('g') => {
+                self.active_table_state().select(Some(0));
+                Action::None
+            }
+            KeyCode::Char('G') => {
+                let max = self.panel_len(self.selected_panel, resources).saturating_sub(1);
+                self.active_table_state().select(Some(max));
                 Action::None
             }
             _ => Action::None,
@@ -110,8 +142,9 @@ impl View for DaMonitorView {
             .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(0)])
             .split(area);
 
+        let l2_selected = self.l2_table_state.selected().unwrap_or(0);
         let highlighted_block = if self.selected_panel == Panel::L2Blocks {
-            resources.da.tracker.block_contributions.get(self.selected_row).map(|c| c.block_number)
+            resources.da.tracker.block_contributions.get(l2_selected).map(|c| c.block_number)
         } else {
             None
         };
@@ -137,7 +170,7 @@ impl View for DaMonitorView {
             panel_chunks[0],
             resources,
             self.selected_panel == Panel::L2Blocks,
-            self.selected_row,
+            &self.l2_table_state,
         );
 
         render_l1_blocks_table(
@@ -145,7 +178,7 @@ impl View for DaMonitorView {
             panel_chunks[1],
             resources.da.tracker.filtered_l1_blocks(self.l1_filter),
             self.selected_panel == Panel::L1Blocks,
-            if self.selected_panel == Panel::L1Blocks { self.selected_row } else { 0 },
+            &mut self.l1_table_state,
             self.l1_filter,
             "L1 Blocks",
             resources.da.l1_connection_mode,
@@ -168,9 +201,8 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources, filter: 
     let burn_2m = tracker.burn_tracker.rate_over(RATE_WINDOW_2M);
     let burn_5m = tracker.burn_tracker.rate_over(RATE_WINDOW_5M);
 
-    let base_share_2m = tracker.base_blob_share(RATE_WINDOW_2M);
-    let target_usage_2m =
-        tracker.blob_target_usage(RATE_WINDOW_2M, resources.config.l1_blob_target);
+    let base_share = tracker.base_blob_share(L1_BLOCK_WINDOW);
+    let target_usage = tracker.blob_target_usage(L1_BLOCK_WINDOW, resources.config.l1_blob_target);
 
     let time_since = tracker.last_base_blob_time.map(|t| t.elapsed());
 
@@ -199,10 +231,13 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources, filter: 
         ]),
         Line::from(vec![
             Span::styled("L1 Target: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_share(target_usage_2m), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format_share(target_usage),
+                Style::default().fg(target_usage.map_or(Color::DarkGray, target_usage_color)),
+            ),
             Span::raw("  "),
             Span::styled("Base: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format_share(base_share_2m), Style::default().fg(COLOR_BASE_BLUE)),
+            Span::styled(format_share(base_share), Style::default().fg(COLOR_BASE_BLUE)),
             Span::raw("  "),
             Span::styled("Last: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
@@ -229,7 +264,7 @@ fn render_blocks_panel(
     area: Rect,
     resources: &Resources,
     is_active: bool,
-    selected_row: usize,
+    table_state: &TableState,
 ) {
     use ratatui::widgets::{Cell, Row, Table};
 
@@ -248,7 +283,6 @@ fn render_blocks_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // DA(8) + Age(6) + spacing(3) = 17
     let fixed_cols_width = 8 + 6 + 3;
     let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
@@ -259,13 +293,14 @@ fn render_blocks_panel(
         Cell::from("Age").style(header_style),
     ]);
 
+    let selected_row = table_state.selected();
+
     let rows: Vec<Row> = tracker
         .block_contributions
         .iter()
-        .take(inner.height.saturating_sub(1) as usize)
         .enumerate()
         .map(|(idx, contrib)| {
-            let is_selected = is_active && idx == selected_row;
+            let is_selected = is_active && selected_row == Some(idx);
             let is_safe = contrib.block_number <= tracker.safe_l2_block;
 
             let style = if is_selected {
@@ -292,5 +327,5 @@ fn render_blocks_panel(
 
     let widths = [Constraint::Max(10), Constraint::Length(8), Constraint::Min(6)];
     let table = Table::new(rows, widths).header(header);
-    f.render_widget(table, inner);
+    f.render_stateful_widget(table, inner, &mut table_state.clone());
 }

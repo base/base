@@ -1,5 +1,5 @@
 use anyhow::Result;
-use base_flashtypes::Flashblock;
+use base_primitives::Flashblock;
 use tokio::sync::mpsc;
 
 use super::{App, Resources, ViewId, views::create_view};

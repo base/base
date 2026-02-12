@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use anyhow::Result;
-use base_flashtypes::Flashblock;
+use base_primitives::Flashblock;
 use futures_util::{StreamExt, stream};
 use op_alloy_network::Optimism;
 use tokio::sync::mpsc;
@@ -422,13 +422,28 @@ async fn run_l1_blob_watcher_ws(
 
     let _ = mode_tx.send(L1ConnectionMode::WebSocket).await;
 
+    let mut last_block: Option<u64> = None;
+
     if let Ok(Some(block)) = provider.get_block_by_number(BlockNumberOrTag::Latest).full().await {
         let info = extract_l1_block_info(&block, batcher_address);
+        last_block = Some(block.header.number);
         let _ = result_tx.send(info).await;
     }
 
     while let Some(header) = stream.next().await {
         let block_num = header.number;
+
+        let start = last_block.map_or(block_num, |last| last + 1);
+        for gap_num in start..block_num {
+            if let Ok(Some(block)) =
+                provider.get_block_by_number(BlockNumberOrTag::Number(gap_num)).full().await
+            {
+                let info = extract_l1_block_info(&block, batcher_address);
+                if result_tx.send(info).await.is_err() {
+                    return Ok(());
+                }
+            }
+        }
 
         if let Ok(Some(block)) =
             provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await
@@ -438,6 +453,8 @@ async fn run_l1_blob_watcher_ws(
                 return Ok(());
             }
         }
+
+        last_block = Some(block_num);
     }
 
     warn!("L1 WebSocket stream ended");

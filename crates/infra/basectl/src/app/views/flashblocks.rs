@@ -1,7 +1,7 @@
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     widgets::{Block, Borders, Cell, Row, Table, TableState},
 };
@@ -9,10 +9,11 @@ use ratatui::{
 use crate::{
     app::{Action, Resources, View},
     commands::common::{
-        COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, build_gas_bar, format_gas,
-        format_gwei, time_diff_color, truncate_block_number,
+        COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, block_color,
+        block_color_bright, build_gas_bar, format_gas, format_gwei, render_gas_usage_bar,
+        time_diff_color, truncate_block_number,
     },
-    tui::Keybinding,
+    tui::{Keybinding, Toast},
 };
 
 const GAS_BAR_CHARS: usize = 40;
@@ -115,7 +116,10 @@ impl View for FlashblocksView {
                     && let Some(entry) = resources.flash.entries.get(idx)
                     && let Ok(mut clipboard) = Clipboard::new()
                 {
-                    let _ = clipboard.set_text(entry.block_number.to_string());
+                    let block_num = entry.block_number.to_string();
+                    if clipboard.set_text(&block_num).is_ok() {
+                        resources.toasts.push(Toast::info(format!("Copied {block_num}")));
+                    }
                 }
                 Action::None
             }
@@ -133,6 +137,27 @@ impl View for FlashblocksView {
     fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources) {
         let flash = &resources.flash;
 
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(area);
+
+        let highlighted_block = self
+            .table_state
+            .selected()
+            .and_then(|idx| flash.entries.get(idx))
+            .map(|e| e.block_number);
+
+        render_gas_usage_bar(
+            frame,
+            chunks[0],
+            &flash.entries,
+            DEFAULT_ELASTICITY,
+            highlighted_block,
+        );
+
+        let table_area = chunks[1];
+
         let missed = resources.flash.missed_flashblocks;
         let missed_str = if missed > 0 { format!(" | {missed} missed") } else { String::new() };
         let title = if flash.paused {
@@ -148,14 +173,8 @@ impl View for FlashblocksView {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let highlighted_block = self
-            .table_state
-            .selected()
-            .and_then(|idx| flash.entries.get(idx))
-            .map(|e| e.block_number);
+        let inner = block.inner(table_area);
+        frame.render_widget(block, table_area);
 
         // Idx(4) + Txs(4) + Gas(7) + BaseFee(12) + Delta(8) + Dt(8) + Fill(42) + Time(8) + spacing = ~100
         let fixed_cols_width = 4 + 4 + 7 + 12 + 8 + 8 + (GAS_BAR_CHARS as u16 + 2) + 8 + 9;
@@ -233,19 +252,21 @@ impl View for FlashblocksView {
                     |ms| (format!("+{ms}ms"), Style::default().fg(time_diff_color(ms))),
                 );
 
-                let first_fb_style = if entry.index == 0 {
-                    Style::default().fg(Color::Green)
+                let block_style = if entry.index == 0 {
+                    Style::default()
+                        .fg(block_color_bright(entry.block_number))
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(block_color(entry.block_number))
                 };
 
                 let time_str = entry.timestamp.format("%H:%M:%S").to_string();
 
                 Row::new(vec![
                     Cell::from(truncate_block_number(entry.block_number, block_col_width))
-                        .style(first_fb_style),
-                    Cell::from(entry.index.to_string()).style(first_fb_style),
-                    Cell::from(entry.tx_count.to_string()).style(first_fb_style),
+                        .style(block_style),
+                    Cell::from(entry.index.to_string()).style(block_style),
+                    Cell::from(entry.tx_count.to_string()).style(block_style),
                     Cell::from(format_gas(entry.gas_used)),
                     Cell::from(base_fee_str).style(base_fee_style),
                     Cell::from(delta_str).style(delta_style),

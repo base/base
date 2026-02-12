@@ -101,7 +101,10 @@ impl ToastState {
         self.toasts.retain(|t| !t.is_expired());
     }
 
-    /// Get the current active toast (most recent)
+    pub fn push(&mut self, toast: Toast) {
+        self.toasts.push(toast);
+    }
+
     pub fn current(&self) -> Option<&Toast> {
         self.toasts.last()
     }

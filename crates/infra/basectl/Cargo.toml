@@ -24,7 +24,7 @@ alloy-rpc-types-eth = { workspace = true }
 alloy-eips = { workspace = true }
 op-alloy-network = { workspace = true }
 op-alloy-consensus = { workspace = true }
-base-flashtypes = { workspace = true }
+base-primitives = { workspace = true }
 url = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }

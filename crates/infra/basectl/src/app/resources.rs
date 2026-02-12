@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use base_flashtypes::Flashblock;
+use base_primitives::Flashblock;
 use tokio::sync::mpsc;
 
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
     tui::ToastState,
 };
 
-const MAX_FLASHBLOCKS: usize = 100;
+const MAX_FLASH_BLOCKS: usize = 30;
 
 #[derive(Debug)]
 pub struct Resources {
@@ -275,7 +275,7 @@ impl Default for FlashState {
 impl FlashState {
     pub fn new() -> Self {
         Self {
-            entries: VecDeque::with_capacity(MAX_FLASHBLOCKS),
+            entries: VecDeque::with_capacity(MAX_FLASH_BLOCKS * 10),
             current_block: None,
             current_gas_limit: 0,
             current_base_fee: None,
@@ -305,6 +305,23 @@ impl FlashState {
         for tsf in flashblocks {
             self.add_flashblock(tsf);
         }
+    }
+
+    fn evict_old_blocks(&mut self) {
+        let mut distinct = 0usize;
+        let mut last_block = None;
+        let mut keep = self.entries.len();
+        for (i, entry) in self.entries.iter().enumerate() {
+            if last_block != Some(entry.block_number) {
+                distinct += 1;
+                last_block = Some(entry.block_number);
+                if distinct > MAX_FLASH_BLOCKS {
+                    keep = i;
+                    break;
+                }
+            }
+        }
+        self.entries.truncate(keep);
     }
 
     pub fn add_flashblock(&mut self, tsf: TimestampedFlashblock) {
@@ -349,8 +366,6 @@ impl FlashState {
         };
 
         self.entries.push_front(entry);
-        if self.entries.len() > MAX_FLASHBLOCKS {
-            self.entries.pop_back();
-        }
+        self.evict_old_blocks();
     }
 }
