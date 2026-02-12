@@ -43,6 +43,9 @@ jobs:
           anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+          # DEBUG: Enable full output to diagnose failures (disable after debugging)
+          show_full_output: true
+
           # When track_progress is enabled:
           # - Creates a tracking comment with progress checkboxes
           # - Includes all PR context (comments, attachments, images)
