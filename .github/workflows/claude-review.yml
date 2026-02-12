@@ -39,6 +39,7 @@ jobs:
           ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
         with:
           anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
           # When track_progress is enabled:
           # - Creates a tracking comment with progress checkboxes
