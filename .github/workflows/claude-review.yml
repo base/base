@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   # This allows posting comments and reviews
@@ -25,7 +29,6 @@ jobs:
           allowed-endpoints: >
             api.github.com:443
             bun.sh:443
-            claude.ai:443
             github.com:443
             objects.githubusercontent.com:443
             registry.npmjs.org:443
@@ -42,9 +45,6 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-
-          # DEBUG: Enable full output to diagnose failures (disable after debugging)
-          show_full_output: true
 
           # When track_progress is enabled:
           # - Creates a tracking comment with progress checkboxes
