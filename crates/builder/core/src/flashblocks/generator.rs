@@ -19,7 +19,7 @@ use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFacto
 use reth_revm::cached::CachedReads;
 use reth_tasks::TaskSpawner;
 use tokio::{
-    sync::oneshot,
+    sync::{Notify, oneshot},
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -410,39 +410,24 @@ impl<T: Clone> Future for ResolvePayload<T> {
 /// Values can be overwritten by calling [`BlockCell::set`] multiple times.
 #[derive(Clone, Debug)]
 pub struct BlockCell<T> {
-    inner: Arc<BlockCellInner<T>>,
-}
-
-#[derive(Debug)]
-struct BlockCellInner<T> {
-    value: Mutex<Option<T>>,
-    wakers: Mutex<Vec<std::task::Waker>>,
+    inner: Arc<Mutex<Option<T>>>,
+    notify: Arc<Notify>,
 }
 
 impl<T: Clone> BlockCell<T> {
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(BlockCellInner {
-                value: Mutex::new(None),
-                wakers: Mutex::new(Vec::new()),
-            }),
-        }
+        Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
     }
 
     pub fn set(&self, value: T) {
-        {
-            let mut val = self.inner.value.lock();
-            *val = Some(value);
-        }
-        // Wake all registered waiters
-        let wakers: Vec<std::task::Waker> = self.inner.wakers.lock().drain(..).collect();
-        for waker in wakers {
-            waker.wake();
-        }
+        let mut inner = self.inner.lock();
+        *inner = Some(value);
+        self.notify.notify_one();
     }
 
     pub fn get(&self) -> Option<T> {
-        self.inner.value.lock().clone()
+        let inner = self.inner.lock();
+        inner.clone()
     }
 
     /// Return a future that resolves when a value is set.
@@ -467,21 +452,13 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Check if a value is already available
-        if let Some(value) = self.cell.get() {
-            return Poll::Ready(value);
-        }
-
-        // Register waker for notification
-        self.cell.inner.wakers.lock().push(cx.waker().clone());
-
-        // Re-check after registering to avoid race condition where
-        // set() was called between the first check and waker registration
-        if let Some(value) = self.cell.get() {
-            return Poll::Ready(value);
-        }
-
-        Poll::Pending
+        self.cell.get().map_or_else(
+            || {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            Poll::Ready,
+        )
     }
 }
 
