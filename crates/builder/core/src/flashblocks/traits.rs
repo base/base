@@ -1,11 +1,10 @@
 //! Contains the payload builder trait.
 
-
 use reth_node_api::PayloadBuilderAttributes;
 use reth_payload_builder::PayloadBuilderError;
 use reth_payload_primitives::BuiltPayload;
 
-use crate::{BuildArguments, BlockCell};
+use crate::{BlockCell, BuildArguments};
 
 /// A trait for building payloads that encapsulate Ethereum transactions.
 ///

@@ -43,10 +43,7 @@ where
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub fn refresh_iterator(
-        &mut self,
-        inner: reth_payload_util::BestPayloadTransactions<T, I>,
-    ) {
+    pub fn refresh_iterator(&mut self, inner: reth_payload_util::BestPayloadTransactions<T, I>) {
         self.inner = inner;
     }
 

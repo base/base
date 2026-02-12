@@ -377,7 +377,7 @@ where
     }
 }
 
-/// A future that resolves when a payload becomes available in the BlockCell.
+/// A future that resolves when a payload becomes available in the [`BlockCell`].
 pub struct ResolvePayload<T> {
     future: WaitForValue<T>,
 }
@@ -435,7 +435,7 @@ impl<T: Clone> BlockCell<T> {
 }
 
 #[derive(Clone)]
-/// Future that resolves when a value is set in BlockCell.
+/// Future that resolves when a value is set in [`BlockCell`].
 pub struct WaitForValue<T> {
     cell: BlockCell<T>,
 }
