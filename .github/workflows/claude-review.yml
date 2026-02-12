@@ -48,7 +48,7 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            Perform a comprehensive code review with the following focus areas:
+            Perform a thorough and comprehensive code review with the following focus areas:
 
             1. **Code Quality**
                 - Clean code principles and best practices
