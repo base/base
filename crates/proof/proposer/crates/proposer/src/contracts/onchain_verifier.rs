@@ -1,9 +1,11 @@
 //! `OnchainVerifier` contract bindings.
 
-use alloy::primitives::Bytes;
+use alloy::primitives::{Address, Bytes};
+use alloy::providers::RootProvider;
 use alloy::sol;
+use async_trait::async_trait;
 
-use crate::{ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET};
+use crate::{ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, ProposerError};
 
 sol! {
     /// Output proposal structure from the `L2OutputOracle`.
@@ -69,6 +71,39 @@ pub fn decode_proof_bytes(proof: &Bytes) -> Vec<u8> {
         }
     }
     bytes
+}
+
+/// Async trait for reading onchain verifier state.
+#[async_trait]
+pub trait OnchainVerifierClient: Send + Sync {
+    /// Returns the latest output proposal from the contract.
+    async fn latest_output_proposal(&self) -> Result<OutputProposal, ProposerError>;
+}
+
+/// Concrete implementation backed by Alloy's sol-generated contract bindings.
+#[allow(missing_debug_implementations)]
+pub struct OnchainVerifierContractClient {
+    contract: IOnchainVerifier::IOnchainVerifierInstance<RootProvider>,
+}
+
+impl OnchainVerifierContractClient {
+    /// Creates a new client for the given contract address and L1 RPC URL.
+    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ProposerError> {
+        let provider = RootProvider::new_http(l1_rpc_url);
+        let contract = IOnchainVerifier::IOnchainVerifierInstance::new(address, provider);
+        Ok(Self { contract })
+    }
+}
+
+#[async_trait]
+impl OnchainVerifierClient for OnchainVerifierContractClient {
+    async fn latest_output_proposal(&self) -> Result<OutputProposal, ProposerError> {
+        self.contract
+            .latestOutputProposal()
+            .call()
+            .await
+            .map_err(|e| ProposerError::Contract(e.to_string()))
+    }
 }
 
 #[cfg(test)]

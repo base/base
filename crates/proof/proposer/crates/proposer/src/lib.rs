@@ -30,4 +30,5 @@ mod test_utils;
 pub use cli::Cli;
 pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig};
 pub use constants::*;
+pub use contracts::{OnchainVerifierClient, OnchainVerifierContractClient, OutputProposal};
 pub use error::*;
