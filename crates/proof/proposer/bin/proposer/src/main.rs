@@ -5,6 +5,7 @@ use std::sync::Arc;
 use base_proposer::{
     Cli, ProposerConfig,
     contracts::OnchainVerifierContractClient,
+    create_output_proposer,
     driver::{Driver, DriverConfig},
     enclave::{create_enclave_client, rollup_config_to_per_chain_config},
     prover::Prover,
@@ -97,6 +98,15 @@ async fn main() -> Result<()> {
         cancel_clone.cancel();
     });
 
+    // Create output proposer
+    let output_proposer = create_output_proposer(
+        config.l1_eth_rpc.clone(),
+        config.onchain_verifier_addr,
+        config.signing.clone(),
+        config.retry.clone(),
+    )?;
+    info!(address = %config.onchain_verifier_addr, "Output proposer initialized");
+
     // Create and run driver
     let driver_config = DriverConfig {
         poll_interval: config.poll_interval,
@@ -110,6 +120,7 @@ async fn main() -> Result<()> {
         l2_client,
         rollup_client,
         verifier_client,
+        output_proposer,
         cancel,
     );
 

@@ -14,10 +14,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::contracts::OnchainVerifierClient;
+use crate::contracts::output_proposer::OutputProposer;
 use crate::enclave::EnclaveClientTrait;
 use crate::prover::{Prover, ProverProposal};
 use crate::rpc::{L1Client, L2Client, RollupClient};
-use crate::{AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, ProposerError};
+use crate::{
+    AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, PROPOSAL_TIMEOUT,
+    ProposerError,
+};
 
 /// Driver configuration.
 #[derive(Debug, Clone)]
@@ -56,6 +60,7 @@ where
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
     verifier_client: Arc<V>,
+    output_proposer: Arc<dyn OutputProposer>,
     cancel: CancellationToken,
     /// Pending single-block proposals awaiting aggregation and submission.
     pending: VecDeque<ProverProposal>,
@@ -73,6 +78,7 @@ where
         f.debug_struct("Driver")
             .field("config", &self.config)
             .field("pending_count", &self.pending.len())
+            .field("has_output_proposer", &true)
             .finish_non_exhaustive()
     }
 }
@@ -86,13 +92,14 @@ where
     V: OnchainVerifierClient + 'static,
 {
     /// Creates a new driver with the given configuration.
-    pub const fn new(
+    pub fn new(
         config: DriverConfig,
         prover: Arc<Prover<L1, L2, E>>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
         verifier_client: Arc<V>,
+        output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
@@ -102,6 +109,7 @@ where
             l2_client,
             rollup_client,
             verifier_client,
+            output_proposer,
             cancel,
             pending: VecDeque::new(),
         }
@@ -372,7 +380,10 @@ where
         self.latest_safe_block().await.map(|b| b.number)
     }
 
-    /// Proposes an output (logging stub for Milestone 7).
+    /// Submits a proposal to L1 via the output proposer.
+    ///
+    /// Wraps the submission in a [`PROPOSAL_TIMEOUT`] and logs success/failure/timeout.
+    /// Does NOT pop from pending (cleanup happens in `generate_outputs` on next tick).
     async fn propose_output(&self, proposal: &ProverProposal) {
         info!(
             l2_block_number = proposal.to.number,
@@ -382,8 +393,36 @@ where
             has_withdrawals = proposal.has_withdrawals,
             from = proposal.from.number,
             to = proposal.to.number,
-            "Would propose output (submission not yet implemented)"
+            "Proposing output"
         );
+
+        match tokio::time::timeout(
+            PROPOSAL_TIMEOUT,
+            self.output_proposer.propose_output(proposal),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                info!(
+                    l2_block_number = proposal.to.number,
+                    "Output proposal submitted successfully"
+                );
+            }
+            Ok(Err(e)) => {
+                warn!(
+                    error = %e,
+                    l2_block_number = proposal.to.number,
+                    "Failed to submit output proposal"
+                );
+            }
+            Err(_) => {
+                warn!(
+                    l2_block_number = proposal.to.number,
+                    timeout_secs = PROPOSAL_TIMEOUT.as_secs(),
+                    "Output proposal timed out"
+                );
+            }
+        }
     }
 }
 
@@ -404,8 +443,8 @@ mod tests {
     use crate::prover::types::test_helpers::test_proposal;
     use crate::rpc::SyncStatus;
     use crate::test_utils::{
-        MockL1, MockL2, MockOnchainVerifier, MockRollupClient, test_output_proposal,
-        test_per_chain_config, test_sync_status,
+        MockL1, MockL2, MockOnchainVerifier, MockOutputProposer, MockRollupClient,
+        test_output_proposal, test_per_chain_config, test_sync_status,
     };
 
     // ---- Mock infrastructure ----
@@ -471,6 +510,7 @@ mod tests {
         l1_block_number: u64,
         sync_status: SyncStatus,
         output_proposal: crate::contracts::OutputProposal,
+        output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Driver<MockL1, MockL2, E, MockRollupClient, MockOnchainVerifier> {
         let l1 = Arc::new(MockL1 {
@@ -489,7 +529,16 @@ mod tests {
         let rollup = Arc::new(MockRollupClient { sync_status });
         let verifier = Arc::new(MockOnchainVerifier { output_proposal });
 
-        Driver::new(driver_config, prover, l1, l2, rollup, verifier, cancel)
+        Driver::new(
+            driver_config,
+            prover,
+            l1,
+            l2,
+            rollup,
+            verifier,
+            output_proposer,
+            cancel,
+        )
     }
 
     fn test_driver(
@@ -503,6 +552,7 @@ mod tests {
             l1_block_number,
             sync_status,
             output_proposal,
+            Arc::new(MockOutputProposer),
             CancellationToken::new(),
         )
     }
@@ -689,6 +739,7 @@ mod tests {
             1000,
             sync_status,
             output,
+            Arc::new(MockOutputProposer),
             cancel.clone(),
         );
 
@@ -699,6 +750,53 @@ mod tests {
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok(), "run() should return Ok on cancellation");
+    }
+
+    #[tokio::test]
+    async fn test_step_calls_output_proposer() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        /// Tracking proposer that records whether `propose_output` was called.
+        struct TrackingOutputProposer {
+            called: AtomicBool,
+        }
+
+        #[async_trait]
+        impl OutputProposer for TrackingOutputProposer {
+            async fn propose_output(
+                &self,
+                _proposal: &ProverProposal,
+            ) -> Result<(), ProposerError> {
+                self.called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let safe_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(700, safe_hash);
+        let output = test_output_proposal(100);
+        let tracking = Arc::new(TrackingOutputProposer {
+            called: AtomicBool::new(false),
+        });
+
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig::default(),
+            1000,
+            sync_status,
+            output,
+            Arc::clone(&tracking) as Arc<dyn OutputProposer>,
+            CancellationToken::new(),
+        );
+
+        driver.pending.push_back(test_proposal(101, 700, false));
+
+        let result = driver.step().await;
+        assert!(result.is_ok(), "step() should succeed, got: {result:?}");
+        assert!(
+            tracking.called.load(Ordering::SeqCst),
+            "OutputProposer::propose_output should have been called"
+        );
     }
 
     #[tokio::test]
@@ -717,6 +815,7 @@ mod tests {
             400, // l1_latest=400
             sync_status,
             output,
+            Arc::new(MockOutputProposer),
             cancel,
         );
 

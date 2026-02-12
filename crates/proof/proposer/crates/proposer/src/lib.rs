@@ -28,7 +28,10 @@ pub mod rpc;
 mod test_utils;
 
 pub use cli::Cli;
-pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig};
+pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig, SigningConfig};
 pub use constants::*;
-pub use contracts::{OnchainVerifierClient, OnchainVerifierContractClient, OutputProposal};
+pub use contracts::{
+    OnchainVerifierClient, OnchainVerifierContractClient, OutputProposal, OutputProposer,
+    create_output_proposer,
+};
 pub use error::*;
