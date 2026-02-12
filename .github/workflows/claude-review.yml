@@ -82,11 +82,12 @@ jobs:
             - Rust idioms: &String instead of &str, &Vec<T> instead of &[T], manual implementations of standard traits, needless lifetime annotations
 
             COMMENT MANAGEMENT:
-            Before posting your review summary, clean up previous summaries from earlier runs:
-            1. Run: gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- CLAUDE_REVIEW_SUMMARY -->")) | .id'
-            2. For each ID found, run: gh api -X DELETE repos/${{ github.repository }}/issues/comments/<id>
-            3. Always start your summary comment with <!-- CLAUDE_REVIEW_SUMMARY --> on the first line
+            Before posting your review summary, clean up previous summary comments from earlier runs:
+            1. Delete your previous summary comments by running: gh pr comment ${{ github.event.pull_request.number }} --delete-last --yes
+            2. Repeat step 1 until it returns an error (no more comments to delete)
+            3. Then post your new summary using: gh pr comment ${{ github.event.pull_request.number }} --body "<!-- CLAUDE_REVIEW_SUMMARY -->\n\n<your summary>"
+            Note: --delete-last only deletes your own top-level comments, not inline review comments or other users' comments.
 
           claude_args: |
             --model claude-opus-4-6-default
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh api -X DELETE repos/${{ github.repository }}/issues/comments:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --delete-last:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
