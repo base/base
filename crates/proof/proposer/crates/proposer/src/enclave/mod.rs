@@ -1,12 +1,54 @@
 //! Enclave client types for TEE proof generation.
 
 use alloy_primitives::{Address, B256, U256};
+use async_trait::async_trait;
 
 pub use op_enclave_client::EnclaveClient;
+use op_enclave_client::{ClientError, ExecuteStatelessRequest};
 use op_enclave_core::types::config::{BlockId, Genesis, GenesisSystemConfig, RollupConfig};
 pub use op_enclave_core::{Proposal, executor::ExecutionWitness, types::config::PerChainConfig};
 
 use crate::ProposerError;
+
+/// Trait abstracting the enclave RPC client for testability.
+///
+/// This follows the same pattern as [`crate::rpc::L1Client`] and [`crate::rpc::L2Client`].
+#[async_trait]
+pub trait EnclaveClientTrait: Send + Sync {
+    /// Executes stateless block validation in the enclave.
+    async fn execute_stateless(
+        &self,
+        req: ExecuteStatelessRequest,
+    ) -> Result<Proposal, ClientError>;
+
+    /// Aggregates multiple proposals into a single batched proposal.
+    async fn aggregate(
+        &self,
+        config_hash: B256,
+        prev_output_root: B256,
+        proposals: Vec<Proposal>,
+    ) -> Result<Proposal, ClientError>;
+}
+
+#[async_trait]
+impl EnclaveClientTrait for EnclaveClient {
+    async fn execute_stateless(
+        &self,
+        req: ExecuteStatelessRequest,
+    ) -> Result<Proposal, ClientError> {
+        self.execute_stateless(req).await
+    }
+
+    async fn aggregate(
+        &self,
+        config_hash: B256,
+        prev_output_root: B256,
+        proposals: Vec<Proposal>,
+    ) -> Result<Proposal, ClientError> {
+        self.aggregate(config_hash, prev_output_root, proposals)
+            .await
+    }
+}
 
 /// Convert a [`RollupConfig`] (from RPC) to [`PerChainConfig`].
 ///

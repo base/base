@@ -24,6 +24,9 @@ pub mod metrics;
 pub mod prover;
 pub mod rpc;
 
+#[cfg(test)]
+mod test_utils;
+
 pub use cli::Cli;
 pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig};
 pub use constants::*;

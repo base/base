@@ -24,8 +24,8 @@ use op_enclave_core::{
 
 use crate::{
     ProposerError,
-    enclave::{EnclaveClient, PerChainConfig},
-    rpc::{L1Client, L2Client, OpBlock},
+    enclave::{EnclaveClientTrait, PerChainConfig},
+    rpc::{L1BlockId, L1Client, L2BlockRef, L2Client, OpBlock},
 };
 
 /// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
@@ -37,18 +37,19 @@ const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Prover for generating TEE-signed proposals.
 #[derive(Debug)]
-pub struct Prover<L1, L2> {
+pub struct Prover<L1, L2, E> {
     rollup_config: RollupConfig,
     config_hash: B256,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
-    enclave_client: EnclaveClient,
+    enclave_client: E,
 }
 
-impl<L1, L2> Prover<L1, L2>
+impl<L1, L2, E> Prover<L1, L2, E>
 where
     L1: L1Client,
     L2: L2Client,
+    E: EnclaveClientTrait,
 {
     /// Creates a new prover instance.
     ///
@@ -65,7 +66,7 @@ where
         rollup_config: RollupConfig,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
-        enclave_client: EnclaveClient,
+        enclave_client: E,
     ) -> Self {
         config.force_defaults();
         let config_hash = config.hash();
@@ -254,26 +255,69 @@ where
         // Check if block has withdrawals
         let has_withdrawals = check_withdrawals(&block.header.inner);
 
+        let block_ref = L2BlockRef {
+            hash: block_hash,
+            number: block.header.number,
+            parent_hash: block.header.parent_hash,
+            timestamp: block.header.inner.timestamp,
+            l1origin: L1BlockId {
+                hash: l1_origin_hash,
+                number: l1_origin_number,
+            },
+            sequence_number: l2_block_info.seq_num,
+        };
+
         Ok(ProverProposal {
             output: proposal,
-            l2_block_number: block.header.number,
-            l1_origin_hash,
-            l1_origin_number,
+            from: block_ref.clone(),
+            to: block_ref,
             has_withdrawals,
         })
     }
 
-    /// Aggregates multiple proposals into a single proposal.
+    /// Aggregates multiple prover proposals into a single batched proposal.
     ///
-    /// # Arguments
-    ///
-    /// * `prev_output_root` - The output root before the first proposal
-    /// * `proposals` - The proposals to aggregate
+    /// This handles the higher-level aggregation logic:
+    /// - Empty input returns an error
+    /// - Single proposal is returned as-is
+    /// - Multiple proposals are aggregated via the enclave, with withdrawal
+    ///   flags OR'd and block ranges tracked via `from`/`to`
     ///
     /// # Errors
     ///
-    /// Returns an error if the enclave aggregation fails.
+    /// Returns an error if no proposals are provided or enclave aggregation fails.
     pub async fn aggregate(
+        &self,
+        prev_output_root: B256,
+        proposals: Vec<ProverProposal>,
+    ) -> Result<ProverProposal, ProposerError> {
+        if proposals.is_empty() {
+            return Err(ProposerError::Internal("no proposals to aggregate".into()));
+        }
+        if proposals.len() == 1 {
+            return Ok(proposals.into_iter().next().unwrap());
+        }
+
+        let has_withdrawals = proposals.iter().any(|p| p.has_withdrawals);
+        let enclave_proposals: Vec<Proposal> = proposals.iter().map(|p| p.output.clone()).collect();
+
+        let from = proposals.first().unwrap().from.clone();
+        let to = proposals.last().unwrap().to.clone();
+
+        let output = self
+            .aggregate_enclave(prev_output_root, enclave_proposals)
+            .await?;
+
+        Ok(ProverProposal {
+            output,
+            from,
+            to,
+            has_withdrawals,
+        })
+    }
+
+    /// Low-level enclave aggregation call.
+    async fn aggregate_enclave(
         &self,
         prev_output_root: B256,
         proposals: Vec<Proposal>,
@@ -429,9 +473,16 @@ fn extract_missing_trie_hash(err: &str) -> Option<B256> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bloom, BloomInput};
+    use std::time::Duration;
+
+    use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
+    use async_trait::async_trait;
+    use op_enclave_client::{ClientError, ExecuteStatelessRequest};
 
     use super::*;
+    use crate::enclave::EnclaveClientTrait;
+    use crate::test_utils::test_prover;
+    use types::test_helpers::test_proposal;
 
     #[test]
     fn test_check_withdrawals_empty_bloom() {
@@ -548,5 +599,294 @@ mod tests {
             }
             _ => panic!("Expected Legacy envelope"),
         }
+    }
+
+    // --- aggregate tests (via Prover::aggregate) ---
+
+    /// Mock enclave client that returns a pre-configured aggregate result.
+    struct MockEnclaveClient {
+        aggregate_result: Proposal,
+    }
+
+    #[async_trait]
+    impl EnclaveClientTrait for MockEnclaveClient {
+        async fn execute_stateless(
+            &self,
+            _req: ExecuteStatelessRequest,
+        ) -> Result<Proposal, ClientError> {
+            unimplemented!("not needed for aggregate tests")
+        }
+
+        async fn aggregate(
+            &self,
+            _config_hash: B256,
+            _prev_output_root: B256,
+            _proposals: Vec<Proposal>,
+        ) -> Result<Proposal, ClientError> {
+            Ok(self.aggregate_result.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_empty_proposals() {
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: Proposal {
+                output_root: B256::ZERO,
+                signature: Bytes::new(),
+                l1_origin_hash: B256::ZERO,
+                l2_block_number: U256::ZERO,
+                prev_output_root: B256::ZERO,
+                config_hash: B256::ZERO,
+            },
+        });
+
+        let result = prover.aggregate(B256::ZERO, vec![]).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no proposals to aggregate")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_single_proposal() {
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: Proposal {
+                output_root: B256::ZERO,
+                signature: Bytes::new(),
+                l1_origin_hash: B256::ZERO,
+                l2_block_number: U256::ZERO,
+                prev_output_root: B256::ZERO,
+                config_hash: B256::ZERO,
+            },
+        });
+
+        let single = test_proposal(5, 5, true);
+        let result = prover.aggregate(B256::ZERO, vec![single.clone()]).await;
+        let agg = result.unwrap();
+
+        // Single proposal is returned as-is
+        assert_eq!(agg.from.number, 5);
+        assert_eq!(agg.to.number, 5);
+        assert!(agg.has_withdrawals);
+        assert_eq!(agg.output.output_root, single.output.output_root);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_multiple_proposals_from_to() {
+        let agg_output = Proposal {
+            output_root: B256::repeat_byte(0xAA),
+            signature: Bytes::from(vec![0xBB; 65]),
+            l1_origin_hash: B256::repeat_byte(0xCC),
+            l2_block_number: U256::from(25),
+            prev_output_root: B256::repeat_byte(0xDD),
+            config_hash: B256::repeat_byte(0xEE),
+        };
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: agg_output.clone(),
+        });
+
+        let proposals = vec![
+            test_proposal(10, 15, false),
+            test_proposal(16, 20, false),
+            test_proposal(21, 25, false),
+        ];
+
+        let result = prover.aggregate(B256::ZERO, proposals).await.unwrap();
+
+        assert_eq!(result.from.number, 10);
+        assert_eq!(result.to.number, 25);
+        assert_eq!(result.output.output_root, agg_output.output_root);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_withdrawal_combinations() {
+        let agg_output = Proposal {
+            output_root: B256::repeat_byte(0xAA),
+            signature: Bytes::from(vec![0xBB; 65]),
+            l1_origin_hash: B256::ZERO,
+            l2_block_number: U256::from(3),
+            prev_output_root: B256::ZERO,
+            config_hash: B256::ZERO,
+        };
+
+        // [F, F, F] → F
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: agg_output.clone(),
+        });
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![
+                    test_proposal(1, 1, false),
+                    test_proposal(2, 2, false),
+                    test_proposal(3, 3, false),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(!result.has_withdrawals);
+
+        // [T, F, F] → T
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: agg_output.clone(),
+        });
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![
+                    test_proposal(1, 1, true),
+                    test_proposal(2, 2, false),
+                    test_proposal(3, 3, false),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(result.has_withdrawals);
+
+        // [F, T, F] → T
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: agg_output.clone(),
+        });
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![
+                    test_proposal(1, 1, false),
+                    test_proposal(2, 2, true),
+                    test_proposal(3, 3, false),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(result.has_withdrawals);
+
+        // [F, F, T] → T
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: agg_output.clone(),
+        });
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![
+                    test_proposal(1, 1, false),
+                    test_proposal(2, 2, false),
+                    test_proposal(3, 3, true),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(result.has_withdrawals);
+
+        // [T, T, T] → T
+        let prover = test_prover(MockEnclaveClient {
+            aggregate_result: agg_output,
+        });
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![
+                    test_proposal(1, 1, true),
+                    test_proposal(2, 2, true),
+                    test_proposal(3, 3, true),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(result.has_withdrawals);
+    }
+
+    // --- enclave error / timeout tests ---
+
+    /// Mock enclave client whose `aggregate` always returns an error.
+    struct FailingEnclaveClient;
+
+    #[async_trait]
+    impl EnclaveClientTrait for FailingEnclaveClient {
+        async fn execute_stateless(
+            &self,
+            _: ExecuteStatelessRequest,
+        ) -> Result<Proposal, ClientError> {
+            unimplemented!()
+        }
+        async fn aggregate(
+            &self,
+            _: B256,
+            _: B256,
+            _: Vec<Proposal>,
+        ) -> Result<Proposal, ClientError> {
+            Err(ClientError::ClientCreation(
+                "enclave aggregate failed".into(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_enclave_error() {
+        let prover = test_prover(FailingEnclaveClient);
+
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![test_proposal(1, 1, false), test_proposal(2, 2, false)],
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("enclave aggregate failed"),
+            "expected enclave error message, got: {err}"
+        );
+    }
+
+    /// Mock enclave client whose `aggregate` sleeps longer than `ENCLAVE_TIMEOUT`.
+    struct SlowEnclaveClient;
+
+    #[async_trait]
+    impl EnclaveClientTrait for SlowEnclaveClient {
+        async fn execute_stateless(
+            &self,
+            _: ExecuteStatelessRequest,
+        ) -> Result<Proposal, ClientError> {
+            unimplemented!()
+        }
+        async fn aggregate(
+            &self,
+            _: B256,
+            _: B256,
+            _: Vec<Proposal>,
+        ) -> Result<Proposal, ClientError> {
+            tokio::time::sleep(Duration::from_secs(601)).await;
+            Ok(Proposal {
+                output_root: B256::ZERO,
+                signature: Bytes::new(),
+                l1_origin_hash: B256::ZERO,
+                l2_block_number: U256::ZERO,
+                prev_output_root: B256::ZERO,
+                config_hash: B256::ZERO,
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_aggregate_enclave_timeout() {
+        let prover = test_prover(SlowEnclaveClient);
+
+        let result = prover
+            .aggregate(
+                B256::ZERO,
+                vec![test_proposal(1, 1, false), test_proposal(2, 2, false)],
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("timed out"),
+            "expected timeout error, got: {err}"
+        );
     }
 }
