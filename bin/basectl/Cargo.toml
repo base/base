@@ -8,11 +8,11 @@ license.workspace = true
 name = "basectl"
 path = "main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 basectl-cli = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
-
-[lints]
-workspace = true

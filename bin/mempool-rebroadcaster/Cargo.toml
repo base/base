@@ -7,6 +7,9 @@ edition = "2021"
 name = "mempool-rebroadcaster"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 clap = { workspace = true }
 dotenvy.workspace = true
@@ -14,6 +17,3 @@ mempool-rebroadcaster = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
-
-[lints]
-workspace = true

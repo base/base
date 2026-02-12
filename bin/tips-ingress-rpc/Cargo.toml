@@ -7,6 +7,9 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 tips-core.workspace = true
 tips-audit-lib.workspace = true
@@ -20,6 +23,3 @@ rdkafka.workspace = true
 jsonrpsee.workspace = true
 op-alloy-network.workspace = true
 alloy-provider.workspace = true
-
-[lints]
-workspace = true

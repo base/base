@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 tokio = { workspace = true }
 serde_json = { workspace = true }
@@ -28,6 +31,3 @@ alloy-sol-types = { workspace = true }
 alloy-contract = { workspace = true }
 arboard = { workspace = true }
 tracing = { workspace = true }
-
-[lints]
-workspace = true

@@ -7,6 +7,9 @@ edition = "2021"
 name = "based"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 clap = { workspace = true }
 based = { workspace = true }
@@ -14,6 +17,3 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 cadence = { workspace = true }
-
-[lints]
-workspace = true

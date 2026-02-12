@@ -8,6 +8,9 @@ license.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 hex.workspace = true
 rand.workspace = true
@@ -38,9 +41,6 @@ op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
-
-[lints]
-workspace = true
 
 [dev-dependencies]
 serial_test.workspace = true

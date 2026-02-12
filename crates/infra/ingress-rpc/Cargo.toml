@@ -7,6 +7,9 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 url.workspace = true
 tips-core.workspace = true
@@ -33,9 +36,6 @@ clap = { workspace = true, features = ["std", "derive", "env"] }
 op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 moka = { workspace = true, features = ["future"] }
 uuid = { workspace = true, features = ["v5"] }
-
-[lints]
-workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true

@@ -7,6 +7,9 @@ license.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,6 +24,3 @@ alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-trie.workspace = true
 alloy-provider = { workspace = true, features = ["txpool-api"] }
-
-[lints]
-workspace = true
