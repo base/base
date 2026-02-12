@@ -16,8 +16,7 @@ use common::TestHarness;
 
 #[tokio::test]
 #[ignore = "TODO doesn't appear to work with minio, should test against a real S3 bucket"]
-async fn test_kafka_publisher_s3_archiver_integration()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_kafka_publisher_s3_archiver_integration() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let topic = "test-mempool-events";
 
@@ -73,8 +72,7 @@ async fn test_kafka_publisher_s3_archiver_integration()
 }
 
 #[tokio::test]
-async fn test_userop_kafka_publisher_reader_integration()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_userop_kafka_publisher_reader_integration() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let topic = "test-userop-events";
 

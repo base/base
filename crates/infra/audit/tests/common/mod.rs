@@ -15,7 +15,7 @@ pub(crate) struct TestHarness {
 }
 
 impl TestHarness {
-    pub(crate) async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub(crate) async fn new() -> anyhow::Result<Self> {
         let minio_container = MinIO::default().start().await?;
         let s3_port = minio_container.get_host_port_ipv4(9000).await?;
         let s3_endpoint = format!("http://127.0.0.1:{s3_port}");

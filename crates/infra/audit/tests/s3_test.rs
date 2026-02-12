@@ -22,7 +22,7 @@ fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Ev
 }
 
 #[tokio::test]
-async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_event_write_and_read() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -72,7 +72,7 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
 }
 
 #[tokio::test]
-async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_events_appended() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -108,7 +108,7 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
 }
 
 #[tokio::test]
-async fn test_event_deduplication() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_event_deduplication() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -135,7 +135,7 @@ async fn test_event_deduplication() -> Result<(), Box<dyn std::error::Error + Se
 }
 
 #[tokio::test]
-async fn test_nonexistent_data() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_nonexistent_data() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -153,8 +153,7 @@ async fn test_nonexistent_data() -> Result<(), Box<dyn std::error::Error + Send 
 
 #[tokio::test]
 #[ignore = "TODO doesn't appear to work with minio, should test against a real S3 bucket"]
-async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-{
+async fn system_test_concurrent_writes_for_bundle() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer =
         Arc::new(S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone()));
@@ -217,8 +216,7 @@ fn create_test_userop_event(
 }
 
 #[tokio::test]
-async fn test_userop_event_write_and_read() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-{
+async fn system_test_userop_event_write_and_read() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -246,7 +244,7 @@ async fn test_userop_event_write_and_read() -> Result<(), Box<dyn std::error::Er
 }
 
 #[tokio::test]
-async fn test_userop_events_appended() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_userop_events_appended() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -289,7 +287,7 @@ async fn test_userop_events_appended() -> Result<(), Box<dyn std::error::Error +
 }
 
 #[tokio::test]
-async fn test_userop_event_deduplication() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_userop_event_deduplication() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -318,8 +316,7 @@ async fn test_userop_event_deduplication() -> Result<(), Box<dyn std::error::Err
 }
 
 #[tokio::test]
-async fn test_userop_nonexistent_returns_none()
--> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_userop_nonexistent_returns_none() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -331,7 +328,7 @@ async fn test_userop_nonexistent_returns_none()
 }
 
 #[tokio::test]
-async fn test_userop_all_event_types() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_userop_all_event_types() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
@@ -367,7 +364,7 @@ async fn test_userop_all_event_types() -> Result<(), Box<dyn std::error::Error +
 }
 
 #[tokio::test]
-async fn test_userop_dropped_event() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn system_test_userop_dropped_event() -> anyhow::Result<()> {
     let harness = TestHarness::new().await?;
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
