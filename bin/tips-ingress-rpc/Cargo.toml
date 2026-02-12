@@ -11,7 +11,6 @@ edition.workspace = true
 tips-core.workspace = true
 tips-audit-lib.workspace = true
 tips-ingress-rpc-lib.workspace = true
-account-abstraction-core.workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true

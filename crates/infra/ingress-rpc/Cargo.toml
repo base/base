@@ -18,7 +18,6 @@ metrics-derive.workspace = true
 op-alloy-network.workspace = true
 alloy-signer-local.workspace = true
 base-reth-rpc-types.workspace = true
-account-abstraction-core.workspace = true
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }

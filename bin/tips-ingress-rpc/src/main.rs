@@ -1,4 +1,3 @@
-use account_abstraction_core::create_mempool_engine;
 use alloy_provider::ProviderBuilder;
 use clap::Parser;
 use jsonrpsee::server::Server;
@@ -72,29 +71,6 @@ async fn main() -> anyhow::Result<()> {
     let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
     connect_audit_to_publisher(audit_rx, audit_publisher);
 
-    let (mempool_engine, mempool_engine_handle) = if let Some(user_op_properties_file) =
-        &config.user_operation_consumer_properties
-    {
-        let engine = create_mempool_engine(
-            user_op_properties_file,
-            &config.user_operation_topic,
-            &config.user_operation_consumer_group_id,
-            None,
-        )?;
-
-        let handle = {
-            let engine_clone = engine.clone();
-            tokio::spawn(async move { engine_clone.run().await })
-        };
-
-        (Some(engine), Some(handle))
-    } else {
-        info!(
-            "User operation consumer properties not provided, skipping mempool engine initialization"
-        );
-        (None, None)
-    };
-
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
     let (builder_backrun_tx, _) =
@@ -118,7 +94,6 @@ async fn main() -> anyhow::Result<()> {
         audit_tx,
         builder_tx,
         builder_backrun_tx,
-        mempool_engine.clone(),
         cfg,
     );
     let bind_addr = format!("{}:{}", config.address, config.port);
@@ -134,9 +109,6 @@ async fn main() -> anyhow::Result<()> {
 
     handle.stopped().await;
     health_handle.abort();
-    if let Some(engine_handle) = mempool_engine_handle {
-        engine_handle.abort();
-    }
 
     Ok(())
 }

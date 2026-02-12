@@ -1,9 +1,5 @@
 use std::sync::Arc;
 
-use account_abstraction_core::{
-    MempoolEvent,
-    domain::types::{VersionedUserOperation, WrappedUserOperation},
-};
 use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -68,34 +64,6 @@ impl MessageQueue for KafkaMessageQueue {
                 info!("retrying to enqueue message {:?} after {:?}", err, dur);
             })
             .await
-    }
-}
-
-pub struct UserOpQueuePublisher<Q: MessageQueue> {
-    queue: Arc<Q>,
-    topic: String,
-}
-
-impl<Q: MessageQueue> UserOpQueuePublisher<Q> {
-    pub fn new(queue: Arc<Q>, topic: String) -> Self {
-        Self { queue, topic }
-    }
-
-    pub async fn publish(&self, user_op: &VersionedUserOperation, hash: &B256) -> Result<()> {
-        let key = hash.to_string();
-        let event = self.create_user_op_added_event(user_op, hash);
-        let payload = serde_json::to_vec(&event)?;
-        self.queue.publish(&self.topic, &key, &payload).await
-    }
-
-    fn create_user_op_added_event(
-        &self,
-        user_op: &VersionedUserOperation,
-        hash: &B256,
-    ) -> MempoolEvent {
-        let wrapped_user_op = WrappedUserOperation { operation: user_op.clone(), hash: *hash };
-
-        MempoolEvent::UserOpAdded { user_op: wrapped_user_op }
     }
 }
 

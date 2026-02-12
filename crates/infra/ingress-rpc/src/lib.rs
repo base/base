@@ -76,26 +76,6 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC", default_value = "tips-audit")]
     pub audit_topic: String,
 
-    /// Kafka properties file for the user operation consumer
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_USER_OPERATION_CONSUMER_PROPERTIES_FILE")]
-    pub user_operation_consumer_properties: Option<String>,
-
-    /// Consumer group id for user operation topic (set uniquely per deployment)
-    #[arg(
-        long,
-        env = "TIPS_INGRESS_KAFKA_USER_OPERATION_CONSUMER_GROUP_ID",
-        default_value = "tips-user-operation"
-    )]
-    pub user_operation_consumer_group_id: String,
-
-    /// User operation topic for pushing valid user operations
-    #[arg(
-        long,
-        env = "TIPS_INGRESS_KAFKA_USER_OPERATION_TOPIC",
-        default_value = "tips-user-operation"
-    )]
-    pub user_operation_topic: String,
-
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
     pub log_level: String,
 
@@ -125,9 +105,6 @@ pub struct Config {
     /// Timeout for bundle metering in milliseconds (default: 2000 milliseconds)
     #[arg(long, env = "TIPS_INGRESS_METER_BUNDLE_TIMEOUT_MS", default_value = "2000")]
     pub meter_bundle_timeout_ms: u64,
-
-    #[arg(long, env = "TIPS_INGRESS_VALIDATE_USER_OPERATION_TIMEOUT_MS", default_value = "2000")]
-    pub validate_user_operation_timeout_ms: u64,
 
     /// URLs of the builder RPC service for setting metering information
     #[arg(long, env = "TIPS_INGRESS_BUILDER_RPCS", value_delimiter = ',')]

@@ -142,7 +142,6 @@ tips-core = { path = "crates/infra/core" }
 tips-audit-lib = { path = "crates/infra/audit" }
 tips-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 tips-system-tests = { path = "crates/infra/system-tests" }
-account-abstraction-core = { path = "crates/infra/account-abstraction-core" }
 
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
