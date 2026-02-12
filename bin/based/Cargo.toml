@@ -1,15 +1,15 @@
 [package]
-name = "sidecrush-bin"
+name = "based-bin"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "sidecrush"
+name = "based"
 path = "src/main.rs"
 
 [dependencies]
 clap = { workspace = true }
-sidecrush = { workspace = true }
+based = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }

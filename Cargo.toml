@@ -134,7 +134,7 @@ base-builder-publish = { path = "crates/builder/publish" }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
-sidecrush = { path = "crates/infra/sidecrush" }
+based = { path = "crates/infra/based" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Tips
