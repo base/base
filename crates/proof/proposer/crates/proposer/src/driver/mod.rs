@@ -11,6 +11,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use crate::enclave::EnclaveClientTrait;
 use crate::prover::{Prover, ProverProposal};
 use crate::rpc::{L1Client, L2Client, RollupClient};
 
@@ -38,14 +39,15 @@ impl Default for DriverConfig {
 
 /// The main driver that coordinates proposal generation.
 #[derive(Debug)]
-pub struct Driver<L1, L2, R>
+pub struct Driver<L1, L2, E, R>
 where
     L1: L1Client,
     L2: L2Client,
+    E: EnclaveClientTrait,
     R: RollupClient,
 {
     config: DriverConfig,
-    prover: Arc<Prover<L1, L2>>,
+    prover: Arc<Prover<L1, L2, E>>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
     cancel: CancellationToken,
@@ -53,16 +55,17 @@ where
     last_proposed_block: Option<u64>,
 }
 
-impl<L1, L2, R> Driver<L1, L2, R>
+impl<L1, L2, E, R> Driver<L1, L2, E, R>
 where
     L1: L1Client + 'static,
     L2: L2Client + 'static,
+    E: EnclaveClientTrait + 'static,
     R: RollupClient + 'static,
 {
     /// Creates a new driver with the given configuration.
     pub fn new(
         config: DriverConfig,
-        prover: Arc<Prover<L1, L2>>,
+        prover: Arc<Prover<L1, L2, E>>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
     ) -> Self {
@@ -164,9 +167,9 @@ where
     /// multiple proposals. For now, we just log the proposal.
     async fn handle_proposal(&self, proposal: ProverProposal) -> Result<()> {
         info!(
-            l2_block_number = proposal.l2_block_number,
-            l1_origin_number = proposal.l1_origin_number,
-            l1_origin_hash = ?proposal.l1_origin_hash,
+            l2_block_number = proposal.to.number,
+            l1_origin_number = proposal.to.l1origin.number,
+            l1_origin_hash = ?proposal.to.l1origin.hash,
             has_withdrawals = proposal.has_withdrawals,
             output_root = ?proposal.output.output_root,
             "Generated proposal"
