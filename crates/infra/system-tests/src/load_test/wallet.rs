@@ -1,11 +1,11 @@
+use std::{fs, path::Path};
+
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::{Context, Result};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletData {
@@ -45,9 +45,7 @@ pub fn generate_wallets(num_wallets: usize, seed: Option<u64>) -> Vec<Wallet> {
         None => ChaCha8Rng::from_entropy(),
     };
 
-    (0..num_wallets)
-        .map(|_| Wallet::new_random(&mut rng))
-        .collect()
+    (0..num_wallets).map(|_| Wallet::new_random(&mut rng)).collect()
 }
 
 pub fn save_wallets(wallets: &[Wallet], fund_amount: f64, path: &Path) -> Result<()> {
@@ -60,9 +58,7 @@ pub fn save_wallets(wallets: &[Wallet], fund_amount: f64, path: &Path) -> Result
         })
         .collect();
 
-    let wallets_file = WalletsFile {
-        wallets: wallet_data,
-    };
+    let wallets_file = WalletsFile { wallets: wallet_data };
 
     let json =
         serde_json::to_string_pretty(&wallets_file).context("Failed to serialize wallets")?;
@@ -76,11 +72,8 @@ pub fn load_wallets(path: &Path) -> Result<Vec<Wallet>> {
     let wallets_file: WalletsFile =
         serde_json::from_str(&json).context("Failed to parse wallets file")?;
 
-    let wallets: Result<Vec<Wallet>> = wallets_file
-        .wallets
-        .iter()
-        .map(|wd| Wallet::from_private_key(&wd.private_key))
-        .collect();
+    let wallets: Result<Vec<Wallet>> =
+        wallets_file.wallets.iter().map(|wd| Wallet::from_private_key(&wd.private_key)).collect();
 
     wallets
 }

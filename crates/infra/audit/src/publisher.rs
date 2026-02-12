@@ -1,8 +1,9 @@
-use crate::types::{BundleEvent, UserOpEvent};
 use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use tracing::{debug, error, info};
+
+use crate::types::{BundleEvent, UserOpEvent};
 
 /// Trait for publishing bundle events.
 #[async_trait]
@@ -42,11 +43,7 @@ impl KafkaBundleEventPublisher {
 
         let record = FutureRecord::to(&self.topic).key(&key).payload(&payload);
 
-        match self
-            .producer
-            .send(record, tokio::time::Duration::from_secs(5))
-            .await
-        {
+        match self.producer.send(record, tokio::time::Duration::from_secs(5)).await {
             Ok(_) => {
                 debug!(
                     bundle_id = %bundle_id,
@@ -157,11 +154,7 @@ impl KafkaUserOpEventPublisher {
 
         let record = FutureRecord::to(&self.topic).key(&key).payload(&payload);
 
-        match self
-            .producer
-            .send(record, tokio::time::Duration::from_secs(5))
-            .await
-        {
+        match self.producer.send(record, tokio::time::Duration::from_secs(5)).await {
             Ok(_) => {
                 debug!(
                     user_op_hash = %user_op_hash,

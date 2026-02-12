@@ -1,5 +1,6 @@
-use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use std::net::SocketAddr;
+
+use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use tracing::info;
 
 /// Health check handler that always returns 200 OK

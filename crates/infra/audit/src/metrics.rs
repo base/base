@@ -5,7 +5,7 @@ use metrics_derive::Metrics;
 #[derive(Metrics, Clone)]
 #[metrics(scope = "tips_audit")]
 pub struct Metrics {
-    /// Duration of archive_event operations.
+    /// Duration of `archive_event` operations.
     #[metric(describe = "Duration of archive_event")]
     pub archive_event_duration: Histogram,
 
@@ -13,7 +13,7 @@ pub struct Metrics {
     #[metric(describe = "Age of event when processed (now - event timestamp)")]
     pub event_age: Histogram,
 
-    /// Duration of Kafka read_event operations.
+    /// Duration of Kafka `read_event` operations.
     #[metric(describe = "Duration of Kafka read_event")]
     pub kafka_read_duration: Histogram,
 
@@ -21,7 +21,7 @@ pub struct Metrics {
     #[metric(describe = "Duration of Kafka commit")]
     pub kafka_commit_duration: Histogram,
 
-    /// Duration of update_bundle_history operations.
+    /// Duration of `update_bundle_history` operations.
     #[metric(describe = "Duration of update_bundle_history")]
     pub update_bundle_history_duration: Histogram,
 
@@ -29,11 +29,11 @@ pub struct Metrics {
     #[metric(describe = "Duration of update all transaction indexes")]
     pub update_tx_indexes_duration: Histogram,
 
-    /// Duration of S3 get_object operations.
+    /// Duration of S3 `get_object` operations.
     #[metric(describe = "Duration of S3 get_object")]
     pub s3_get_duration: Histogram,
 
-    /// Duration of S3 put_object operations.
+    /// Duration of S3 `put_object` operations.
     #[metric(describe = "Duration of S3 put_object")]
     pub s3_put_duration: Histogram,
 

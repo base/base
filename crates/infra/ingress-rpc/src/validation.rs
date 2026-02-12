@@ -1,3 +1,8 @@
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
 use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
@@ -6,8 +11,6 @@ use base_reth_rpc_types::{EthApiError, SignError, extract_l1_info_from_tx};
 use jsonrpsee::core::RpcResult;
 use op_alloy_network::Optimism;
 use op_revm::l1block::L1BlockInfo;
-use std::collections::HashSet;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tips_core::Bundle;
 use tokio::time::Instant;
 use tracing::warn;
@@ -95,10 +98,7 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
 pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -> RpcResult<()> {
     // Don't allow bundles to be submitted over 1 hour into the future
     // TODO: make the window configurable
-    let valid_timestamp_window = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+    let valid_timestamp_window = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
         + Duration::from_secs(3600).as_secs();
     if let Some(max_timestamp) = bundle.max_timestamp
         && max_timestamp > valid_timestamp_window
@@ -111,18 +111,14 @@ pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -
 
     // Check max gas limit for the entire bundle
     if bundle_gas > MAX_BUNDLE_GAS {
-        return Err(
-            EthApiError::InvalidParams("Bundle gas limit exceeds maximum allowed".into())
-                .into_rpc_err(),
-        );
+        return Err(EthApiError::InvalidParams("Bundle gas limit exceeds maximum allowed".into())
+            .into_rpc_err());
     }
 
     // Can only provide 3 transactions at once
     if bundle.txs.len() > 3 {
-        return Err(
-            EthApiError::InvalidParams("Bundle can only contain 3 transactions".into())
-                .into_rpc_err(),
-        );
+        return Err(EthApiError::InvalidParams("Bundle can only contain 3 transactions".into())
+            .into_rpc_err());
     }
 
     // Partial transaction dropping is not supported, `dropping_tx_hashes` must be empty
@@ -149,24 +145,19 @@ pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use alloy_consensus::SignableTransaction;
-    use alloy_consensus::TxEip1559;
-    use alloy_consensus::transaction::SignerRecoverable;
-    use alloy_primitives::Bytes;
-    use alloy_primitives::bytes;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+    use alloy_primitives::{Bytes, bytes};
     use alloy_signer_local::PrivateKeySigner;
     use op_alloy_consensus::OpTxEnvelope;
-    use op_alloy_network::TxSignerSync;
-    use op_alloy_network::eip2718::Encodable2718;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use op_alloy_network::{TxSignerSync, eip2718::Encodable2718};
+
+    use super::*;
 
     #[tokio::test]
     async fn test_err_bundle_max_timestamp_too_far_in_the_future() {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let too_far_in_the_future = current_time + 3601;
         let bundle = Bundle {
             txs: vec![],
@@ -288,17 +279,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_err_bundle_partial_transaction_dropping_not_supported() {
-        let bundle = Bundle {
-            txs: vec![],
-            dropping_tx_hashes: vec![B256::random()],
-            ..Default::default()
-        };
+        let bundle =
+            Bundle { txs: vec![], dropping_tx_hashes: vec![B256::random()], ..Default::default() };
         assert_eq!(
             validate_bundle(&bundle, 0, vec![]),
-            Err(
-                EthApiError::InvalidParams("Partial transaction dropping is not supported".into())
-                    .into_rpc_err()
-            )
+            Err(EthApiError::InvalidParams("Partial transaction dropping is not supported".into())
+                .into_rpc_err())
         );
     }
 

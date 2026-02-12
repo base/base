@@ -8,7 +8,7 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::BorrowedMessage,
 };
-use tips_audit_lib::types::BundleEvent;
+use tips_audit_lib::BundleEvent;
 use tips_core::{BundleExtensions, kafka::load_kafka_config_from_file};
 use tokio::time::{Instant, timeout};
 use uuid::Uuid;
@@ -43,15 +43,13 @@ fn build_kafka_consumer(properties_env: &str, default_path: &str) -> Result<Stre
             "group.id",
             format!(
                 "tips-system-tests-{}",
-                Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice())
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, props_file.as_bytes())
             ),
         )
         .set("enable.auto.commit", "false")
         .set("auto.offset.reset", "earliest");
 
-    client_config
-        .create()
-        .context("Failed to create Kafka consumer")
+    client_config.create().context("Failed to create Kafka consumer")
 }
 
 async fn wait_for_kafka_message<T>(
@@ -109,10 +107,11 @@ pub async fn wait_for_audit_event_by_hash(
             let payload = message.payload()?;
             let event: BundleEvent = serde_json::from_slice(payload).ok()?;
             // Match by bundle hash from the Received event
-            if let BundleEvent::Received { bundle, .. } = &event {
-                if bundle.bundle_hash() == expected_hash && matcher(&event) {
-                    return Some(event);
-                }
+            if let BundleEvent::Received { bundle, .. } = &event
+                && bundle.bundle_hash() == expected_hash
+                && matcher(&event)
+            {
+                return Some(event);
             }
             None
         },

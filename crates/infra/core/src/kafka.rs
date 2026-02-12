@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::fs;
+use std::{collections::HashMap, fs};
 
 pub fn load_kafka_config_from_file(
     properties_file_path: &str,

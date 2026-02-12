@@ -1,6 +1,8 @@
-use super::tracker::TransactionTracker;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use super::tracker::TransactionTracker;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestResults {
@@ -50,11 +52,7 @@ pub fn calculate_results(tracker: &Arc<TransactionTracker>, config: TestConfig) 
 
     let sent_rate = total_sent as f64 / actual_duration.as_secs_f64();
     let included_rate = total_included as f64 / actual_duration.as_secs_f64();
-    let success_rate = if total_sent > 0 {
-        total_included as f64 / total_sent as f64
-    } else {
-        0.0
-    };
+    let success_rate = if total_sent > 0 { total_included as f64 / total_sent as f64 } else { 0.0 };
 
     TestResults {
         config,
@@ -69,10 +67,6 @@ pub fn calculate_results(tracker: &Arc<TransactionTracker>, config: TestConfig) 
             success_rate,
             actual_duration_secs: actual_duration.as_secs_f64(),
         },
-        errors: ErrorResults {
-            send_errors,
-            reverted: total_reverted,
-            timed_out: total_timed_out,
-        },
+        errors: ErrorResults { send_errors, reverted: total_reverted, timed_out: total_timed_out },
     }
 }

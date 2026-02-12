@@ -1,7 +1,8 @@
-use super::tracker::TransactionTracker;
-use super::wallet::Wallet;
-use crate::client::TipsRpcClient;
-use crate::fixtures::create_load_test_transaction;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_provider::{Provider, RootProvider};
@@ -9,9 +10,10 @@ use anyhow::{Context, Result};
 use op_alloy_network::Optimism;
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::time::sleep;
+
+use super::{tracker::TransactionTracker, wallet::Wallet};
+use crate::{client::TipsRpcClient, fixtures::create_load_test_transaction};
 
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
@@ -36,15 +38,7 @@ impl<N: Network> SenderTask<N> {
         tracker: Arc<TransactionTracker>,
         rng: ChaCha8Rng,
     ) -> Self {
-        Self {
-            wallet,
-            client,
-            sequencer,
-            rate_per_wallet,
-            duration,
-            tracker,
-            rng,
-        }
+        Self { wallet, client, sequencer, rate_per_wallet, duration, tracker, rng }
     }
 
     pub async fn run(mut self) -> Result<()> {

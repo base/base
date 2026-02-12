@@ -1,11 +1,15 @@
-use crate::domain::types::{ValidationResult, VersionedUserOperation};
-use crate::services::interfaces::user_op_validator::UserOperationValidator;
+use std::sync::Arc;
+
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use op_alloy_network::Optimism;
-use std::sync::Arc;
 use tokio::time::{Duration, timeout};
+
+use crate::{
+    domain::types::{ValidationResult, VersionedUserOperation},
+    services::interfaces::user_op_validator::UserOperationValidator,
+};
 
 #[derive(Debug, Clone)]
 pub struct BaseNodeValidator {
@@ -18,10 +22,7 @@ impl BaseNodeValidator {
         simulation_provider: Arc<RootProvider<Optimism>>,
         validate_user_operation_timeout: u64,
     ) -> Self {
-        Self {
-            simulation_provider,
-            validate_user_operation_timeout,
-        }
+        Self { simulation_provider, validate_user_operation_timeout }
     }
 }
 
@@ -56,12 +57,12 @@ impl UserOperationValidator for BaseNodeValidator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_rpc_types::erc4337::UserOperation;
     use tokio::time::Duration;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    use super::*;
 
     const VALIDATION_TIMEOUT_SECS: u64 = 1;
     const LONG_DELAY_SECS: u64 = 3;
@@ -107,9 +108,7 @@ mod tests {
         let validator = new_validator(&mock_server);
         let user_operation = new_test_user_operation_v06();
 
-        let result = validator
-            .validate_user_operation(&user_operation, &Address::ZERO)
-            .await;
+        let result = validator.validate_user_operation(&user_operation, &Address::ZERO).await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Timeout"));
@@ -134,9 +133,7 @@ mod tests {
         let validator = new_validator(&mock_server);
         let user_operation = new_test_user_operation_v06();
 
-        let result = validator
-            .validate_user_operation(&user_operation, &Address::ZERO)
-            .await;
+        let result = validator.validate_user_operation(&user_operation, &Address::ZERO).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Internal error"));
     }
@@ -163,11 +160,9 @@ mod tests {
         let validator = new_validator(&mock_server);
         let user_operation = new_test_user_operation_v06();
 
-        let result = validator
-            .validate_user_operation(&user_operation, &Address::ZERO)
-            .await
-            .unwrap();
+        let result =
+            validator.validate_user_operation(&user_operation, &Address::ZERO).await.unwrap();
 
-        assert_eq!(result.valid, true);
+        assert!(result.valid);
     }
 }

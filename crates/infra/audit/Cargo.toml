@@ -29,5 +29,6 @@ aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "
 futures = { workspace = true }
 
 [dev-dependencies]
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }

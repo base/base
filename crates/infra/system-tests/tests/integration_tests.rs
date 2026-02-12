@@ -8,11 +8,11 @@ use anyhow::{Context, Result, bail};
 use common::kafka::wait_for_audit_event_by_hash;
 use op_alloy_network::Optimism;
 use serial_test::serial;
-use tips_audit_lib::types::BundleEvent;
+use tips_audit_lib::BundleEvent;
 use tips_core::BundleExtensions;
-use tips_system_tests::client::TipsRpcClient;
-use tips_system_tests::fixtures::{
-    create_funded_signer, create_optimism_provider, create_signed_transaction,
+use tips_system_tests::{
+    client::TipsRpcClient,
+    fixtures::{create_funded_signer, create_optimism_provider, create_signed_transaction},
 };
 use tokio::time::{Duration, Instant, sleep};
 
@@ -34,17 +34,10 @@ async fn wait_for_transaction_seen(
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     loop {
         if Instant::now() >= deadline {
-            bail!(
-                "Timed out waiting for transaction {} to appear on the sequencer",
-                tx_hash
-            );
+            bail!("Timed out waiting for transaction {} to appear on the sequencer", tx_hash);
         }
 
-        if provider
-            .get_transaction_by_hash(tx_hash.into())
-            .await?
-            .is_some()
-        {
+        if provider.get_transaction_by_hash(tx_hash).await?.is_some() {
             return Ok(());
         }
 
@@ -84,9 +77,7 @@ async fn test_send_raw_transaction_accepted() -> Result<()> {
 
     let sequencer_url = get_sequencer_url();
     let sequencer_provider = create_optimism_provider(&sequencer_url)?;
-    let nonce = sequencer_provider
-        .get_transaction_count(signer.address())
-        .await?;
+    let nonce = sequencer_provider.get_transaction_count(signer.address()).await?;
 
     let to = Address::from([0x11; 20]);
     let value = U256::from(1000);
@@ -139,9 +130,7 @@ async fn test_send_bundle_accepted() -> Result<()> {
 
     let sequencer_url = get_sequencer_url();
     let sequencer_provider = create_optimism_provider(&sequencer_url)?;
-    let nonce = sequencer_provider
-        .get_transaction_count(signer.address())
-        .await?;
+    let nonce = sequencer_provider.get_transaction_count(signer.address()).await?;
 
     let to = Address::from([0x11; 20]);
     let value = U256::from(1000);
@@ -176,10 +165,7 @@ async fn test_send_bundle_accepted() -> Result<()> {
         .context("Failed to send backrun bundle to TIPS")?;
 
     // Verify TIPS accepted the bundle and returned a hash
-    assert!(
-        !bundle_hash.bundle_hash.is_zero(),
-        "Bundle hash should not be zero"
-    );
+    assert!(!bundle_hash.bundle_hash.is_zero(), "Bundle hash should not be zero");
 
     // Verify bundle hash is calculated correctly: keccak256(concat(tx_hashes))
     let mut concatenated = Vec::new();
@@ -191,11 +177,12 @@ async fn test_send_bundle_accepted() -> Result<()> {
     );
 
     // Verify audit channel emitted a Received event for this bundle
-    let audit_event = wait_for_audit_event_by_hash(&bundle_hash.bundle_hash, |event| {
-        matches!(event, BundleEvent::Received { .. })
-    })
-    .await
-    .context("Failed to read audit event from Kafka")?;
+    let audit_event: BundleEvent =
+        wait_for_audit_event_by_hash(&bundle_hash.bundle_hash, |event| {
+            matches!(event, BundleEvent::Received { .. })
+        })
+        .await
+        .context("Failed to read audit event from Kafka")?;
     match audit_event {
         BundleEvent::Received { bundle, .. } => {
             assert_eq!(
@@ -208,21 +195,18 @@ async fn test_send_bundle_accepted() -> Result<()> {
     }
 
     // Wait for transaction to appear on sequencer
-    wait_for_transaction_seen(&sequencer_provider, tx_hash.into(), 60)
+    wait_for_transaction_seen(&sequencer_provider, tx_hash, 60)
         .await
         .context("Bundle transaction never appeared on sequencer")?;
 
     // Verify transaction receipt shows success
     let receipt = sequencer_provider
-        .get_transaction_receipt(tx_hash.into())
+        .get_transaction_receipt(tx_hash)
         .await
         .context("Failed to fetch transaction receipt")?
         .expect("Transaction receipt should exist after being seen on sequencer");
     assert!(receipt.status(), "Transaction should have succeeded");
-    assert!(
-        receipt.block_number().is_some(),
-        "Transaction should be included in a block"
-    );
+    assert!(receipt.block_number().is_some(), "Transaction should be included in a block");
 
     Ok(())
 }
@@ -246,9 +230,7 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
 
     let sequencer_url = get_sequencer_url();
     let sequencer_provider = create_optimism_provider(&sequencer_url)?;
-    let nonce = sequencer_provider
-        .get_transaction_count(signer.address())
-        .await?;
+    let nonce = sequencer_provider.get_transaction_count(signer.address()).await?;
 
     // Create two transactions
     let tx1 = create_signed_transaction(
@@ -273,14 +255,8 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
     let tx2_hash = keccak256(&tx2);
 
     // First send both transactions to mempool
-    client
-        .send_raw_transaction(tx1.clone())
-        .await
-        .context("Failed to send tx1 to mempool")?;
-    client
-        .send_raw_transaction(tx2.clone())
-        .await
-        .context("Failed to send tx2 to mempool")?;
+    client.send_raw_transaction(tx1.clone()).await.context("Failed to send tx1 to mempool")?;
+    client.send_raw_transaction(tx2.clone()).await.context("Failed to send tx2 to mempool")?;
 
     let bundle = Bundle {
         txs: vec![tx1, tx2],
@@ -301,10 +277,7 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
         .context("Failed to send multi-transaction backrun bundle to TIPS")?;
 
     // Verify TIPS accepted the bundle and returned a hash
-    assert!(
-        !bundle_hash.bundle_hash.is_zero(),
-        "Bundle hash should not be zero"
-    );
+    assert!(!bundle_hash.bundle_hash.is_zero(), "Bundle hash should not be zero");
 
     // Verify bundle hash is calculated correctly: keccak256(concat(all tx_hashes))
     let mut concatenated = Vec::new();
@@ -317,11 +290,12 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
     );
 
     // Verify audit channel emitted a Received event
-    let audit_event = wait_for_audit_event_by_hash(&bundle_hash.bundle_hash, |event| {
-        matches!(event, BundleEvent::Received { .. })
-    })
-    .await
-    .context("Failed to read audit event for 2-tx bundle")?;
+    let audit_event: BundleEvent =
+        wait_for_audit_event_by_hash(&bundle_hash.bundle_hash, |event| {
+            matches!(event, BundleEvent::Received { .. })
+        })
+        .await
+        .context("Failed to read audit event for 2-tx bundle")?;
     match audit_event {
         BundleEvent::Received { bundle, .. } => {
             assert_eq!(
@@ -334,25 +308,22 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
     }
 
     // Wait for both transactions to appear on sequencer
-    wait_for_transaction_seen(&sequencer_provider, tx1_hash.into(), 60)
+    wait_for_transaction_seen(&sequencer_provider, tx1_hash, 60)
         .await
         .context("Bundle tx1 never appeared on sequencer")?;
-    wait_for_transaction_seen(&sequencer_provider, tx2_hash.into(), 60)
+    wait_for_transaction_seen(&sequencer_provider, tx2_hash, 60)
         .await
         .context("Bundle tx2 never appeared on sequencer")?;
 
     // Verify both transaction receipts show success
     for (tx_hash, name) in [(tx1_hash, "tx1"), (tx2_hash, "tx2")] {
         let receipt = sequencer_provider
-            .get_transaction_receipt(tx_hash.into())
+            .get_transaction_receipt(tx_hash)
             .await
             .context(format!("Failed to fetch {name} receipt"))?
-            .expect(&format!("{name} receipt should exist"));
+            .unwrap_or_else(|| panic!("{name} receipt should exist"));
         assert!(receipt.status(), "{name} should have succeeded");
-        assert!(
-            receipt.block_number().is_some(),
-            "{name} should be included in a block"
-        );
+        assert!(receipt.block_number().is_some(), "{name} should be included in a block");
     }
 
     Ok(())

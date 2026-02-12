@@ -3,18 +3,18 @@ use alloy_provider::ProviderBuilder;
 use clap::Parser;
 use jsonrpsee::server::Server;
 use op_alloy_network::Optimism;
-use rdkafka::ClientConfig;
-use rdkafka::producer::FutureProducer;
+use rdkafka::{ClientConfig, producer::FutureProducer};
 use tips_audit_lib::{BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher};
-use tips_core::kafka::load_kafka_config_from_file;
-use tips_core::logger::init_logger_with_format;
-use tips_core::metrics::init_prometheus_exporter;
-use tips_core::{AcceptedBundle, MeterBundleResponse};
-use tips_ingress_rpc_lib::Config;
-use tips_ingress_rpc_lib::connect_ingress_to_builder;
-use tips_ingress_rpc_lib::health::bind_health_server;
-use tips_ingress_rpc_lib::queue::KafkaMessageQueue;
-use tips_ingress_rpc_lib::service::{IngressApiServer, IngressService, Providers};
+use tips_core::{
+    AcceptedBundle, MeterBundleResponse, kafka::load_kafka_config_from_file,
+    logger::init_logger_with_format, metrics::init_prometheus_exporter,
+};
+use tips_ingress_rpc_lib::{
+    Config, connect_ingress_to_builder,
+    health::bind_health_server,
+    queue::KafkaMessageQueue,
+    service::{IngressApiServer, IngressService, Providers},
+};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
@@ -56,9 +56,8 @@ async fn main() -> anyhow::Result<()> {
         }),
     };
 
-    let ingress_client_config = ClientConfig::from_iter(load_kafka_config_from_file(
-        &config.ingress_kafka_properties,
-    )?);
+    let ingress_client_config =
+        ClientConfig::from_iter(load_kafka_config_from_file(&config.ingress_kafka_properties)?);
 
     let queue_producer: FutureProducer = ingress_client_config.create()?;
 

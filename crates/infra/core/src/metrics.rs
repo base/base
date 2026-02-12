@@ -1,5 +1,6 @@
-use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
+
+use metrics_exporter_prometheus::PrometheusBuilder;
 
 pub fn init_prometheus_exporter(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     PrometheusBuilder::new()

@@ -1,10 +1,22 @@
-use account_abstraction_core::domain::ReputationService;
-use account_abstraction_core::infrastructure::base_node::validator::BaseNodeValidator;
-use account_abstraction_core::services::ReputationServiceImpl;
-use account_abstraction_core::services::interfaces::user_op_validator::UserOperationValidator;
-use account_abstraction_core::{Mempool, MempoolEngine};
-use alloy_consensus::transaction::Recovered;
-use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use account_abstraction_core::{
+    Mempool, MempoolEngine,
+    domain::{
+        ReputationService,
+        entrypoints::version::EntryPointVersion,
+        types::{UserOperationRequest, VersionedUserOperation},
+    },
+    infrastructure::base_node::validator::BaseNodeValidator,
+    services::{ReputationServiceImpl, interfaces::user_op_validator::UserOperationValidator},
+};
+use alloy_consensus::{
+    Transaction,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use base_reth_rpc_types::EthApiError;
@@ -15,23 +27,23 @@ use jsonrpsee::{
 use moka::future::Cache;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tips_audit_lib::BundleEvent;
-use tips_core::types::ParsedBundle;
 use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
+    types::ParsedBundle,
 };
-use tokio::sync::{broadcast, mpsc};
-use tokio::time::{Duration, Instant, timeout};
+use tokio::{
+    sync::{broadcast, mpsc},
+    time::{Duration, Instant, timeout},
+};
 use tracing::{debug, info, warn};
 
-use crate::metrics::{Metrics, record_histogram};
-use crate::queue::{BundleQueuePublisher, MessageQueue, UserOpQueuePublisher};
-use crate::validation::validate_bundle;
-use crate::{Config, TxSubmissionMethod};
-use account_abstraction_core::domain::entrypoints::version::EntryPointVersion;
-use account_abstraction_core::domain::types::{UserOperationRequest, VersionedUserOperation};
-use std::sync::Arc;
+use crate::{
+    Config, TxSubmissionMethod,
+    metrics::{Metrics, record_histogram},
+    queue::{BundleQueuePublisher, MessageQueue, UserOpQueuePublisher},
+    validation::validate_bundle,
+};
 
 /// RPC providers for different endpoints
 pub struct Providers {
@@ -113,9 +125,8 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
             .map(|engine| Arc::new(ReputationServiceImpl::new(engine.get_mempool())));
 
         // A TTL cache to deduplicate bundles with the same Bundle ID
-        let bundle_cache = Cache::builder()
-            .time_to_live(Duration::from_secs(config.bundle_cache_ttl))
-            .build();
+        let bundle_cache =
+            Cache::builder().time_to_live(Duration::from_secs(config.bundle_cache_ttl)).build();
         Self {
             mempool_provider,
             simulation_provider,
@@ -156,7 +167,7 @@ fn validate_backrun_bundle_limits(
 ) -> Result<(), String> {
     if txs_count < 2 {
         return Err(
-            "Backrun bundle must have at least 2 transactions (target + backrun)".to_string(),
+            "Backrun bundle must have at least 2 transactions (target + backrun)".to_string()
         );
     }
     if txs_count > max_backrun_txs {
@@ -176,10 +187,8 @@ fn validate_backrun_bundle_limits(
 impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for IngressService<Q, M> {
     async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
         if !self.backrun_enabled {
-            return Err(
-                EthApiError::InvalidParams("Backrun bundle submission is disabled".into())
-                    .into_rpc_err(),
-            );
+            return Err(EthApiError::InvalidParams("Backrun bundle submission is disabled".into())
+                .into_rpc_err());
         }
 
         let start = Instant::now();
@@ -197,18 +206,13 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
 
         self.metrics.backrun_bundles_received_total.increment(1);
 
-        self.builder_backrun_tx
-            .send(accepted_bundle.clone())
-            .map_err(|e| {
-                EthApiError::InvalidParams(format!("Failed to send backrun bundle: {e}"))
-                    .into_rpc_err()
-            })?;
+        self.builder_backrun_tx.send(accepted_bundle.clone()).map_err(|e| {
+            EthApiError::InvalidParams(format!("Failed to send backrun bundle: {e}")).into_rpc_err()
+        })?;
 
         self.send_audit_event(&accepted_bundle, bundle_hash);
 
-        self.metrics
-            .backrun_bundles_sent_duration
-            .record(start.elapsed().as_secs_f64());
+        self.metrics.backrun_bundles_sent_duration.record(start.elapsed().as_secs_f64());
 
         Ok(BundleHash { bundle_hash })
     }
@@ -226,11 +230,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
             .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
 
         // publish the bundle to the queue
-        if let Err(e) = self
-            .bundle_queue_publisher
-            .publish(&accepted_bundle, &bundle_hash)
-            .await
-        {
+        if let Err(e) = self.bundle_queue_publisher.publish(&accepted_bundle, &bundle_hash).await {
             warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
             return Err(EthApiError::InvalidParams("Failed to queue bundle".into()).into_rpc_err());
         }
@@ -247,10 +247,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
     }
 
     async fn cancel_bundle(&self, _request: CancelBundle) -> RpcResult<()> {
-        warn!(
-            message = "TODO: implement cancel_bundle",
-            method = "cancel_bundle"
-        );
+        warn!(message = "TODO: implement cancel_bundle", method = "cancel_bundle");
         todo!("implement cancel_bundle")
     }
 
@@ -275,10 +272,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
             let tx_data = data.clone();
             let tx_hash = transaction.tx_hash();
             tokio::spawn(async move {
-                match forward_provider
-                    .send_raw_transaction(tx_data.iter().as_slice())
-                    .await
-                {
+                match forward_provider.send_raw_transaction(tx_data.iter().as_slice()).await {
                     Ok(_) => {
                         debug!(message = "Forwarded raw tx", hash = %tx_hash);
                     }
@@ -289,10 +283,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
             });
         }
 
-        let expiry_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+        let expiry_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
             + self.send_transaction_default_lifetime_seconds;
 
         let bundle = Bundle {
@@ -347,10 +338,8 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
                 AcceptedBundle::new(parsed_bundle, meter_bundle_response.unwrap_or_default());
 
             if send_to_kafka {
-                if let Err(e) = self
-                    .bundle_queue_publisher
-                    .publish(&accepted_bundle, bundle_hash)
-                    .await
+                if let Err(e) =
+                    self.bundle_queue_publisher.publish(&accepted_bundle, bundle_hash).await
                 {
                     warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
                 }
@@ -360,10 +349,8 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
             }
 
             if send_to_mempool {
-                let response = self
-                    .mempool_provider
-                    .send_raw_transaction(data.iter().as_slice())
-                    .await;
+                let response =
+                    self.mempool_provider.send_raw_transaction(data.iter().as_slice()).await;
                 match response {
                     Ok(_) => {
                         self.metrics.sent_to_mempool.increment(1);
@@ -384,9 +371,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
             self.send_audit_event(&accepted_bundle, accepted_bundle.bundle_hash());
         }
 
-        self.metrics
-            .send_raw_transaction_duration
-            .record(start.elapsed().as_secs_f64());
+        self.metrics.send_raw_transaction_duration.record(start.elapsed().as_secs_f64());
 
         Ok(transaction.tx_hash())
     }
@@ -422,9 +407,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
         };
 
         if let Some(reputation_service) = &self.reputation_service {
-            let _ = reputation_service
-                .get_reputation(&request.user_operation.sender())
-                .await;
+            let _ = reputation_service.get_reputation(&request.user_operation.sender()).await;
         }
 
         let user_op_hash = request.hash().map_err(|e| {
@@ -441,10 +424,8 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
                 EthApiError::InvalidParams(e.to_string()).into_rpc_err()
             })?;
 
-        if let Err(e) = self
-            .user_op_queue_publisher
-            .publish(&request.user_operation, &user_op_hash)
-            .await
+        if let Err(e) =
+            self.user_op_queue_publisher.publish(&request.user_operation, &user_op_hash).await
         {
             warn!(
                 message = "Failed to publish user operation to queue",
@@ -452,7 +433,7 @@ impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for Ingre
                 error = %e
             );
             return Err(
-                EthApiError::InvalidParams("Failed to queue user operation".into()).into_rpc_err(),
+                EthApiError::InvalidParams("Failed to queue user operation".into()).into_rpc_err()
             );
         }
 
@@ -479,10 +460,8 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
     async fn validate_bundle(&self, bundle: &Bundle) -> RpcResult<()> {
         let start = Instant::now();
         if bundle.txs.is_empty() {
-            return Err(
-                EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
-                    .into_rpc_err(),
-            );
+            return Err(EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
+                .into_rpc_err());
         }
 
         let mut total_gas = 0u64;
@@ -494,9 +473,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
         }
         validate_bundle(bundle, total_gas, tx_hashes)?;
 
-        self.metrics
-            .validate_bundle_duration
-            .record(start.elapsed().as_secs_f64());
+        self.metrics.validate_bundle_duration.record(start.elapsed().as_secs_f64());
         Ok(())
     }
 
@@ -518,9 +495,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
         // >
         let res: MeterBundleResponse = timeout(
             timeout_duration,
-            self.simulation_provider
-                .client()
-                .request("base_meterBundle", (bundle,)),
+            self.simulation_provider.client().request("base_meterBundle", (bundle,)),
         )
         .await
         .map_err(|_| {
@@ -537,7 +512,7 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
         if total_execution_time > self.block_time_milliseconds {
             self.metrics.bundles_exceeded_metering_time.increment(1);
             return Err(
-                EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err(),
+                EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err()
             );
         }
         Ok(res)
@@ -582,26 +557,32 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
-    use account_abstraction_core::MempoolEvent;
-    use account_abstraction_core::domain::PoolConfig;
-    use account_abstraction_core::infrastructure::in_memory::mempool::InMemoryMempool;
-    use account_abstraction_core::services::interfaces::event_source::EventSource;
+    use std::{
+        net::{IpAddr, SocketAddr},
+        str::FromStr,
+    };
+
+    use account_abstraction_core::{
+        MempoolEvent, domain::PoolConfig, infrastructure::in_memory::mempool::InMemoryMempool,
+        services::interfaces::event_source::EventSource,
+    };
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
-    use jsonrpsee::core::client::ClientT;
-    use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-    use jsonrpsee::server::{ServerBuilder, ServerHandle};
+    use jsonrpsee::{
+        core::client::ClientT,
+        http_client::{HttpClient, HttpClientBuilder},
+        server::{ServerBuilder, ServerHandle},
+    };
     use mockall::mock;
     use serde_json::json;
-    use std::net::{IpAddr, SocketAddr};
-    use std::str::FromStr;
     use tips_core::test_utils::create_test_meter_bundle_response;
     use tokio::sync::{RwLock, broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    use super::*;
+    use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
     struct MockQueue;
 
     #[async_trait]
@@ -661,9 +642,7 @@ mod tests {
         let addr = server.local_addr().unwrap();
         let handle = server.start(mock.into_rpc());
 
-        let client = HttpClientBuilder::default()
-            .build(format!("http://{}", addr))
-            .unwrap();
+        let client = HttpClientBuilder::default().build(format!("http://{}", addr)).unwrap();
 
         (client, handle)
     }
@@ -823,9 +802,7 @@ mod tests {
         let providers = Providers {
             mempool: RootProvider::new_http(simulation_server.uri().parse().unwrap()),
             simulation: RootProvider::new_http(simulation_server.uri().parse().unwrap()),
-            raw_tx_forward: Some(RootProvider::new_http(
-                forward_server.uri().parse().unwrap(),
-            )),
+            raw_tx_forward: Some(RootProvider::new_http(forward_server.uri().parse().unwrap())),
         };
 
         let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
@@ -877,9 +854,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_user_operation_accepts_valid_payload() {
         let mut mock = MockIngressApi::new();
-        mock.expect_send_user_operation()
-            .times(1)
-            .returning(|_, _| Ok(FixedBytes::ZERO));
+        mock.expect_send_user_operation().times(1).returning(|_, _| Ok(FixedBytes::ZERO));
 
         let (client, _handle) = setup_rpc_server(mock).await;
 
@@ -887,9 +862,8 @@ mod tests {
         let entry_point =
             account_abstraction_core::domain::entrypoints::version::EntryPointVersion::V06_ADDRESS;
 
-        let result: Result<FixedBytes<32>, _> = client
-            .request("eth_sendUserOperation", (user_op, entry_point))
-            .await;
+        let result: Result<FixedBytes<32>, _> =
+            client.request("eth_sendUserOperation", (user_op, entry_point)).await;
 
         assert!(result.is_ok());
     }
@@ -897,9 +871,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_user_operation_rejects_invalid_payload() {
         let mut mock = MockIngressApi::new();
-        mock.expect_send_user_operation()
-            .times(0)
-            .returning(|_, _| Ok(FixedBytes::ZERO));
+        mock.expect_send_user_operation().times(0).returning(|_, _| Ok(FixedBytes::ZERO));
 
         let (client, _handle) = setup_rpc_server(mock).await;
 
@@ -922,9 +894,8 @@ mod tests {
             "signature": "0x42eff6474dd0b7efd0ca3070e05ee0f3e3c6c665176b80c7768f59445d3415de30b65c4c6ae35c45822b726e8827a986765027e7e2d7d2a8d72c9cf0d23194b81c"
         });
 
-        let wrong_user_op_result: Result<FixedBytes<32>, _> = client
-            .request("eth_sendUserOperation", (wrong_user_op, Address::ZERO))
-            .await;
+        let wrong_user_op_result: Result<FixedBytes<32>, _> =
+            client.request("eth_sendUserOperation", (wrong_user_op, Address::ZERO)).await;
 
         assert!(wrong_user_op_result.is_err());
     }
@@ -939,11 +910,7 @@ mod tests {
         // Exceeds max tx count
         let result = validate_backrun_bundle_limits(6, 21000, 5, 5000000);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("exceeds max transaction count")
-        );
+        assert!(result.unwrap_err().contains("exceeds max transaction count"));
 
         // Exceeds max gas limit
         let result = validate_backrun_bundle_limits(2, 6000000, 5, 5000000);

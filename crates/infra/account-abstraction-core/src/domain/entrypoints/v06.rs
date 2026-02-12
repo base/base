@@ -69,9 +69,10 @@ pub fn hash_user_operation(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{Bytes, U256, address, b256, bytes};
     use alloy_rpc_types::erc4337;
+
+    use super::*;
 
     #[test]
     fn test_hash_zeroed() {
@@ -91,15 +92,9 @@ mod tests {
             signature: Bytes::default(),
         };
 
-        let hash = hash_user_operation(
-            &user_op_with_zeroed_init_code,
-            entry_point_address_v0_6,
-            chain_id,
-        );
-        assert_eq!(
-            hash,
-            b256!("dca97c3b49558ab360659f6ead939773be8bf26631e61bb17045bb70dc983b2d")
-        );
+        let hash =
+            hash_user_operation(&user_op_with_zeroed_init_code, entry_point_address_v0_6, chain_id);
+        assert_eq!(hash, b256!("dca97c3b49558ab360659f6ead939773be8bf26631e61bb17045bb70dc983b2d"));
     }
 
     #[test]
@@ -109,12 +104,8 @@ mod tests {
         let user_op_with_non_zeroed_init_code = erc4337::UserOperation {
             sender: address!("0x1306b01bc3e4ad202612d3843387e94737673f53"),
             nonce: U256::from(8942),
-            init_code: "0x6942069420694206942069420694206942069420"
-                .parse()
-                .unwrap(),
-            call_data: "0x0000000000000000000000000000000000000000080085"
-                .parse()
-                .unwrap(),
+            init_code: "0x6942069420694206942069420694206942069420".parse().unwrap(),
+            call_data: "0x0000000000000000000000000000000000000000080085".parse().unwrap(),
             call_gas_limit: U256::from(10_000),
             verification_gas_limit: U256::from(100_000),
             pre_verification_gas: U256::from(100),
@@ -131,9 +122,6 @@ mod tests {
             entry_point_address_v0_6,
             chain_id,
         );
-        assert_eq!(
-            hash,
-            b256!("484add9e4d8c3172d11b5feb6a3cc712280e176d278027cfa02ee396eb28afa1")
-        );
+        assert_eq!(hash, b256!("484add9e4d8c3172d11b5feb6a3cc712280e176d278027cfa02ee396eb28afa1"));
     }
 }

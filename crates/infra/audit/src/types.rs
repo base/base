@@ -100,11 +100,11 @@ impl BundleEvent {
     /// Returns the bundle ID for this event.
     pub const fn bundle_id(&self) -> BundleId {
         match self {
-            Self::Received { bundle_id, .. } => *bundle_id,
-            Self::Cancelled { bundle_id, .. } => *bundle_id,
-            Self::BuilderIncluded { bundle_id, .. } => *bundle_id,
-            Self::BlockIncluded { bundle_id, .. } => *bundle_id,
-            Self::Dropped { bundle_id, .. } => *bundle_id,
+            Self::Received { bundle_id, .. }
+            | Self::Cancelled { bundle_id, .. }
+            | Self::BuilderIncluded { bundle_id, .. }
+            | Self::BlockIncluded { bundle_id, .. }
+            | Self::Dropped { bundle_id, .. } => *bundle_id,
         }
     }
 
@@ -122,21 +122,17 @@ impl BundleEvent {
                     })
                 })
                 .collect(),
-            Self::Cancelled { .. } => vec![],
-            Self::BuilderIncluded { .. } => vec![],
-            Self::BlockIncluded { .. } => vec![],
-            Self::Dropped { .. } => vec![],
+            Self::Cancelled { .. }
+            | Self::BuilderIncluded { .. }
+            | Self::BlockIncluded { .. }
+            | Self::Dropped { .. } => vec![],
         }
     }
 
     /// Generates a unique event key for this event.
     pub fn generate_event_key(&self) -> String {
         match self {
-            Self::BlockIncluded {
-                bundle_id,
-                block_hash,
-                ..
-            } => {
+            Self::BlockIncluded { bundle_id, block_hash, .. } => {
                 format!("{bundle_id}-{block_hash}")
             }
             _ => {
@@ -187,20 +183,16 @@ impl UserOpEvent {
     /// Returns the user operation hash for this event.
     pub const fn user_op_hash(&self) -> UserOpHash {
         match self {
-            Self::AddedToMempool { user_op_hash, .. } => *user_op_hash,
-            Self::Dropped { user_op_hash, .. } => *user_op_hash,
-            Self::Included { user_op_hash, .. } => *user_op_hash,
+            Self::AddedToMempool { user_op_hash, .. }
+            | Self::Dropped { user_op_hash, .. }
+            | Self::Included { user_op_hash, .. } => *user_op_hash,
         }
     }
 
     /// Generates a unique event key for this event.
     pub fn generate_event_key(&self) -> String {
         match self {
-            Self::Included {
-                user_op_hash,
-                tx_hash,
-                ..
-            } => {
+            Self::Included { user_op_hash, tx_hash, .. } => {
                 format!("{user_op_hash}-{tx_hash}")
             }
             _ => {
@@ -216,8 +208,9 @@ impl UserOpEvent {
 
 #[cfg(test)]
 mod user_op_event_tests {
-    use super::*;
     use alloy_primitives::{address, b256};
+
+    use super::*;
 
     fn create_test_user_op_hash() -> UserOpHash {
         b256!("1111111111111111111111111111111111111111111111111111111111111111")
@@ -282,10 +275,8 @@ mod user_op_event_tests {
         };
         assert_eq!(added.user_op_hash(), hash);
 
-        let dropped = UserOpEvent::Dropped {
-            user_op_hash: hash,
-            reason: UserOpDropReason::Expired,
-        };
+        let dropped =
+            UserOpEvent::Dropped { user_op_hash: hash, reason: UserOpDropReason::Expired };
         assert_eq!(dropped.user_op_hash(), hash);
 
         let included = UserOpEvent::Included {
@@ -302,11 +293,7 @@ mod user_op_event_tests {
             b256!("1111111111111111111111111111111111111111111111111111111111111111");
         let tx_hash = b256!("2222222222222222222222222222222222222222222222222222222222222222");
 
-        let event = UserOpEvent::Included {
-            user_op_hash,
-            block_number: 100,
-            tx_hash,
-        };
+        let event = UserOpEvent::Included { user_op_hash, block_number: 100, tx_hash };
 
         let key = event.generate_event_key();
         assert!(key.contains(&format!("{user_op_hash}")));

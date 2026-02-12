@@ -12,12 +12,9 @@ pub use domain::{
     mempool::{Mempool, PoolConfig},
     types::{ValidationResult, VersionedUserOperation, WrappedUserOperation},
 };
-
+pub use factories::kafka_engine::create_mempool_engine;
 pub use infrastructure::in_memory::InMemoryMempool;
-
 pub use services::{
     interfaces::{event_source::EventSource, user_op_validator::UserOperationValidator},
     mempool_engine::MempoolEngine,
 };
-
-pub use factories::kafka_engine::create_mempool_engine;

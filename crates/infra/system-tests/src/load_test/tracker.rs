@@ -1,8 +1,13 @@
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
 use alloy_primitives::B256;
 use dashmap::DashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 pub struct TransactionTracker {
     // Pending transactions (tx_hash -> send_time)
@@ -65,10 +70,7 @@ impl TransactionTracker {
     }
 
     pub fn get_pending(&self) -> Vec<(B256, Instant)> {
-        self.pending
-            .iter()
-            .map(|entry| (*entry.key(), *entry.value()))
-            .collect()
+        self.pending.iter().map(|entry| (*entry.key(), *entry.value())).collect()
     }
 
     pub fn mark_test_completed(&self) {

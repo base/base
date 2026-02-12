@@ -1,10 +1,9 @@
-use rdkafka::producer::FutureProducer;
-use rdkafka::{ClientConfig, consumer::StreamConsumer};
+use rdkafka::{ClientConfig, consumer::StreamConsumer, producer::FutureProducer};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::{kafka, kafka::Kafka, minio::MinIO};
 use uuid::Uuid;
 
-pub struct TestHarness {
+pub(crate) struct TestHarness {
     pub s3_client: aws_sdk_s3::Client,
     pub bucket_name: String,
     #[allow(dead_code)] // TODO is read
@@ -16,7 +15,7 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub(crate) async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let minio_container = MinIO::default().start().await?;
         let s3_port = minio_container.get_host_port_ipv4(9000).await?;
         let s3_endpoint = format!("http://127.0.0.1:{s3_port}");
@@ -35,24 +34,14 @@ impl TestHarness {
             .await;
 
         let s3_client = aws_sdk_s3::Client::new(&config);
-        let bucket_name = format!(
-            "test-bucket-{}",
-            Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice())
-        );
+        let bucket_name =
+            format!("test-bucket-{}", Uuid::new_v5(&Uuid::NAMESPACE_OID, s3_endpoint.as_bytes()));
 
-        s3_client
-            .create_bucket()
-            .bucket(&bucket_name)
-            .send()
-            .await?;
+        s3_client.create_bucket().bucket(&bucket_name).send().await?;
 
         let kafka_container = Kafka::default().start().await?;
-        let bootstrap_servers = format!(
-            "127.0.0.1:{}",
-            kafka_container
-                .get_host_port_ipv4(kafka::KAFKA_PORT)
-                .await?
-        );
+        let bootstrap_servers =
+            format!("127.0.0.1:{}", kafka_container.get_host_port_ipv4(kafka::KAFKA_PORT).await?);
 
         let kafka_producer = ClientConfig::new()
             .set("bootstrap.servers", &bootstrap_servers)
@@ -69,7 +58,7 @@ impl TestHarness {
             .create::<StreamConsumer>()
             .expect("Failed to create Kafka StreamConsumer");
 
-        Ok(TestHarness {
+        Ok(Self {
             s3_client,
             bucket_name,
             kafka_producer,

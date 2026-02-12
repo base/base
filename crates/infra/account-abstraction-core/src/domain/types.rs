@@ -1,9 +1,10 @@
-use super::entrypoints::{v06, v07, version::EntryPointVersion};
 use alloy_primitives::{Address, B256, ChainId, FixedBytes, U256};
 use alloy_rpc_types::erc4337;
 pub use alloy_rpc_types::erc4337::SendUserOperationResponse;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+
+use super::entrypoints::{v06, v07, version::EntryPointVersion};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
@@ -53,15 +54,13 @@ impl UserOperationRequest {
             .map_err(|_| anyhow::anyhow!("Unknown entry point version: {:#x}", self.entry_point))?;
 
         match (&self.user_operation, entry_point_version) {
-            (VersionedUserOperation::UserOperation(op), EntryPointVersion::V06) => Ok(
-                v06::hash_user_operation(op, self.entry_point, self.chain_id),
-            ),
-            (VersionedUserOperation::PackedUserOperation(op), EntryPointVersion::V07) => Ok(
-                v07::hash_user_operation(op, self.entry_point, self.chain_id),
-            ),
-            _ => Err(anyhow::anyhow!(
-                "Mismatched operation type and entry point version"
-            )),
+            (VersionedUserOperation::UserOperation(op), EntryPointVersion::V06) => {
+                Ok(v06::hash_user_operation(op, self.entry_point, self.chain_id))
+            }
+            (VersionedUserOperation::PackedUserOperation(op), EntryPointVersion::V07) => {
+                Ok(v07::hash_user_operation(op, self.entry_point, self.chain_id))
+            }
+            _ => Err(anyhow::anyhow!("Mismatched operation type and entry point version")),
         }
     }
 }
@@ -134,8 +133,9 @@ impl WrappedUserOperation {
 mod tests {
     use std::str::FromStr;
 
-    use super::*;
     use alloy_primitives::{Address, Uint};
+
+    use super::*;
 
     #[test]
     fn deser_untagged_user_operation_without_type_field() {

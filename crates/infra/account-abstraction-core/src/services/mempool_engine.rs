@@ -1,8 +1,10 @@
-use super::interfaces::event_source::EventSource;
-use crate::domain::{events::MempoolEvent, mempool::Mempool};
 use std::sync::Arc;
+
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+
+use super::interfaces::event_source::EventSource;
+use crate::domain::{events::MempoolEvent, mempool::Mempool};
 
 pub struct MempoolEngine<T: Mempool> {
     mempool: Arc<RwLock<T>>,
@@ -11,10 +13,7 @@ pub struct MempoolEngine<T: Mempool> {
 
 impl<T: Mempool> MempoolEngine<T> {
     pub fn new(mempool: Arc<RwLock<T>>, event_source: Arc<dyn EventSource>) -> MempoolEngine<T> {
-        Self {
-            mempool,
-            event_source,
-        }
+        Self { mempool, event_source }
     }
 
     pub fn get_mempool(&self) -> Arc<RwLock<T>> {
@@ -56,17 +55,20 @@ impl<T: Mempool> MempoolEngine<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::domain::{
-        mempool::PoolConfig,
-        types::{VersionedUserOperation, WrappedUserOperation},
-    };
-    use crate::infrastructure::in_memory::mempool::InMemoryMempool;
-    use crate::services::interfaces::event_source::EventSource;
     use alloy_primitives::{Address, FixedBytes, Uint};
     use alloy_rpc_types::erc4337;
     use async_trait::async_trait;
     use tokio::sync::Mutex;
+
+    use super::*;
+    use crate::{
+        domain::{
+            mempool::PoolConfig,
+            types::{VersionedUserOperation, WrappedUserOperation},
+        },
+        infrastructure::in_memory::mempool::InMemoryMempool,
+        services::interfaces::event_source::EventSource,
+    };
 
     fn make_wrapped_op(max_fee: u128, hash: [u8; 32]) -> WrappedUserOperation {
         let op = VersionedUserOperation::UserOperation(erc4337::UserOperation {
@@ -83,10 +85,7 @@ mod tests {
             signature: Default::default(),
         });
 
-        WrappedUserOperation {
-            operation: op,
-            hash: FixedBytes::from(hash),
-        }
+        WrappedUserOperation { operation: op, hash: FixedBytes::from(hash) }
     }
 
     struct MockEventSource {
@@ -95,9 +94,7 @@ mod tests {
 
     impl MockEventSource {
         fn new(events: Vec<MempoolEvent>) -> Self {
-            Self {
-                events: Mutex::new(events),
-            }
+            Self { events: Mutex::new(events) }
         }
     }
 
@@ -120,9 +117,7 @@ mod tests {
         let op_hash = [1u8; 32];
         let wrapped = make_wrapped_op(1_000, op_hash);
 
-        let add_event = MempoolEvent::UserOpAdded {
-            user_op: wrapped.clone(),
-        };
+        let add_event = MempoolEvent::UserOpAdded { user_op: wrapped.clone() };
         let mock_source = Arc::new(MockEventSource::new(vec![add_event]));
 
         let engine = MempoolEngine::new(mempool.clone(), mock_source);
@@ -138,13 +133,9 @@ mod tests {
         let mempool = Arc::new(RwLock::new(InMemoryMempool::new(PoolConfig::default())));
         let op_hash = [1u8; 32];
         let wrapped = make_wrapped_op(1_000, op_hash);
-        let add_event = MempoolEvent::UserOpAdded {
-            user_op: wrapped.clone(),
-        };
-        let remove_event = MempoolEvent::UserOpDropped {
-            user_op: wrapped.clone(),
-            reason: "test".to_string(),
-        };
+        let add_event = MempoolEvent::UserOpAdded { user_op: wrapped.clone() };
+        let remove_event =
+            MempoolEvent::UserOpDropped { user_op: wrapped.clone(), reason: "test".to_string() };
         let mock_source = Arc::new(MockEventSource::new(vec![add_event, remove_event]));
 
         let engine = MempoolEngine::new(mempool.clone(), mock_source);

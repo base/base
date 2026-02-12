@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "load-test")]

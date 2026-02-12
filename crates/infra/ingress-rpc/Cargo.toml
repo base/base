@@ -12,7 +12,6 @@ url.workspace = true
 tips-core.workspace = true
 op-revm.workspace = true
 metrics.workspace = true
-dotenvy.workspace = true
 tips-audit-lib.workspace = true
 async-trait.workspace = true
 metrics-derive.workspace = true

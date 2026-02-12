@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
+use alloy_primitives::Address;
+use async_trait::async_trait;
+use tokio::sync::RwLock;
+
 use crate::{
     Mempool,
     domain::{ReputationService, ReputationStatus},
 };
-use alloy_primitives::Address;
-use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 pub struct ReputationServiceImpl<T: Mempool> {
     mempool: Arc<RwLock<T>>,

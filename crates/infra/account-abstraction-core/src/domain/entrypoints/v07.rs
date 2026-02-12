@@ -8,8 +8,7 @@
  *
  * Reference: rundler/crates/types/src/user_operation/v0_7.rs:1094-1123
  */
-use alloy_primitives::{Address, ChainId, FixedBytes, U256};
-use alloy_primitives::{Bytes, keccak256};
+use alloy_primitives::{Address, Bytes, ChainId, FixedBytes, U256, keccak256};
 use alloy_rpc_types::erc4337;
 use alloy_sol_types::{SolValue, sol};
 
@@ -60,16 +59,10 @@ impl From<erc4337::PackedUserOperation> for PackedUserOperation {
         let account_gas_limits =
             pack_u256_pair_to_bytes32(uo.verification_gas_limit, uo.call_gas_limit);
         let gas_fees = pack_u256_pair_to_bytes32(uo.max_priority_fee_per_gas, uo.max_fee_per_gas);
-        let pvgl: [u8; 16] = uo
-            .paymaster_verification_gas_limit
-            .unwrap_or_default()
-            .to::<u128>()
-            .to_be_bytes();
-        let pogl: [u8; 16] = uo
-            .paymaster_post_op_gas_limit
-            .unwrap_or_default()
-            .to::<u128>()
-            .to_be_bytes();
+        let pvgl: [u8; 16] =
+            uo.paymaster_verification_gas_limit.unwrap_or_default().to::<u128>().to_be_bytes();
+        let pogl: [u8; 16] =
+            uo.paymaster_post_op_gas_limit.unwrap_or_default().to::<u128>().to_be_bytes();
         let paymaster_and_data = if let Some(paymaster) = uo.paymaster {
             let mut paymaster_and_data = paymaster.to_vec();
             paymaster_and_data.extend_from_slice(&pvgl);
@@ -142,9 +135,9 @@ pub fn hash_user_operation(
 
 #[cfg(test)]
 mod test {
+    use alloy_primitives::{Bytes, U256, address, b256, bytes, uint};
+
     use super::*;
-    use alloy_primitives::{Bytes, U256};
-    use alloy_primitives::{address, b256, bytes, uint};
 
     #[test]
     fn test_hash() {

@@ -3,8 +3,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{ProviderBuilder, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Result;
-use op_alloy_network::eip2718::Encodable2718;
-use op_alloy_network::{Optimism, TxSignerSync};
+use op_alloy_network::{Optimism, TxSignerSync, eip2718::Encodable2718};
 
 /// Create an Optimism RPC provider from a URL string
 ///

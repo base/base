@@ -1,11 +1,11 @@
-use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
 use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
-use alloy_provider::network::TxSignerSync;
-use alloy_provider::network::eip2718::Encodable2718;
+use alloy_provider::network::{TxSignerSync, eip2718::Encodable2718};
 use alloy_signer_local::PrivateKeySigner;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_rpc_types::OpTransactionRequest;
+
+use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
 
 // https://basescan.org/tx/0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e
 pub const TXN_DATA: Bytes = bytes!(
@@ -17,12 +17,7 @@ pub const TXN_HASH: TxHash =
 
 pub fn create_bundle_from_txn_data() -> AcceptedBundle {
     AcceptedBundle::new(
-        Bundle {
-            txs: vec![TXN_DATA],
-            ..Default::default()
-        }
-        .try_into()
-        .unwrap(),
+        Bundle { txs: vec![TXN_DATA], ..Default::default() }.try_into().unwrap(),
         create_test_meter_bundle_response(),
     )
 }

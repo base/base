@@ -1,7 +1,8 @@
-use super::metrics::TestResults;
+use std::{fs, path::Path};
+
 use anyhow::{Context, Result};
-use std::fs;
-use std::path::Path;
+
+use super::metrics::TestResults;
 
 pub fn print_results(results: &TestResults) {
     println!("\n");
@@ -28,10 +29,7 @@ pub fn print_results(results: &TestResults) {
         "  Included:            {:.1} tx/s ({} total)",
         results.results.included_rate, results.results.total_included
     );
-    println!(
-        "  Success Rate:        {:.1}%",
-        results.results.success_rate * 100.0
-    );
+    println!("  Success Rate:        {:.1}%", results.results.success_rate * 100.0);
 
     println!("\nTransaction Results:");
     println!(

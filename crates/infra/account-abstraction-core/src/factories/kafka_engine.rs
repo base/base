@@ -1,14 +1,17 @@
-use crate::domain::mempool::PoolConfig;
-use crate::infrastructure::in_memory::mempool::InMemoryMempool;
-use crate::infrastructure::kafka::consumer::KafkaEventSource;
-use crate::services::mempool_engine::MempoolEngine;
+use std::sync::Arc;
+
 use rdkafka::{
     ClientConfig,
     consumer::{Consumer, StreamConsumer},
 };
-use std::sync::Arc;
 use tips_core::kafka::load_kafka_config_from_file;
 use tokio::sync::RwLock;
+
+use crate::{
+    domain::mempool::PoolConfig,
+    infrastructure::{in_memory::mempool::InMemoryMempool, kafka::consumer::KafkaEventSource},
+    services::mempool_engine::MempoolEngine,
+};
 
 pub fn create_mempool_engine(
     properties_file: &str,
@@ -24,9 +27,7 @@ pub fn create_mempool_engine(
     consumer.subscribe(&[topic])?;
 
     let event_source = Arc::new(KafkaEventSource::new(Arc::new(consumer)));
-    let mempool = Arc::new(RwLock::new(InMemoryMempool::new(
-        pool_config.unwrap_or_default(),
-    )));
+    let mempool = Arc::new(RwLock::new(InMemoryMempool::new(pool_config.unwrap_or_default())));
     let engine = MempoolEngine::<InMemoryMempool>::new(mempool, event_source);
 
     Ok(Arc::new(engine))

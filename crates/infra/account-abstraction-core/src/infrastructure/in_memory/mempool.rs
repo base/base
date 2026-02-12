@@ -1,11 +1,19 @@
-use crate::domain::mempool::{Mempool, PoolConfig};
-use crate::domain::types::{UserOpHash, WrappedUserOperation};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeSet, HashMap},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+    },
+};
+
 use alloy_primitives::Address;
-use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use tracing::warn;
+
+use crate::domain::{
+    mempool::{Mempool, PoolConfig},
+    types::{UserOpHash, WrappedUserOperation},
+};
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct OrderedPoolOperation {
@@ -15,10 +23,7 @@ struct OrderedPoolOperation {
 
 impl OrderedPoolOperation {
     fn from_wrapped(operation: &WrappedUserOperation, submission_id: u64) -> Self {
-        Self {
-            pool_operation: operation.clone(),
-            submission_id,
-        }
+        Self { pool_operation: operation.clone(), submission_id }
     }
 
     fn sender(&self) -> Address {
@@ -93,9 +98,7 @@ pub struct InMemoryMempool {
 impl Mempool for InMemoryMempool {
     fn add_operation(&mut self, operation: &WrappedUserOperation) -> Result<(), anyhow::Error> {
         if operation.operation.max_fee_per_gas() < self.config.minimum_max_fee_per_gas {
-            return Err(anyhow::anyhow!(
-                "Gas price is below the minimum required PVG gas"
-            ));
+            return Err(anyhow::anyhow!("Gas price is below the minimum required PVG gas"));
         }
         self.handle_add_operation(operation)?;
         Ok(())
@@ -134,8 +137,7 @@ impl Mempool for InMemoryMempool {
         operation_hash: &UserOpHash,
     ) -> Result<Option<WrappedUserOperation>, anyhow::Error> {
         if let Some(ordered_operation) = self.hash_to_operation.remove(operation_hash) {
-            self.best
-                .remove(&ByMaxFeeAndSubmissionId(ordered_operation.clone()));
+            self.best.remove(&ByMaxFeeAndSubmissionId(ordered_operation.clone()));
             self.operations_by_account
                 .get_mut(&ordered_operation.sender())
                 .map(|set| set.remove(&ByNonce(ordered_operation.clone())));
@@ -158,20 +160,17 @@ impl InMemoryMempool {
         let order = self.get_next_order_id();
         let ordered_operation = OrderedPoolOperation::from_wrapped(operation, order);
 
-        self.best
-            .insert(ByMaxFeeAndSubmissionId(ordered_operation.clone()));
+        self.best.insert(ByMaxFeeAndSubmissionId(ordered_operation.clone()));
         self.operations_by_account
             .entry(ordered_operation.sender())
             .or_default()
             .insert(ByNonce(ordered_operation.clone()));
-        self.hash_to_operation
-            .insert(operation.hash, ordered_operation.clone());
+        self.hash_to_operation.insert(operation.hash, ordered_operation.clone());
         Ok(())
     }
 
     fn get_next_order_id(&self) -> u64 {
-        self.submission_id_counter
-            .fetch_add(1, AtomicOrdering::SeqCst)
+        self.submission_id_counter.fetch_add(1, AtomicOrdering::SeqCst)
     }
 
     pub fn new(config: PoolConfig) -> Self {
@@ -187,10 +186,11 @@ impl InMemoryMempool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::domain::types::VersionedUserOperation;
     use alloy_primitives::{Address, FixedBytes, Uint};
     use alloy_rpc_types::erc4337;
+
+    use super::*;
+    use crate::domain::types::VersionedUserOperation;
 
     fn create_test_user_operation(max_priority_fee_per_gas: u128) -> VersionedUserOperation {
         VersionedUserOperation::UserOperation(erc4337::UserOperation {
@@ -219,9 +219,7 @@ mod tests {
     }
 
     fn create_test_mempool(minimum_required_pvg_gas: u128) -> InMemoryMempool {
-        InMemoryMempool::new(PoolConfig {
-            minimum_max_fee_per_gas: minimum_required_pvg_gas,
-        })
+        InMemoryMempool::new(PoolConfig { minimum_max_fee_per_gas: minimum_required_pvg_gas })
     }
 
     #[test]

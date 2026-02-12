@@ -1,6 +1,7 @@
-use alloy_consensus::Transaction;
-use alloy_consensus::transaction::Recovered;
-use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::{
+    Transaction,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, keccak256};
 use alloy_provider::network::eip2718::{Decodable2718, Encodable2718};
 use op_alloy_consensus::OpTxEnvelope;
@@ -211,10 +212,7 @@ impl<T: BundleTxs> BundleExtensions for T {
     }
 
     fn senders(&self) -> Vec<Address> {
-        self.transactions()
-            .iter()
-            .map(|t| t.recover_signer().unwrap())
-            .collect()
+        self.transactions().iter().map(|t| t.recover_signer().unwrap()).collect()
     }
 
     fn gas_limit(&self) -> u64 {
@@ -222,10 +220,7 @@ impl<T: BundleTxs> BundleExtensions for T {
     }
 
     fn da_size(&self) -> u64 {
-        self.transactions()
-            .iter()
-            .map(|t| tx_estimated_size_fjord_bytes(&t.encoded_2718()))
-            .sum()
+        self.transactions().iter().map(|t| tx_estimated_size_fjord_bytes(&t.encoded_2718())).sum()
     }
 }
 
@@ -304,11 +299,12 @@ pub struct MeterBundleResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::{create_test_meter_bundle_response, create_transaction};
     use alloy_primitives::Keccak256;
     use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
+
+    use super::*;
+    use crate::test_utils::{create_test_meter_bundle_response, create_transaction};
 
     #[test]
     fn test_bundle_types() {
@@ -394,6 +390,7 @@ mod tests {
             state_flashblock_index: Some(42),
             total_gas_used: 21000,
             total_execution_time_us: 1000,
+            state_root_time_us: 0,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -418,6 +415,7 @@ mod tests {
             state_flashblock_index: None,
             total_gas_used: 21000,
             total_execution_time_us: 1000,
+            state_root_time_us: 0,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -459,7 +457,7 @@ mod tests {
         let bob = PrivateKeySigner::random();
 
         // suppose this is a spam tx
-        let tx1 = create_transaction(alice.clone(), 1, bob.address());
+        let tx1 = create_transaction(alice, 1, bob.address());
         let tx1_bytes = tx1.encoded_2718();
 
         // we receive it the first time
@@ -478,7 +476,7 @@ mod tests {
         // but we may receive it more than once
         let bundle2 = AcceptedBundle::new(
             Bundle {
-                txs: vec![tx1_bytes.clone().into()],
+                txs: vec![tx1_bytes.into()],
                 block_number: 1,
                 replacement_uuid: None,
                 ..Default::default()

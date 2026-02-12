@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [features]
-test-utils = ["dep:alloy-signer-local", "dep:op-alloy-rpc-types"]
+test-utils = [ "dep:alloy-signer-local", "dep:op-alloy-rpc-types" ]
 
 [dependencies]
 op-alloy-flz.workspace = true

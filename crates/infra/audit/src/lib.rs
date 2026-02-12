@@ -33,13 +33,12 @@ pub use storage::{
 };
 
 mod types;
+use tokio::sync::mpsc;
+use tracing::error;
 pub use types::{
     BundleEvent, BundleId, DropReason, Transaction, TransactionId, UserOpDropReason, UserOpEvent,
     UserOpHash,
 };
-
-use tokio::sync::mpsc;
-use tracing::error;
 
 /// Connects a bundle event receiver to a publisher, spawning a task to forward events.
 pub fn connect_audit_to_publisher<P>(event_rx: mpsc::UnboundedReceiver<BundleEvent>, publisher: P)

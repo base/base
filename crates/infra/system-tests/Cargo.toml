@@ -20,7 +20,6 @@ bytes = { workspace = true }
 async-trait = { workspace = true }
 tips-audit-lib = { workspace = true }
 alloy-network = { workspace = true }
-tips-ingress-rpc-lib.workspace = true
 op-alloy-network = { workspace = true }
 alloy-signer-local = { workspace = true }
 aws-credential-types = { workspace = true }
@@ -38,12 +37,9 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 clap = { version = "4.5", features = ["std", "derive", "env"] }
 op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
 serial_test = "3"
 tokio = { workspace = true, features = ["full", "test-util"] }
-testcontainers = { workspace = true, features = ["blocking"] }
-testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }

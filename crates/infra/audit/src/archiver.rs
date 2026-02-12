@@ -1,14 +1,22 @@
-use crate::metrics::Metrics;
-use crate::reader::{Event, EventReader};
-use crate::storage::EventWriter;
+use std::{
+    fmt,
+    marker::PhantomData,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
 use anyhow::Result;
-use std::fmt;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{Mutex, mpsc};
-use tokio::time::sleep;
+use tokio::{
+    sync::{Mutex, mpsc},
+    time::sleep,
+};
 use tracing::{error, info};
+
+use crate::{
+    metrics::Metrics,
+    reader::{Event, EventReader},
+    storage::EventWriter,
+};
 
 /// Archives audit events from Kafka to S3 storage.
 pub struct KafkaAuditArchiver<R, W>
@@ -48,20 +56,9 @@ where
         let (event_tx, event_rx) = mpsc::channel(channel_buffer_size);
         let metrics = Metrics::default();
 
-        Self::spawn_workers(
-            writer,
-            event_rx,
-            metrics.clone(),
-            worker_pool_size,
-            noop_archive,
-        );
+        Self::spawn_workers(writer, event_rx, metrics.clone(), worker_pool_size, noop_archive);
 
-        Self {
-            reader,
-            event_tx,
-            metrics,
-            _phantom: PhantomData,
-        }
+        Self { reader, event_tx, metrics, _phantom: PhantomData }
     }
 
     fn spawn_workers(
@@ -76,7 +73,7 @@ where
         for worker_id in 0..worker_pool_size {
             let writer = writer.clone();
             let metrics = metrics.clone();
-            let event_rx = event_rx.clone();
+            let event_rx = Arc::clone(&event_rx);
 
             tokio::spawn(async move {
                 loop {
@@ -128,9 +125,7 @@ where
             let read_start = Instant::now();
             match self.reader.read_event().await {
                 Ok(event) => {
-                    self.metrics
-                        .kafka_read_duration
-                        .record(read_start.elapsed().as_secs_f64());
+                    self.metrics.kafka_read_duration.record(read_start.elapsed().as_secs_f64());
 
                     let now_ms = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -149,9 +144,7 @@ where
                     if let Err(e) = self.reader.commit().await {
                         error!(error = %e, "Failed to commit message");
                     }
-                    self.metrics
-                        .kafka_commit_duration
-                        .record(commit_start.elapsed().as_secs_f64());
+                    self.metrics.kafka_commit_duration.record(commit_start.elapsed().as_secs_f64());
                 }
                 Err(e) => {
                     error!(error = %e, "Error reading events");

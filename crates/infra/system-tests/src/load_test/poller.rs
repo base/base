@@ -1,11 +1,12 @@
-use super::tracker::TransactionTracker;
+use std::{sync::Arc, time::Duration};
+
 use alloy_network::ReceiptResponse;
 use alloy_provider::{Provider, RootProvider};
 use anyhow::Result;
 use op_alloy_network::Optimism;
-use std::sync::Arc;
-use std::time::Duration;
 use tracing::debug;
+
+use super::tracker::TransactionTracker;
 
 pub struct ReceiptPoller {
     sequencer: RootProvider<Optimism>,
@@ -19,11 +20,7 @@ impl ReceiptPoller {
         tracker: Arc<TransactionTracker>,
         timeout: Duration,
     ) -> Self {
-        Self {
-            sequencer,
-            tracker,
-            timeout,
-        }
+        Self { sequencer, tracker, timeout }
     }
 
     pub async fn run(self) -> Result<()> {

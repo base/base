@@ -1,4 +1,5 @@
 use std::str::FromStr;
+
 use tracing::warn;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -49,25 +50,14 @@ pub fn init_logger_with_format(log_level: &str, format: LogFormat) {
         LogFormat::Json => {
             tracing_subscriber::registry()
                 .with(env_filter)
-                .with(
-                    fmt::layer()
-                        .json()
-                        .flatten_event(true)
-                        .with_current_span(true),
-                )
+                .with(fmt::layer().json().flatten_event(true).with_current_span(true))
                 .init();
         }
         LogFormat::Compact => {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt::layer().compact())
-                .init();
+            tracing_subscriber::registry().with(env_filter).with(fmt::layer().compact()).init();
         }
         LogFormat::Pretty => {
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(fmt::layer().pretty())
-                .init();
+            tracing_subscriber::registry().with(env_filter).with(fmt::layer().pretty()).init();
         }
     }
 }

@@ -1,22 +1,24 @@
-use crate::metrics::Metrics;
-use crate::reader::Event;
-use crate::types::{
-    BundleEvent, BundleId, DropReason, TransactionId, UserOpDropReason, UserOpEvent, UserOpHash,
-};
+use std::{fmt, fmt::Debug, time::Instant};
+
 use alloy_primitives::{Address, TxHash, U256};
 use anyhow::Result;
 use async_trait::async_trait;
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::error::SdkError;
-use aws_sdk_s3::operation::get_object::GetObjectError;
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::{
+    Client as S3Client, error::SdkError, operation::get_object::GetObjectError,
+    primitives::ByteStream,
+};
 use futures::future;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::fmt::Debug;
-use std::time::Instant;
 use tips_core::AcceptedBundle;
 use tracing::info;
+
+use crate::{
+    metrics::Metrics,
+    reader::Event,
+    types::{
+        BundleEvent, BundleId, DropReason, TransactionId, UserOpDropReason, UserOpEvent, UserOpHash,
+    },
+};
 
 /// S3 key types for storing different event types.
 #[derive(Debug)]
@@ -105,11 +107,11 @@ impl BundleHistoryEvent {
     /// Returns the event key.
     pub fn key(&self) -> &str {
         match self {
-            Self::Received { key, .. } => key,
-            Self::Cancelled { key, .. } => key,
-            Self::BuilderIncluded { key, .. } => key,
-            Self::BlockIncluded { key, .. } => key,
-            Self::Dropped { key, .. } => key,
+            Self::Received { key, .. }
+            | Self::Cancelled { key, .. }
+            | Self::BuilderIncluded { key, .. }
+            | Self::BlockIncluded { key, .. }
+            | Self::Dropped { key, .. } => key,
         }
     }
 }
@@ -164,9 +166,9 @@ impl UserOpHistoryEvent {
     /// Returns the event key.
     pub fn key(&self) -> &str {
         match self {
-            Self::AddedToMempool { key, .. } => key,
-            Self::Dropped { key, .. } => key,
-            Self::Included { key, .. } => key,
+            Self::AddedToMempool { key, .. }
+            | Self::Dropped { key, .. }
+            | Self::Included { key, .. } => key,
         }
     }
 }
@@ -203,32 +205,26 @@ fn update_bundle_history_transform(
             timestamp: event.timestamp,
             bundle: bundle.clone(),
         },
-        BundleEvent::Cancelled { .. } => BundleHistoryEvent::Cancelled {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-        },
-        BundleEvent::BuilderIncluded {
-            builder,
-            block_number,
-            flashblock_index,
-            ..
-        } => BundleHistoryEvent::BuilderIncluded {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-            builder: builder.clone(),
-            block_number: *block_number,
-            flashblock_index: *flashblock_index,
-        },
-        BundleEvent::BlockIncluded {
-            block_number,
-            block_hash,
-            ..
-        } => BundleHistoryEvent::BlockIncluded {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-            block_number: *block_number,
-            block_hash: *block_hash,
-        },
+        BundleEvent::Cancelled { .. } => {
+            BundleHistoryEvent::Cancelled { key: event.key.clone(), timestamp: event.timestamp }
+        }
+        BundleEvent::BuilderIncluded { builder, block_number, flashblock_index, .. } => {
+            BundleHistoryEvent::BuilderIncluded {
+                key: event.key.clone(),
+                timestamp: event.timestamp,
+                builder: builder.clone(),
+                block_number: *block_number,
+                flashblock_index: *flashblock_index,
+            }
+        }
+        BundleEvent::BlockIncluded { block_number, block_hash, .. } => {
+            BundleHistoryEvent::BlockIncluded {
+                key: event.key.clone(),
+                timestamp: event.timestamp,
+                block_number: *block_number,
+                block_hash: *block_hash,
+            }
+        }
         BundleEvent::Dropped { reason, .. } => BundleHistoryEvent::Dropped {
             key: event.key.clone(),
             timestamp: event.timestamp,
@@ -279,28 +275,21 @@ fn update_userop_history_transform(
     }
 
     let history_event = match &event.event {
-        UserOpEvent::AddedToMempool {
-            sender,
-            entry_point,
-            nonce,
-            ..
-        } => UserOpHistoryEvent::AddedToMempool {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-            sender: *sender,
-            entry_point: *entry_point,
-            nonce: *nonce,
-        },
+        UserOpEvent::AddedToMempool { sender, entry_point, nonce, .. } => {
+            UserOpHistoryEvent::AddedToMempool {
+                key: event.key.clone(),
+                timestamp: event.timestamp,
+                sender: *sender,
+                entry_point: *entry_point,
+                nonce: *nonce,
+            }
+        }
         UserOpEvent::Dropped { reason, .. } => UserOpHistoryEvent::Dropped {
             key: event.key.clone(),
             timestamp: event.timestamp,
             reason: reason.clone(),
         },
-        UserOpEvent::Included {
-            block_number,
-            tx_hash,
-            ..
-        } => UserOpHistoryEvent::Included {
+        UserOpEvent::Included { block_number, tx_hash, .. } => UserOpHistoryEvent::Included {
             key: event.key.clone(),
             timestamp: event.timestamp,
             block_number: *block_number,
@@ -364,11 +353,7 @@ pub struct S3EventReaderWriter {
 impl S3EventReaderWriter {
     /// Creates a new S3 event reader/writer.
     pub fn new(s3_client: S3Client, bucket: String) -> Self {
-        Self {
-            s3_client,
-            bucket,
-            metrics: Metrics::default(),
-        }
+        Self { s3_client, bucket, metrics: Metrics::default() }
     }
 
     async fn update_bundle_history(&self, event: Event) -> Result<()> {
@@ -414,9 +399,7 @@ impl S3EventReaderWriter {
         for attempt in 0..MAX_RETRIES {
             let get_start = Instant::now();
             let (current_value, etag) = self.get_object_with_etag::<T>(key).await?;
-            self.metrics
-                .s3_get_duration
-                .record(get_start.elapsed().as_secs_f64());
+            self.metrics.s3_get_duration.record(get_start.elapsed().as_secs_f64());
 
             let value = current_value.unwrap_or_default();
 
@@ -440,9 +423,7 @@ impl S3EventReaderWriter {
                     let put_start = Instant::now();
                     match put_request.send().await {
                         Ok(_) => {
-                            self.metrics
-                                .s3_put_duration
-                                .record(put_start.elapsed().as_secs_f64());
+                            self.metrics.s3_put_duration.record(put_start.elapsed().as_secs_f64());
                             info!(
                                 s3_key = %key,
                                 attempt = attempt + 1,
@@ -451,9 +432,7 @@ impl S3EventReaderWriter {
                             return Ok(());
                         }
                         Err(e) => {
-                            self.metrics
-                                .s3_put_duration
-                                .record(put_start.elapsed().as_secs_f64());
+                            self.metrics.s3_put_duration.record(put_start.elapsed().as_secs_f64());
 
                             if attempt < MAX_RETRIES - 1 {
                                 let delay = BASE_DELAY_MS * 2_u64.pow(attempt as u32);
@@ -491,14 +470,7 @@ impl S3EventReaderWriter {
     where
         T: for<'de> Deserialize<'de>,
     {
-        match self
-            .s3_client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-        {
+        match self.s3_client.get_object().bucket(&self.bucket).key(key).send().await {
             Ok(response) => {
                 let etag = response.e_tag().map(|s| s.to_string());
                 let body = response.body.collect().await?;
@@ -537,23 +509,19 @@ impl EventWriter for S3EventReaderWriter {
         let bundle_future = self.update_bundle_history(event);
 
         let tx_start = Instant::now();
-        let tx_futures: Vec<_> = transaction_ids
-            .into_iter()
-            .map(|tx_id| async move {
-                self.update_transaction_by_hash_index(&tx_id, bundle_id)
-                    .await
-            })
-            .collect();
+        let tx_futures: Vec<_> =
+            transaction_ids
+                .into_iter()
+                .map(|tx_id| async move {
+                    self.update_transaction_by_hash_index(&tx_id, bundle_id).await
+                })
+                .collect();
 
         // Run the bundle and transaction futures concurrently and wait for them to complete
         tokio::try_join!(bundle_future, future::try_join_all(tx_futures))?;
 
-        self.metrics
-            .update_bundle_history_duration
-            .record(bundle_start.elapsed().as_secs_f64());
-        self.metrics
-            .update_tx_indexes_duration
-            .record(tx_start.elapsed().as_secs_f64());
+        self.metrics.update_bundle_history_duration.record(bundle_start.elapsed().as_secs_f64());
+        self.metrics.update_tx_indexes_duration.record(tx_start.elapsed().as_secs_f64());
 
         Ok(())
     }
@@ -572,9 +540,8 @@ impl BundleEventS3Reader for S3EventReaderWriter {
         tx_hash: TxHash,
     ) -> Result<Option<TransactionMetadata>> {
         let s3_key = S3Key::TransactionByHash(tx_hash).to_string();
-        let (transaction_metadata, _) = self
-            .get_object_with_etag::<TransactionMetadata>(&s3_key)
-            .await?;
+        let (transaction_metadata, _) =
+            self.get_object_with_etag::<TransactionMetadata>(&s3_key).await?;
         Ok(transaction_metadata)
     }
 }
@@ -597,19 +564,18 @@ impl UserOpEventS3Reader for S3EventReaderWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::reader::Event;
-    use crate::types::{BundleEvent, DropReason, UserOpDropReason, UserOpEvent};
     use alloy_primitives::{Address, B256, TxHash, U256};
     use tips_core::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use uuid::Uuid;
 
+    use super::*;
+    use crate::{
+        reader::Event,
+        types::{BundleEvent, DropReason, UserOpDropReason, UserOpEvent},
+    };
+
     fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
-        Event {
-            key: key.to_string(),
-            timestamp,
-            event: bundle_event,
-        }
+        Event { key: key.to_string(), timestamp, event: bundle_event }
     }
 
     #[test]
@@ -617,10 +583,7 @@ mod tests {
         let bundle_history = BundleHistory { history: vec![] };
         let bundle = create_bundle_from_txn_data();
         let bundle_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
-        let bundle_event = BundleEvent::Received {
-            bundle_id,
-            bundle: Box::new(bundle.clone()),
-        };
+        let bundle_event = BundleEvent::Received { bundle_id, bundle: Box::new(bundle.clone()) };
         let event = create_test_event("test-key", 1234567890, bundle_event);
 
         let result = update_bundle_history_transform(bundle_history, &event);
@@ -630,11 +593,7 @@ mod tests {
         assert_eq!(bundle_history.history.len(), 1);
 
         match &bundle_history.history[0] {
-            BundleHistoryEvent::Received {
-                key,
-                timestamp: ts,
-                bundle: b,
-            } => {
+            BundleHistoryEvent::Received { key, timestamp: ts, bundle: b } => {
                 assert_eq!(key, "test-key");
                 assert_eq!(*ts, 1234567890);
                 assert_eq!(b.block_number, bundle.block_number);
@@ -650,16 +609,11 @@ mod tests {
             timestamp: 1111111111,
             bundle: Box::new(create_bundle_from_txn_data()),
         };
-        let bundle_history = BundleHistory {
-            history: vec![existing_event],
-        };
+        let bundle_history = BundleHistory { history: vec![existing_event] };
 
         let bundle = create_bundle_from_txn_data();
         let bundle_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
-        let bundle_event = BundleEvent::Received {
-            bundle_id,
-            bundle: Box::new(bundle),
-        };
+        let bundle_event = BundleEvent::Received { bundle_id, bundle: Box::new(bundle) };
         let event = create_test_event("duplicate-key", 1234567890, bundle_event);
 
         let result = update_bundle_history_transform(bundle_history, &event);
@@ -673,10 +627,7 @@ mod tests {
         let bundle = create_bundle_from_txn_data();
         let bundle_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
 
-        let bundle_event = BundleEvent::Received {
-            bundle_id,
-            bundle: Box::new(bundle),
-        };
+        let bundle_event = BundleEvent::Received { bundle_id, bundle: Box::new(bundle) };
         let event = create_test_event("test-key", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
@@ -705,10 +656,7 @@ mod tests {
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
-        let bundle_event = BundleEvent::Dropped {
-            bundle_id,
-            reason: DropReason::TimedOut,
-        };
+        let bundle_event = BundleEvent::Dropped { bundle_id, reason: DropReason::TimedOut };
         let event = create_test_event("test-key-5", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history, &event);
         assert!(result.is_some());
@@ -732,9 +680,7 @@ mod tests {
     fn test_update_transaction_metadata_transform_skips_existing_bundle() {
         let bundle = create_bundle_from_txn_data();
         let bundle_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
-        let metadata = TransactionMetadata {
-            bundle_ids: vec![bundle_id],
-        };
+        let metadata = TransactionMetadata { bundle_ids: vec![bundle_id] };
 
         let result = update_transaction_metadata_transform(metadata, bundle_id);
 
@@ -749,9 +695,7 @@ mod tests {
         let existing_bundle_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
         let new_bundle_id = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
 
-        let metadata = TransactionMetadata {
-            bundle_ids: vec![existing_bundle_id],
-        };
+        let metadata = TransactionMetadata { bundle_ids: vec![existing_bundle_id] };
 
         let result = update_transaction_metadata_transform(metadata, new_bundle_id);
 
@@ -767,11 +711,7 @@ mod tests {
         timestamp: i64,
         userop_event: UserOpEvent,
     ) -> UserOpEventWrapper {
-        UserOpEventWrapper {
-            key: key.to_string(),
-            timestamp,
-            event: userop_event,
-        }
+        UserOpEventWrapper { key: key.to_string(), timestamp, event: userop_event }
     }
 
     #[test]
@@ -791,12 +731,7 @@ mod tests {
         let entry_point = Address::from([3u8; 20]);
         let nonce = U256::from(1);
 
-        let userop_event = UserOpEvent::AddedToMempool {
-            user_op_hash,
-            sender,
-            entry_point,
-            nonce,
-        };
+        let userop_event = UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce };
         let event = create_test_userop_event("test-key", 1234567890, userop_event);
 
         let result = update_userop_history_transform(userop_history, &event);
@@ -837,16 +772,9 @@ mod tests {
             entry_point,
             nonce,
         };
-        let userop_history = UserOpHistory {
-            history: vec![existing_event],
-        };
+        let userop_history = UserOpHistory { history: vec![existing_event] };
 
-        let userop_event = UserOpEvent::AddedToMempool {
-            user_op_hash,
-            sender,
-            entry_point,
-            nonce,
-        };
+        let userop_event = UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce };
         let event = create_test_userop_event("duplicate-key", 1234567890, userop_event);
 
         let result = update_userop_history_transform(userop_history, &event);
@@ -860,10 +788,7 @@ mod tests {
         let user_op_hash = B256::from([1u8; 32]);
         let reason = UserOpDropReason::Expired;
 
-        let userop_event = UserOpEvent::Dropped {
-            user_op_hash,
-            reason: reason.clone(),
-        };
+        let userop_event = UserOpEvent::Dropped { user_op_hash, reason };
         let event = create_test_userop_event("dropped-key", 1234567890, userop_event);
 
         let result = update_userop_history_transform(userop_history, &event);
@@ -873,11 +798,7 @@ mod tests {
         assert_eq!(history.history.len(), 1);
 
         match &history.history[0] {
-            UserOpHistoryEvent::Dropped {
-                key,
-                timestamp,
-                reason: r,
-            } => {
+            UserOpHistoryEvent::Dropped { key, timestamp, reason: r } => {
                 assert_eq!(key, "dropped-key");
                 assert_eq!(*timestamp, 1234567890);
                 match r {
@@ -896,11 +817,7 @@ mod tests {
         let tx_hash = TxHash::from([4u8; 32]);
         let block_number = 12345u64;
 
-        let userop_event = UserOpEvent::Included {
-            user_op_hash,
-            block_number,
-            tx_hash,
-        };
+        let userop_event = UserOpEvent::Included { user_op_hash, block_number, tx_hash };
         let event = create_test_userop_event("included-key", 1234567890, userop_event);
 
         let result = update_userop_history_transform(userop_history, &event);
@@ -910,12 +827,7 @@ mod tests {
         assert_eq!(history.history.len(), 1);
 
         match &history.history[0] {
-            UserOpHistoryEvent::Included {
-                key,
-                timestamp,
-                block_number: bn,
-                tx_hash: th,
-            } => {
+            UserOpHistoryEvent::Included { key, timestamp, block_number: bn, tx_hash: th } => {
                 assert_eq!(key, "included-key");
                 assert_eq!(*timestamp, 1234567890);
                 assert_eq!(*bn, 12345);
@@ -933,12 +845,7 @@ mod tests {
         let entry_point = Address::from([3u8; 20]);
         let nonce = U256::from(1);
 
-        let userop_event = UserOpEvent::AddedToMempool {
-            user_op_hash,
-            sender,
-            entry_point,
-            nonce,
-        };
+        let userop_event = UserOpEvent::AddedToMempool { user_op_hash, sender, entry_point, nonce };
         let event = create_test_userop_event("key-1", 1234567890, userop_event);
         let result = update_userop_history_transform(userop_history.clone(), &event);
         assert!(result.is_some());

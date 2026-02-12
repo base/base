@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use account_abstraction_core::{
     MempoolEvent,
     domain::types::{VersionedUserOperation, WrappedUserOperation},
@@ -7,7 +9,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use std::sync::Arc;
 use tips_core::AcceptedBundle;
 use tokio::time::Duration;
 use tracing::{error, info};
@@ -92,14 +93,9 @@ impl<Q: MessageQueue> UserOpQueuePublisher<Q> {
         user_op: &VersionedUserOperation,
         hash: &B256,
     ) -> MempoolEvent {
-        let wrapped_user_op = WrappedUserOperation {
-            operation: user_op.clone(),
-            hash: *hash,
-        };
+        let wrapped_user_op = WrappedUserOperation { operation: user_op.clone(), hash: *hash };
 
-        MempoolEvent::UserOpAdded {
-            user_op: wrapped_user_op,
-        }
+        MempoolEvent::UserOpAdded { user_op: wrapped_user_op }
     }
 }
 
@@ -122,12 +118,13 @@ impl<Q: MessageQueue> BundleQueuePublisher<Q> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rdkafka::config::ClientConfig;
     use tips_core::{
         AcceptedBundle, Bundle, BundleExtensions, test_utils::create_test_meter_bundle_response,
     };
     use tokio::time::{Duration, Instant};
+
+    use super::*;
 
     fn create_test_bundle() -> Bundle {
         Bundle::default()
@@ -144,10 +141,8 @@ mod tests {
 
         let publisher = KafkaMessageQueue::new(producer);
         let bundle = create_test_bundle();
-        let accepted_bundle = AcceptedBundle::new(
-            bundle.try_into().unwrap(),
-            create_test_meter_bundle_response(),
-        );
+        let accepted_bundle =
+            AcceptedBundle::new(bundle.try_into().unwrap(), create_test_meter_bundle_response());
         let bundle_hash = &accepted_bundle.bundle_hash();
 
         let start = Instant::now();

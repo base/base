@@ -137,6 +137,13 @@ basectl-cli = { path = "crates/infra/basectl" }
 sidecrush = { path = "crates/infra/sidecrush" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
+# Tips
+tips-core = { path = "crates/infra/core" }
+tips-audit-lib = { path = "crates/infra/audit" }
+tips-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
+tips-system-tests = { path = "crates/infra/system-tests" }
+account-abstraction-core = { path = "crates/infra/account-abstraction-core" }
+
 # Kona
 kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
 kona-rpc = { git = "https://github.com/ethereum-optimism/optimism", rev = "238012d2d96d5cebbdc390c9199bd63722115a42", default-features = false }
@@ -385,3 +392,11 @@ ratatui = "0.29.0"
 crossterm = "0.28.1"
 serde_yaml = "0.9.34"
 either = { version = "1.15.0", default-features = false }
+rdkafka = { version = "0.37.0", default-features = false }
+aws-config = { version = "1.1.7", default-features = false }
+aws-sdk-s3 = { version = "1.106.0", default-features = false }
+aws-credential-types = { version = "1.1.7", default-features = false }
+axum = { version = "0.8.3", default-features = false }
+dotenvy = { version = "0.15.7", default-features = false }
+wiremock = { version = "0.6.2", default-features = false }
+testcontainers-modules = { version = "0.14.0", default-features = false }

@@ -27,10 +27,7 @@ impl<N: Network> TipsRpcClient<N> {
     }
 
     pub async fn send_bundle(&self, bundle: Bundle) -> Result<BundleHash> {
-        self.provider
-            .raw_request("eth_sendBundle".into(), [bundle])
-            .await
-            .map_err(Into::into)
+        self.provider.raw_request("eth_sendBundle".into(), [bundle]).await.map_err(Into::into)
     }
 
     pub async fn send_backrun_bundle(&self, bundle: Bundle) -> Result<BundleHash> {
@@ -41,10 +38,7 @@ impl<N: Network> TipsRpcClient<N> {
     }
 
     pub async fn cancel_bundle(&self, request: CancelBundle) -> Result<bool> {
-        self.provider
-            .raw_request("eth_cancelBundle".into(), [request])
-            .await
-            .map_err(Into::into)
+        self.provider.raw_request("eth_cancelBundle".into(), [request]).await.map_err(Into::into)
     }
 
     pub fn provider(&self) -> &RootProvider<N> {

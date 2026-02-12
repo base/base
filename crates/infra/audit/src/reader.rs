@@ -1,4 +1,5 @@
-use crate::types::{BundleEvent, UserOpEvent};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::{
@@ -7,10 +8,11 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::Message,
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tips_core::kafka::load_kafka_config_from_file;
 use tokio::time::sleep;
 use tracing::{debug, error, info};
+
+use crate::types::{BundleEvent, UserOpEvent};
 
 /// Creates a Kafka consumer from a properties file.
 pub fn create_kafka_consumer(kafka_properties_file: &str) -> Result<StreamConsumer> {
@@ -70,12 +72,7 @@ impl KafkaAuditLogReader {
     /// Creates a new Kafka audit log reader.
     pub fn new(consumer: StreamConsumer, topic: String) -> Result<Self> {
         consumer.subscribe(&[&topic])?;
-        Ok(Self {
-            consumer,
-            topic,
-            last_message_offset: None,
-            last_message_partition: None,
-        })
+        Ok(Self { consumer, topic, last_message_offset: None, last_message_partition: None })
     }
 }
 
@@ -84,18 +81,16 @@ impl EventReader for KafkaAuditLogReader {
     async fn read_event(&mut self) -> Result<Event> {
         match self.consumer.recv().await {
             Ok(message) => {
-                let payload = message
-                    .payload()
-                    .ok_or_else(|| anyhow::anyhow!("Message has no payload"))?;
+                let payload =
+                    message.payload().ok_or_else(|| anyhow::anyhow!("Message has no payload"))?;
 
                 // Extract Kafka timestamp, use current time as fallback
                 let timestamp = match message.timestamp() {
-                    Timestamp::CreateTime(millis) => millis,
-                    Timestamp::LogAppendTime(millis) => millis,
-                    Timestamp::NotAvailable => SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as i64,
+                    Timestamp::CreateTime(millis) | Timestamp::LogAppendTime(millis) => millis,
+                    Timestamp::NotAvailable => {
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as i64
+                    }
                 };
 
                 let event: BundleEvent = serde_json::from_slice(payload)?;
@@ -117,11 +112,7 @@ impl EventReader for KafkaAuditLogReader {
                     .map(|k| String::from_utf8_lossy(k).to_string())
                     .ok_or_else(|| anyhow::anyhow!("Message missing required key"))?;
 
-                let event_result = Event {
-                    key,
-                    event,
-                    timestamp,
-                };
+                let event_result = Event { key, event, timestamp };
 
                 Ok(event_result)
             }
@@ -139,8 +130,7 @@ impl EventReader for KafkaAuditLogReader {
         {
             let mut tpl = TopicPartitionList::new();
             tpl.add_partition_offset(&self.topic, partition, rdkafka::Offset::Offset(offset + 1))?;
-            self.consumer
-                .commit(&tpl, rdkafka::consumer::CommitMode::Async)?;
+            self.consumer.commit(&tpl, rdkafka::consumer::CommitMode::Async)?;
         }
         Ok(())
     }
@@ -195,12 +185,7 @@ impl KafkaUserOpAuditLogReader {
     /// Creates a new Kafka user operation audit log reader.
     pub fn new(consumer: StreamConsumer, topic: String) -> Result<Self> {
         consumer.subscribe(&[&topic])?;
-        Ok(Self {
-            consumer,
-            topic,
-            last_message_offset: None,
-            last_message_partition: None,
-        })
+        Ok(Self { consumer, topic, last_message_offset: None, last_message_partition: None })
     }
 }
 
@@ -209,17 +194,15 @@ impl UserOpEventReader for KafkaUserOpAuditLogReader {
     async fn read_event(&mut self) -> Result<UserOpEventWrapper> {
         match self.consumer.recv().await {
             Ok(message) => {
-                let payload = message
-                    .payload()
-                    .ok_or_else(|| anyhow::anyhow!("Message has no payload"))?;
+                let payload =
+                    message.payload().ok_or_else(|| anyhow::anyhow!("Message has no payload"))?;
 
                 let timestamp = match message.timestamp() {
-                    Timestamp::CreateTime(millis) => millis,
-                    Timestamp::LogAppendTime(millis) => millis,
-                    Timestamp::NotAvailable => SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as i64,
+                    Timestamp::CreateTime(millis) | Timestamp::LogAppendTime(millis) => millis,
+                    Timestamp::NotAvailable => {
+                        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+                            as i64
+                    }
                 };
 
                 let event: UserOpEvent = serde_json::from_slice(payload)?;
@@ -240,11 +223,7 @@ impl UserOpEventReader for KafkaUserOpAuditLogReader {
                     .map(|k| String::from_utf8_lossy(k).to_string())
                     .ok_or_else(|| anyhow::anyhow!("Message missing required key"))?;
 
-                Ok(UserOpEventWrapper {
-                    key,
-                    event,
-                    timestamp,
-                })
+                Ok(UserOpEventWrapper { key, event, timestamp })
             }
             Err(e) => {
                 error!(error = %e, "Error receiving UserOp message from Kafka");
@@ -260,8 +239,7 @@ impl UserOpEventReader for KafkaUserOpAuditLogReader {
         {
             let mut tpl = TopicPartitionList::new();
             tpl.add_partition_offset(&self.topic, partition, rdkafka::Offset::Offset(offset + 1))?;
-            self.consumer
-                .commit(&tpl, rdkafka::consumer::CommitMode::Async)?;
+            self.consumer.commit(&tpl, rdkafka::consumer::CommitMode::Async)?;
         }
         Ok(())
     }

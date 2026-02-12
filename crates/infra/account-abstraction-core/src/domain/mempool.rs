@@ -1,5 +1,6 @@
-use crate::domain::types::{UserOpHash, WrappedUserOperation};
 use std::sync::Arc;
+
+use crate::domain::types::{UserOpHash, WrappedUserOperation};
 
 #[derive(Default)]
 pub struct PoolConfig {
