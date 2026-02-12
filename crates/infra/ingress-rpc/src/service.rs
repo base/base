@@ -457,18 +457,14 @@ impl<Q: MessageQueue> IngressService<Q> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, SocketAddr};
+    use std::{
+        net::{IpAddr, SocketAddr},
+        str::FromStr,
+    };
 
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
-    use jsonrpsee::{
-        core::client::ClientT,
-        http_client::{HttpClient, HttpClientBuilder},
-        server::{ServerBuilder, ServerHandle},
-    };
-    use mockall::mock;
-    use serde_json::json;
     use tips_core::test_utils::create_test_meter_bundle_response;
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
@@ -514,17 +510,6 @@ mod tests {
             bundle_cache_ttl: 20,
             send_to_builder: false,
         }
-    }
-
-    async fn setup_rpc_server(mock: MockIngressApi) -> (HttpClient, ServerHandle) {
-        let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
-
-        let addr = server.local_addr().unwrap();
-        let handle = server.start(mock.into_rpc());
-
-        let client = HttpClientBuilder::default().build(format!("http://{}", addr)).unwrap();
-
-        (client, handle)
     }
 
     #[tokio::test]
@@ -605,14 +590,8 @@ mod tests {
         let (builder_tx, _builder_rx) = broadcast::channel(1);
         let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
-        let service = IngressService::new(
-            providers,
-            MockQueue,
-            audit_tx,
-            builder_tx,
-            backrun_tx,
-            config,
-        );
+        let service =
+            IngressService::new(providers, MockQueue, audit_tx, builder_tx, backrun_tx, config);
 
         let bundle = Bundle::default();
         let bundle_hash = B256::default();
@@ -667,14 +646,8 @@ mod tests {
         let (builder_tx, _builder_rx) = broadcast::channel(1);
         let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
-        let service = IngressService::new(
-            providers,
-            MockQueue,
-            audit_tx,
-            builder_tx,
-            backrun_tx,
-            config,
-        );
+        let service =
+            IngressService::new(providers, MockQueue, audit_tx, builder_tx, backrun_tx, config);
 
         // Valid signed transaction bytes
         let tx_bytes = Bytes::from_str("0x02f86c0d010183072335825208940000000000000000000000000000000000000000872386f26fc1000080c001a0cdb9e4f2f1ba53f9429077e7055e078cf599786e29059cd80c5e0e923bb2c114a01c90e29201e031baf1da66296c3a5c15c200bcb5e6c34da2f05f7d1778f8be07").unwrap();
@@ -687,18 +660,6 @@ mod tests {
 
         // wiremock automatically verifies expect(1) when forward_server is dropped
     }
-    mock! {
-        pub IngressApi {}
-
-        #[async_trait]
-        impl IngressApiServer for IngressApi {
-            async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
-            async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
-            async fn cancel_bundle(&self, request: CancelBundle) -> RpcResult<()>;
-            async fn send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
-        }
-    }
-
     #[test]
     fn test_validate_backrun_bundle_rejects_invalid() {
         // Too few transactions (need at least 2: target + backrun)

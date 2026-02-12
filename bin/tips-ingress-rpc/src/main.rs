@@ -88,14 +88,8 @@ async fn main() -> anyhow::Result<()> {
         address = %bound_health_addr
     );
 
-    let service = IngressService::new(
-        providers,
-        queue,
-        audit_tx,
-        builder_tx,
-        builder_backrun_tx,
-        cfg,
-    );
+    let service =
+        IngressService::new(providers, queue, audit_tx, builder_tx, builder_backrun_tx, cfg);
     let bind_addr = format!("{}:{}", config.address, config.port);
 
     let server = Server::builder().build(&bind_addr).await?;

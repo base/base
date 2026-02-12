@@ -35,6 +35,4 @@ moka = { workspace = true, features = ["future"] }
 uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
-mockall = "0.13"
 wiremock.workspace = true
-jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
