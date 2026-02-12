@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::{Context, Result};
-use rand::SeedableRng;
+use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,9 @@ impl Wallet {
     }
 
     pub fn new_random(rng: &mut ChaCha8Rng) -> Self {
-        let signer = PrivateKeySigner::random_with(rng);
+        let mut key_bytes = [0u8; 32];
+        rng.fill_bytes(&mut key_bytes);
+        let signer = PrivateKeySigner::from_slice(&key_bytes).expect("valid random key bytes");
         let address = signer.address();
         Self { signer, address }
     }
@@ -42,7 +44,7 @@ impl Wallet {
 pub fn generate_wallets(num_wallets: usize, seed: Option<u64>) -> Vec<Wallet> {
     let mut rng = match seed {
         Some(s) => ChaCha8Rng::seed_from_u64(s),
-        None => ChaCha8Rng::from_entropy(),
+        None => ChaCha8Rng::from_os_rng(),
     };
 
     (0..num_wallets).map(|_| Wallet::new_random(&mut rng)).collect()
