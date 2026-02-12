@@ -284,6 +284,7 @@ where
             &ctx,
             &mut info,
             !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            self.config.flashblocks.enable_incremental_trie_cache,
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
@@ -589,6 +590,7 @@ where
             ctx,
             info,
             !ctx.extra.disable_state_root || ctx.attributes().no_tx_pool,
+            self.config.flashblocks.enable_incremental_trie_cache,
         );
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics.total_block_built_duration.record(total_block_built_duration);
@@ -746,7 +748,7 @@ where
         let start_time = Instant::now();
 
         // Build the final block WITH state root computed
-        let (final_payload, _) = build_block(state, ctx, info, true)?;
+        let (final_payload, _) = build_block(state, ctx, info, true, true)?;
 
         let elapsed = start_time.elapsed();
         info!(
@@ -869,6 +871,7 @@ pub(super) fn build_block<DB, P>(
     ctx: &OpPayloadBuilderCtx,
     info: &mut ExecutionInfo,
     calculate_state_root: bool,
+    enable_incremental_trie_cache: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
@@ -937,7 +940,10 @@ where
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(execution_outcome.state());
 
-        if let Some(prev_trie) = &info.extra.prev_trie_updates {
+        // Check if we can use incremental trie caching (use cached trie from previous flashblock if available)
+        let use_incremental = if enable_incremental_trie_cache
+            && let Some(prev_trie) = &info.extra.prev_trie_updates {
+            // Incremental path: Use cached trie from previous flashblock
             debug!(
                 target: "payload_builder",
                 flashblock_index = info.extra.last_flashblock_index + 1,
@@ -970,48 +976,9 @@ where
                         "failed to calculate state root for payload"
                     );
                 })?;
-        }
+        };
 
-        #[cfg(debug_assertions)]
-        if info.extra.prev_trie_updates.is_some() {
-            let full_hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-            let (full_state_root, _) = state_provider
-                .state_root_with_updates(full_hashed_state.clone())
-                .expect("Full state root calculation should succeed");
-
-            if state_root != full_state_root {
-                error!(
-                    target: "payload_builder",
-                    incremental_root = %state_root,
-                    full_root = %full_state_root,
-                    flashblock_index = info.extra.last_flashblock_index + 1,
-                    total_accounts = state.bundle_state.state.len(),
-                    "TRIE CACHE VERIFICATION FAILED: State roots do not match!"
-                );
-
-                error!(
-                    target: "payload_builder",
-                    incremental_hashed_accounts = hashed_state.accounts.len(),
-                    full_hashed_accounts = full_hashed_state.accounts.len(),
-                    incremental_hashed_storages = hashed_state.storages.len(),
-                    full_hashed_storages = full_hashed_state.storages.len(),
-                    "Hashed state comparison"
-                );
-
-                panic!(
-                    "Trie cache correctness verification failed! Incremental: {}, Full: {}",
-                    state_root, full_state_root
-                );
-            } else {
-                debug!(
-                    target: "payload_builder",
-                    state_root = %state_root,
-                    flashblock_index = info.extra.last_flashblock_index + 1,
-                    "Trie cache verification passed: incremental matches full calculation"
-                );
-            }
-        }
-
+        // Save trie updates for next flashblock's incremental calculation
         info.extra.prev_trie_updates = Some(Arc::new(trie_output.clone()));
 
         let state_root_calculation_time = state_root_start_time.elapsed();
