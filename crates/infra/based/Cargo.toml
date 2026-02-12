@@ -21,6 +21,9 @@ alloy-rpc-types-eth = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing = { workspace = true }

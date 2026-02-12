@@ -1,3 +1,5 @@
+//! End-to-end tests for the mempool rebroadcaster.
+
 use std::path::Path;
 
 use alloy_rpc_types::txpool::TxpoolContent;

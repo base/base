@@ -20,3 +20,6 @@ rdkafka.workspace = true
 jsonrpsee.workspace = true
 op-alloy-network.workspace = true
 alloy-provider.workspace = true
+
+[lints]
+workspace = true

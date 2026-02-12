@@ -14,5 +14,5 @@ pub trait View {
         Action::None
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources);
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources);
 }

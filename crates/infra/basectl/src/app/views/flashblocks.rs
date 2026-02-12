@@ -134,7 +134,7 @@ impl View for FlashblocksView {
         Action::None
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
         let flash = &resources.flash;
 
         let chunks = Layout::default()
@@ -193,7 +193,7 @@ impl View for FlashblocksView {
             Cell::from("Time").style(header_style),
         ]);
 
-        let rows: Vec<Row> = flash
+        let rows: Vec<Row<'_>> = flash
             .entries
             .iter()
             .enumerate()

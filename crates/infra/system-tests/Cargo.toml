@@ -39,6 +39,9 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 serial_test.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }

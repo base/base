@@ -103,7 +103,7 @@ impl View for HomeView {
         }
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, _resources: &Resources) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, _resources: &Resources) {
         let logo_height = LOGO.lines().count() as u16;
         let menu_height = (MENU_ITEMS.len() * 2) as u16 + 2;
         let total_content_height = logo_height + menu_height + 3;
@@ -126,9 +126,9 @@ impl View for HomeView {
     }
 }
 
-fn render_logo(f: &mut Frame, area: Rect) {
+fn render_logo(f: &mut Frame<'_>, area: Rect) {
     let max_len = LOGO.lines().map(|l| l.chars().count()).max().unwrap_or(0);
-    let padded_lines: Vec<Line> = LOGO
+    let padded_lines: Vec<Line<'_>> = LOGO
         .lines()
         .map(|line| {
             let padding = max_len.saturating_sub(line.chars().count());
@@ -144,7 +144,7 @@ fn render_logo(f: &mut Frame, area: Rect) {
     f.render_widget(logo, area);
 }
 
-fn render_menu(f: &mut Frame, area: Rect, selected_index: usize) {
+fn render_menu(f: &mut Frame<'_>, area: Rect, selected_index: usize) {
     let mut lines = Vec::new();
 
     for (i, item) in MENU_ITEMS.iter().enumerate() {

@@ -32,7 +32,7 @@ impl AppFrame {
     }
 
     pub fn render(
-        f: &mut Frame,
+        f: &mut Frame<'_>,
         layout: &AppLayout,
         config_name: &str,
         keybindings: &[Keybinding],
@@ -43,7 +43,12 @@ impl AppFrame {
     }
 }
 
-fn render_help_sidebar(f: &mut Frame, area: Rect, config_name: &str, keybindings: &[Keybinding]) {
+fn render_help_sidebar(
+    f: &mut Frame<'_>,
+    area: Rect,
+    config_name: &str,
+    keybindings: &[Keybinding],
+) {
     let block = Block::default()
         .title(format!(" Help [{config_name}] "))
         .borders(Borders::ALL)
@@ -52,7 +57,7 @@ fn render_help_sidebar(f: &mut Frame, area: Rect, config_name: &str, keybindings
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let mut lines: Vec<Line> = keybindings
+    let mut lines: Vec<Line<'_>> = keybindings
         .iter()
         .map(|kb| {
             Line::from(vec![

@@ -61,8 +61,8 @@ pub fn create_signed_transaction(
 
 /// Create a simple load test transaction with standard defaults:
 /// - value: 1000 wei (small test amount)
-/// - gas_limit: 21000 (standard transfer)
-/// - max_fee_per_gas: 1 gwei
+/// - `gas_limit`: 21000 (standard transfer)
+/// - `max_fee_per_gas`: 1 gwei
 pub fn create_load_test_transaction(
     signer: &PrivateKeySigner,
     to: Address,

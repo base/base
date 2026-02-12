@@ -21,3 +21,6 @@ alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-trie.workspace = true
 alloy-provider = { workspace = true, features = ["txpool-api"] }
+
+[lints]
+workspace = true

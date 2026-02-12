@@ -28,3 +28,6 @@ alloy-sol-types = { workspace = true }
 alloy-contract = { workspace = true }
 arboard = { workspace = true }
 tracing = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,3 +1,6 @@
+//! Tips ingress RPC library.
+#![allow(missing_docs, missing_debug_implementations)]
+
 pub mod health;
 pub mod metrics;
 pub mod queue;
@@ -30,10 +33,10 @@ impl FromStr for TxSubmissionMethod {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "mempool" => Ok(TxSubmissionMethod::Mempool),
-            "kafka" => Ok(TxSubmissionMethod::Kafka),
-            "mempool,kafka" | "kafka,mempool" => Ok(TxSubmissionMethod::MempoolAndKafka),
-            "none" => Ok(TxSubmissionMethod::None),
+            "mempool" => Ok(Self::Mempool),
+            "kafka" => Ok(Self::Kafka),
+            "mempool,kafka" | "kafka,mempool" => Ok(Self::MempoolAndKafka),
+            "none" => Ok(Self::None),
             _ => Err(format!(
                 "Invalid submission method: '{s}'. Valid options: mempool, kafka, mempool,kafka, kafka,mempool, none"
             )),

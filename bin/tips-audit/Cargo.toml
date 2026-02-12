@@ -19,3 +19,6 @@ rdkafka.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 aws-credential-types.workspace = true
+
+[lints]
+workspace = true

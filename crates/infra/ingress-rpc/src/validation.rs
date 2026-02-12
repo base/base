@@ -76,7 +76,7 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
             })?;
         record_histogram(start.elapsed(), "eth_getBlockByNumber".to_string());
 
-        let txs = block.transactions.clone();
+        let txs = block.transactions;
         let first_tx = txs.first_transaction().ok_or_else(|| {
             warn!(message = "block contains no transactions");
             EthApiError::InternalEthError.into_rpc_err()
@@ -90,7 +90,7 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
 }
 
 /// Helper function to validate propeties of a bundle. A bundle is valid if it satisfies the following criteria:
-/// - The bundle's max_timestamp is not more than 1 hour in the future
+/// - The bundle's `max_timestamp` is not more than 1 hour in the future
 /// - The bundle's gas limit is not greater than the maximum allowed gas limit
 /// - The bundle can only contain 3 transactions at once
 /// - Partial transaction dropping is not supported, `dropping_tx_hashes` must be empty

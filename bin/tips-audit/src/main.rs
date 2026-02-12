@@ -1,3 +1,5 @@
+//! Tips audit binary entry point.
+
 use std::net::SocketAddr;
 
 use anyhow::Result;

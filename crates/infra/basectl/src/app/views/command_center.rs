@@ -257,7 +257,7 @@ impl View for CommandCenterView {
         Action::None
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -334,7 +334,7 @@ impl View for CommandCenterView {
 }
 
 #[allow(clippy::option_if_let_else)]
-fn render_config_panel(f: &mut Frame, area: Rect, resources: &Resources) {
+fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let block = Block::default()
         .title(" L1 Config ")
         .borders(Borders::ALL)
@@ -395,7 +395,7 @@ fn format_gas_value(gas: u64) -> String {
     }
 }
 
-fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
+fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let tracker = &resources.da.tracker;
 
     let backlog_color = backlog_size_color(tracker.da_backlog_bytes);
@@ -469,7 +469,7 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources) {
 }
 
 fn render_da_panel(
-    f: &mut Frame,
+    f: &mut Frame<'_>,
     area: Rect,
     resources: &Resources,
     is_active: bool,
@@ -499,7 +499,7 @@ fn render_da_panel(
 
     let selected_row = table_state.selected();
 
-    let rows: Vec<Row> = tracker
+    let rows: Vec<Row<'_>> = tracker
         .block_contributions
         .iter()
         .enumerate()
@@ -541,7 +541,7 @@ const GAS_BAR_CHARS: usize = 20;
 const DEFAULT_ELASTICITY: u64 = 6;
 
 fn render_flash_panel(
-    f: &mut Frame,
+    f: &mut Frame<'_>,
     area: Rect,
     resources: &Resources,
     is_active: bool,
@@ -576,7 +576,7 @@ fn render_flash_panel(
 
     let selected_row = table_state.selected();
 
-    let rows: Vec<Row> = flash
+    let rows: Vec<Row<'_>> = flash
         .entries
         .iter()
         .enumerate()

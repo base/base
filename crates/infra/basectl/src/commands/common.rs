@@ -689,7 +689,7 @@ pub fn build_gas_bar(
 
 #[allow(clippy::too_many_arguments)]
 pub fn render_l1_blocks_table<'a>(
-    f: &mut Frame,
+    f: &mut Frame<'_>,
     area: Rect,
     l1_blocks: impl Iterator<Item = &'a L1Block>,
     is_active: bool,
@@ -728,7 +728,7 @@ pub fn render_l1_blocks_table<'a>(
 
     let selected_row = table_state.selected();
 
-    let rows: Vec<Row> = l1_blocks
+    let rows: Vec<Row<'_>> = l1_blocks
         .enumerate()
         .map(|(idx, l1_block)| {
             let is_selected = is_active && selected_row == Some(idx);
@@ -771,7 +771,7 @@ pub fn render_l1_blocks_table<'a>(
 }
 
 pub fn render_da_backlog_bar(
-    f: &mut Frame,
+    f: &mut Frame<'_>,
     area: Rect,
     tracker: &DaTracker,
     loading: Option<&LoadingState>,
@@ -834,7 +834,7 @@ pub fn render_da_backlog_bar(
     }
 
     let total_backlog = tracker.da_backlog_bytes;
-    let mut spans: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span<'_>> = Vec::new();
     let mut chars_used = 0usize;
 
     for contrib in backlog_blocks.iter().rev() {
@@ -880,7 +880,7 @@ pub fn render_da_backlog_bar(
 }
 
 pub fn render_gas_usage_bar(
-    f: &mut Frame,
+    f: &mut Frame<'_>,
     area: Rect,
     entries: &VecDeque<FlashblockEntry>,
     elasticity: u64,
@@ -944,7 +944,7 @@ pub fn render_gas_usage_bar(
         }
     };
 
-    let mut spans: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span<'_>> = Vec::new();
     let mut chars_used = 0usize;
     let mut cumulative_gas = 0u64;
 

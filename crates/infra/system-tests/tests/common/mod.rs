@@ -1,1 +1,1 @@
-pub mod kafka;
+pub(crate) mod kafka;
