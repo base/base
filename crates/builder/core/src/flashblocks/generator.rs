@@ -294,7 +294,7 @@ where
 }
 
 /// Build arguments
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
@@ -405,7 +405,7 @@ impl<T: Clone> Future for ResolvePayload<T> {
     }
 }
 
-/// A simple cell that can be set once and allows waiting for the value to be set.
+/// A cell that holds a value and allows waiting for it to be set.
 #[derive(Clone, Debug)]
 pub struct BlockCell<T> {
     inner: Arc<Mutex<Option<T>>>,

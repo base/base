@@ -12,8 +12,7 @@ use crate::{BlockCell, BuildArguments};
 /// using `BuildArguments`. It returns a `Result` indicating success or a
 /// `PayloadBuilderError` if building fails.
 ///
-/// Generic parameters `Pool` and `Client` represent the transaction pool and
-/// Ethereum client types.
+/// Generic parameters represent the payload attributes and built payload types.
 #[async_trait::async_trait]
 pub trait PayloadBuilder: Send + Sync + Clone {
     /// The payload attributes type to accept for building.
