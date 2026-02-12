@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use basectl_cli::{
     app::{ViewId, run_app, run_app_with_view},
     config::ChainConfig,

@@ -4,9 +4,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
-
 [dependencies]
 tokio = { workspace = true }
 serde_json = { workspace = true }
@@ -19,13 +16,13 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 dirs = { workspace = true }
-alloy-provider = { workspace = true }
+alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-rpc-types-eth = { workspace = true }
 alloy-eips = { workspace = true }
 op-alloy-network = { workspace = true }
 op-alloy-consensus = { workspace = true }
-base-primitives = { workspace = true }
-url = { workspace = true }
+base-primitives = { workspace = true, features = ["flashblocks"] }
+url = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-contract = { workspace = true }
