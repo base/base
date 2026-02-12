@@ -15,7 +15,8 @@ jobs:
     name: Review PR
     # Note: This job runs on the custom Runner to be able to access LLM Gateway
     # It will not work on other runners
-    runs-on: BaseRunner
+    runs-on:
+      group: BaseRunnerGroup
     steps:
       - name: Harden the runner (Block unauthorized outbound calls)
         uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
