@@ -73,7 +73,8 @@ jobs:
             - Post one summary comment at the end with your overall assessment (if you have findings)
 
             DUPLICATE AVOIDANCE:
-            Before posting any inline comment, first fetch all existing review comments on this PR to check for duplicates.
+            Before posting any inline comment, first fetch all existing inline review comments on this PR by running:
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | {path, body}'
             Do NOT post a comment if there is already a comment from github-actions[bot] on the same file raising the same or substantially similar issue.
             Only post new findings that haven't been raised before.
 
@@ -95,4 +96,4 @@ jobs:
 
           claude_args: |
             --model claude-opus-4-6-default
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --delete-last:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --delete-last:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*)"
