@@ -38,7 +38,7 @@ jobs:
         uses: anthropics/claude-code-action@1b8ee3b94104046d71fde52ec3557651ad8c0d71 # v1.0.29
         env:
           ANTHROPIC_BASE_URL: ${{ vars.LLM_GATEWAY_BASE_URL }}
-          ANTHROPIC_DEFAULT_SONNET_MODEL: claude-opus-4-6-default
+
         with:
           anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -87,4 +87,5 @@ jobs:
 
           # Tools for comprehensive PR review
           claude_args: |
+            --model claude-opus-4-6-default
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --edit-last --body:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
