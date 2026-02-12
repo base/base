@@ -17,3 +17,5 @@ pub use payload::FlashblocksExecutionInfo;
 
 mod service;
 pub use service::FlashblocksServiceBuilder;
+
+pub(crate) mod state_trie_warmer;

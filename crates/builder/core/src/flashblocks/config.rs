@@ -40,6 +40,9 @@ pub struct FlashblocksConfig {
     /// When enabled, flashblocks are built without state root, but the final payload
     /// returned by `get_payload` will have the state root computed.
     pub compute_state_root_on_finalize: bool,
+
+    /// Should we enable background state trie cache warming via state root calculation
+    pub enable_state_trie_warming: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -51,6 +54,7 @@ impl Default for FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
+            enable_state_trie_warming: false,
         }
     }
 }
@@ -66,6 +70,7 @@ impl FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
+            enable_state_trie_warming: false,
         }
     }
 
@@ -96,6 +101,12 @@ impl FlashblocksConfig {
     #[must_use]
     pub const fn with_compute_state_root_on_finalize(mut self, compute: bool) -> Self {
         self.compute_state_root_on_finalize = compute;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_enable_state_trie_warming(mut self, enable: bool) -> Self {
+        self.enable_state_trie_warming = enable;
         self
     }
 

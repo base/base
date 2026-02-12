@@ -140,6 +140,18 @@ pub struct BuilderMetrics {
     // === State Root Time / Gas Ratio (Anomaly Detection) ===
     /// Ratio of `state_root_time_us` / `gas_used` for each transaction.
     pub state_root_time_per_gas_ratio: Histogram,
+
+    // === State Trie Warming Metrics ===
+    /// Number of state trie warming tasks started
+    pub state_trie_warming_started_count: Counter,
+    /// Number of state trie warming tasks completed successfully
+    pub state_trie_warming_completed_count: Counter,
+    /// Number of state trie warming tasks skipped (already warming)
+    pub state_trie_warming_skipped_count: Counter,
+    /// Number of state trie warming tasks that encountered errors
+    pub state_trie_warming_error_count: Counter,
+    /// Histogram of state trie warming duration (completed tasks only)
+    pub state_trie_warming_duration: Histogram,
 }
 
 impl BuilderMetrics {

@@ -51,6 +51,7 @@ use crate::{
         config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
         generator::{BlockCell, BuildArguments, PayloadBuilder},
+        state_trie_warmer::{StateTrieHook, StateTrieWarmerTask},
     },
     metrics::BuilderMetrics,
     traits::{ClientBounds, PoolBounds},
@@ -263,12 +264,28 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(state_provider);
 
+        // Create state trie warming channel and task
+        let state_hook = if self.config.flashblocks.enable_state_trie_warming {
+            let warming_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+            let (warming_tx, warming_rx) = std::sync::mpsc::channel();
+            let warming_task = StateTrieWarmerTask::new(
+                warming_rx,
+                warming_provider,
+                Arc::clone(&self.metrics),
+                ctx.block_number(),
+            );
+            tokio::task::spawn_blocking(move || warming_task.run());
+            StateTrieHook::new(warming_tx)
+        } else {
+            StateTrieHook::noop()
+        };
+
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
         let mut state =
             State::builder().with_database(cached_reads.as_db_mut(db)).with_bundle_update().build();
 
-        let mut info = execute_pre_steps(&mut state, &ctx)?;
+        let mut info = execute_pre_steps(&mut state, &ctx, &state_hook)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
@@ -437,6 +454,7 @@ where
                     &best_payload,
                     &publish_guard,
                     &fb_span,
+                    &state_hook,
                 )
                 .await
             {
@@ -501,6 +519,7 @@ where
         best_payload: &BlockCell<OpBuiltPayload>,
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
+        state_hook: &StateTrieHook,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
@@ -546,6 +565,7 @@ where
             target_da_footprint_for_batch,
             flashblock_execution_time_limit_us,
             block_state_root_time_limit_us,
+            state_hook,
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
@@ -836,6 +856,7 @@ struct FlashblocksMetadata {
 fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
+    state_hook: &StateTrieHook,
 ) -> Result<ExecutionInfo, PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + std::fmt::Debug + revm::Database,
@@ -847,7 +868,7 @@ where
         .apply_pre_execution_changes()?;
 
     // 2. execute sequencer transactions
-    let info = ctx.execute_sequencer_transactions(state)?;
+    let info = ctx.execute_sequencer_transactions(state, state_hook)?;
 
     Ok(info)
 }
