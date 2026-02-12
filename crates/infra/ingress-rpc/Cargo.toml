@@ -1,0 +1,42 @@
+[package]
+name = "tips-ingress-rpc-lib"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[dependencies]
+url.workspace = true
+tips-core.workspace = true
+op-revm.workspace = true
+metrics.workspace = true
+dotenvy.workspace = true
+tips-audit-lib.workspace = true
+async-trait.workspace = true
+metrics-derive.workspace = true
+op-alloy-network.workspace = true
+alloy-signer-local.workspace = true
+base-reth-rpc-types.workspace = true
+account-abstraction-core.workspace = true
+alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["std"] }
+anyhow = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-provider = { workspace = true, features = ["reqwest"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+backon = { workspace = true, features = ["std", "tokio-sleep"] }
+axum = { workspace = true, features = ["tokio", "http1", "json"] }
+clap = { version = "4.5.47", features = ["std", "derive", "env"] }
+op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+moka = { workspace = true, features = ["future"] }
+uuid = { workspace = true, features = ["v5"] }
+
+[dev-dependencies]
+mockall = "0.13"
+wiremock.workspace = true
+jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
