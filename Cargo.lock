@@ -3009,7 +3009,7 @@ dependencies = [
 
 [[package]]
 name = "based-bin"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "based",
  "cadence",
@@ -8071,7 +8071,7 @@ dependencies = [
 
 [[package]]
 name = "mempool-rebroadcaster-bin"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "clap",
  "dotenvy",
