@@ -41,3 +41,13 @@ pub const DEFAULT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 
 /// Default maximum delay between retry attempts.
 pub const DEFAULT_RETRY_MAX_DELAY: Duration = Duration::from_secs(10);
+
+// ============================================================================
+// Gas Estimation Constants
+// ============================================================================
+
+/// Gas limit multiplier numerator (120% = 6/5).
+pub const GAS_LIMIT_MULTIPLIER_NUMERATOR: u64 = 6;
+
+/// Gas limit multiplier denominator (120% = 6/5).
+pub const GAS_LIMIT_MULTIPLIER_DENOMINATOR: u64 = 5;

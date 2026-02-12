@@ -2,6 +2,8 @@
 
 use std::{net::IpAddr, time::Duration};
 
+use alloy::signers::k256::ecdsa::SigningKey;
+use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::Address;
 use backon::ExponentialBuilder;
 use base_cli_utils::LogConfig;
@@ -37,6 +39,42 @@ pub enum ConfigError {
     /// Invalid RPC configuration.
     #[error("invalid RPC config: {0}")]
     Rpc(String),
+    /// Invalid signing configuration.
+    #[error("invalid signing config: {0}")]
+    Signing(String),
+}
+
+/// Signing configuration for L1 transaction submission.
+#[derive(Clone)]
+pub enum SigningConfig {
+    /// Local signing with an in-process private key (development).
+    Local {
+        /// The private key signer.
+        signer: PrivateKeySigner,
+    },
+    /// Remote signing via a signer sidecar JSON-RPC endpoint (production).
+    Remote {
+        /// URL of the signer sidecar.
+        endpoint: Url,
+        /// Address of the signer account.
+        address: Address,
+    },
+}
+
+impl std::fmt::Debug for SigningConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local { signer } => f
+                .debug_struct("Local")
+                .field("address", &signer.address())
+                .finish(),
+            Self::Remote { endpoint, address } => f
+                .debug_struct("Remote")
+                .field("endpoint", endpoint)
+                .field("address", address)
+                .finish(),
+        }
+    }
 }
 
 /// Validated proposer configuration.
@@ -74,6 +112,8 @@ pub struct ProposerConfig {
     pub rpc: RpcServerConfig,
     /// RPC retry configuration.
     pub retry: RetryConfig,
+    /// Signing configuration for L1 transaction submission.
+    pub signing: SigningConfig,
 }
 
 impl ProposerConfig {
@@ -118,6 +158,13 @@ impl ProposerConfig {
             ));
         }
 
+        // Validate and extract signing config
+        let signing = build_signing_config(
+            cli.proposer.private_key.as_deref(),
+            cli.proposer.signer_endpoint.as_ref(),
+            cli.proposer.signer_address.as_ref(),
+        )?;
+
         // Extract retry config before moving other proposer fields
         let retry = RetryConfig::from(&cli.proposer);
 
@@ -132,6 +179,7 @@ impl ProposerConfig {
             poll_interval: cli.proposer.poll_interval,
             rpc_timeout: cli.proposer.rpc_timeout,
             retry,
+            signing,
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
@@ -159,6 +207,48 @@ fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
     }
 
     Ok(())
+}
+
+/// Validate and build [`SigningConfig`] from CLI arguments.
+///
+/// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
+fn build_signing_config(
+    private_key: Option<&str>,
+    signer_endpoint: Option<&Url>,
+    signer_address: Option<&Address>,
+) -> Result<SigningConfig, ConfigError> {
+    match (private_key, signer_endpoint, signer_address) {
+        (Some(pk), None, None) => {
+            let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
+            let key_bytes = hex::decode(hex_str)
+                .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?;
+            let signing_key = SigningKey::from_slice(&key_bytes)
+                .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
+            let signer = PrivateKeySigner::from_signing_key(signing_key);
+            Ok(SigningConfig::Local { signer })
+        }
+        (None, Some(endpoint), Some(address)) => {
+            validate_url(endpoint, "signer-endpoint")?;
+            Ok(SigningConfig::Remote {
+                endpoint: endpoint.clone(),
+                address: *address,
+            })
+        }
+        (None, None, None) => Err(ConfigError::Signing(
+            "one of --private-key or (--signer-endpoint + --signer-address) must be provided"
+                .to_string(),
+        )),
+        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(ConfigError::Signing(
+            "--private-key is mutually exclusive with --signer-endpoint/--signer-address"
+                .to_string(),
+        )),
+        (None, Some(_), None) => Err(ConfigError::Signing(
+            "--signer-endpoint requires --signer-address".to_string(),
+        )),
+        (None, None, Some(_)) => Err(ConfigError::Signing(
+            "--signer-address requires --signer-endpoint".to_string(),
+        )),
+    }
 }
 
 impl From<LogArgs> for LogConfig {
@@ -316,6 +406,12 @@ mod tests {
                 rpc_max_retries: 5,
                 rpc_retry_initial_delay: Duration::from_millis(100),
                 rpc_retry_max_delay: Duration::from_secs(10),
+                private_key: Some(
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                        .to_string(),
+                ),
+                signer_endpoint: None,
+                signer_address: None,
             },
             logging: LogArgs {
                 level: 3,
@@ -503,6 +599,56 @@ mod tests {
             error.to_string(),
             "invalid RPC config: RPC port must be non-zero"
         );
+
+        let error = ConfigError::Signing("missing key".to_string());
+        assert_eq!(error.to_string(), "invalid signing config: missing key");
+    }
+
+    #[test]
+    fn test_signing_config_local() {
+        let cli = minimal_cli();
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(matches!(config.signing, SigningConfig::Local { .. }));
+    }
+
+    #[test]
+    fn test_signing_config_remote() {
+        let mut cli = minimal_cli();
+        cli.proposer.private_key = None;
+        cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
+        cli.proposer.signer_address = Some(
+            "0x1234567890123456789012345678901234567890"
+                .parse()
+                .unwrap(),
+        );
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(matches!(config.signing, SigningConfig::Remote { .. }));
+    }
+
+    #[test]
+    fn test_signing_config_none_provided() {
+        let mut cli = minimal_cli();
+        cli.proposer.private_key = None;
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(result, Err(ConfigError::Signing(_))));
+    }
+
+    #[test]
+    fn test_signing_config_both_provided() {
+        let mut cli = minimal_cli();
+        // private_key is already set in minimal_cli
+        cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(result, Err(ConfigError::Signing(_))));
+    }
+
+    #[test]
+    fn test_signing_config_endpoint_without_address() {
+        let mut cli = minimal_cli();
+        cli.proposer.private_key = None;
+        cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
     #[test]

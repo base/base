@@ -10,9 +10,10 @@ use op_enclave_core::types::config::{
 use op_enclave_core::{AccountResult, executor::ExecutionWitness};
 
 use crate::ProposerError;
+use crate::contracts::output_proposer::OutputProposer;
 use crate::contracts::{OnchainVerifierClient, OutputProposal};
 use crate::enclave::EnclaveClientTrait;
-use crate::prover::Prover;
+use crate::prover::{Prover, ProverProposal};
 use crate::rpc::{
     L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, RollupClient, RpcError,
     RpcResult, SyncStatus,
@@ -197,5 +198,15 @@ pub(crate) fn test_output_proposal(block_number: u64) -> OutputProposal {
         outputRoot: B256::ZERO,
         timestamp: U256::from(1_000_000u64).try_into().unwrap(),
         l2BlockNumber: U256::from(block_number).try_into().unwrap(),
+    }
+}
+
+/// Mock output proposer that does nothing (returns `Ok(())`).
+pub(crate) struct MockOutputProposer;
+
+#[async_trait]
+impl OutputProposer for MockOutputProposer {
+    async fn propose_output(&self, _proposal: &ProverProposal) -> Result<(), ProposerError> {
+        Ok(())
     }
 }
