@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 /// Number of proofs to aggregate in a single batch.
-pub const AGGREGATE_BATCH_SIZE: u64 = 512;
+pub const AGGREGATE_BATCH_SIZE: usize = 512;
 
 /// Number of blocks the EVM can look back for blockhashes.
 pub const BLOCKHASH_WINDOW: u64 = 256;

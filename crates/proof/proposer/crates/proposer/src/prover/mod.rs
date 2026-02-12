@@ -3,7 +3,7 @@
 //! This module provides the core prover functionality for generating
 //! TEE-signed proposals for L2 block transitions.
 
-mod types;
+pub(crate) mod types;
 
 pub use types::ProverProposal;
 
