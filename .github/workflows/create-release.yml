@@ -40,7 +40,7 @@ jobs:
 
       - name: Create and push tag
         run: |
-          ./scripts/release/create-tag.sh "${{ inputs.release_branch }}" "${{ inputs.release_type }}"
+          ./etc/scripts/release/create-tag.sh "${{ inputs.release_branch }}" "${{ inputs.release_type }}"
 
       - name: Summary
         run: |

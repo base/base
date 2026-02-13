@@ -1,4 +1,4 @@
-![Base](assets/logo.png)
+![Base](docs/assets/logo.png)
 
 # Base Reth Node
 
@@ -118,7 +118,7 @@ _(Note: Replace `[OPTIONS]` with the necessary configuration flags for your setu
 ### 1. Build the Docker Image
 
 ```bash
-docker build -t base-reth-node -f docker/Dockerfile.client .
+docker build -t base-reth-node -f etc/docker/Dockerfile.client .
 ```
 
 ### 2. Run the Docker Container

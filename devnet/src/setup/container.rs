@@ -248,12 +248,12 @@ impl SetupContainer {
         }
 
         let repo_root = self.find_repo_root()?;
-        let dockerfile_path = repo_root.join("docker/Dockerfile.devnet");
+        let dockerfile_path = repo_root.join("etc/docker/Dockerfile.devnet");
 
-        ensure!(dockerfile_path.exists(), "docker/Dockerfile.devnet not found");
+        ensure!(dockerfile_path.exists(), "etc/docker/Dockerfile.devnet not found");
 
         let status = Command::new("docker")
-            .args(["build", "-t", SETUP_IMAGE_TAG, "-f", "docker/Dockerfile.devnet", "."])
+            .args(["build", "-t", SETUP_IMAGE_TAG, "-f", "etc/docker/Dockerfile.devnet", "."])
             .current_dir(&repo_root)
             .status()
             .wrap_err("Failed to run docker build")?;
@@ -266,13 +266,15 @@ impl SetupContainer {
     fn find_repo_root(&self) -> Result<PathBuf> {
         let mut path = std::env::current_dir()?;
         loop {
-            if path.join("Cargo.toml").exists() && path.join("docker/Dockerfile.devnet").exists() {
+            if path.join("Cargo.toml").exists()
+                && path.join("etc/docker/Dockerfile.devnet").exists()
+            {
                 return Ok(path);
             }
             if !path.pop() {
                 break;
             }
         }
-        Err(eyre::eyre!("Could not find repository root with docker/Dockerfile.devnet"))
+        Err(eyre::eyre!("Could not find repository root with etc/docker/Dockerfile.devnet"))
     }
 }

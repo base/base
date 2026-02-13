@@ -181,7 +181,7 @@ jobs:
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
-          file: docker/Dockerfile.client
+          file: etc/docker/Dockerfile.client
           push: false
           cache-from: type=gha,scope=ci-docker
           cache-to: type=gha,mode=max,scope=ci-docker
@@ -311,7 +311,7 @@ jobs:
       - name: Cache docker images
         uses: ScribeMD/docker-cache@fb28c93772363301b8d0a6072ce850224b73f74e # 0.5.0
         with:
-          key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'docker/Dockerfile.devnet') }}
+          key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'etc/docker/Dockerfile.devnet') }}
 
       - name: Pre-pull docker images
         run: just system-tests-pull-images

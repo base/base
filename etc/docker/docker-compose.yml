@@ -1,13 +1,13 @@
 services:
   setup-l1:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.devnet
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.devnet
     container_name: setup-l1
     volumes:
-      - ../.devnet/l1/configs:/output
-      - ../.devnet/l1/reth:/data/l1-reth
-      - ../.devnet/l1/lighthouse:/data/l1-lighthouse
+      - ../../.devnet/l1/configs:/output
+      - ../../.devnet/l1/reth:/data/l1-reth
+      - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=4
@@ -28,8 +28,8 @@ services:
       - "${L1_AUTH_PORT}:${L1_AUTH_PORT}"   # Auth RPC (Engine API)
       - "${L1_P2P_PORT}:${L1_P2P_PORT}"     # P2P
     volumes:
-      - ../.devnet/l1/reth:/data
-      - ../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l1/reth:/data
+      - ../../.devnet/l1/configs:/genesis:ro
     entrypoint: /usr/local/bin/reth
     command:
       - node
@@ -71,8 +71,8 @@ services:
       - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}"       # P2P TCP
       - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}/udp"   # P2P UDP
     volumes:
-      - ../.devnet/l1/lighthouse:/data
-      - ../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l1/lighthouse:/data
+      - ../../.devnet/l1/configs:/genesis:ro
     command:
       - lighthouse
       - bn
@@ -112,7 +112,7 @@ services:
       l1-cl:
         condition: service_healthy
     volumes:
-      - ../.devnet/l1/configs:/genesis
+      - ../../.devnet/l1/configs:/genesis
     command:
       - lighthouse
       - vc
@@ -125,19 +125,19 @@ services:
 
   setup-l2:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.devnet
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.devnet
     container_name: setup-l2
-    env_file: ../.env.devnet
+    env_file: devnet-env
     depends_on:
       l1-el:
         condition: service_healthy
     volumes:
-      - ../.devnet:/devnet
-      - ../.devnet/l2/builder:/data/l2-builder
-      - ../.devnet/l2/builder-cl:/data/l2-builder-cl
-      - ../.devnet/l2/client:/data/l2-client
-      - ../.devnet/l2/client-cl:/data/l2-client-cl
+      - ../../.devnet:/devnet
+      - ../../.devnet/l2/builder:/data/l2-builder
+      - ../../.devnet/l2/builder-cl:/data/l2-builder-cl
+      - ../../.devnet/l2/client:/data/l2-client
+      - ../../.devnet/l2/client-cl:/data/l2-client-cl
     environment:
       - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
       - L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -156,8 +156,8 @@ services:
 
   base-builder:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.builder
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.builder
       args:
         - PROFILE=dev
     container_name: base-builder
@@ -172,9 +172,9 @@ services:
       - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
     volumes:
-      - ../.devnet/l2/builder:/data
-      - ../.devnet/l1/configs:/genesis:ro
-      - ../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l2/builder:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-builder
     command:
       - node
@@ -225,9 +225,9 @@ services:
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}/udp"   # P2P UDP
       - "${L2_BUILDER_CL_METRICS_PORT}:${L2_BUILDER_CL_METRICS_PORT}"  # Metrics
     volumes:
-      - ../.devnet/l2/builder-cl:/data
-      - ../.devnet/l1/configs:/genesis:ro
-      - ../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l2/builder-cl:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
       - op-node
       - --l1
@@ -283,7 +283,7 @@ services:
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
     volumes:
-      - ../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l1/configs:/genesis:ro
     command:
       - op-batcher
       - --l1-eth-rpc
@@ -311,8 +311,8 @@ services:
 
   base-client:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile.client
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.client
       args:
         - PROFILE=dev
     container_name: base-client
@@ -326,9 +326,9 @@ services:
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
     volumes:
-      - ../.devnet/l2/client:/data
-      - ../.devnet/l1/configs:/genesis:ro
-      - ../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l2/client:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-client
     command:
       - node
@@ -375,9 +375,9 @@ services:
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # P2P UDP
       - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
     volumes:
-      - ../.devnet/l2/client-cl:/data
-      - ../.devnet/l1/configs:/genesis:ro
-      - ../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l2/client-cl:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
       - op-node
       - --l1
@@ -426,8 +426,8 @@ services:
       base-builder:
         condition: service_healthy
     volumes:
-      - ../scripts/devnet/load/:/load:ro
-      - ../.devnet/contender:/root/.contender
+      - ../../etc/scripts/devnet/load/:/load:ro
+      - ../../.devnet/contender:/root/.contender
     command:
       - campaign
       - /load/campaign.toml
