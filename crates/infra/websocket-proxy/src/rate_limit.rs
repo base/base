@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_instance_tracking_and_cleanup() {
+    async fn system_test_instance_tracking_and_cleanup() {
         let container = Redis::default().start().await.unwrap();
         let host_port = container.get_host_port_ipv4(6379).await.unwrap();
         let client_addr = format!("redis://127.0.0.1:{}", host_port);
