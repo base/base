@@ -19,7 +19,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - OP Stack consensus layer nodes (`op-node`) for both builder and client
 - The `op-batcher` for submitting L2 data to L1
 
-All services read configuration from `.env.devnet` in the repository root. The devnet stores chain data in `.devnet/` which is created on first run.
+All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 
 ## Usage
 
@@ -41,5 +41,5 @@ docker build -t base-reth-node -f etc/docker/Dockerfile.client .
 To run the compose stack manually:
 
 ```bash
-docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml up -d --build
+docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --build
 ```

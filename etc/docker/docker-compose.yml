@@ -128,7 +128,7 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
     container_name: setup-l2
-    env_file: ../../.env.devnet
+    env_file: devnet-env
     depends_on:
       l1-el:
         condition: service_healthy

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# Source .env.devnet if it exists
+# Source devnet-env if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/../../../.env.devnet"
+ENV_FILE="$SCRIPT_DIR/../../docker/devnet-env"
 if [ -f "$ENV_FILE" ]; then
     set -a
     source "$ENV_FILE"

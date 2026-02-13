@@ -1,5 +1,5 @@
 set positional-arguments := true
-set dotenv-filename := ".env.devnet"
+set dotenv-filename := "etc/docker/devnet-env"
 
 alias t := test
 alias f := fix
@@ -154,11 +154,11 @@ bench-flashblocks:
 
 # Stops devnet, deletes data, and starts fresh
 devnet: devnet-down
-    docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml up -d --build --scale contender=0
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --build --scale contender=0
 
 # Stops devnet and deletes all data
 devnet-down:
-    -docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml down
+    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml down
     rm -rf .devnet
 
 # Shows devnet block numbers and sync status
@@ -191,4 +191,4 @@ devnet-flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
-    docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml logs -f {{ containers }}
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
