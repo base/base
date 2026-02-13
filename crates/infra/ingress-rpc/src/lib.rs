@@ -1,4 +1,4 @@
-//! Tips ingress RPC service library.
+#![doc = include_str!("../README.md")]
 
 /// Health check HTTP server.
 mod health;

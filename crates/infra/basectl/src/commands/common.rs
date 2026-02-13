@@ -868,7 +868,7 @@ pub fn render_l1_blocks_table<'a>(
     ];
 
     let table = Table::new(rows, widths).header(header);
-    f.render_stateful_widget(table, inner, &mut table_state.clone());
+    f.render_stateful_widget(table, inner, table_state);
 }
 
 /// Renders a horizontal bar showing the DA backlog with per-block coloring.
