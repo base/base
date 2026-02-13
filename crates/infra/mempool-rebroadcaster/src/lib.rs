@@ -1,4 +1,4 @@
-//! Mempool rebroadcaster library.
+#![doc = include_str!("../README.md")]
 
 mod rebroadcaster;
 
