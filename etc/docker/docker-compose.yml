@@ -426,7 +426,7 @@ services:
       base-builder:
         condition: service_healthy
     volumes:
-      - ../scripts/devnet/load/:/load:ro
+      - ../../etc/scripts/devnet/load/:/load:ro
       - ../../.devnet/contender:/root/.contender
     command:
       - campaign

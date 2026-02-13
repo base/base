@@ -45,7 +45,7 @@ for rule in "${DISALLOWED_DEPS[@]}"; do
 done
 
 if [ "$FOUND_VIOLATIONS" = true ]; then
-  echo "Dependency rules are defined in scripts/ci/check-crate-deps.sh"
+  echo "Dependency rules are defined in etc/scripts/ci/check-crate-deps.sh"
   exit 1
 fi
 
