@@ -20,7 +20,7 @@ const INITIAL_BACKOFF_MS: u64 = 100;
 
 /// Sends transactions at a configured rate from a single wallet.
 #[derive(Debug)]
-pub struct SenderTask<N: Network> {
+pub(crate) struct SenderTask<N: Network> {
     wallet: Wallet,
     client: TipsRpcClient<N>,
     sequencer: RootProvider<Optimism>,
@@ -32,7 +32,7 @@ pub struct SenderTask<N: Network> {
 
 impl<N: Network> SenderTask<N> {
     /// Creates a new sender task for the given wallet and configuration.
-    pub const fn new(
+    pub(crate) const fn new(
         wallet: Wallet,
         client: TipsRpcClient<N>,
         sequencer: RootProvider<Optimism>,
@@ -45,7 +45,7 @@ impl<N: Network> SenderTask<N> {
     }
 
     /// Runs the send loop until the test duration expires.
-    pub async fn run(mut self) -> Result<()> {
+    pub(crate) async fn run(mut self) -> Result<()> {
         let mut nonce = self
             .sequencer
             .get_transaction_count(self.wallet.address)

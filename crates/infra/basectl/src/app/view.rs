@@ -5,7 +5,7 @@ use super::{Action, Resources};
 use crate::tui::Keybinding;
 
 /// Trait implemented by each TUI view screen.
-pub trait View {
+pub(crate) trait View {
     /// Returns the keybindings available in this view.
     fn keybindings(&self) -> &'static [Keybinding];
 

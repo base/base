@@ -6,7 +6,7 @@ use super::tracker::TransactionTracker;
 
 /// Aggregated load test results.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TestResults {
+pub(crate) struct TestResults {
     /// Test configuration used.
     pub config: TestConfig,
     /// Throughput measurements.
@@ -17,7 +17,7 @@ pub struct TestResults {
 
 /// Configuration snapshot recorded with test results.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TestConfig {
+pub(crate) struct TestConfig {
     /// Target ingress URL.
     pub target: String,
     /// Sequencer RPC URL.
@@ -36,7 +36,7 @@ pub struct TestConfig {
 
 /// Throughput metrics from a load test run.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ThroughputResults {
+pub(crate) struct ThroughputResults {
     /// Actual send rate in transactions per second.
     pub sent_rate: f64,
     /// Inclusion rate in transactions per second.
@@ -59,7 +59,7 @@ pub struct ThroughputResults {
 
 /// Error counts from a load test run.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ErrorResults {
+pub(crate) struct ErrorResults {
     /// Number of send errors.
     pub send_errors: u64,
     /// Number of reverted transactions.
@@ -69,7 +69,10 @@ pub struct ErrorResults {
 }
 
 /// Computes aggregated test results from the tracker and configuration.
-pub fn calculate_results(tracker: &Arc<TransactionTracker>, config: TestConfig) -> TestResults {
+pub(crate) fn calculate_results(
+    tracker: &Arc<TransactionTracker>,
+    config: TestConfig,
+) -> TestResults {
     let actual_duration = tracker.elapsed();
     let total_sent = tracker.total_sent();
     let total_included = tracker.total_included();

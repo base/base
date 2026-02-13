@@ -36,7 +36,7 @@ enum Panel {
 
 /// View for monitoring data availability backlog and L1 blob submissions.
 #[derive(Debug)]
-pub struct DaMonitorView {
+pub(crate) struct DaMonitorView {
     selected_panel: Panel,
     l2_table_state: TableState,
     l1_table_state: TableState,
@@ -51,7 +51,7 @@ impl Default for DaMonitorView {
 
 impl DaMonitorView {
     /// Creates a new DA monitor view with default panel selection.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut l2_table_state = TableState::default();
         l2_table_state.select(Some(0));
         let mut l1_table_state = TableState::default();

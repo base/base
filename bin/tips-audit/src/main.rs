@@ -11,7 +11,7 @@ use rdkafka::consumer::Consumer;
 use tips_audit_lib::{
     KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
 };
-use tips_core::{logger::init_logger_with_format, metrics::init_prometheus_exporter};
+use tips_core::{init_logger_with_format, init_prometheus_exporter};
 use tracing::info;
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -36,7 +36,7 @@ struct Args {
     log_level: String,
 
     #[arg(long, env = "TIPS_AUDIT_LOG_FORMAT", default_value = "pretty")]
-    log_format: tips_core::logger::LogFormat,
+    log_format: tips_core::LogFormat,
 
     #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
     s3_config_type: S3ConfigType,

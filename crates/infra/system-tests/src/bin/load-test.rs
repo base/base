@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use tips_system_tests::load_test::{config, load, setup};
+use tips_system_tests::{config, load, setup};
 
 #[tokio::main]
 async fn main() -> Result<()> {

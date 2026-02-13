@@ -1,9 +1,6 @@
 //! Base infrastructure control CLI binary.
 
-use basectl_cli::{
-    app::{ViewId, run_app, run_app_with_view},
-    config::ChainConfig,
-};
+use basectl_cli::{ChainConfig, ViewId, run_app, run_app_with_view};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]

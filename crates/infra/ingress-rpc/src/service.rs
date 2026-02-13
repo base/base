@@ -20,7 +20,7 @@ use op_alloy_network::Optimism;
 use tips_audit_lib::BundleEvent;
 use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
-    types::ParsedBundle,
+    ParsedBundle,
 };
 use tokio::{
     sync::{broadcast, mpsc},
@@ -504,7 +504,7 @@ mod tests {
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
             log_level: String::from("info"),
-            log_format: tips_core::logger::LogFormat::Pretty,
+            log_format: tips_core::LogFormat::Pretty,
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             metrics_addr: SocketAddr::from(([127, 0, 0, 1], 9002)),

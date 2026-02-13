@@ -1,8 +1,13 @@
 #![doc = include_str!("../README.md")]
 
-/// RPC client wrappers for TIPS endpoints.
-pub mod client;
-/// Transaction and provider test fixtures.
-pub mod fixtures;
-/// Load testing framework.
-pub mod load_test;
+mod client;
+pub use client::TipsRpcClient;
+
+mod fixtures;
+pub use fixtures::{
+    create_funded_signer, create_load_test_transaction, create_optimism_provider,
+    create_signed_transaction, create_test_signer,
+};
+
+mod load_test;
+pub use load_test::{config, load, setup};

@@ -101,7 +101,7 @@ mod option_address_serde {
 
 /// Response from the `optimism_rollupConfig` RPC method.
 #[derive(Debug, Clone, Deserialize)]
-pub struct RollupConfig {
+pub(crate) struct RollupConfig {
     /// Genesis configuration block.
     pub genesis: GenesisConfig,
     /// L1 `SystemConfig` contract address.
@@ -110,14 +110,14 @@ pub struct RollupConfig {
 
 /// Genesis configuration from rollup config.
 #[derive(Debug, Clone, Deserialize)]
-pub struct GenesisConfig {
+pub(crate) struct GenesisConfig {
     /// System configuration at genesis.
     pub system_config: GenesisSystemConfig,
 }
 
 /// System config within genesis.
 #[derive(Debug, Clone, Deserialize)]
-pub struct GenesisSystemConfig {
+pub(crate) struct GenesisSystemConfig {
     /// Batcher address configured at genesis.
     #[serde(rename = "batcherAddr")]
     pub batcher_addr: Address,
@@ -125,7 +125,7 @@ pub struct GenesisSystemConfig {
 
 impl ChainConfig {
     /// Returns the default Base mainnet configuration.
-    pub fn mainnet() -> Self {
+    pub(crate) fn mainnet() -> Self {
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
@@ -139,7 +139,7 @@ impl ChainConfig {
     }
 
     /// Returns the default Base Sepolia configuration.
-    pub fn sepolia() -> Self {
+    pub(crate) fn sepolia() -> Self {
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("https://sepolia.base.org").unwrap(),

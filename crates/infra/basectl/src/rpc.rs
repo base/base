@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use anyhow::Result;
@@ -12,15 +12,14 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tracing::warn;
 
-use crate::{config::ChainConfig, l1_client::fetch_system_config_params, tui::Toast};
+use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
-const DEFAULT_ELASTICITY: u64 = 6;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const WS_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// Fetches the safe and latest L2 block numbers.
-pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
+pub(crate) async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
     let provider = ProviderBuilder::new().connect(l2_rpc).await?;
 
     let safe_block = provider
@@ -38,8 +37,6 @@ pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
 
 struct RawBlockInfo {
     da_bytes: u64,
-    tx_count: usize,
-    gas_used: u64,
     timestamp: u64,
 }
 
@@ -50,20 +47,14 @@ async fn fetch_raw_block_info<P: Provider<Optimism>>(
     let block =
         provider.get_block_by_number(BlockNumberOrTag::Number(block_num)).full().await.ok()??;
 
-    let tx_count = block.transactions.len();
     let da_bytes: u64 =
         block.transactions.txns().map(|tx| tx.inner.inner.encode_2718_len() as u64).sum();
 
-    Some(RawBlockInfo {
-        da_bytes,
-        tx_count,
-        gas_used: block.header.gas_used,
-        timestamp: block.header.timestamp,
-    })
+    Some(RawBlockInfo { da_bytes, timestamp: block.header.timestamp })
 }
 
 /// Polls the L2 safe head block number at regular intervals.
-pub async fn run_safe_head_poller(
+pub(crate) async fn run_safe_head_poller(
     l2_rpc: String,
     tx: mpsc::Sender<u64>,
     toast_tx: mpsc::Sender<Toast>,
@@ -138,7 +129,7 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards raw flashblocks.
-pub async fn run_flashblock_ws(
+pub(crate) async fn run_flashblock_ws(
     url: String,
     tx: mpsc::Sender<Flashblock>,
     toast_tx: mpsc::Sender<Toast>,
@@ -148,7 +139,7 @@ pub async fn run_flashblock_ws(
 
 /// A flashblock paired with its local receive timestamp.
 #[derive(Debug)]
-pub struct TimestampedFlashblock {
+pub(crate) struct TimestampedFlashblock {
     /// The decoded flashblock.
     pub flashblock: Flashblock,
     /// Local time when this flashblock was received.
@@ -156,7 +147,7 @@ pub struct TimestampedFlashblock {
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards timestamped flashblocks.
-pub async fn run_flashblock_ws_timestamped(
+pub(crate) async fn run_flashblock_ws_timestamped(
     url: String,
     tx: mpsc::Sender<TimestampedFlashblock>,
     toast_tx: mpsc::Sender<Toast>,
@@ -170,29 +161,25 @@ pub async fn run_flashblock_ws_timestamped(
 
 /// Summary of the initial DA backlog between safe and latest blocks.
 #[derive(Debug, Clone)]
-pub struct InitialBacklog {
+pub(crate) struct InitialBacklog {
     /// Safe L2 block number.
     pub safe_block: u64,
-    /// Latest (unsafe) L2 block number.
-    pub unsafe_block: u64,
     /// Total DA bytes across all backlog blocks.
     pub da_bytes: u64,
 }
 
 /// Progress update during initial backlog fetch.
 #[derive(Debug, Clone)]
-pub struct BacklogProgress {
+pub(crate) struct BacklogProgress {
     /// Number of blocks fetched so far.
     pub current_block: u64,
     /// Total number of blocks to fetch.
     pub total_blocks: u64,
-    /// Cumulative DA bytes fetched so far.
-    pub da_bytes_so_far: u64,
 }
 
 /// Individual block data from backlog fetch.
 #[derive(Debug, Clone)]
-pub struct BacklogBlock {
+pub(crate) struct BacklogBlock {
     /// L2 block number.
     pub block_number: u64,
     /// DA bytes contributed by this block.
@@ -203,19 +190,19 @@ pub struct BacklogBlock {
 
 /// Result of initial backlog fetch - either progress or complete.
 #[derive(Debug, Clone)]
-pub enum BacklogFetchResult {
+pub(crate) enum BacklogFetchResult {
     /// Incremental progress update.
     Progress(BacklogProgress),
     /// A single fetched block.
     Block(BacklogBlock),
     /// Backlog fetch completed successfully.
     Complete(InitialBacklog),
-    /// Backlog fetch failed with an error message.
-    Error(String),
+    /// Backlog fetch failed.
+    Error,
 }
 
 /// Fetches the initial DA backlog, sending progress updates and block data.
-pub async fn fetch_initial_backlog_with_progress(
+pub(crate) async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
     progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
 ) {
@@ -223,7 +210,7 @@ pub async fn fetch_initial_backlog_with_progress(
         let (safe_block, unsafe_block) = fetch_safe_and_latest(&l2_rpc).await?;
 
         if unsafe_block <= safe_block {
-            return Ok(InitialBacklog { safe_block, unsafe_block, da_bytes: 0 });
+            return Ok(InitialBacklog { safe_block, da_bytes: 0 });
         }
 
         let total_blocks = unsafe_block - safe_block;
@@ -265,7 +252,6 @@ pub async fn fetch_initial_backlog_with_progress(
                     .send(BacklogFetchResult::Progress(BacklogProgress {
                         current_block: blocks_fetched,
                         total_blocks,
-                        da_bytes_so_far: total_da_bytes,
                     }))
                     .await;
             }
@@ -276,11 +262,7 @@ pub async fn fetch_initial_backlog_with_progress(
             let _ = progress_tx.send(BacklogFetchResult::Block(block)).await;
         }
 
-        Ok::<_, anyhow::Error>(InitialBacklog {
-            safe_block,
-            unsafe_block,
-            da_bytes: total_da_bytes,
-        })
+        Ok::<_, anyhow::Error>(InitialBacklog { safe_block, da_bytes: total_da_bytes })
     }
     .await;
 
@@ -289,28 +271,25 @@ pub async fn fetch_initial_backlog_with_progress(
             let _ = progress_tx.send(BacklogFetchResult::Complete(backlog)).await;
         }
         Err(e) => {
-            let _ = progress_tx.send(BacklogFetchResult::Error(e.to_string())).await;
+            warn!("Backlog fetch failed: {e}");
+            let _ = progress_tx.send(BacklogFetchResult::Error).await;
         }
     }
 }
 
 /// DA and gas information for a single L2 block.
 #[derive(Debug, Clone)]
-pub struct BlockDaInfo {
+pub(crate) struct BlockDaInfo {
     /// L2 block number.
     pub block_number: u64,
     /// Total DA bytes from all transactions.
     pub da_bytes: u64,
-    /// Number of transactions in the block.
-    pub tx_count: usize,
-    /// Gas used by the block.
-    pub gas_used: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
 }
 
 /// Fetches DA info for requested block numbers and sends results back.
-pub async fn run_block_fetcher(
+pub(crate) async fn run_block_fetcher(
     l2_rpc: String,
     mut request_rx: mpsc::Receiver<u64>,
     result_tx: mpsc::Sender<BlockDaInfo>,
@@ -335,8 +314,6 @@ pub async fn run_block_fetcher(
             let block_info = BlockDaInfo {
                 block_number: block_num,
                 da_bytes: info.da_bytes,
-                tx_count: info.tx_count,
-                gas_used: info.gas_used,
                 timestamp: info.timestamp,
             };
 
@@ -347,62 +324,11 @@ pub async fn run_block_fetcher(
     }
 }
 
-/// Chain parameters needed for flashblocks display.
-#[derive(Debug, Clone, Copy)]
-pub struct ChainParams {
-    /// Block gas limit.
-    pub gas_limit: u64,
-    /// EIP-1559 elasticity multiplier.
-    pub elasticity: u64,
-}
-
-/// Fetch chain parameters, trying L1 first and falling back to L2.
-///
-/// This fetches `gas_limit` and elasticity from the L1 `SystemConfig` contract.
-/// If elasticity is not available on L1 (older `SystemConfig`), it falls back
-/// to fetching from L2 `extraData`.
-pub async fn fetch_chain_params(config: &ChainConfig) -> Result<ChainParams> {
-    let l1_params =
-        fetch_system_config_params(config.l1_rpc.as_str(), config.system_config).await?;
-
-    let elasticity = match l1_params.elasticity {
-        Some(e) => e,
-        None => fetch_elasticity(config.rpc.as_str()).await?,
-    };
-
-    Ok(ChainParams { gas_limit: l1_params.gas_limit, elasticity })
-}
-
-/// Fetch the EIP-1559 elasticity multiplier from the L2 block extraData.
-/// Falls back to default (6) if extraData is not in Holocene format.
-pub async fn fetch_elasticity(rpc_url: &str) -> Result<u64> {
-    let provider = ProviderBuilder::new().connect(rpc_url).await?;
-
-    let block = provider
-        .get_block_by_number(BlockNumberOrTag::Latest)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("No block found"))?;
-
-    let extra_data = &block.header.extra_data;
-
-    // Holocene format: version(1) + denominator(4) + elasticity(4) = 9 bytes
-    if extra_data.len() >= 9 && extra_data[0] == 0 {
-        let elasticity =
-            u32::from_be_bytes([extra_data[5], extra_data[6], extra_data[7], extra_data[8]]);
-        Ok(elasticity as u64)
-    } else {
-        // Pre-Holocene or invalid format, use default
-        Ok(DEFAULT_ELASTICITY)
-    }
-}
-
 /// Information about an L1 block and its blob counts.
 #[derive(Debug, Clone)]
-pub struct L1BlockInfo {
+pub(crate) struct L1BlockInfo {
     /// L1 block number.
     pub block_number: u64,
-    /// L1 block hash.
-    pub block_hash: B256,
     /// Unix timestamp of the L1 block.
     pub timestamp: u64,
     /// Total number of blobs in this L1 block.
@@ -413,7 +339,7 @@ pub struct L1BlockInfo {
 
 /// How the L1 watcher connects to the L1 node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum L1ConnectionMode {
+pub(crate) enum L1ConnectionMode {
     /// Connected via WebSocket subscription.
     WebSocket,
     /// Connected via HTTP polling.
@@ -425,7 +351,7 @@ fn http_to_ws(url: &str) -> String {
 }
 
 /// Watches L1 blocks for blob transactions, preferring WebSocket with polling fallback.
-pub async fn run_l1_blob_watcher(
+pub(crate) async fn run_l1_blob_watcher(
     l1_rpc: String,
     batcher_address: Address,
     result_tx: mpsc::Sender<L1BlockInfo>,
@@ -566,7 +492,6 @@ fn extract_l1_block_info(
 
     L1BlockInfo {
         block_number: block.header.number,
-        block_hash: block.header.hash,
         timestamp: block.header.timestamp,
         total_blobs,
         base_blobs,

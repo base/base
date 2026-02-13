@@ -4,19 +4,21 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 use alloy_rpc_types as _;
 
-/// Kafka configuration utilities.
-pub mod kafka;
-/// Logging initialization and format configuration.
-pub mod logger;
-/// Prometheus metrics exporter.
-pub mod metrics;
+mod kafka;
+pub use kafka::load_kafka_config_from_file;
+
+mod logger;
+pub use logger::{LogFormat, init_logger, init_logger_with_format};
+
+mod metrics;
+pub use metrics::init_prometheus_exporter;
+
 /// Test utilities and fixtures.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-/// Core bundle and transaction types.
-pub mod types;
 
+mod types;
 pub use types::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, BundleTxs, CancelBundle,
-    MeterBundleResponse,
+    MeterBundleResponse, ParsedBundle, TransactionResult,
 };

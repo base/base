@@ -15,7 +15,7 @@ const MAX_FLASH_BLOCKS: usize = 30;
 
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
-pub struct Resources {
+pub(crate) struct Resources {
     /// Active chain configuration.
     pub config: ChainConfig,
     /// Data availability monitoring state.
@@ -31,7 +31,7 @@ pub struct Resources {
 
 /// State for DA (data availability) monitoring.
 #[derive(Debug)]
-pub struct DaState {
+pub(crate) struct DaState {
     /// Tracks L2 block DA contributions and backlog.
     pub tracker: DaTracker,
     /// Current backlog loading progress, if still loading.
@@ -54,11 +54,9 @@ pub struct DaState {
 
 /// State for the flashblocks stream display.
 #[derive(Debug)]
-pub struct FlashState {
+pub(crate) struct FlashState {
     /// Recent flashblock entries shown in the table.
     pub entries: VecDeque<FlashblockEntry>,
-    /// Current L2 block number being built.
-    pub current_block: Option<u64>,
     /// Current block gas limit.
     pub current_gas_limit: u64,
     /// Current base fee per gas in wei.
@@ -75,7 +73,7 @@ pub struct FlashState {
 
 impl Resources {
     /// Creates new resources with the given chain configuration.
-    pub fn new(config: ChainConfig) -> Self {
+    pub(crate) fn new(config: ChainConfig) -> Self {
         Self {
             config,
             da: DaState::new(),
@@ -87,17 +85,17 @@ impl Resources {
     }
 
     /// Returns the configured chain name.
-    pub fn chain_name(&self) -> &str {
+    pub(crate) fn chain_name(&self) -> &str {
         &self.config.name
     }
 
     /// Sets the channel for receiving L1 system config updates.
-    pub fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<FullSystemConfig>) {
+    pub(crate) fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<FullSystemConfig>) {
         self.sys_config_rx = Some(rx);
     }
 
     /// Polls for a new system config from the background task.
-    pub fn poll_sys_config(&mut self) {
+    pub(crate) fn poll_sys_config(&mut self) {
         if let Some(ref mut rx) = self.sys_config_rx
             && let Ok(cfg) = rx.try_recv()
         {
@@ -114,7 +112,7 @@ impl Default for DaState {
 
 impl DaState {
     /// Creates a new empty DA state.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             tracker: DaTracker::new(),
             loading: None,
@@ -134,7 +132,7 @@ impl DaState {
     }
 
     /// Sets the channels used for receiving DA monitoring data.
-    pub fn set_channels(
+    pub(crate) fn set_channels(
         &mut self,
         fb_rx: mpsc::Receiver<Flashblock>,
         sync_rx: mpsc::Receiver<u64>,
@@ -152,12 +150,12 @@ impl DaState {
     }
 
     /// Sets the channel for receiving L1 connection mode updates.
-    pub fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
+    pub(crate) fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
         self.l1_mode_rx = Some(rx);
     }
 
     /// Drains all pending messages from background channels and updates state.
-    pub fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         let backlog_results: Vec<_> = self
             .backlog_rx
             .as_mut()
@@ -184,7 +182,7 @@ impl DaState {
                     self.flush_buffers();
                     self.loaded = true;
                 }
-                BacklogFetchResult::Error(_) => {
+                BacklogFetchResult::Error => {
                     self.flush_buffers();
                     self.loaded = true;
                 }
@@ -301,10 +299,9 @@ impl Default for FlashState {
 
 impl FlashState {
     /// Creates a new empty flashblock state.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             entries: VecDeque::with_capacity(MAX_FLASH_BLOCKS * 10),
-            current_block: None,
             current_gas_limit: 0,
             current_base_fee: None,
             message_count: 0,
@@ -316,12 +313,12 @@ impl FlashState {
     }
 
     /// Sets the channel for receiving timestamped flashblocks.
-    pub fn set_channel(&mut self, fb_rx: mpsc::Receiver<TimestampedFlashblock>) {
+    pub(crate) fn set_channel(&mut self, fb_rx: mpsc::Receiver<TimestampedFlashblock>) {
         self.fb_rx = Some(fb_rx);
     }
 
     /// Drains pending flashblocks from the channel unless paused.
-    pub fn poll(&mut self) {
+    pub(crate) fn poll(&mut self) {
         if self.paused {
             return;
         }
@@ -355,7 +352,7 @@ impl FlashState {
     }
 
     /// Processes a received flashblock and updates tracking state.
-    pub fn add_flashblock(&mut self, tsf: TimestampedFlashblock) {
+    pub(crate) fn add_flashblock(&mut self, tsf: TimestampedFlashblock) {
         let TimestampedFlashblock { flashblock: fb, received_at } = tsf;
 
         self.message_count += 1;

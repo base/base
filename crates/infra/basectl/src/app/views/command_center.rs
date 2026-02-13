@@ -40,7 +40,7 @@ enum Panel {
 
 /// Combined monitoring view with flashblocks, DA, and L1 block panels.
 #[derive(Debug)]
-pub struct CommandCenterView {
+pub(crate) struct CommandCenterView {
     focused_panel: Panel,
     da_table_state: TableState,
     flash_table_state: TableState,
@@ -57,7 +57,7 @@ impl Default for CommandCenterView {
 
 impl CommandCenterView {
     /// Creates a new command center view with default panel selection.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let mut da_table_state = TableState::default();
         da_table_state.select(Some(0));
         let mut flash_table_state = TableState::default();

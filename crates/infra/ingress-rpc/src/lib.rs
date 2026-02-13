@@ -16,8 +16,9 @@ pub use queue::{BundleQueuePublisher, KafkaMessageQueue, MessageQueue};
 mod service;
 pub use service::{IngressApiServer, IngressService, Providers};
 
-/// Bundle and transaction validation.
+/// Transaction validation implementation.
 mod validation;
+/// Bundle and transaction validation.
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
@@ -104,7 +105,7 @@ pub struct Config {
 
     /// Log output format (pretty or json)
     #[arg(long, env = "TIPS_INGRESS_LOG_FORMAT", default_value = "pretty")]
-    pub log_format: tips_core::logger::LogFormat,
+    pub log_format: tips_core::LogFormat,
 
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(

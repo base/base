@@ -3,7 +3,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::B256;
 use chrono::{DateTime, Local};
 use ratatui::{
     prelude::*,
@@ -13,9 +12,9 @@ use ratatui::{
 use crate::rpc::{L1BlockInfo, L1ConnectionMode};
 
 /// Size of a single blob in bytes (128 `KiB`).
-pub const BLOB_SIZE: u64 = 128 * 1024;
+pub(crate) const BLOB_SIZE: u64 = 128 * 1024;
 /// Maximum number of entries retained in history buffers.
-pub const MAX_HISTORY: usize = 1000;
+pub(crate) const MAX_HISTORY: usize = 1000;
 
 const BLOCK_COLORS: [Color; 24] = [
     Color::Rgb(0, 82, 255),
@@ -51,38 +50,38 @@ const EIGHTH_BLOCKS: [char; 8] = ['▏', '▎', '▍', '▌', '▋', '▊', '▉
 // =============================================================================
 
 /// Primary Base blue color.
-pub const COLOR_BASE_BLUE: Color = Color::Rgb(0, 82, 255);
+pub(crate) const COLOR_BASE_BLUE: Color = Color::Rgb(0, 82, 255);
 /// Active border highlight color.
-pub const COLOR_ACTIVE_BORDER: Color = Color::Rgb(100, 180, 255);
+pub(crate) const COLOR_ACTIVE_BORDER: Color = Color::Rgb(100, 180, 255);
 
 /// Background color for the currently selected table row.
-pub const COLOR_ROW_SELECTED: Color = Color::Rgb(60, 60, 80);
+pub(crate) const COLOR_ROW_SELECTED: Color = Color::Rgb(60, 60, 80);
 /// Background color for a highlighted (cross-referenced) table row.
-pub const COLOR_ROW_HIGHLIGHTED: Color = Color::Rgb(40, 40, 60);
+pub(crate) const COLOR_ROW_HIGHLIGHTED: Color = Color::Rgb(40, 40, 60);
 
 /// Color for DA growth rate indicators.
-pub const COLOR_GROWTH: Color = Color::Rgb(255, 180, 100);
+pub(crate) const COLOR_GROWTH: Color = Color::Rgb(255, 180, 100);
 /// Color for DA burn rate indicators.
-pub const COLOR_BURN: Color = Color::Rgb(100, 200, 100);
+pub(crate) const COLOR_BURN: Color = Color::Rgb(100, 200, 100);
 /// Color for gas target markers.
-pub const COLOR_TARGET: Color = Color::Rgb(255, 200, 100);
+pub(crate) const COLOR_TARGET: Color = Color::Rgb(255, 200, 100);
 /// Color for gas bar fill below target.
-pub const COLOR_GAS_FILL: Color = Color::Rgb(100, 180, 255);
+pub(crate) const COLOR_GAS_FILL: Color = Color::Rgb(100, 180, 255);
 
 // =============================================================================
 // Duration Constants
 // =============================================================================
 
 /// Timeout for terminal event polling.
-pub const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
+pub(crate) const EVENT_POLL_TIMEOUT: Duration = Duration::from_millis(100);
 /// Rate calculation window of 30 seconds.
-pub const RATE_WINDOW_30S: Duration = Duration::from_secs(30);
+pub(crate) const RATE_WINDOW_30S: Duration = Duration::from_secs(30);
 /// Rate calculation window of 2 minutes.
-pub const RATE_WINDOW_2M: Duration = Duration::from_secs(120);
+pub(crate) const RATE_WINDOW_2M: Duration = Duration::from_secs(120);
 /// Rate calculation window of 5 minutes.
-pub const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
+pub(crate) const RATE_WINDOW_5M: Duration = Duration::from_secs(300);
 /// Number of recent L1 blocks used for blob share and target usage calculations.
-pub const L1_BLOCK_WINDOW: usize = 10;
+pub(crate) const L1_BLOCK_WINDOW: usize = 10;
 
 // =============================================================================
 // Shared Data Types
@@ -90,7 +89,7 @@ pub const L1_BLOCK_WINDOW: usize = 10;
 
 /// A single flashblock entry displayed in the TUI.
 #[derive(Clone, Debug)]
-pub struct FlashblockEntry {
+pub(crate) struct FlashblockEntry {
     /// L2 block number.
     pub block_number: u64,
     /// Flashblock index within the block.
@@ -113,7 +112,7 @@ pub struct FlashblockEntry {
 
 /// An L2 block's data availability contribution.
 #[derive(Clone, Debug)]
-pub struct BlockContribution {
+pub(crate) struct BlockContribution {
     /// L2 block number.
     pub block_number: u64,
     /// DA bytes contributed by this block.
@@ -124,7 +123,7 @@ pub struct BlockContribution {
 
 impl BlockContribution {
     /// Returns the age of this block in seconds since its timestamp.
-    pub fn age_seconds(&self) -> u64 {
+    pub(crate) fn age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -135,11 +134,9 @@ impl BlockContribution {
 
 /// An L1 block with blob and attribution data.
 #[derive(Clone, Debug)]
-pub struct L1Block {
+pub(crate) struct L1Block {
     /// L1 block number.
     pub block_number: u64,
-    /// L1 block hash.
-    pub block_hash: B256,
     /// Unix timestamp of the L1 block.
     pub timestamp: u64,
     /// Total number of blobs in this L1 block.
@@ -156,10 +153,9 @@ pub struct L1Block {
 
 impl L1Block {
     /// Creates a new `L1Block` from raw L1 block info.
-    pub const fn from_info(info: L1BlockInfo) -> Self {
+    pub(crate) const fn from_info(info: L1BlockInfo) -> Self {
         Self {
             block_number: info.block_number,
-            block_hash: info.block_hash,
             timestamp: info.timestamp,
             total_blobs: info.total_blobs,
             base_blobs: info.base_blobs,
@@ -170,32 +166,32 @@ impl L1Block {
     }
 
     /// Returns true if this L1 block contains any blobs.
-    pub const fn has_blobs(&self) -> bool {
+    pub(crate) const fn has_blobs(&self) -> bool {
         self.total_blobs > 0
     }
 
     /// Returns true if this L1 block contains blobs from the Base batcher.
-    pub const fn has_base_blobs(&self) -> bool {
+    pub(crate) const fn has_base_blobs(&self) -> bool {
         self.base_blobs > 0
     }
 
     /// Returns a formatted string of base/total blob counts.
-    pub fn blobs_display(&self) -> String {
+    pub(crate) fn blobs_display(&self) -> String {
         format!("{}/{}", self.base_blobs, self.total_blobs)
     }
 
     /// Returns the block number truncated to fit within `max_width` characters.
-    pub fn block_display(&self, max_width: usize) -> String {
+    pub(crate) fn block_display(&self, max_width: usize) -> String {
         truncate_block_number(self.block_number, max_width)
     }
 
     /// Returns the number of attributed L2 blocks as a display string.
-    pub fn l2_blocks_display(&self) -> String {
+    pub(crate) fn l2_blocks_display(&self) -> String {
         self.l2_blocks_submitted.map_or_else(|| "-".to_string(), |n| n.to_string())
     }
 
     /// Returns the DA-to-L1 compression ratio, if data is available.
-    pub fn compression_ratio(&self) -> Option<f64> {
+    pub(crate) fn compression_ratio(&self) -> Option<f64> {
         let da_bytes = self.l2_da_bytes?;
         if self.base_blobs == 0 {
             return None;
@@ -205,12 +201,12 @@ impl L1Block {
     }
 
     /// Returns the compression ratio as a formatted display string.
-    pub fn compression_display(&self) -> String {
+    pub(crate) fn compression_display(&self) -> String {
         self.compression_ratio().map_or_else(|| "-".to_string(), |r| format!("{r:.2}x"))
     }
 
     /// Returns the age of this L1 block in seconds.
-    pub fn age_seconds(&self) -> u64 {
+    pub(crate) fn age_seconds(&self) -> u64 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -219,14 +215,14 @@ impl L1Block {
     }
 
     /// Returns the block age as a human-readable duration string.
-    pub fn age_display(&self) -> String {
+    pub(crate) fn age_display(&self) -> String {
         format_duration(Duration::from_secs(self.age_seconds()))
     }
 }
 
 /// Filter mode for the L1 blocks table display.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum L1BlockFilter {
+pub(crate) enum L1BlockFilter {
     /// Show all L1 blocks.
     #[default]
     All,
@@ -238,7 +234,7 @@ pub enum L1BlockFilter {
 
 impl L1BlockFilter {
     /// Returns the next filter in the cycle.
-    pub const fn next(self) -> Self {
+    pub(crate) const fn next(self) -> Self {
         match self {
             Self::All => Self::WithBlobs,
             Self::WithBlobs => Self::WithBaseBlobs,
@@ -247,7 +243,7 @@ impl L1BlockFilter {
     }
 
     /// Returns a short label for this filter mode.
-    pub const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::All => "All",
             Self::WithBlobs => "Blobs",
@@ -258,7 +254,7 @@ impl L1BlockFilter {
 
 /// Tracks byte rate samples over a sliding time window.
 #[derive(Debug)]
-pub struct RateTracker {
+pub(crate) struct RateTracker {
     samples: VecDeque<(Instant, u64)>,
 }
 
@@ -270,12 +266,12 @@ impl Default for RateTracker {
 
 impl RateTracker {
     /// Creates a new rate tracker with an empty sample buffer.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { samples: VecDeque::with_capacity(300) }
     }
 
     /// Records a byte count sample at the current instant.
-    pub fn add_sample(&mut self, bytes: u64) {
+    pub(crate) fn add_sample(&mut self, bytes: u64) {
         let now = Instant::now();
         self.samples.push_back((now, bytes));
         let cutoff = now - Duration::from_secs(300);
@@ -285,7 +281,7 @@ impl RateTracker {
     }
 
     /// Computes the byte rate (bytes/sec) over the given duration window.
-    pub fn rate_over(&self, duration: Duration) -> Option<f64> {
+    pub(crate) fn rate_over(&self, duration: Duration) -> Option<f64> {
         let now = Instant::now();
         let cutoff = now - duration;
 
@@ -311,7 +307,7 @@ impl RateTracker {
 
 /// Progress state during initial backlog loading.
 #[derive(Debug)]
-pub struct LoadingState {
+pub(crate) struct LoadingState {
     /// Number of blocks fetched so far.
     pub current_block: u64,
     /// Total number of blocks to fetch.
@@ -324,7 +320,7 @@ pub struct LoadingState {
 
 /// Tracks DA backlog state, L2 block contributions, and L1 blob data.
 #[derive(Debug)]
-pub struct DaTracker {
+pub(crate) struct DaTracker {
     /// Latest safe L2 block number.
     pub safe_l2_block: u64,
     /// Total DA bytes in the backlog (unsafe minus safe).
@@ -352,7 +348,7 @@ impl Default for DaTracker {
 
 impl DaTracker {
     /// Creates a new empty DA tracker.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             safe_l2_block: 0,
             da_backlog_bytes: 0,
@@ -366,14 +362,14 @@ impl DaTracker {
     }
 
     /// Sets the initial backlog state from the safe block and total DA bytes.
-    pub const fn set_initial_backlog(&mut self, safe_block: u64, da_bytes: u64) {
+    pub(crate) const fn set_initial_backlog(&mut self, safe_block: u64, da_bytes: u64) {
         self.safe_l2_block = safe_block;
         self.da_backlog_bytes = da_bytes;
         self.last_attributed_safe_l2 = safe_block;
     }
 
     /// Adds a block from the initial backlog fetch.
-    pub fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
+    pub(crate) fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
         let contribution = BlockContribution { block_number, da_bytes, timestamp };
         self.block_contributions.push_front(contribution);
         if self.block_contributions.len() > MAX_HISTORY {
@@ -382,7 +378,7 @@ impl DaTracker {
     }
 
     /// Records a new L2 block and adds its DA bytes to the backlog.
-    pub fn add_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
+    pub(crate) fn add_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
         if block_number <= self.safe_l2_block {
             return;
         }
@@ -398,7 +394,12 @@ impl DaTracker {
     }
 
     /// Updates an existing block's DA bytes with accurate data from a full fetch.
-    pub fn update_block_info(&mut self, block_number: u64, accurate_da_bytes: u64, timestamp: u64) {
+    pub(crate) fn update_block_info(
+        &mut self,
+        block_number: u64,
+        accurate_da_bytes: u64,
+        timestamp: u64,
+    ) {
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
                 let diff = accurate_da_bytes as i64 - contrib.da_bytes as i64;
@@ -438,7 +439,7 @@ impl DaTracker {
     }
 
     /// Updates the safe head and subtracts newly safe block bytes from the backlog.
-    pub fn update_safe_head(&mut self, safe_block: u64) {
+    pub(crate) fn update_safe_head(&mut self, safe_block: u64) {
         if safe_block <= self.safe_l2_block {
             return;
         }
@@ -460,7 +461,7 @@ impl DaTracker {
     }
 
     /// Records a new L1 block and attempts to attribute L2 blocks to it.
-    pub fn record_l1_block(&mut self, info: L1BlockInfo) {
+    pub(crate) fn record_l1_block(&mut self, info: L1BlockInfo) {
         if self.l1_blocks.iter().any(|b| b.block_number == info.block_number) {
             return;
         }
@@ -564,7 +565,10 @@ impl DaTracker {
     }
 
     /// Returns an iterator over L1 blocks matching the given filter.
-    pub fn filtered_l1_blocks(&self, filter: L1BlockFilter) -> impl Iterator<Item = &L1Block> {
+    pub(crate) fn filtered_l1_blocks(
+        &self,
+        filter: L1BlockFilter,
+    ) -> impl Iterator<Item = &L1Block> {
         self.l1_blocks.iter().filter(move |b| match filter {
             L1BlockFilter::All => true,
             L1BlockFilter::WithBlobs => b.has_blobs(),
@@ -573,7 +577,7 @@ impl DaTracker {
     }
 
     /// Returns the Base batcher's share of total blobs over the last `n` L1 blocks.
-    pub fn base_blob_share(&self, n: usize) -> Option<f64> {
+    pub(crate) fn base_blob_share(&self, n: usize) -> Option<f64> {
         let blocks: Vec<_> = self.l1_blocks.iter().take(n).collect();
         if blocks.is_empty() {
             return None;
@@ -584,7 +588,7 @@ impl DaTracker {
     }
 
     /// Returns the blob target usage ratio over the last `n` L1 blocks.
-    pub fn blob_target_usage(&self, n: usize, l1_blob_target: u64) -> Option<f64> {
+    pub(crate) fn blob_target_usage(&self, n: usize, l1_blob_target: u64) -> Option<f64> {
         let blocks: Vec<_> = self.l1_blocks.iter().take(n).collect();
         if blocks.is_empty() || l1_blob_target == 0 {
             return None;
@@ -600,7 +604,7 @@ impl DaTracker {
 // =============================================================================
 
 /// Formats a byte count into a human-readable string (e.g. "1.5M").
-pub fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
         format!("{:.1}G", bytes as f64 / 1_000_000_000.0)
     } else if bytes >= 1_000_000 {
@@ -613,7 +617,7 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// Formats a gas value into a human-readable string (e.g. "30.0M").
-pub fn format_gas(gas: u64) -> String {
+pub(crate) fn format_gas(gas: u64) -> String {
     if gas >= 1_000_000 {
         format!("{:.1}M", gas as f64 / 1_000_000.0)
     } else if gas >= 1_000 {
@@ -624,13 +628,13 @@ pub fn format_gas(gas: u64) -> String {
 }
 
 /// Truncates a block number to fit within `max_width` characters.
-pub fn truncate_block_number(block_number: u64, max_width: usize) -> String {
+pub(crate) fn truncate_block_number(block_number: u64, max_width: usize) -> String {
     let s = block_number.to_string();
     if s.len() <= max_width { s } else { format!("…{}", &s[s.len() - (max_width - 1)..]) }
 }
 
 /// Formats a duration into a compact human-readable string (e.g. "2m30s").
-pub fn format_duration(d: Duration) -> String {
+pub(crate) fn format_duration(d: Duration) -> String {
     let secs = d.as_secs();
     if secs >= 3600 {
         format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
@@ -642,7 +646,7 @@ pub fn format_duration(d: Duration) -> String {
 }
 
 /// Formats a byte rate into a human-readable string (e.g. "1.2K/s").
-pub fn format_rate(rate: Option<f64>) -> String {
+pub(crate) fn format_rate(rate: Option<f64>) -> String {
     match rate {
         Some(r) if r >= 1_000_000.0 => format!("{:.1}M/s", r / 1_000_000.0),
         Some(r) if r >= 1_000.0 => format!("{:.1}K/s", r / 1_000.0),
@@ -652,7 +656,7 @@ pub fn format_rate(rate: Option<f64>) -> String {
 }
 
 /// Formats a wei value as gwei with appropriate precision.
-pub fn format_gwei(wei: u128) -> String {
+pub(crate) fn format_gwei(wei: u128) -> String {
     let gwei = wei as f64 / 1_000_000_000.0;
     if gwei >= 1.0 { format!("{gwei:.2} gwei") } else { format!("{gwei:.4} gwei") }
 }
@@ -667,7 +671,7 @@ const BACKLOG_THRESHOLDS: &[(u64, Color)] = &[
 ];
 
 /// Returns a color indicating backlog severity based on byte count.
-pub fn backlog_size_color(bytes: u64) -> Color {
+pub(crate) fn backlog_size_color(bytes: u64) -> Color {
     BACKLOG_THRESHOLDS
         .iter()
         .find(|(threshold, _)| bytes < *threshold)
@@ -675,12 +679,12 @@ pub fn backlog_size_color(bytes: u64) -> Color {
 }
 
 /// Returns a unique color for the given block number.
-pub const fn block_color(block_number: u64) -> Color {
+pub(crate) const fn block_color(block_number: u64) -> Color {
     BLOCK_COLORS[(block_number as usize) % BLOCK_COLORS.len()]
 }
 
 /// Returns a brightened version of the block color for emphasis.
-pub const fn block_color_bright(block_number: u64) -> Color {
+pub(crate) const fn block_color_bright(block_number: u64) -> Color {
     let Color::Rgb(r, g, b) = BLOCK_COLORS[(block_number as usize) % BLOCK_COLORS.len()] else {
         unreachable!()
     };
@@ -702,7 +706,7 @@ const GAS_COLOR_WARM: (u8, u8, u8) = (255, 200, 80);
 const GAS_COLOR_HOT: (u8, u8, u8) = (255, 60, 60);
 
 /// Builds a styled gas usage bar line with target marker.
-pub fn build_gas_bar(
+pub(crate) fn build_gas_bar(
     gas_used: u64,
     gas_limit: u64,
     elasticity: u64,
@@ -776,7 +780,7 @@ pub fn build_gas_bar(
 
 /// Parameters for rendering the L1 blocks table.
 #[derive(Debug)]
-pub struct L1BlocksTableParams<'a, I: Iterator<Item = &'a L1Block>> {
+pub(crate) struct L1BlocksTableParams<'a, I: Iterator<Item = &'a L1Block>> {
     /// Iterator over L1 blocks to display.
     pub l1_blocks: I,
     /// Whether this panel is the active (focused) panel.
@@ -792,7 +796,7 @@ pub struct L1BlocksTableParams<'a, I: Iterator<Item = &'a L1Block>> {
 }
 
 /// Renders the L1 blocks table panel.
-pub fn render_l1_blocks_table<'a>(
+pub(crate) fn render_l1_blocks_table<'a>(
     f: &mut Frame<'_>,
     area: Rect,
     params: L1BlocksTableParams<'a, impl Iterator<Item = &'a L1Block>>,
@@ -872,7 +876,7 @@ pub fn render_l1_blocks_table<'a>(
 }
 
 /// Renders a horizontal bar showing the DA backlog with per-block coloring.
-pub fn render_da_backlog_bar(
+pub(crate) fn render_da_backlog_bar(
     f: &mut Frame<'_>,
     area: Rect,
     tracker: &DaTracker,
@@ -982,7 +986,7 @@ pub fn render_da_backlog_bar(
 }
 
 /// Renders a horizontal bar showing aggregate gas usage across recent blocks.
-pub fn render_gas_usage_bar(
+pub(crate) fn render_gas_usage_bar(
     f: &mut Frame<'_>,
     area: Rect,
     entries: &VecDeque<FlashblockEntry>,
@@ -1112,7 +1116,7 @@ pub fn render_gas_usage_bar(
 const TARGET_USAGE_MAX: f64 = 1.5;
 
 /// Returns a color representing how close usage is to the target (blue to red).
-pub fn target_usage_color(usage: f64) -> Color {
+pub(crate) fn target_usage_color(usage: f64) -> Color {
     let t = usage.clamp(0.0, TARGET_USAGE_MAX);
     if t <= 1.0 {
         lerp_rgb((0, 100, 255), (255, 255, 0), t)
@@ -1133,7 +1137,7 @@ const FLASHBLOCK_TARGET_MS: i64 = 200;
 const FLASHBLOCK_TOLERANCE_MS: i64 = 50;
 
 /// Returns a color indicating how close a time delta is to the 200ms target.
-pub fn time_diff_color(ms: i64) -> Color {
+pub(crate) fn time_diff_color(ms: i64) -> Color {
     let target = FLASHBLOCK_TARGET_MS;
     let tol = FLASHBLOCK_TOLERANCE_MS;
     if (target - tol..=target + tol).contains(&ms) {

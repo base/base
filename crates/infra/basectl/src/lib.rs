@@ -1,14 +1,12 @@
 #![doc = include_str!("../README.md")]
 
-/// TUI application framework.
-pub mod app;
-/// CLI commands.
-pub mod commands;
-/// Chain configuration.
-pub mod config;
-/// L1 Ethereum client.
-pub mod l1_client;
-/// RPC client utilities.
-pub mod rpc;
-/// Terminal UI rendering.
-pub mod tui;
+mod app;
+pub use app::{ViewId, run_app, run_app_with_view};
+
+mod commands;
+mod config;
+pub use config::ChainConfig;
+
+mod l1_client;
+mod rpc;
+mod tui;
