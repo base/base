@@ -25,7 +25,7 @@ pub struct Metrics {
     pub successful_simulations: Counter,
 
     /// Number of bundles that failed simulation.
-    #[metric(describe = "Number of bundles simulated")]
+    #[metric(describe = "Number of bundles that failed simulation")]
     pub failed_simulations: Counter,
 
     /// Number of bundles sent to Kafka.
