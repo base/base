@@ -27,14 +27,14 @@ async fn system_test_kafka_publisher_s3_archiver_integration() -> anyhow::Result
         BundleEvent::Dropped { bundle_id: test_bundle_id, reason: DropReason::TimedOut },
     ];
 
-    let publisher = KafkaBundleEventPublisher::new(harness._kafka_producer, topic.to_string());
+    let publisher = KafkaBundleEventPublisher::new(harness.kafka_producer, topic.to_string());
 
     for event in &test_events {
         publisher.publish(event.clone()).await?;
     }
 
     let mut consumer = KafkaAuditArchiver::new(
-        KafkaAuditLogReader::new(harness._kafka_consumer, topic.to_string())?,
+        KafkaAuditLogReader::new(harness.kafka_consumer, topic.to_string())?,
         s3_writer.clone(),
         1,
         100,

@@ -1,4 +1,4 @@
-//! Tips system tests library.
+#![doc = include_str!("../README.md")]
 
 /// RPC client wrappers for TIPS endpoints.
 pub mod client;
