@@ -132,7 +132,7 @@ check-udeps: build-contracts
     @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
     cargo +nightly udeps --workspace --all-features --all-targets
 
-# Checks that shared crates don't depend on client crates
+# Checks crate dependency boundary rules
 check-crate-deps:
     ./scripts/ci/check-crate-deps.sh
 
