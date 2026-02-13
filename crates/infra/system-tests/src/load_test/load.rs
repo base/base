@@ -52,10 +52,9 @@ pub async fn run(args: LoadArgs) -> Result<()> {
     let mut sender_handles = Vec::new();
 
     for (i, wallet) in wallets.into_iter().enumerate() {
-        let rng = match args.seed {
-            Some(seed) => ChaCha8Rng::seed_from_u64(seed + i as u64),
-            None => ChaCha8Rng::from_os_rng(),
-        };
+        let rng = args.seed.map_or_else(ChaCha8Rng::from_os_rng, |seed| {
+            ChaCha8Rng::seed_from_u64(seed + i as u64)
+        });
 
         let sender = SenderTask::new(
             wallet,

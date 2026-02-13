@@ -42,10 +42,7 @@ impl Wallet {
 }
 
 pub fn generate_wallets(num_wallets: usize, seed: Option<u64>) -> Vec<Wallet> {
-    let mut rng = match seed {
-        Some(s) => ChaCha8Rng::seed_from_u64(s),
-        None => ChaCha8Rng::from_os_rng(),
-    };
+    let mut rng = seed.map_or_else(ChaCha8Rng::from_os_rng, ChaCha8Rng::seed_from_u64);
 
     (0..num_wallets).map(|_| Wallet::new_random(&mut rng)).collect()
 }

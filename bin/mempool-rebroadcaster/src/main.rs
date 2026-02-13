@@ -1,3 +1,5 @@
+//! Mempool rebroadcaster binary entry point.
+
 use clap::Parser;
 use dotenvy::dotenv;
 use mempool_rebroadcaster::Rebroadcaster;

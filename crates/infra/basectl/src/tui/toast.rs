@@ -110,7 +110,7 @@ impl ToastState {
     }
 
     /// Render toasts in the bottom-right corner of the given area
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(toast) = self.current() else {
             return;
         };

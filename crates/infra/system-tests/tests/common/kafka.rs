@@ -70,8 +70,7 @@ async fn wait_for_kafka_message<T>(
         let now = Instant::now();
         if now >= deadline {
             anyhow::bail!(
-                "Timed out waiting for Kafka message on topic {topic} after {:?}",
-                timeout_duration
+                "Timed out waiting for Kafka message on topic {topic} after {timeout_duration:?}"
             );
         }
 
@@ -92,7 +91,7 @@ async fn wait_for_kafka_message<T>(
     }
 }
 
-pub async fn wait_for_audit_event_by_hash(
+pub(crate) async fn wait_for_audit_event_by_hash(
     expected_bundle_hash: &B256,
     mut matcher: impl FnMut(&BundleEvent) -> bool,
 ) -> Result<BundleEvent> {

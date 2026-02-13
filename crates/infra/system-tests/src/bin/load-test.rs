@@ -1,3 +1,5 @@
+//! Load test binary entry point.
+
 use anyhow::Result;
 use clap::Parser;
 use tips_system_tests::load_test::{config, load, setup};

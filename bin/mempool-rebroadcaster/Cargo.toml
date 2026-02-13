@@ -7,6 +7,9 @@ edition.workspace = true
 name = "mempool-rebroadcaster"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 clap = { workspace = true }
 dotenvy.workspace = true

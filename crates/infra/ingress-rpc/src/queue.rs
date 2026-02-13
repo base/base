@@ -19,7 +19,7 @@ pub struct KafkaMessageQueue {
 }
 
 impl KafkaMessageQueue {
-    pub fn new(producer: FutureProducer) -> Self {
+    pub const fn new(producer: FutureProducer) -> Self {
         Self { producer }
     }
 }
@@ -73,7 +73,7 @@ pub struct BundleQueuePublisher<Q: MessageQueue> {
 }
 
 impl<Q: MessageQueue> BundleQueuePublisher<Q> {
-    pub fn new(queue: Arc<Q>, topic: String) -> Self {
+    pub const fn new(queue: Arc<Q>, topic: String) -> Self {
         Self { queue, topic }
     }
 

@@ -15,7 +15,7 @@ pub struct ReceiptPoller {
 }
 
 impl ReceiptPoller {
-    pub fn new(
+    pub const fn new(
         sequencer: RootProvider<Optimism>,
         tracker: Arc<TransactionTracker>,
         timeout: Duration,

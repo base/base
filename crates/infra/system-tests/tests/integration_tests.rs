@@ -1,3 +1,5 @@
+//! Integration tests for tips system.
+
 #[path = "common/mod.rs"]
 mod common;
 
@@ -34,7 +36,7 @@ async fn wait_for_transaction_seen(
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
     loop {
         if Instant::now() >= deadline {
-            bail!("Timed out waiting for transaction {} to appear on the sequencer", tx_hash);
+            bail!("Timed out waiting for transaction {tx_hash} to appear on the sequencer");
         }
 
         if provider.get_transaction_by_hash(tx_hash).await?.is_some() {
@@ -191,7 +193,7 @@ async fn test_send_bundle_accepted() -> Result<()> {
                 "Audit event bundle hash should match response"
             );
         }
-        other => panic!("Expected Received audit event, got {:?}", other),
+        other => panic!("Expected Received audit event, got {other:?}"),
     }
 
     // Wait for transaction to appear on sequencer
@@ -304,7 +306,7 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
                 "Audit event bundle hash should match response"
             );
         }
-        other => panic!("Expected Received audit event, got {:?}", other),
+        other => panic!("Expected Received audit event, got {other:?}"),
     }
 
     // Wait for both transactions to appear on sequencer

@@ -29,7 +29,7 @@ pub struct SenderTask<N: Network> {
 }
 
 impl<N: Network> SenderTask<N> {
-    pub fn new(
+    pub const fn new(
         wallet: Wallet,
         client: TipsRpcClient<N>,
         sequencer: RootProvider<Optimism>,

@@ -103,7 +103,7 @@ impl<Q: MessageQueue> IngressService<Q> {
             raw_tx_forward_provider,
             tx_submission_method: config.tx_submission_method,
             bundle_queue_publisher: BundleQueuePublisher::new(
-                queue_connection.clone(),
+                queue_connection,
                 config.ingress_topic,
             ),
             audit_channel,
@@ -351,7 +351,6 @@ impl<Q: MessageQueue> IngressService<Q> {
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
 
         let transaction = envelope
-            .clone()
             .try_into_recovered()
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
         Ok(transaction)
@@ -435,7 +434,7 @@ impl<Q: MessageQueue> IngressService<Q> {
         } else {
             MeterBundleResponse::default()
         };
-        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
+        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response);
         Ok((accepted_bundle, bundle_hash))
     }
 

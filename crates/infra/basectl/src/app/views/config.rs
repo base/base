@@ -49,7 +49,7 @@ impl View for ConfigView {
         }
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -60,7 +60,7 @@ impl View for ConfigView {
     }
 }
 
-fn render_chain_config(f: &mut Frame, area: Rect, resources: &Resources) {
+fn render_chain_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let config = &resources.config;
 
     let batcher_str = config
@@ -105,7 +105,7 @@ fn render_chain_config(f: &mut Frame, area: Rect, resources: &Resources) {
 }
 
 #[allow(clippy::option_if_let_else)]
-fn render_system_config(f: &mut Frame, area: Rect, resources: &Resources) {
+fn render_system_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let block = Block::default()
         .title(" L1 SystemConfig ")
         .borders(Borders::ALL)

@@ -136,7 +136,7 @@ impl View for DaMonitorView {
         }
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, resources: &Resources) {
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Length(5), Constraint::Min(0)])
@@ -190,7 +190,7 @@ fn format_share(share: Option<f64>) -> String {
     share.map_or_else(|| "-".to_string(), |s| format!("{:.0}%", s * 100.0))
 }
 
-fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources, filter: L1BlockFilter) {
+fn render_stats_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources, filter: L1BlockFilter) {
     let tracker = &resources.da.tracker;
 
     let growth_30s = tracker.growth_tracker.rate_over(RATE_WINDOW_30S);
@@ -260,7 +260,7 @@ fn render_stats_panel(f: &mut Frame, area: Rect, resources: &Resources, filter: 
 }
 
 fn render_blocks_panel(
-    f: &mut Frame,
+    f: &mut Frame<'_>,
     area: Rect,
     resources: &Resources,
     is_active: bool,
@@ -295,7 +295,7 @@ fn render_blocks_panel(
 
     let selected_row = table_state.selected();
 
-    let rows: Vec<Row> = tracker
+    let rows: Vec<Row<'_>> = tracker
         .block_contributions
         .iter()
         .enumerate()

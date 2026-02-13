@@ -1,3 +1,5 @@
+//! Tips ingress RPC binary entry point.
+
 use alloy_provider::ProviderBuilder;
 use clap::Parser;
 use jsonrpsee::server::Server;

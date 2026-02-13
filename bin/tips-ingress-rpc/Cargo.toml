@@ -7,6 +7,9 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 tips-core.workspace = true
 tips-audit-lib.workspace = true

@@ -1,3 +1,5 @@
+//! Based binary entry point.
+
 use std::net::UdpSocket;
 
 use based::{

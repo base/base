@@ -7,6 +7,9 @@ edition.workspace = true
 name = "based"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 clap = { workspace = true }
 based = { workspace = true }
