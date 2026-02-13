@@ -10,9 +10,10 @@ use ratatui::{
 use crate::{
     app::{Action, Resources, View},
     commands::common::{
-        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter, RATE_WINDOW_2M,
-        RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration, format_rate, render_da_backlog_bar,
-        render_l1_blocks_table, target_usage_color, truncate_block_number,
+        COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
+        L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
+        format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
+        truncate_block_number,
     },
     tui::Keybinding,
 };
@@ -33,6 +34,7 @@ enum Panel {
     L1Blocks,
 }
 
+/// View for monitoring data availability backlog and L1 blob submissions.
 #[derive(Debug)]
 pub struct DaMonitorView {
     selected_panel: Panel,
@@ -48,6 +50,7 @@ impl Default for DaMonitorView {
 }
 
 impl DaMonitorView {
+    /// Creates a new DA monitor view with default panel selection.
     pub fn new() -> Self {
         let mut l2_table_state = TableState::default();
         l2_table_state.select(Some(0));
@@ -176,12 +179,14 @@ impl View for DaMonitorView {
         render_l1_blocks_table(
             frame,
             panel_chunks[1],
-            resources.da.tracker.filtered_l1_blocks(self.l1_filter),
-            self.selected_panel == Panel::L1Blocks,
-            &mut self.l1_table_state,
-            self.l1_filter,
-            "L1 Blocks",
-            resources.da.l1_connection_mode,
+            L1BlocksTableParams {
+                l1_blocks: resources.da.tracker.filtered_l1_blocks(self.l1_filter),
+                is_active: self.selected_panel == Panel::L1Blocks,
+                table_state: &mut self.l1_table_state,
+                filter: self.l1_filter,
+                title: "L1 Blocks",
+                connection_mode: resources.da.l1_connection_mode,
+            },
         );
     }
 }

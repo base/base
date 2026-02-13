@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 
 use super::metrics::TestResults;
 
+/// Prints load test results to stdout in a formatted table.
 pub fn print_results(results: &TestResults) {
     println!("\n");
     println!("Load Test Results");
@@ -57,6 +58,7 @@ pub fn print_results(results: &TestResults) {
     println!("\n");
 }
 
+/// Saves load test results to a JSON file.
 pub fn save_results(results: &TestResults, path: &Path) -> Result<()> {
     let json = serde_json::to_string_pretty(results).context("Failed to serialize results")?;
     fs::write(path, json).context("Failed to write results file")?;

@@ -1,6 +1,7 @@
 use super::{CommandCenterView, ConfigView, DaMonitorView, FlashblocksView, HomeView};
 use crate::app::{View, ViewId};
 
+/// Creates a boxed view instance for the given view identifier.
 pub fn create_view(view_id: ViewId) -> Box<dyn View> {
     match view_id {
         ViewId::Home => Box::new(HomeView::new()),

@@ -4,12 +4,14 @@ use async_trait::async_trait;
 
 use super::{EthClient, HeaderSummary};
 
+/// An [`EthClient`](super::EthClient) backed by an alloy HTTP provider.
 #[derive(Debug, Clone)]
 pub struct AlloyEthClient {
     provider: RootProvider,
 }
 
 impl AlloyEthClient {
+    /// Connects to the given HTTP endpoint and returns a new [`AlloyEthClient`].
     pub fn new_http(url: &str) -> anyhow::Result<Self> {
         let provider =
             ProviderBuilder::new().disable_recommended_fillers().connect_http(url.parse()?);

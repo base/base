@@ -8,6 +8,8 @@ use tracing::debug;
 
 use super::tracker::TransactionTracker;
 
+/// Polls the sequencer for transaction receipts and updates the tracker.
+#[derive(Debug)]
 pub struct ReceiptPoller {
     sequencer: RootProvider<Optimism>,
     tracker: Arc<TransactionTracker>,
@@ -15,6 +17,7 @@ pub struct ReceiptPoller {
 }
 
 impl ReceiptPoller {
+    /// Creates a new receipt poller with the given sequencer, tracker, and timeout.
     pub const fn new(
         sequencer: RootProvider<Optimism>,
         tracker: Arc<TransactionTracker>,
@@ -23,6 +26,7 @@ impl ReceiptPoller {
         Self { sequencer, tracker, timeout }
     }
 
+    /// Runs the polling loop until all transactions are resolved.
     pub async fn run(self) -> Result<()> {
         let mut interval = tokio::time::interval(Duration::from_secs(2)); // Block time
 

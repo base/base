@@ -4,6 +4,7 @@ mod resources;
 mod router;
 mod runner;
 mod view;
+/// TUI view implementations.
 pub mod views;
 
 pub use core::App;

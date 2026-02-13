@@ -10,6 +10,7 @@ pub struct HealthcheckMetrics {
 }
 
 impl HealthcheckMetrics {
+    /// Wraps the given `StatsD` client for healthcheck metric emission.
     pub fn new(client: StatsdClient) -> Self {
         Self { client: Arc::new(client) }
     }

@@ -21,9 +21,12 @@ sol! {
     }
 }
 
+/// Gas limit and elasticity fetched from the L1 `SystemConfig` contract.
 #[derive(Debug, Clone)]
 pub struct SystemConfigParams {
+    /// Block gas limit.
     pub gas_limit: u64,
+    /// EIP-1559 elasticity multiplier, if available.
     pub elasticity: Option<u64>,
 }
 
@@ -31,15 +34,25 @@ pub struct SystemConfigParams {
 /// Fields are `Option` because not all contracts have all functions (version differences).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FullSystemConfig {
+    /// Block gas limit.
     pub gas_limit: Option<u64>,
+    /// EIP-1559 elasticity multiplier.
     pub eip1559_elasticity: Option<u32>,
+    /// EIP-1559 denominator.
     pub eip1559_denominator: Option<u32>,
+    /// Batcher hash (32 bytes).
     pub batcher_hash: Option<[u8; 32]>,
+    /// L1 fee overhead.
     pub overhead: Option<U256>,
+    /// L1 fee scalar.
     pub scalar: Option<U256>,
+    /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
+    /// `SystemConfig` start block.
     pub start_block: Option<U256>,
+    /// Base fee scalar for L1 cost computation.
     pub basefee_scalar: Option<u32>,
+    /// Blob base fee scalar for L1 cost computation.
     pub blobbasefee_scalar: Option<u32>,
 }
 

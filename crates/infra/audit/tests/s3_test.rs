@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! S3 event storage tests.
 
 use std::sync::Arc;
 

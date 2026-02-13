@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Base infrastructure control CLI binary.
 
 use basectl_cli::{
     app::{ViewId, run_app, run_app_with_view},

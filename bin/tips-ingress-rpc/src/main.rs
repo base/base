@@ -11,10 +11,8 @@ use tips_core::{
     logger::init_logger_with_format, metrics::init_prometheus_exporter,
 };
 use tips_ingress_rpc_lib::{
-    Config, connect_ingress_to_builder,
-    health::bind_health_server,
-    queue::KafkaMessageQueue,
-    service::{IngressApiServer, IngressService, Providers},
+    Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers, bind_health_server,
+    connect_ingress_to_builder,
 };
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;

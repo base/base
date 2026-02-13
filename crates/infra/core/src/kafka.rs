@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs};
 
+/// Loads Kafka configuration from a Java-style properties file.
 pub fn load_kafka_config_from_file(
     properties_file_path: &str,
 ) -> Result<HashMap<String, String>, std::io::Error> {

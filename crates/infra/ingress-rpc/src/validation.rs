@@ -19,16 +19,21 @@ use crate::metrics::record_histogram;
 
 const MAX_BUNDLE_GAS: u64 = 25_000_000;
 
-/// Account info for a given address
+/// Account info for a given address.
+#[derive(Debug)]
 pub struct AccountInfo {
+    /// Account balance in wei.
     pub balance: U256,
+    /// Account transaction nonce.
     pub nonce: u64,
+    /// Hash of the account's code.
     pub code_hash: B256,
 }
 
-/// Interface for fetching account info for a given address
+/// Interface for fetching account info for a given address.
 #[async_trait]
 pub trait AccountInfoLookup: Send + Sync {
+    /// Fetches account info for the given address.
     async fn fetch_account_info(&self, address: Address) -> RpcResult<AccountInfo>;
 }
 
@@ -51,9 +56,10 @@ impl AccountInfoLookup for RootProvider<Optimism> {
     }
 }
 
-/// Interface for fetching L1 block info for a given block number
+/// Interface for fetching L1 block info for a given block number.
 #[async_trait]
 pub trait L1BlockInfoLookup: Send + Sync {
+    /// Fetches the L1 block info from the latest L2 block.
     async fn fetch_l1_block_info(&self) -> RpcResult<L1BlockInfo>;
 }
 

@@ -19,6 +19,7 @@ const DEFAULT_ELASTICITY: u64 = 6;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const WS_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
 
+/// Fetches the safe and latest L2 block numbers.
 pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
     let provider = ProviderBuilder::new().connect(l2_rpc).await?;
 
@@ -61,6 +62,7 @@ async fn fetch_raw_block_info<P: Provider<Optimism>>(
     })
 }
 
+/// Polls the L2 safe head block number at regular intervals.
 pub async fn run_safe_head_poller(
     l2_rpc: String,
     tx: mpsc::Sender<u64>,
@@ -135,6 +137,7 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
     }
 }
 
+/// Subscribes to flashblocks via WebSocket and forwards raw flashblocks.
 pub async fn run_flashblock_ws(
     url: String,
     tx: mpsc::Sender<Flashblock>,
@@ -143,12 +146,16 @@ pub async fn run_flashblock_ws(
     run_flashblock_ws_inner(&url, &tx, &toast_tx, |fb| fb).await;
 }
 
+/// A flashblock paired with its local receive timestamp.
 #[derive(Debug)]
 pub struct TimestampedFlashblock {
+    /// The decoded flashblock.
     pub flashblock: Flashblock,
+    /// Local time when this flashblock was received.
     pub received_at: chrono::DateTime<chrono::Local>,
 }
 
+/// Subscribes to flashblocks via WebSocket and forwards timestamped flashblocks.
 pub async fn run_flashblock_ws_timestamped(
     url: String,
     tx: mpsc::Sender<TimestampedFlashblock>,
@@ -161,38 +168,53 @@ pub async fn run_flashblock_ws_timestamped(
     .await;
 }
 
+/// Summary of the initial DA backlog between safe and latest blocks.
 #[derive(Debug, Clone)]
 pub struct InitialBacklog {
+    /// Safe L2 block number.
     pub safe_block: u64,
+    /// Latest (unsafe) L2 block number.
     pub unsafe_block: u64,
+    /// Total DA bytes across all backlog blocks.
     pub da_bytes: u64,
 }
 
-/// Progress update during initial backlog fetch
+/// Progress update during initial backlog fetch.
 #[derive(Debug, Clone)]
 pub struct BacklogProgress {
+    /// Number of blocks fetched so far.
     pub current_block: u64,
+    /// Total number of blocks to fetch.
     pub total_blocks: u64,
+    /// Cumulative DA bytes fetched so far.
     pub da_bytes_so_far: u64,
 }
 
-/// Individual block data from backlog fetch
+/// Individual block data from backlog fetch.
 #[derive(Debug, Clone)]
 pub struct BacklogBlock {
+    /// L2 block number.
     pub block_number: u64,
+    /// DA bytes contributed by this block.
     pub da_bytes: u64,
+    /// Unix timestamp of the block.
     pub timestamp: u64,
 }
 
-/// Result of initial backlog fetch - either progress or complete
+/// Result of initial backlog fetch - either progress or complete.
 #[derive(Debug, Clone)]
 pub enum BacklogFetchResult {
+    /// Incremental progress update.
     Progress(BacklogProgress),
+    /// A single fetched block.
     Block(BacklogBlock),
+    /// Backlog fetch completed successfully.
     Complete(InitialBacklog),
+    /// Backlog fetch failed with an error message.
     Error(String),
 }
 
+/// Fetches the initial DA backlog, sending progress updates and block data.
 pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
     progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
@@ -272,15 +294,22 @@ pub async fn fetch_initial_backlog_with_progress(
     }
 }
 
+/// DA and gas information for a single L2 block.
 #[derive(Debug, Clone)]
 pub struct BlockDaInfo {
+    /// L2 block number.
     pub block_number: u64,
+    /// Total DA bytes from all transactions.
     pub da_bytes: u64,
+    /// Number of transactions in the block.
     pub tx_count: usize,
+    /// Gas used by the block.
     pub gas_used: u64,
+    /// Unix timestamp of the block.
     pub timestamp: u64,
 }
 
+/// Fetches DA info for requested block numbers and sends results back.
 pub async fn run_block_fetcher(
     l2_rpc: String,
     mut request_rx: mpsc::Receiver<u64>,
@@ -318,10 +347,12 @@ pub async fn run_block_fetcher(
     }
 }
 
-/// Chain parameters needed for flashblocks display
+/// Chain parameters needed for flashblocks display.
 #[derive(Debug, Clone, Copy)]
 pub struct ChainParams {
+    /// Block gas limit.
     pub gas_limit: u64,
+    /// EIP-1559 elasticity multiplier.
     pub elasticity: u64,
 }
 
@@ -365,18 +396,27 @@ pub async fn fetch_elasticity(rpc_url: &str) -> Result<u64> {
     }
 }
 
+/// Information about an L1 block and its blob counts.
 #[derive(Debug, Clone)]
 pub struct L1BlockInfo {
+    /// L1 block number.
     pub block_number: u64,
+    /// L1 block hash.
     pub block_hash: B256,
+    /// Unix timestamp of the L1 block.
     pub timestamp: u64,
+    /// Total number of blobs in this L1 block.
     pub total_blobs: u64,
+    /// Number of blobs from the Base batcher.
     pub base_blobs: u64,
 }
 
+/// How the L1 watcher connects to the L1 node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum L1ConnectionMode {
+    /// Connected via WebSocket subscription.
     WebSocket,
+    /// Connected via HTTP polling.
     Polling,
 }
 
@@ -384,6 +424,7 @@ fn http_to_ws(url: &str) -> String {
     url.replacen("http://", "ws://", 1).replacen("https://", "wss://", 1)
 }
 
+/// Watches L1 blocks for blob transactions, preferring WebSocket with polling fallback.
 pub async fn run_l1_blob_watcher(
     l1_rpc: String,
     batcher_address: Address,

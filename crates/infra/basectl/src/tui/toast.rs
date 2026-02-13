@@ -10,11 +10,14 @@ use tokio::sync::mpsc;
 /// Duration to display a toast notification
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 
-/// Toast severity level
+/// Toast severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastLevel {
+    /// Informational message.
     Info,
+    /// Warning message.
     Warning,
+    /// Error message.
     Error,
 }
 
@@ -36,27 +39,34 @@ impl ToastLevel {
     }
 }
 
-/// A toast notification message
+/// A toast notification message.
 #[derive(Debug, Clone)]
 pub struct Toast {
+    /// Severity level of this toast.
     pub level: ToastLevel,
+    /// Display message text.
     pub message: String,
+    /// When this toast was created.
     pub created_at: Instant,
 }
 
 impl Toast {
+    /// Creates a new toast with the given level and message.
     pub fn new(level: ToastLevel, message: impl Into<String>) -> Self {
         Self { level, message: message.into(), created_at: Instant::now() }
     }
 
+    /// Creates an informational toast.
     pub fn info(message: impl Into<String>) -> Self {
         Self::new(ToastLevel::Info, message)
     }
 
+    /// Creates a warning toast.
     pub fn warning(message: impl Into<String>) -> Self {
         Self::new(ToastLevel::Warning, message)
     }
 
+    /// Creates an error toast.
     pub fn error(message: impl Into<String>) -> Self {
         Self::new(ToastLevel::Error, message)
     }
@@ -80,10 +90,12 @@ impl Default for ToastState {
 }
 
 impl ToastState {
+    /// Creates a new empty toast state.
     pub const fn new() -> Self {
         Self { toasts: Vec::new(), rx: None }
     }
 
+    /// Sets the channel for receiving toast notifications from background tasks.
     pub fn set_channel(&mut self, rx: mpsc::Receiver<Toast>) {
         self.rx = Some(rx);
     }
@@ -101,10 +113,12 @@ impl ToastState {
         self.toasts.retain(|t| !t.is_expired());
     }
 
+    /// Pushes a toast notification directly.
     pub fn push(&mut self, toast: Toast) {
         self.toasts.push(toast);
     }
 
+    /// Returns the most recent active toast, if any.
     pub fn current(&self) -> Option<&Toast> {
         self.toasts.last()
     }

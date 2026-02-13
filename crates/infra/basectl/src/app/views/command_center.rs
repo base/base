@@ -12,10 +12,10 @@ use crate::{
     app::{Action, Resources, View},
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
-        L1_BLOCK_WINDOW, L1BlockFilter, RATE_WINDOW_2M, backlog_size_color, block_color,
-        block_color_bright, build_gas_bar, format_bytes, format_duration, format_gwei, format_rate,
-        render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table, target_usage_color,
-        time_diff_color, truncate_block_number,
+        L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
+        block_color, block_color_bright, build_gas_bar, format_bytes, format_duration, format_gwei,
+        format_rate, render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table,
+        target_usage_color, time_diff_color, truncate_block_number,
     },
     tui::{Keybinding, Toast},
 };
@@ -38,6 +38,7 @@ enum Panel {
     L1Blocks,
 }
 
+/// Combined monitoring view with flashblocks, DA, and L1 block panels.
 #[derive(Debug)]
 pub struct CommandCenterView {
     focused_panel: Panel,
@@ -55,6 +56,7 @@ impl Default for CommandCenterView {
 }
 
 impl CommandCenterView {
+    /// Creates a new command center view with default panel selection.
     pub fn new() -> Self {
         let mut da_table_state = TableState::default();
         da_table_state.select(Some(0));
@@ -323,25 +325,27 @@ impl View for CommandCenterView {
         render_l1_blocks_table(
             frame,
             panel_chunks[2],
-            resources.da.tracker.filtered_l1_blocks(self.l1_filter),
-            self.focused_panel == Panel::L1Blocks,
-            &mut self.l1_table_state,
-            self.l1_filter,
-            "L1 Blocks",
-            resources.da.l1_connection_mode,
+            L1BlocksTableParams {
+                l1_blocks: resources.da.tracker.filtered_l1_blocks(self.l1_filter),
+                is_active: self.focused_panel == Panel::L1Blocks,
+                table_state: &mut self.l1_table_state,
+                filter: self.l1_filter,
+                title: "L1 Blocks",
+                connection_mode: resources.da.l1_connection_mode,
+            },
         );
     }
 }
 
-#[allow(clippy::option_if_let_else)]
 fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let block = Block::default()
         .title(" L1 Config ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 
-    let content = match &resources.system_config {
-        Some(sys) => {
+    let content = resources.system_config.as_ref().map_or_else(
+        || vec![Line::from(Span::styled("Loading...", Style::default().fg(Color::DarkGray)))],
+        |sys| {
             let gas_limit = sys.gas_limit.unwrap_or(0);
             let elasticity = sys.eip1559_elasticity.unwrap_or(0) as u64;
             let gas_target = if elasticity > 0 { gas_limit / elasticity } else { 0 };
@@ -375,11 +379,8 @@ fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
                     Span::styled(blobbasefee_scalar, Style::default().fg(Color::Yellow)),
                 ]),
             ]
-        }
-        None => {
-            vec![Line::from(Span::styled("Loading...", Style::default().fg(Color::DarkGray)))]
-        }
-    };
+        },
+    );
 
     let para = Paragraph::new(content).block(block);
     f.render_widget(para, area);

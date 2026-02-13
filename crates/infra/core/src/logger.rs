@@ -3,10 +3,14 @@ use std::str::FromStr;
 use tracing::warn;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
+/// Log output format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
+    /// Human-readable pretty-printed format.
     Pretty,
+    /// Structured JSON format.
     Json,
+    /// Compact single-line format.
     Compact,
 }
 
@@ -26,10 +30,12 @@ impl FromStr for LogFormat {
     }
 }
 
+/// Initializes the global tracing subscriber with pretty format.
 pub fn init_logger(log_level: &str) {
     init_logger_with_format(log_level, LogFormat::Pretty);
 }
 
+/// Initializes the global tracing subscriber with the specified format.
 pub fn init_logger_with_format(log_level: &str, format: LogFormat) {
     let level = match log_level.to_lowercase().as_str() {
         "trace" => tracing::Level::TRACE,

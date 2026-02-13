@@ -6,18 +6,27 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Configuration for a chain monitored by basectl.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainConfig {
+    /// Human-readable chain name (e.g. "mainnet", "sepolia").
     pub name: String,
+    /// L2 JSON-RPC endpoint URL.
     pub rpc: Url,
+    /// Flashblocks WebSocket endpoint URL.
     pub flashblocks_ws: Url,
+    /// L1 Ethereum JSON-RPC endpoint URL.
     pub l1_rpc: Url,
+    /// Optional OP-Node JSON-RPC endpoint URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub op_node_rpc: Option<Url>,
+    /// L1 `SystemConfig` contract address.
     #[serde(with = "address_serde")]
     pub system_config: Address,
+    /// L1 batcher address for blob attribution.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "option_address_serde")]
     pub batcher_address: Option<Address>,
+    /// Expected number of blobs per L1 block target.
     #[serde(default = "default_blob_target")]
     pub l1_blob_target: u64,
 }
@@ -93,24 +102,29 @@ mod option_address_serde {
 /// Response from the `optimism_rollupConfig` RPC method.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RollupConfig {
+    /// Genesis configuration block.
     pub genesis: GenesisConfig,
+    /// L1 `SystemConfig` contract address.
     pub l1_system_config_address: Address,
 }
 
 /// Genesis configuration from rollup config.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisConfig {
+    /// System configuration at genesis.
     pub system_config: GenesisSystemConfig,
 }
 
 /// System config within genesis.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GenesisSystemConfig {
+    /// Batcher address configured at genesis.
     #[serde(rename = "batcherAddr")]
     pub batcher_addr: Address,
 }
 
 impl ChainConfig {
+    /// Returns the default Base mainnet configuration.
     pub fn mainnet() -> Self {
         Self {
             name: "mainnet".to_string(),
@@ -124,6 +138,7 @@ impl ChainConfig {
         }
     }
 
+    /// Returns the default Base Sepolia configuration.
     pub fn sepolia() -> Self {
         Self {
             name: "sepolia".to_string(),

@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Mempool rebroadcaster library.
 
 mod rebroadcaster;
 

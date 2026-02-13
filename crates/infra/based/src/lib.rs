@@ -1,5 +1,6 @@
-#![allow(missing_docs)]
+//! Block building sidecar healthcheck service library.
 
+/// Healthcheck logic and client implementations.
 mod healthcheck;
 mod metrics;
 

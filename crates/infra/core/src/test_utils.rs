@@ -7,14 +7,17 @@ use op_alloy_rpc_types::OpTransactionRequest;
 
 use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
 
+/// Sample encoded transaction bytes for testing.
 // https://basescan.org/tx/0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e
 pub const TXN_DATA: Bytes = bytes!(
     "0x02f88f8221058304b6b3018315fb3883124f80948ff2f0a8d017c79454aa28509a19ab9753c2dd1480a476d58e1a0182426068c9ea5b00000000000000000002f84f00000000083e4fda54950000c080a086fbc7bbee41f441fb0f32f7aa274d2188c460fe6ac95095fa6331fa08ec4ce7a01aee3bcc3c28f7ba4e0c24da9ae85e9e0166c73cabb42c25ff7b5ecd424f3105"
 );
 
+/// Transaction hash corresponding to [`TXN_DATA`].
 pub const TXN_HASH: TxHash =
     b256!("0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e");
 
+/// Creates an [`AcceptedBundle`] from the sample [`TXN_DATA`].
 pub fn create_bundle_from_txn_data() -> AcceptedBundle {
     AcceptedBundle::new(
         Bundle { txs: vec![TXN_DATA], ..Default::default() }.try_into().unwrap(),
@@ -22,6 +25,7 @@ pub fn create_bundle_from_txn_data() -> AcceptedBundle {
     )
 }
 
+/// Creates a signed EIP-1559 transaction envelope.
 pub fn create_transaction(from: PrivateKeySigner, nonce: u64, to: Address) -> OpTxEnvelope {
     let mut txn = OpTransactionRequest::default()
         .value(U256::from(10_000))
@@ -38,6 +42,7 @@ pub fn create_transaction(from: PrivateKeySigner, nonce: u64, to: Address) -> Op
     OpTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig))
 }
 
+/// Creates an [`AcceptedBundle`] from the given transactions and targeting parameters.
 pub fn create_test_bundle(
     txns: Vec<OpTxEnvelope>,
     block_number: Option<u64>,
@@ -58,6 +63,7 @@ pub fn create_test_bundle(
     AcceptedBundle::new(bundle.try_into().unwrap(), meter_bundle_response)
 }
 
+/// Creates a default [`MeterBundleResponse`] with zeroed values.
 pub fn create_test_meter_bundle_response() -> MeterBundleResponse {
     MeterBundleResponse {
         bundle_gas_price: U256::from(0),
