@@ -1,14 +1,17 @@
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
-use tracing::{debug, error, warn};
-
-use thiserror::Error;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, SystemTime},
+};
 
 use redis::{Client, Commands, RedisError};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, SystemTime};
+use thiserror::Error;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -20,10 +23,7 @@ pub enum RateLimitType {
 #[derive(Error, Debug)]
 pub enum RateLimitError {
     #[error("Rate Limit Reached: {reason}")]
-    Limit {
-        reason: String,
-        limit_type: RateLimitType,
-    },
+    Limit { reason: String, limit_type: RateLimitType },
 }
 
 #[clippy::has_significant_drop]
@@ -72,14 +72,10 @@ impl RateLimit for InMemoryRateLimit {
         let mut inner = self.inner.lock().unwrap();
 
         let permit =
-            inner
-                .semaphore
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| RateLimitError::Limit {
-                    reason: "Global limit".to_owned(),
-                    limit_type: RateLimitType::Global,
-                })?;
+            inner.semaphore.clone().try_acquire_owned().map_err(|_| RateLimitError::Limit {
+                reason: "Global limit".to_owned(),
+                limit_type: RateLimitType::Global,
+            })?;
 
         let current_count = match inner.active_connections.get(&addr) {
             Some(count) => *count,
@@ -87,10 +83,7 @@ impl RateLimit for InMemoryRateLimit {
         };
 
         if current_count + 1 > self.per_ip_limit {
-            debug!(
-                message = "Rate limit exceeded, trying to acquire",
-                client = addr.to_string()
-            );
+            debug!(message = "Rate limit exceeded, trying to acquire", client = addr.to_string());
             return Err(RateLimitError::Limit {
                 reason: String::from("IP limit exceeded"),
                 limit_type: RateLimitType::PerIp,
@@ -101,11 +94,7 @@ impl RateLimit for InMemoryRateLimit {
 
         inner.active_connections.insert(addr, new_count);
 
-        Ok(Ticket {
-            addr,
-            _permit: permit,
-            rate_limiter: self.clone(),
-        })
+        Ok(Ticket { addr, _permit: permit, rate_limiter: self.clone() })
     }
 
     fn release(&self, addr: IpAddr) {
@@ -172,10 +161,7 @@ impl RedisRateLimit {
         };
 
         if let Err(e) = rate_limiter.register_instance() {
-            error!(
-                message = "Failed to register instance in Redis",
-                error = e.to_string()
-            );
+            error!(message = "Failed to register instance in Redis", error = e.to_string());
         }
 
         Ok(rate_limiter)
@@ -215,10 +201,7 @@ impl RedisRateLimit {
 
     fn register_instance(&self) -> Result<(), RedisError> {
         self.update_heartbeat()?;
-        debug!(
-            message = "Registered instance in Redis",
-            instance_id = self.instance_id
-        );
+        debug!(message = "Registered instance in Redis", instance_id = self.instance_id);
 
         Ok(())
     }
@@ -230,16 +213,11 @@ impl RedisRateLimit {
         let ttl = self.heartbeat_ttl.as_secs();
         conn.set_ex::<_, _, ()>(
             self.instance_heartbeat_key(),
-            now.duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            now.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs(),
             ttl,
         )?;
 
-        debug!(
-            message = "Updated instance heartbeat",
-            instance_id = self.instance_id
-        );
+        debug!(message = "Updated instance heartbeat", instance_id = self.instance_id);
 
         Ok(())
     }
@@ -279,10 +257,7 @@ impl RedisRateLimit {
 
         for instance_id in instance_ids_with_connections {
             if instance_id == self.instance_id {
-                debug!(
-                    message = "Skipping current instance",
-                    instance_id = instance_id
-                );
+                debug!(message = "Skipping current instance", instance_id = instance_id);
                 continue;
             }
 
@@ -306,10 +281,8 @@ impl RedisRateLimit {
         conn: &mut redis::Connection,
         instance_id: &str,
     ) -> Result<(), RedisError> {
-        let ip_instance_pattern = format!(
-            "{}:ip:*:instance:{}:connections",
-            self.key_prefix, instance_id
-        );
+        let ip_instance_pattern =
+            format!("{}:ip:*:instance:{}:connections", self.key_prefix, instance_id);
         let ip_instance_keys: Vec<String> = conn.keys(ip_instance_pattern)?;
 
         debug!(
@@ -327,17 +300,11 @@ impl RedisRateLimit {
     }
 
     fn ip_instance_key(&self, addr: &IpAddr) -> String {
-        format!(
-            "{}:ip:{}:instance:{}:connections",
-            self.key_prefix, addr, self.instance_id
-        )
+        format!("{}:ip:{}:instance:{}:connections", self.key_prefix, addr, self.instance_id)
     }
 
     fn instance_heartbeat_key(&self) -> String {
-        format!(
-            "{}:instance:{}:heartbeat",
-            self.key_prefix, self.instance_id
-        )
+        format!("{}:instance:{}:heartbeat", self.key_prefix, self.instance_id)
     }
 }
 
@@ -358,10 +325,7 @@ impl RateLimit for RedisRateLimit {
         let mut conn = match self.redis_client.get_connection() {
             Ok(conn) => conn,
             Err(e) => {
-                error!(
-                    message = "Failed to connect to Redis",
-                    error = e.to_string()
-                );
+                error!(message = "Failed to connect to Redis", error = e.to_string());
                 return Err(RateLimitError::Limit {
                     reason: "Redis connection failed".to_string(),
                     limit_type: RateLimitType::Global,
@@ -422,11 +386,7 @@ impl RateLimit for RedisRateLimit {
             instance_id = self.instance_id
         );
 
-        Ok(Ticket {
-            addr,
-            _permit: permit,
-            rate_limiter: self,
-        })
+        Ok(Ticket { addr, _permit: permit, rate_limiter: self })
     }
 
     fn release(&self, addr: IpAddr) {
@@ -450,10 +410,7 @@ impl RateLimit for RedisRateLimit {
                 );
             }
             Err(e) => {
-                error!(
-                    message = "Failed to connect to Redis for release",
-                    error = e.to_string()
-                );
+                error!(message = "Failed to connect to Redis for release", error = e.to_string());
             }
         }
     }
@@ -461,11 +418,12 @@ impl RateLimit for RedisRateLimit {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::str::FromStr;
-    use std::time::Duration;
+    use std::{str::FromStr, time::Duration};
+
     use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::redis::Redis;
+
+    use super::*;
 
     const GLOBAL_LIMIT: usize = 3;
     const PER_IP_LIMIT: usize = 2;
@@ -476,55 +434,22 @@ mod tests {
 
         let rate_limiter = Arc::new(InMemoryRateLimit::new(GLOBAL_LIMIT, PER_IP_LIMIT));
 
-        assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
-            GLOBAL_LIMIT
-        );
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections.len(),
-            0
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), GLOBAL_LIMIT);
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections.len(), 0);
 
         let c1 = rate_limiter.clone().try_acquire(user_1).unwrap();
 
         assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
+            rate_limiter.inner.lock().unwrap().semaphore.available_permits(),
             GLOBAL_LIMIT - 1
         );
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections.len(),
-            1
-        );
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections[&user_1],
-            1
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections.len(), 1);
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections[&user_1], 1);
 
         drop(c1);
 
-        assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
-            GLOBAL_LIMIT
-        );
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections.len(),
-            0
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), GLOBAL_LIMIT);
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections.len(), 0);
     }
 
     #[tokio::test]
@@ -540,22 +465,11 @@ mod tests {
 
         let _c3 = rate_limiter.clone().try_acquire(user_1).unwrap();
 
-        assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
-            0
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), 0);
 
         let c4 = rate_limiter.clone().try_acquire(user_2);
         assert!(c4.is_err());
-        assert_eq!(
-            c4.err().unwrap().to_string(),
-            "Rate Limit Reached: Global limit"
-        );
+        assert_eq!(c4.err().unwrap().to_string(), "Rate Limit Reached: Global limit");
 
         drop(_c3);
 
@@ -573,17 +487,11 @@ mod tests {
         let _c1 = rate_limiter.clone().try_acquire(user_1).unwrap();
         let _c2 = rate_limiter.clone().try_acquire(user_1).unwrap();
 
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections[&user_1],
-            2
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections[&user_1], 2);
 
         let c3 = rate_limiter.clone().try_acquire(user_1);
         assert!(c3.is_err());
-        assert_eq!(
-            c3.err().unwrap().to_string(),
-            "Rate Limit Reached: IP limit exceeded"
-        );
+        assert_eq!(c3.err().unwrap().to_string(), "Rate Limit Reached: IP limit exceeded");
 
         let c4 = rate_limiter.clone().try_acquire(user_2);
         assert!(c4.is_ok());
@@ -603,23 +511,12 @@ mod tests {
         let ticket_2_1 = rate_limiter.clone().try_acquire(user_2).unwrap();
         let ticket_2_2 = rate_limiter.clone().try_acquire(user_2).unwrap();
 
-        assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
-            0
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), 0);
 
         // Try user_3 - should fail due to global limit
         let result = rate_limiter.clone().try_acquire(user_3);
         assert!(result.is_err());
-        assert_eq!(
-            result.err().unwrap().to_string(),
-            "Rate Limit Reached: Global limit"
-        );
+        assert_eq!(result.err().unwrap().to_string(), "Rate Limit Reached: Global limit");
 
         drop(ticket_1_1);
 
@@ -630,19 +527,8 @@ mod tests {
         drop(ticket_2_2);
         drop(ticket_3_1);
 
-        assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
-            4
-        );
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections.len(),
-            0
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), 4);
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections.len(), 0);
     }
 
     #[tokio::test]
@@ -657,10 +543,7 @@ mod tests {
 
         let result = rate_limiter.clone().try_acquire(user_1);
         assert!(result.is_err());
-        assert_eq!(
-            result.err().unwrap().to_string(),
-            "Rate Limit Reached: IP limit exceeded"
-        );
+        assert_eq!(result.err().unwrap().to_string(), "Rate Limit Reached: IP limit exceeded");
 
         let ticket_2_1 = rate_limiter.clone().try_acquire(user_2).unwrap();
         drop(ticket_1_1);
@@ -669,28 +552,14 @@ mod tests {
 
         let result = rate_limiter.clone().try_acquire(user_1);
         assert!(result.is_err());
-        assert_eq!(
-            result.err().unwrap().to_string(),
-            "Rate Limit Reached: IP limit exceeded"
-        );
+        assert_eq!(result.err().unwrap().to_string(), "Rate Limit Reached: IP limit exceeded");
 
         drop(ticket_1_2);
         drop(ticket_1_3);
         drop(ticket_2_1);
 
-        assert_eq!(
-            rate_limiter
-                .inner
-                .lock()
-                .unwrap()
-                .semaphore
-                .available_permits(),
-            5
-        );
-        assert_eq!(
-            rate_limiter.inner.lock().unwrap().active_connections.len(),
-            0
-        );
+        assert_eq!(rate_limiter.inner.lock().unwrap().semaphore.available_permits(), 5);
+        assert_eq!(rate_limiter.inner.lock().unwrap().active_connections.len(), 0);
     }
 
     #[tokio::test]
@@ -758,10 +627,7 @@ mod tests {
                 .arg("test:instance:instance1:heartbeat".to_string())
                 .query(&mut conn)
                 .unwrap();
-            assert!(
-                !exists,
-                "Instance1 heartbeat should be gone after TTL expiration"
-            );
+            assert!(!exists, "Instance1 heartbeat should be gone after TTL expiration");
 
             let ip1_instance1_count: usize = redis::cmd("GET")
                 .arg("test:ip:127.0.0.1:instance:instance1:connections")
@@ -776,10 +642,7 @@ mod tests {
                 ip1_instance1_count, 1,
                 "IP1 instance1 count should still be 1 after instance1 crash"
             );
-            assert_eq!(
-                ip2_instance1_count, 1,
-                "IP2 instance1 count should still be 1 after crash"
-            );
+            assert_eq!(ip2_instance1_count, 1, "IP2 instance1 count should still be 1 after crash");
         }
 
         let rate_limiter2 = Arc::new(RedisRateLimit {
@@ -811,14 +674,8 @@ mod tests {
                 .query(&mut conn)
                 .unwrap();
 
-            assert!(
-                !ip1_instance1_exists,
-                "IP1 instance1 counter should be gone after cleanup"
-            );
-            assert!(
-                !ip2_instance1_exists,
-                "IP2 instance1 counter should be gone after cleanup"
-            );
+            assert!(!ip1_instance1_exists, "IP1 instance1 counter should be gone after cleanup");
+            assert!(!ip2_instance1_exists, "IP2 instance1 counter should be gone after cleanup");
         }
 
         let _ticket3 = rate_limiter2.clone().try_acquire(user_1).unwrap();

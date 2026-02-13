@@ -1,7 +1,7 @@
+use std::{collections::HashSet, io::Write};
+
 use brotli::DecompressorWriter;
 use serde_json::{self, Value};
-use std::collections::HashSet;
-use std::io::Write;
 use tracing::{debug, info, trace, warn};
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -15,11 +15,7 @@ pub enum MatchMode {
 pub enum FilterType {
     Addresses(HashSet<String>),
     Topics(HashSet<String>),
-    Combined {
-        addresses: HashSet<String>,
-        topics: HashSet<String>,
-        match_mode: MatchMode,
-    },
+    Combined { addresses: HashSet<String>, topics: HashSet<String>, match_mode: MatchMode },
     None,
 }
 
@@ -28,10 +24,8 @@ impl FilterType {
         if addresses.is_empty() {
             Self::None
         } else {
-            let normalized: HashSet<String> = addresses
-                .into_iter()
-                .map(|addr| addr.to_lowercase())
-                .collect();
+            let normalized: HashSet<String> =
+                addresses.into_iter().map(|addr| addr.to_lowercase()).collect();
             Self::Addresses(normalized)
         }
     }
@@ -40,10 +34,8 @@ impl FilterType {
         if topics.is_empty() {
             Self::None
         } else {
-            let normalized: HashSet<String> = topics
-                .into_iter()
-                .map(|topic| topic.to_lowercase())
-                .collect();
+            let normalized: HashSet<String> =
+                topics.into_iter().map(|topic| topic.to_lowercase()).collect();
             Self::Topics(normalized)
         }
     }
@@ -60,14 +52,10 @@ impl FilterType {
         } else if topics.is_empty() {
             Self::new_addresses(addresses)
         } else {
-            let normalized_addresses: HashSet<String> = addresses
-                .into_iter()
-                .map(|addr| addr.to_lowercase())
-                .collect();
-            let normalized_topics: HashSet<String> = topics
-                .into_iter()
-                .map(|topic| topic.to_lowercase())
-                .collect();
+            let normalized_addresses: HashSet<String> =
+                addresses.into_iter().map(|addr| addr.to_lowercase()).collect();
+            let normalized_topics: HashSet<String> =
+                topics.into_iter().map(|topic| topic.to_lowercase()).collect();
             Self::Combined {
                 addresses: normalized_addresses,
                 topics: normalized_topics,
@@ -124,11 +112,7 @@ impl FilterType {
         match self {
             FilterType::Addresses(addresses) => self.contains_any_address(json, addresses),
             FilterType::Topics(topics) => self.contains_any_topic(json, topics),
-            FilterType::Combined {
-                addresses,
-                topics,
-                match_mode,
-            } => {
+            FilterType::Combined { addresses, topics, match_mode } => {
                 let address_matches = self.contains_any_address(json, addresses);
                 let topic_matches = self.contains_any_topic(json, topics);
 
@@ -165,10 +149,8 @@ impl FilterType {
         }
 
         // Check logs in receipts (most common case for filtering)
-        if let Some(receipts) = json
-            .get("metadata")
-            .and_then(|m| m.get("receipts"))
-            .and_then(|r| r.as_object())
+        if let Some(receipts) =
+            json.get("metadata").and_then(|m| m.get("receipts")).and_then(|r| r.as_object())
         {
             for receipt_value in receipts.values() {
                 if let Some(receipt_obj) = receipt_value.as_object() {
@@ -193,10 +175,8 @@ impl FilterType {
         }
 
         // Check transactions (least efficient, check last)
-        if let Some(transactions) = json
-            .get("diff")
-            .and_then(|d| d.get("transactions"))
-            .and_then(|t| t.as_array())
+        if let Some(transactions) =
+            json.get("diff").and_then(|d| d.get("transactions")).and_then(|t| t.as_array())
         {
             for tx in transactions {
                 if let Some(tx_str) = tx.as_str() {
@@ -216,10 +196,8 @@ impl FilterType {
 
     fn contains_any_topic(&self, json: &Value, topics: &HashSet<String>) -> bool {
         // Check logs in receipts for topics
-        if let Some(receipts) = json
-            .get("metadata")
-            .and_then(|m| m.get("receipts"))
-            .and_then(|r| r.as_object())
+        if let Some(receipts) =
+            json.get("metadata").and_then(|m| m.get("receipts")).and_then(|r| r.as_object())
         {
             for receipt_value in receipts.values() {
                 if let Some(receipt_obj) = receipt_value.as_object() {
@@ -417,19 +395,19 @@ mod tests {
 
         // Test address filter that should match (in logs)
         let filter = FilterType::new_addresses(vec![
-            "0x4200000000000000000000000000000000000010".to_string()
+            "0x4200000000000000000000000000000000000010".to_string(),
         ]);
         assert!(filter.matches(&payload, false));
 
         // Test address filter that should match (in account balances)
         let filter = FilterType::new_addresses(vec![
-            "0x4200000000000000000000000000000000000007".to_string()
+            "0x4200000000000000000000000000000000000007".to_string(),
         ]);
         assert!(filter.matches(&payload, false));
 
         // Test address filter that should not match
         let filter = FilterType::new_addresses(vec![
-            "0x1111111111111111111111111111111111111111".to_string()
+            "0x1111111111111111111111111111111111111111".to_string(),
         ]);
         assert!(!filter.matches(&payload, false));
 

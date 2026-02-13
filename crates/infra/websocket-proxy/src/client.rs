@@ -1,7 +1,8 @@
-use crate::filter::FilterType;
-use crate::rate_limit::Ticket;
-use axum::extract::ws::WebSocket;
 use std::net::IpAddr;
+
+use axum::extract::ws::WebSocket;
+
+use crate::{filter::FilterType, rate_limit::Ticket};
 
 pub struct ClientConnection {
     client_addr: IpAddr,
@@ -17,12 +18,7 @@ impl ClientConnection {
         websocket: WebSocket,
         filter: FilterType,
     ) -> Self {
-        Self {
-            client_addr,
-            _ticket: ticket,
-            websocket,
-            filter,
-        }
+        Self { client_addr, _ticket: ticket, websocket, filter }
     }
 
     pub fn id(&self) -> String {

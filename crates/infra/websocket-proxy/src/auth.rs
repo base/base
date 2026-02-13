@@ -1,8 +1,9 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::auth::AuthenticationParseError::{
     DuplicateAPIKeyArgument, DuplicateApplicationArgument, MissingAPIKeyArgument,
     MissingApplicationArgument, NoData, TooManyComponents,
 };
-use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub struct Authentication {
@@ -49,9 +50,7 @@ impl TryFrom<Vec<String>> for Authentication {
 
         for arg in args {
             let mut parts = arg.split(":");
-            let app = parts
-                .next()
-                .ok_or(MissingApplicationArgument(arg.clone()))?;
+            let app = parts.next().ok_or(MissingApplicationArgument(arg.clone()))?;
             if app.is_empty() {
                 return Err(MissingApplicationArgument(arg.clone()));
             }
@@ -83,16 +82,12 @@ impl TryFrom<Vec<String>> for Authentication {
 
 impl Authentication {
     pub fn none() -> Self {
-        Self {
-            key_to_application: HashMap::new(),
-        }
+        Self { key_to_application: HashMap::new() }
     }
 
     #[allow(dead_code)]
     pub fn new(api_keys: HashMap<String, String>) -> Self {
-        Self {
-            key_to_application: api_keys,
-        }
+        Self { key_to_application: api_keys }
     }
 
     pub fn get_application_for_key(&self, api_key: &String) -> Option<&String> {
@@ -164,10 +159,7 @@ mod tests {
             "app2:key2".to_string(),
         ]);
         assert!(auth.is_err());
-        assert_eq!(
-            auth.unwrap_err(),
-            DuplicateApplicationArgument("app1".into())
-        );
+        assert_eq!(auth.unwrap_err(), DuplicateApplicationArgument("app1".into()));
 
         let auth = Authentication::try_from(vec!["app1:key1".to_string(), "app2:key1".to_string()]);
         assert!(auth.is_err());

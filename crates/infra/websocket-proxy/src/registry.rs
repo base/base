@@ -1,14 +1,14 @@
-use crate::client::ClientConnection;
-use crate::metrics::Metrics;
+use std::{sync::Arc, time::Instant};
+
 use axum::extract::ws::Message;
-use futures::stream::StreamExt;
-use futures::SinkExt;
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::broadcast::Sender;
-use tokio::time::{interval, timeout, Duration};
+use futures::{SinkExt, stream::StreamExt};
+use tokio::{
+    sync::broadcast::{Sender, error::RecvError},
+    time::{Duration, interval, timeout},
+};
 use tracing::{debug, info, trace, warn};
+
+use crate::{client::ClientConnection, metrics::Metrics};
 
 fn get_message_size(msg: &Message) -> u64 {
     match msg {
@@ -39,14 +39,7 @@ impl Registry {
         pong_timeout_ms: u64,
         send_timeout_ms: Duration,
     ) -> Self {
-        Self {
-            sender,
-            metrics,
-            compressed,
-            ping_enabled,
-            pong_timeout_ms,
-            send_timeout_ms,
-        }
+        Self { sender, metrics, compressed, ping_enabled, pong_timeout_ms, send_timeout_ms }
     }
 
     pub async fn subscribe(&self, client: ClientConnection) {

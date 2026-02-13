@@ -1,22 +1,30 @@
-use crate::auth::Authentication;
-use crate::client::ClientConnection;
-use crate::filter::{FilterType, MatchMode};
-use crate::metrics::Metrics;
-use crate::rate_limit::{RateLimit, RateLimitError, RateLimitType};
-use crate::registry::Registry;
-use axum::body::Body;
-use axum::extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get};
-use axum::{Error, Router};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
+
+use axum::{
+    Error, Router,
+    body::Body,
+    extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{any, get},
+};
 use http::{HeaderMap, HeaderValue};
 use serde::Deserialize;
 use serde_json::json;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+
+use crate::{
+    auth::Authentication,
+    client::ClientConnection,
+    filter::{FilterType, MatchMode},
+    metrics::Metrics,
+    rate_limit::{RateLimit, RateLimitError, RateLimitType},
+    registry::Registry,
+};
 
 #[derive(Clone)]
 struct ServerState {
@@ -73,10 +81,7 @@ impl Server {
             info!("Authentication is enabled");
             router = router
                 .route("/ws/{api_key}", any(authenticated_websocket_handler))
-                .route(
-                    "/ws/{api_key}/filter",
-                    any(authenticated_filter_websocket_handler),
-                );
+                .route("/ws/{api_key}/filter", any(authenticated_filter_websocket_handler));
         } else {
             info!("Public endpoint is enabled");
             router = router.route("/ws", any(unauthenticated_websocket_handler));
@@ -91,29 +96,18 @@ impl Server {
             registry: self.registry.clone(),
             rate_limiter: self.rate_limiter.clone(),
             metrics: self.metrics.clone(),
-            auth: self
-                .authentication
-                .clone()
-                .unwrap_or_else(Authentication::none),
+            auth: self.authentication.clone().unwrap_or_else(Authentication::none),
             ip_addr_http_header: self.ip_addr_http_header.clone(),
         });
 
-        let listener = tokio::net::TcpListener::bind(self.listen_addr)
+        let listener = tokio::net::TcpListener::bind(self.listen_addr).await.unwrap();
+
+        info!(message = "starting server", address = listener.local_addr().unwrap().to_string());
+
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+            .with_graceful_shutdown(cancellation_token.cancelled_owned())
             .await
-            .unwrap();
-
-        info!(
-            message = "starting server",
-            address = listener.local_addr().unwrap().to_string()
-        );
-
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(cancellation_token.cancelled_owned())
-        .await
-        .unwrap()
+            .unwrap()
     }
 }
 
@@ -170,9 +164,7 @@ async fn authenticated_websocket_handler(
 
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
-                .body(Body::from(
-                    json!({"message": "Invalid API key"}).to_string(),
-                ))
+                .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
                 .unwrap()
         }
         Some(app) => {
@@ -198,9 +190,7 @@ async fn authenticated_filter_websocket_handler(
 
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
-                .body(Body::from(
-                    json!({"message": "Invalid API key"}).to_string(),
-                ))
+                .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
                 .unwrap()
         }
         Some(app) => {
@@ -278,10 +268,7 @@ fn extract_addr(header: &HeaderValue, fallback: IpAddr) -> IpAddr {
 
     match header.to_str() {
         Ok(header_value) => {
-            let raw_value = header_value
-                .split(',')
-                .map(|ip| ip.trim().to_string())
-                .next_back();
+            let raw_value = header_value.split(',').map(|ip| ip.trim().to_string()).next_back();
 
             if let Some(raw_value) = raw_value {
                 return raw_value.parse::<IpAddr>().unwrap_or(fallback);
@@ -290,10 +277,7 @@ fn extract_addr(header: &HeaderValue, fallback: IpAddr) -> IpAddr {
             fallback
         }
         Err(e) => {
-            warn!(
-                message = "could not get header value",
-                error = e.to_string()
-            );
+            warn!(message = "could not get header value", error = e.to_string());
             fallback
         }
     }
@@ -301,9 +285,10 @@ fn extract_addr(header: &HeaderValue, fallback: IpAddr) -> IpAddr {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use super::*;
     use crate::filter::FilterType;
-    use std::net::Ipv4Addr;
 
     #[test]
     fn test_parse_comma_separated() {
@@ -313,10 +298,7 @@ mod tests {
 
         // Test multiple values
         let multiple = Some("0x123, 0x456 ,0x789".to_string());
-        assert_eq!(
-            parse_comma_separated(multiple),
-            vec!["0x123", "0x456", "0x789"]
-        );
+        assert_eq!(parse_comma_separated(multiple), vec!["0x123", "0x456", "0x789"]);
 
         // Test empty
         assert_eq!(parse_comma_separated(None), Vec::<String>::new());
@@ -333,11 +315,8 @@ mod tests {
     #[test]
     fn test_create_filter_from_query() {
         // Test addresses only
-        let query = FilterQuery {
-            addresses: Some("0x123,0x456".to_string()),
-            topics: None,
-            r#match: None,
-        };
+        let query =
+            FilterQuery { addresses: Some("0x123,0x456".to_string()), topics: None, r#match: None };
         let filter = create_filter_from_query(query);
         match filter {
             FilterType::Addresses(_) => (),
@@ -345,11 +324,8 @@ mod tests {
         }
 
         // Test topics only
-        let query = FilterQuery {
-            addresses: None,
-            topics: Some("0xabc,0xdef".to_string()),
-            r#match: None,
-        };
+        let query =
+            FilterQuery { addresses: None, topics: Some("0xabc,0xdef".to_string()), r#match: None };
         let filter = create_filter_from_query(query);
         match filter {
             FilterType::Topics(_) => (),
@@ -369,11 +345,7 @@ mod tests {
         }
 
         // Test none
-        let query = FilterQuery {
-            addresses: None,
-            topics: None,
-            r#match: None,
-        };
+        let query = FilterQuery { addresses: None, topics: None, r#match: None };
         let filter = create_filter_from_query(query);
         match filter {
             FilterType::None => (),
