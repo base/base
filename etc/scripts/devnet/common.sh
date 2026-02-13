@@ -2,7 +2,7 @@
 
 # Source .env.devnet if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="$SCRIPT_DIR/../../.env.devnet"
+ENV_FILE="$SCRIPT_DIR/../../../.env.devnet"
 if [ -f "$ENV_FILE" ]; then
     set -a
     source "$ENV_FILE"
