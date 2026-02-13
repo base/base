@@ -26,5 +26,5 @@ INTEGRATION_TESTS=1 cargo test --package tips-system-tests --test integration_te
 **Note:** Tests that share the funded wallet use `#[serial]` to avoid nonce conflicts.
 
 Defaults:
-- Kafka configs: `docker/host-*.properties` (override with the standard `TIPS_INGRESS_KAFKA_*` env vars if needed).
+- Kafka configs: `etc/docker/host-*.properties` (override with the standard `TIPS_INGRESS_KAFKA_*` env vars if needed).
 - URLs: `http://localhost:8080` ingress, `http://localhost:8547` sequencer (override via `INGRESS_URL` / `SEQUENCER_URL`).

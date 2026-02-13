@@ -68,7 +68,7 @@ devnet-tests-ci: install-nextest build-contracts
 
 # Pre-pulls Docker images needed for system tests
 system-tests-pull-images:
-    docker build -t devnet-setup:local -f docker/Dockerfile.devnet .
+    docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.10.2
     docker pull sigp/lighthouse:v8.0.1
     docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
@@ -134,7 +134,7 @@ check-udeps: build-contracts
 
 # Checks crate dependency boundary rules
 check-crate-deps:
-    ./scripts/ci/check-crate-deps.sh
+    ./etc/scripts/ci/check-crate-deps.sh
 
 # Watches tests
 watch-test: build-contracts
@@ -154,35 +154,35 @@ bench-flashblocks:
 
 # Stops devnet, deletes data, and starts fresh
 devnet: devnet-down
-    docker compose --env-file .env.devnet -f docker/docker-compose.yml up -d --build --scale contender=0
+    docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml up -d --build --scale contender=0
 
 # Stops devnet and deletes all data
 devnet-down:
-    -docker compose --env-file .env.devnet -f docker/docker-compose.yml down
+    -docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml down
     rm -rf .devnet
 
 # Shows devnet block numbers and sync status
 devnet-status:
-    ./scripts/devnet/status.sh
+    ./etc/scripts/devnet/status.sh
 
 # Shows funded test accounts with live balances and nonces
 devnet-accounts:
-    ./scripts/devnet/accounts.sh
+    ./etc/scripts/devnet/accounts.sh
 
 # Sends test transactions to L1 and L2
 devnet-smoke:
-    ./scripts/devnet/smoke.sh
+    ./etc/scripts/devnet/smoke.sh
 
 # Runs full devnet checks (status + smoke tests)
 devnet-checks: devnet-status devnet-smoke
 
 # Starts the contender load generator
 devnet-load:
-    docker compose -f docker/docker-compose.yml up -d --no-deps contender
+    docker compose -f etc/docker/docker-compose.yml up -d --no-deps contender
 
 # Stops the contender load generator
 devnet-load-down:
-    docker compose -f docker/docker-compose.yml down contender
+    docker compose -f etc/docker/docker-compose.yml down contender
 
 # Stream FB's from the builder via websocket
 devnet-flashblocks:
@@ -191,4 +191,4 @@ devnet-flashblocks:
 
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
-    docker compose --env-file .env.devnet -f docker/docker-compose.yml logs -f {{ containers }}
+    docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml logs -f {{ containers }}

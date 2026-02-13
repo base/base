@@ -35,11 +35,11 @@ just devnet-status # Check block numbers and sync status
 To build the client image directly:
 
 ```bash
-docker build -t base-reth-node -f docker/Dockerfile.client .
+docker build -t base-reth-node -f etc/docker/Dockerfile.client .
 ```
 
 To run the compose stack manually:
 
 ```bash
-docker compose --env-file .env.devnet -f docker/docker-compose.yml up -d --build
+docker compose --env-file .env.devnet -f etc/docker/docker-compose.yml up -d --build
 ```
