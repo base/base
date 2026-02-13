@@ -1,6 +1,6 @@
 //! Async trait definitions for RPC clients.
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{Header, TransactionReceipt};
 use async_trait::async_trait;
 use op_enclave_core::types::config::RollupConfig;
@@ -39,6 +39,9 @@ pub trait L1Client: Send + Sync {
         data: Bytes,
         block_number: Option<u64>,
     ) -> RpcResult<Bytes>;
+
+    /// Gets the ETH balance of an address at the latest block.
+    async fn get_balance(&self, address: Address) -> RpcResult<U256>;
 }
 
 /// L2 RPC client trait for interacting with OP Stack chains.
