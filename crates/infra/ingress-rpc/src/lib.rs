@@ -18,7 +18,6 @@ pub use service::{IngressApiServer, IngressService, Providers};
 
 /// Transaction validation implementation.
 mod validation;
-/// Bundle and transaction validation.
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
