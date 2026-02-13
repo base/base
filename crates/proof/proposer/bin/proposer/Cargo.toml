@@ -13,7 +13,10 @@ path = "src/main.rs"
 [dependencies]
 base-proposer.workspace = true
 
+alloy-primitives.workspace = true
 clap.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

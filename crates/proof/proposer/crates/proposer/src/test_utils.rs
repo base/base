@@ -47,6 +47,9 @@ impl L1Client for MockL1 {
     async fn call_contract(&self, _: Address, _: Bytes, _: Option<u64>) -> RpcResult<Bytes> {
         unimplemented!()
     }
+    async fn get_balance(&self, _: Address) -> RpcResult<U256> {
+        Ok(U256::ZERO)
+    }
 }
 
 /// Mock L2 client with configurable `block_by_number()` behavior.

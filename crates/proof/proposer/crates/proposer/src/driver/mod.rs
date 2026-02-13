@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 use crate::contracts::OnchainVerifierClient;
 use crate::contracts::output_proposer::OutputProposer;
 use crate::enclave::EnclaveClientTrait;
+use crate::metrics as proposer_metrics;
 use crate::prover::{Prover, ProverProposal};
 use crate::rpc::{L1Client, L2Client, RollupClient};
 use crate::{
@@ -239,6 +240,7 @@ where
         }
 
         debug!(queue_depth = self.pending.len(), "Proof queue depth");
+        metrics::gauge!(proposer_metrics::PROOF_QUEUE_DEPTH).set(self.pending.len() as f64);
         Ok(())
     }
 
@@ -407,6 +409,7 @@ where
                     l2_block_number = proposal.to.number,
                     "Output proposal submitted successfully"
                 );
+                metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
             }
             Ok(Err(e)) => {
                 warn!(

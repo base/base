@@ -6,7 +6,7 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::client::RpcClient;
 use alloy::transports::http::{Http, reqwest::Client};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{
     BlockId, Header, TransactionInput, TransactionReceipt, TransactionRequest,
 };
@@ -293,6 +293,23 @@ impl L1Client for L1ClientImpl {
         .when(|e| e.is_retryable())
         .notify(|err, dur| {
             tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::call_contract");
+        })
+        .await
+    }
+
+    async fn get_balance(&self, address: Address) -> RpcResult<U256> {
+        let backoff = self.retry_config.to_backoff_builder();
+
+        (|| async {
+            self.provider
+                .get_balance(address)
+                .await
+                .map_err(RpcError::from)
+        })
+        .retry(backoff)
+        .when(|e| e.is_retryable())
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::get_balance");
         })
         .await
     }

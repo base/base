@@ -1,29 +1,73 @@
 //! Proposer binary entry point.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
+use alloy_primitives::Address;
 use base_proposer::{
-    Cli, ProposerConfig,
+    Cli, ProposerConfig, SigningConfig,
     contracts::OnchainVerifierContractClient,
     create_output_proposer,
     driver::{Driver, DriverConfig},
     enclave::{create_enclave_client, rollup_config_to_per_chain_config},
     prover::Prover,
     rpc::{
-        L1ClientConfig, L1ClientImpl, L2ClientConfig, RollupClient, RollupClientConfig,
+        L1Client, L1ClientConfig, L1ClientImpl, L2ClientConfig, RollupClient, RollupClientConfig,
         RollupClientImpl, create_l2_client,
     },
 };
 use clap::Parser;
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{debug, info};
+
+/// Balance polling interval.
+const BALANCE_POLL_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Periodically polls the L1 balance of `address` and records it as a Prometheus gauge.
+async fn balance_monitor<L1: L1Client>(
+    l1_client: Arc<L1>,
+    address: Address,
+    cancel: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            () = cancel.cancelled() => break,
+            () = tokio::time::sleep(BALANCE_POLL_INTERVAL) => {
+                match l1_client.get_balance(address).await {
+                    Ok(balance) => {
+                        // U256 -> f64 conversion: safe enough for gauge display.
+                        let balance_f64: f64 = balance.to_string().parse().unwrap_or(f64::MAX);
+                        metrics::gauge!(base_proposer::metrics::ACCOUNT_BALANCE_WEI).set(balance_f64);
+                    }
+                    Err(e) => {
+                        debug!(error = %e, "Failed to fetch account balance");
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = ProposerConfig::from_cli(cli)?;
     config.log.init_tracing_subscriber()?;
+
+    // Install Prometheus recorder and HTTP server (if enabled).
+    if config.metrics.enabled {
+        let addr = SocketAddr::new(config.metrics.addr, config.metrics.port);
+        metrics_exporter_prometheus::PrometheusBuilder::new()
+            .with_http_listener(addr)
+            .install()
+            .expect("failed to install Prometheus recorder");
+        info!(%addr, "Metrics server started");
+    }
+
+    // Record startup metrics (no-ops if no recorder installed).
+    base_proposer::metrics::record_startup_metrics(env!("CARGO_PKG_VERSION"));
 
     info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
 
@@ -97,6 +141,20 @@ async fn main() -> Result<()> {
         info!("Received shutdown signal");
         cancel_clone.cancel();
     });
+
+    // Spawn balance monitor (if metrics enabled)
+    if config.metrics.enabled {
+        let address = match &config.signing {
+            SigningConfig::Local { signer } => signer.address(),
+            SigningConfig::Remote { address, .. } => *address,
+        };
+        tokio::spawn(balance_monitor(
+            Arc::clone(&l1_client),
+            address,
+            cancel.clone(),
+        ));
+        info!(%address, "Balance monitor started");
+    }
 
     // Create output proposer
     let output_proposer = create_output_proposer(

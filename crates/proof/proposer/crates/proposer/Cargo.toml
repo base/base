@@ -65,6 +65,9 @@ bytes.workspace = true
 hex.workspace = true
 url.workspace = true
 
+# Metrics
+metrics.workspace = true
+
 # CLI
 clap.workspace = true
 base-cli-utils.workspace = true
