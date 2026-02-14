@@ -40,3 +40,4 @@ uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 wiremock.workspace = true
+base-primitives = { workspace = true, features = ["test-utils"] }
