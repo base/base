@@ -477,6 +477,7 @@ mod tests {
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
+    use base_cli_utils::{LogFormat, LogLevel};
     use base_primitives::bundles::test_utils::create_test_meter_bundle_response;
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
@@ -503,8 +504,8 @@ mod tests {
             ingress_topic: String::new(),
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
-            log_level: base_cli_utils::LogLevel::Info,
-            log_format: base_cli_utils::LogFormat::Pretty,
+            log_level: LogLevel::Info,
+            log_format: LogFormat::Pretty,
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             metrics_addr: SocketAddr::from(([127, 0, 0, 1], 9002)),

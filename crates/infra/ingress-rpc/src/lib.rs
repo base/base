@@ -25,6 +25,7 @@ use std::{
 
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use base_cli_utils::{LogFormat, LogLevel};
 use base_primitives::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
 use op_alloy_network::Optimism;
@@ -100,11 +101,11 @@ pub struct Config {
 
     /// Log verbosity level
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
-    pub log_level: base_cli_utils::LogLevel,
+    pub log_level: LogLevel,
 
     /// Log output format (pretty or json)
     #[arg(long, env = "TIPS_INGRESS_LOG_FORMAT", default_value = "pretty")]
-    pub log_format: base_cli_utils::LogFormat,
+    pub log_format: LogFormat,
 
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(

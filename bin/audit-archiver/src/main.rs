@@ -6,7 +6,7 @@ use anyhow::Result;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
-use base_cli_utils::{LogConfig, LogLevel, PrometheusServer, StdoutLogConfig};
+use base_cli_utils::{LogConfig, LogFormat, LogLevel, PrometheusServer, StdoutLogConfig};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
 use tips_audit_lib::{
@@ -36,7 +36,7 @@ struct Args {
     log_level: LogLevel,
 
     #[arg(long, env = "TIPS_AUDIT_LOG_FORMAT", default_value = "pretty")]
-    log_format: base_cli_utils::LogFormat,
+    log_format: LogFormat,
 
     #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
     s3_config_type: S3ConfigType,
