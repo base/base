@@ -1,0 +1,29 @@
+[package]
+name = "websocket-proxy-bin"
+description = "WebSocket Proxy Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+[[bin]]
+name = "websocket-proxy"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+brotli.workspace = true
+futures.workspace = true
+hostname.workspace = true
+dotenvy.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
+websocket-proxy.workspace = true
+tokio = { workspace = true, features = ["full"] }
+axum = { workspace = true, features = ["ws"] }
+clap = { workspace = true, features = ["derive", "env"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }

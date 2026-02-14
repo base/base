@@ -1,3 +1,5 @@
+//! Integration tests for the websocket proxy.
+
 use std::{
     collections::{HashMap, hash_map::Entry},
     error::Error,
@@ -16,10 +18,7 @@ use tokio::{
 use tokio_tungstenite::connect_async;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
-use websocket_proxy::{
-    auth::Authentication, metrics::Metrics, rate_limit::InMemoryRateLimit, registry::Registry,
-    server::Server,
-};
+use websocket_proxy::{Authentication, InMemoryRateLimit, Metrics, Registry, Server};
 
 struct TestHarness {
     received_messages: Arc<Mutex<HashMap<usize, Vec<String>>>>,
@@ -38,16 +37,16 @@ impl TestHarness {
         let listener = TcpListener::bind(&address).await.unwrap();
         listener.local_addr().unwrap()
     }
-    fn new(addr: SocketAddr) -> TestHarness {
-        TestHarness::new_with_auth(addr, None)
+    fn new(addr: SocketAddr) -> Self {
+        Self::new_with_auth(addr, None)
     }
 
-    fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> TestHarness {
+    fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> Self {
         let (sender, _) = broadcast::channel(5);
         let metrics = Arc::new(Metrics::default());
         let registry = Registry::new(
             sender.clone(),
-            metrics.clone(),
+            Arc::clone(&metrics),
             false,
             false,
             120000,
@@ -84,7 +83,7 @@ impl TestHarness {
         }
     }
 
-    async fn start_server(&mut self) {
+    async fn start_server(&self) {
         let cancel_token = self.cancel_token.clone();
         let server = self.server.clone();
 
@@ -110,7 +109,7 @@ impl TestHarness {
         assert!(healthy);
     }
 
-    async fn can_connect(&mut self, path: &str) -> bool {
+    async fn can_connect(&self, path: &str) -> bool {
         let uri = format!("ws://{}/{}", self.server_addr, path);
         (connect_async(uri).await).is_ok()
     }
@@ -121,8 +120,8 @@ impl TestHarness {
         let client_id = self.current_client_id;
         self.current_client_id += 1;
 
-        let results = self.received_messages.clone();
-        let failed_conns = self.clients_failed_to_connect.clone();
+        let results = Arc::clone(&self.received_messages);
+        let failed_conns = Arc::clone(&self.clients_failed_to_connect);
 
         let handle = tokio::spawn(async move {
             let (ws_stream, _) = match connect_async(uri).await {
@@ -165,7 +164,7 @@ impl TestHarness {
         let client_id = self.current_client_id;
         self.current_client_id += 1;
 
-        let failed_conns = self.clients_failed_to_connect.clone();
+        let failed_conns = Arc::clone(&self.clients_failed_to_connect);
 
         let handle = tokio::spawn(async move {
             let (_ws_stream, _) = match connect_async(uri).await {
@@ -186,8 +185,8 @@ impl TestHarness {
         client_id
     }
 
-    fn send_messages(&mut self, messages: Vec<&str>) {
-        for message_str in messages.iter() {
+    fn send_messages(&self, messages: Vec<&str>) {
+        for message_str in &messages {
             let message = Message::Binary(message_str.as_bytes().to_vec().into());
             match self.sender.send(message) {
                 Ok(_) => {}
@@ -198,26 +197,22 @@ impl TestHarness {
         }
     }
 
-    async fn wait_for_messages_to_drain(&mut self) {
+    async fn wait_for_messages_to_drain(&self) {
         let mut drained = false;
         for _ in 0..5 {
             let len = self.sender.len();
             if len > 0 {
                 tokio::time::sleep(Duration::from_millis(5)).await;
                 continue;
-            } else {
-                drained = true;
-                break;
             }
+            drained = true;
+            break;
         }
         assert!(drained);
     }
 
-    fn messages_for_client(&mut self, client_id: usize) -> Vec<String> {
-        match self.received_messages.lock().unwrap().get(&client_id) {
-            Some(messages) => messages.clone(),
-            None => vec![],
-        }
+    fn messages_for_client(&self, client_id: usize) -> Vec<String> {
+        self.received_messages.lock().unwrap().get(&client_id).cloned().unwrap_or_default()
     }
 
     async fn stop_client(&mut self, client_id: usize) {
@@ -233,7 +228,7 @@ impl TestHarness {
 #[tokio::test]
 async fn test_healthcheck() {
     let addr = TestHarness::alloc_port().await;
-    let mut harness = TestHarness::new(addr);
+    let harness = TestHarness::new(addr);
     assert!(harness.healthcheck().await.is_err());
     harness.start_server().await;
     assert!(harness.healthcheck().await.is_ok());
@@ -346,7 +341,7 @@ async fn test_authentication_disables_public_endpoint() {
     let addr = TestHarness::alloc_port().await;
     let auth = Authentication::none();
 
-    let mut harness = TestHarness::new_with_auth(addr, Some(auth));
+    let harness = TestHarness::new_with_auth(addr, Some(auth));
     harness.start_server().await;
 
     assert!(!(harness.can_connect("ws").await));
@@ -361,7 +356,7 @@ async fn test_authentication_allows_known_api_keys() {
         ("key3".to_string(), "app3".to_string()),
     ]));
 
-    let mut harness = TestHarness::new_with_auth(addr, Some(auth));
+    let harness = TestHarness::new_with_auth(addr, Some(auth));
     harness.start_server().await;
 
     assert!(harness.can_connect("ws/key1").await);
@@ -378,7 +373,7 @@ async fn test_ping_timeout_disconnects_client() {
     let metrics = Arc::new(Metrics::default());
     let registry = Registry::new(
         sender.clone(),
-        metrics.clone(),
+        Arc::clone(&metrics),
         false,
         true,
         1000,

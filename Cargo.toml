@@ -145,6 +145,7 @@ base-builder-publish = { path = "crates/builder/publish" }
 basectl-cli = { path = "crates/infra/basectl" }
 based = { path = "crates/infra/based" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
+websocket-proxy = { path = "crates/infra/websocket-proxy" }
 
 # Tips
 tips-audit-lib = { path = "crates/infra/audit" }
