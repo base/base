@@ -18,7 +18,16 @@ members = [
     "crates/infra/*",
     "devnet"
 ]
-default-members = ["bin/node", "bin/consensus", "bin/builder"]
+default-members = [
+    "bin/based",
+    "bin/node",
+    "bin/basectl",
+    "bin/builder",
+    "bin/consensus",
+    "bin/ingress-rpc",
+    "bin/audit-archiver",
+    "bin/mempool-rebroadcaster",
+]
 
 [workspace.metadata.cargo-udeps.ignore]
 normal = ["rustls-platform-verifier"]

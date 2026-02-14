@@ -1,5 +1,5 @@
 [package]
-name = "tips-ingress-rpc"
+name = "ingress-rpc"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
