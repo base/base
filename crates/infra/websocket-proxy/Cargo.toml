@@ -29,4 +29,3 @@ axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
 
 [dev-dependencies]
 reqwest.workspace = true
-tokio-tungstenite.workspace = true
