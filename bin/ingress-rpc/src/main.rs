@@ -1,4 +1,4 @@
-//! Tips ingress RPC binary entry point.
+//! Ingress RPC binary entry point.
 
 use alloy_provider::ProviderBuilder;
 use audit_archiver_lib::{
