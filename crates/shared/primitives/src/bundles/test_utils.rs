@@ -1,11 +1,12 @@
 use alloy_consensus::SignableTransaction;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
-use alloy_provider::network::{TxSignerSync, eip2718::Encodable2718};
 use alloy_signer_local::PrivateKeySigner;
 use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_network::TxSignerSync;
 use op_alloy_rpc_types::OpTransactionRequest;
 
-use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
+use super::{AcceptedBundle, Bundle, MeterBundleResponse};
 
 /// Sample encoded transaction bytes for testing.
 // https://basescan.org/tx/0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e

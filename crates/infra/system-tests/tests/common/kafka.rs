@@ -2,14 +2,14 @@ use std::{path::Path, time::Duration};
 
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
+use base_primitives::BundleExtensions;
 use rdkafka::{
     Message,
     config::ClientConfig,
     consumer::{Consumer, StreamConsumer},
     message::BorrowedMessage,
 };
-use tips_audit_lib::BundleEvent;
-use tips_core::{BundleExtensions, load_kafka_config_from_file};
+use tips_audit_lib::{BundleEvent, load_kafka_config_from_file};
 use tokio::time::{Instant, timeout};
 use uuid::Uuid;
 

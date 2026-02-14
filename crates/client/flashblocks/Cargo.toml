@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-primitives = { workspace = true, features = ["flashblocks"] }
+base-primitives.workspace = true
 
 # reth
 reth-rpc.workspace = true

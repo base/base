@@ -18,7 +18,7 @@ dashmap.workspace = true
 indicatif.workspace = true
 rand_chacha.workspace = true
 url = { workspace = true }
-tips-core = { workspace = true }
+base-primitives.workspace = true
 bytes = { workspace = true }
 async-trait = { workspace = true }
 tips-audit-lib = { workspace = true }

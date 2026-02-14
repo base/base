@@ -11,36 +11,58 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# kona
+kona-genesis = { workspace = true, optional = true }
+
+# alloy
+alloy-eips.workspace = true
+alloy-serde.workspace = true
+alloy-signer = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+alloy-contract = { workspace = true, optional = true }
+alloy-provider = { workspace = true, optional = true }
+alloy-sol-types = { workspace = true, optional = true }
+alloy-rpc-types-eth.workspace = true
+alloy-signer-local = { workspace = true, optional = true }
+alloy-rpc-types-engine.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
+
+# op-alloy
+op-alloy-flz.workspace = true
+op-alloy-network = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+op-alloy-rpc-types-engine = { workspace = true, optional = true }
+
+# misc
+eyre = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v5", "serde"] }
+bytes.workspace = true
+serde.workspace = true
+brotli.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+op-alloy-network.workspace = true
+alloy-signer-local.workspace = true
+op-alloy-rpc-types = { workspace = true, features = ["std"] }
+
 [features]
 default = []
 engine = [
-	"dep:alloy-eips",
-	"dep:alloy-primitives",
 	"dep:alloy-provider",
-	"dep:alloy-rpc-types-engine",
-	"dep:alloy-rpc-types-eth",
 	"dep:kona-genesis",
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types-engine",
-	"dep:thiserror",
-]
-flashblocks = [
-	"dep:alloy-primitives",
-	"dep:alloy-rpc-types-engine",
-	"dep:alloy-rpc-types-eth",
-	"dep:alloy-serde",
-	"dep:brotli",
-	"dep:bytes",
-	"dep:serde",
-	"dep:serde_json",
-	"dep:thiserror",
 ]
 test-utils = [
-	"dep:alloy-consensus",
 	"dep:alloy-contract",
-	"dep:alloy-eips",
 	"dep:alloy-genesis",
-	"dep:alloy-primitives",
 	"dep:alloy-signer",
 	"dep:alloy-signer-local",
 	"dep:alloy-sol-macro",
@@ -48,40 +70,4 @@ test-utils = [
 	"dep:eyre",
 	"dep:op-alloy-network",
 	"dep:op-alloy-rpc-types",
-	"dep:serde_json",
 ]
-
-[dependencies]
-# kona
-kona-genesis = { workspace = true, optional = true }
-
-# alloy
-alloy-eips = { workspace = true, optional = true }
-alloy-serde = { workspace = true, optional = true }
-alloy-signer = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
-alloy-contract = { workspace = true, optional = true }
-alloy-provider = { workspace = true, optional = true }
-alloy-sol-types = { workspace = true, optional = true }
-alloy-rpc-types-eth = { workspace = true, optional = true }
-alloy-signer-local = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, features = ["serde"], optional = true }
-alloy-consensus = { workspace = true, features = ["std"], optional = true }
-alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
-
-# op-alloy
-op-alloy-network = { workspace = true, optional = true }
-op-alloy-rpc-types = { workspace = true, optional = true }
-op-alloy-rpc-types-engine = { workspace = true, optional = true }
-
-# misc
-eyre = { workspace = true, optional = true }
-bytes = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-brotli = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
-
-[dev-dependencies]
-rstest.workspace = true

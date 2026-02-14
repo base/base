@@ -6,12 +6,12 @@ use anyhow::Result;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
+use base_cli_utils::{LogConfig, LogLevel, PrometheusServer, StdoutLogConfig};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
 use tips_audit_lib::{
     KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
 };
-use tips_core::{init_logger_with_format, init_prometheus_exporter};
 use tracing::info;
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -33,10 +33,10 @@ struct Args {
     s3_bucket: String,
 
     #[arg(long, env = "TIPS_AUDIT_LOG_LEVEL", default_value = "info")]
-    log_level: String,
+    log_level: LogLevel,
 
     #[arg(long, env = "TIPS_AUDIT_LOG_FORMAT", default_value = "pretty")]
-    log_format: tips_core::LogFormat,
+    log_format: base_cli_utils::LogFormat,
 
     #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
     s3_config_type: S3ConfigType,
@@ -72,9 +72,16 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    init_logger_with_format(&args.log_level, args.log_format);
+    LogConfig {
+        global_level: args.log_level.into(),
+        stdout_logs: Some(StdoutLogConfig { format: args.log_format }),
+        file_logs: None,
+    }
+    .init_tracing_subscriber()
+    .expect("Failed to initialize tracing");
 
-    init_prometheus_exporter(args.metrics_addr).expect("Failed to install Prometheus exporter");
+    PrometheusServer::init(args.metrics_addr.ip(), args.metrics_addr.port(), None)
+        .expect("Failed to install Prometheus exporter");
 
     info!(
         kafka_properties_file = %args.kafka_properties_file,

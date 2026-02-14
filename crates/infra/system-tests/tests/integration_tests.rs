@@ -7,11 +7,11 @@ use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, TxHash, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, bail};
+use base_primitives::{Bundle, BundleExtensions};
 use common::kafka::wait_for_audit_event_by_hash;
 use op_alloy_network::Optimism;
 use serial_test::serial;
 use tips_audit_lib::BundleEvent;
-use tips_core::BundleExtensions;
 use tips_system_tests::{
     TipsRpcClient, create_funded_signer, create_optimism_provider, create_signed_transaction,
 };
@@ -122,8 +122,6 @@ async fn test_send_bundle_accepted() -> Result<()> {
         return Ok(());
     }
 
-    use tips_core::Bundle;
-
     let url = get_integration_test_url();
     let provider = create_optimism_provider(&url)?;
     let client = TipsRpcClient::new(provider);
@@ -221,8 +219,6 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
         );
         return Ok(());
     }
-
-    use tips_core::Bundle;
 
     let url = get_integration_test_url();
     let provider = create_optimism_provider(&url)?;

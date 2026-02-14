@@ -1,8 +1,8 @@
 use alloy_consensus::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
 use alloy_primitives::{Address, TxHash, U256};
+use base_primitives::AcceptedBundle;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use tips_core::AcceptedBundle;
 use uuid::Uuid;
 
 /// Unique identifier for a transaction.

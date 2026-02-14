@@ -11,9 +11,14 @@ pub use engine::{
     EngineApiResult, LegacyPayloadSupport, ProofProvider, RollupConfigProvider, StorageKey,
 };
 
-#[cfg(feature = "flashblocks")]
-pub mod flashblocks;
-#[cfg(feature = "flashblocks")]
+/// Bundle types and test utilities for the TIPS transaction inclusion system.
+pub mod bundles;
+pub use bundles::{
+    AcceptedBundle, Bundle, BundleExtensions, BundleHash, BundleTxs, CancelBundle,
+    MeterBundleResponse, ParsedBundle, TransactionResult,
+};
+
+mod flashblocks;
 pub use flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, FlashblockDecodeError,
     FlashblocksPayloadV1, Metadata,

@@ -4,8 +4,8 @@ use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
+use base_primitives::AcceptedBundle;
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use tips_core::AcceptedBundle;
 use tokio::time::Duration;
 use tracing::{error, info};
 
@@ -100,10 +100,11 @@ impl<Q: MessageQueue> BundleQueuePublisher<Q> {
 
 #[cfg(test)]
 mod tests {
-    use rdkafka::config::ClientConfig;
-    use tips_core::{
-        AcceptedBundle, Bundle, BundleExtensions, test_utils::create_test_meter_bundle_response,
+    use base_primitives::{
+        AcceptedBundle, Bundle, BundleExtensions,
+        bundles::test_utils::create_test_meter_bundle_response,
     };
+    use rdkafka::config::ClientConfig;
     use tokio::time::{Duration, Instant};
 
     use super::*;

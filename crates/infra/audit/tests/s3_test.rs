@@ -8,11 +8,11 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 mod common;
-use common::TestHarness;
-use tips_core::{
+use base_primitives::{
     BundleExtensions,
-    test_utils::{TXN_HASH, create_bundle_from_txn_data},
+    bundles::test_utils::{TXN_HASH, create_bundle_from_txn_data},
 };
+use common::TestHarness;
 
 fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
     Event { key: key.to_string(), timestamp, event: bundle_event }

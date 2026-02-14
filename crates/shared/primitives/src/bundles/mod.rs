@@ -2,12 +2,16 @@ use alloy_consensus::{
     Transaction,
     transaction::{Recovered, SignerRecoverable},
 };
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, keccak256};
-use alloy_provider::network::eip2718::{Decodable2718, Encodable2718};
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Test utilities and fixtures.
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 
 /// `Bundle` is the type that mirrors `EthSendBundle` and is used for the API.
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -369,12 +373,12 @@ pub struct MeterBundleResponse {
 
 #[cfg(test)]
 mod tests {
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::Keccak256;
-    use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
-    use crate::test_utils::{create_test_meter_bundle_response, create_transaction};
+    use crate::bundles::test_utils::{create_test_meter_bundle_response, create_transaction};
 
     #[test]
     fn test_bundle_types() {

@@ -12,7 +12,8 @@ workspace = true
 
 [dependencies]
 url.workspace = true
-tips-core.workspace = true
+base-primitives.workspace = true
+base-cli-utils.workspace = true
 op-revm.workspace = true
 metrics.workspace = true
 tips-audit-lib.workspace = true

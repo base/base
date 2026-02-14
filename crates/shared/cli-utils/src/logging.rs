@@ -83,6 +83,38 @@ impl Default for LogConfig {
     }
 }
 
+/// Log level parsed directly from CLI arguments or environment variables.
+///
+/// Wraps [`LevelFilter`] with `clap::ValueEnum` so it can be used as a
+/// clap field type without manual string matching.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogLevel {
+    /// Trace level.
+    Trace,
+    /// Debug level.
+    Debug,
+    /// Info level.
+    #[default]
+    Info,
+    /// Warn level.
+    Warn,
+    /// Error level.
+    Error,
+}
+
+impl From<LogLevel> for LevelFilter {
+    fn from(level: LogLevel) -> Self {
+        match level {
+            LogLevel::Trace => Self::TRACE,
+            LogLevel::Debug => Self::DEBUG,
+            LogLevel::Info => Self::INFO,
+            LogLevel::Warn => Self::WARN,
+            LogLevel::Error => Self::ERROR,
+        }
+    }
+}
+
 /// Converts verbosity count (1-5) to [`LevelFilter`].
 ///
 /// - 1 = ERROR

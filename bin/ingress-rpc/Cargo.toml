@@ -11,7 +11,8 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-tips-core.workspace = true
+base-cli-utils.workspace = true
+base-primitives.workspace = true
 tips-audit-lib.workspace = true
 tips-ingress-rpc-lib.workspace = true
 clap.workspace = true

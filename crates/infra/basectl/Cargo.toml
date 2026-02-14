@@ -24,7 +24,7 @@ alloy-rpc-types-eth = { workspace = true }
 alloy-eips = { workspace = true }
 op-alloy-network = { workspace = true }
 op-alloy-consensus = { workspace = true }
-base-primitives = { workspace = true, features = ["flashblocks"] }
+base-primitives.workspace = true
 url = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true }
 alloy-sol-types = { workspace = true }
