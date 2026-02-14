@@ -31,8 +31,9 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "y", description: "Copy block number" },
 ];
 
+/// View for displaying the live flashblocks stream with gas usage.
 #[derive(Debug)]
-pub struct FlashblocksView {
+pub(crate) struct FlashblocksView {
     table_state: TableState,
     auto_scroll: bool,
 }
@@ -44,7 +45,8 @@ impl Default for FlashblocksView {
 }
 
 impl FlashblocksView {
-    pub fn new() -> Self {
+    /// Creates a new flashblocks view with auto-scroll enabled.
+    pub(crate) fn new() -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
         Self { table_state, auto_scroll: true }

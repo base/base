@@ -9,16 +9,26 @@ use tips_core::AcceptedBundle;
 use tokio::time::Duration;
 use tracing::{error, info};
 
+/// Trait for publishing messages to a queue backend.
 #[async_trait]
 pub trait MessageQueue: Send + Sync {
+    /// Publishes a message with the given key and payload to the specified topic.
     async fn publish(&self, topic: &str, key: &str, payload: &[u8]) -> Result<()>;
 }
 
+/// Kafka-backed message queue implementation.
 pub struct KafkaMessageQueue {
     producer: FutureProducer,
 }
 
+impl std::fmt::Debug for KafkaMessageQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaMessageQueue").finish_non_exhaustive()
+    }
+}
+
 impl KafkaMessageQueue {
+    /// Creates a new Kafka message queue with the given producer.
     pub const fn new(producer: FutureProducer) -> Self {
         Self { producer }
     }
@@ -67,16 +77,20 @@ impl MessageQueue for KafkaMessageQueue {
     }
 }
 
+/// Publishes accepted bundles to a message queue topic.
+#[derive(Debug)]
 pub struct BundleQueuePublisher<Q: MessageQueue> {
     queue: Arc<Q>,
     topic: String,
 }
 
 impl<Q: MessageQueue> BundleQueuePublisher<Q> {
+    /// Creates a new publisher targeting the given queue and topic.
     pub const fn new(queue: Arc<Q>, topic: String) -> Self {
         Self { queue, topic }
     }
 
+    /// Publishes the bundle with its hash as the message key.
     pub async fn publish(&self, bundle: &AcceptedBundle, hash: &B256) -> Result<()> {
         let key = hash.to_string();
         let payload = serde_json::to_vec(bundle)?;

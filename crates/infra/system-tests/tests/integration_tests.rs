@@ -13,8 +13,7 @@ use serial_test::serial;
 use tips_audit_lib::BundleEvent;
 use tips_core::BundleExtensions;
 use tips_system_tests::{
-    client::TipsRpcClient,
-    fixtures::{create_funded_signer, create_optimism_provider, create_signed_transaction},
+    TipsRpcClient, create_funded_signer, create_optimism_provider, create_signed_transaction,
 };
 use tokio::time::{Duration, Instant, sleep};
 

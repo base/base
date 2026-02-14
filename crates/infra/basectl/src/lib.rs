@@ -1,8 +1,12 @@
-#![allow(missing_docs)]
+#![doc = include_str!("../README.md")]
 
-pub mod app;
-pub mod commands;
-pub mod config;
-pub mod l1_client;
-pub mod rpc;
-pub mod tui;
+mod app;
+pub use app::{ViewId, run_app, run_app_with_view};
+
+mod commands;
+mod config;
+pub use config::ChainConfig;
+
+mod l1_client;
+mod rpc;
+mod tui;

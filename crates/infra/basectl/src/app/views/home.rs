@@ -64,13 +64,15 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "q", description: "Quit" },
 ];
 
+/// Main menu view with navigation to all other views.
 #[derive(Debug, Default)]
-pub struct HomeView {
+pub(crate) struct HomeView {
     selected_index: usize,
 }
 
 impl HomeView {
-    pub const fn new() -> Self {
+    /// Creates a new home view with the first menu item selected.
+    pub(crate) const fn new() -> Self {
         Self { selected_index: 0 }
     }
 }

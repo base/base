@@ -8,7 +8,8 @@ use crossterm::{
 };
 use ratatui::prelude::*;
 
-pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+/// Initializes the terminal in raw mode with an alternate screen.
+pub(crate) fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, DisableMouseCapture)?;
@@ -17,7 +18,8 @@ pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     Ok(terminal)
 }
 
-pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+/// Restores the terminal to its original state.
+pub(crate) fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     Ok(())

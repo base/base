@@ -8,14 +8,17 @@ use tracing::debug;
 
 use super::tracker::TransactionTracker;
 
-pub struct ReceiptPoller {
+/// Polls the sequencer for transaction receipts and updates the tracker.
+#[derive(Debug)]
+pub(crate) struct ReceiptPoller {
     sequencer: RootProvider<Optimism>,
     tracker: Arc<TransactionTracker>,
     timeout: Duration,
 }
 
 impl ReceiptPoller {
-    pub const fn new(
+    /// Creates a new receipt poller with the given sequencer, tracker, and timeout.
+    pub(crate) const fn new(
         sequencer: RootProvider<Optimism>,
         tracker: Arc<TransactionTracker>,
         timeout: Duration,
@@ -23,7 +26,8 @@ impl ReceiptPoller {
         Self { sequencer, tracker, timeout }
     }
 
-    pub async fn run(self) -> Result<()> {
+    /// Runs the polling loop until all transactions are resolved.
+    pub(crate) async fn run(self) -> Result<()> {
         let mut interval = tokio::time::interval(Duration::from_secs(2)); // Block time
 
         loop {

@@ -8,7 +8,7 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::Message,
 };
-use tips_core::kafka::load_kafka_config_from_file;
+use tips_core::load_kafka_config_from_file;
 use tokio::time::sleep;
 use tracing::{error, info};
 

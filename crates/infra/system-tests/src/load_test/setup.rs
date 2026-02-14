@@ -13,6 +13,7 @@ use crate::fixtures::create_optimism_provider;
 
 const CHAIN_ID: u64 = 13; // builder-playground local chain ID
 
+/// Funds wallets from a master wallet for load testing.
 pub async fn run(args: SetupArgs) -> Result<()> {
     let master_wallet = Wallet::from_private_key(&args.master_key)
         .context("Failed to parse master wallet private key")?;

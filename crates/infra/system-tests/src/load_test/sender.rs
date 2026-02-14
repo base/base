@@ -18,7 +18,9 @@ use crate::{client::TipsRpcClient, fixtures::create_load_test_transaction};
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
 
-pub struct SenderTask<N: Network> {
+/// Sends transactions at a configured rate from a single wallet.
+#[derive(Debug)]
+pub(crate) struct SenderTask<N: Network> {
     wallet: Wallet,
     client: TipsRpcClient<N>,
     sequencer: RootProvider<Optimism>,
@@ -29,7 +31,8 @@ pub struct SenderTask<N: Network> {
 }
 
 impl<N: Network> SenderTask<N> {
-    pub const fn new(
+    /// Creates a new sender task for the given wallet and configuration.
+    pub(crate) const fn new(
         wallet: Wallet,
         client: TipsRpcClient<N>,
         sequencer: RootProvider<Optimism>,
@@ -41,7 +44,8 @@ impl<N: Network> SenderTask<N> {
         Self { wallet, client, sequencer, rate_per_wallet, duration, tracker, rng }
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    /// Runs the send loop until the test duration expires.
+    pub(crate) async fn run(mut self) -> Result<()> {
         let mut nonce = self
             .sequencer
             .get_transaction_count(self.wallet.address)

@@ -1,13 +1,17 @@
 mod command_center;
-mod config;
-mod da_monitor;
-mod factory;
-mod flashblocks;
-mod home;
+pub(crate) use command_center::CommandCenterView;
 
-pub use command_center::CommandCenterView;
-pub use config::ConfigView;
-pub use da_monitor::DaMonitorView;
-pub use factory::create_view;
-pub use flashblocks::FlashblocksView;
-pub use home::HomeView;
+mod config;
+pub(crate) use config::ConfigView;
+
+mod da_monitor;
+pub(crate) use da_monitor::DaMonitorView;
+
+mod factory;
+pub(crate) use factory::create_view;
+
+mod flashblocks;
+pub(crate) use flashblocks::FlashblocksView;
+
+mod home;
+pub(crate) use home::HomeView;

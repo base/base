@@ -14,27 +14,39 @@ use tracing::{debug, error, info, warn};
 const IGNORED_ERRORS: [&str; 3] =
     ["transaction underpriced", "replacement transaction underpriced", "already known"];
 
+/// Synchronizes transaction pools between geth and reth nodes by rebroadcasting
+/// transactions that exist in one mempool but not the other.
 #[derive(Debug, Clone)]
 pub struct Rebroadcaster {
     geth_provider: RootProvider,
     reth_provider: RootProvider,
 }
 
+/// Result counters from a single rebroadcast run.
 #[derive(Debug, Clone)]
 pub struct RebroadcasterResult {
+    /// Number of transactions successfully sent from geth to reth.
     pub success_geth_to_reth: u32,
+    /// Number of transactions successfully sent from reth to geth.
     pub success_reth_to_geth: u32,
+    /// Number of unexpected failures when sending from geth to reth.
     pub unexpected_failed_geth_to_reth: u32,
+    /// Number of unexpected failures when sending from reth to geth.
     pub unexpected_failed_reth_to_geth: u32,
 }
 
+/// The difference between two transaction pools, identifying transactions
+/// present in one but missing from the other.
 #[derive(Debug)]
 pub struct TxpoolDiff {
+    /// Transactions found in the geth mempool but absent from reth.
     pub in_geth_not_in_reth: Vec<RpcTransaction>,
+    /// Transactions found in the reth mempool but absent from geth.
     pub in_reth_not_in_geth: Vec<RpcTransaction>,
 }
 
 impl Rebroadcaster {
+    /// Creates a new [`Rebroadcaster`] connected to the given geth and reth HTTP endpoints.
     pub fn new(geth_endpoint: String, reth_endpoint: String) -> Self {
         let geth_provider = ProviderBuilder::new()
             .disable_recommended_fillers()
@@ -47,6 +59,9 @@ impl Rebroadcaster {
         Self { geth_provider, reth_provider }
     }
 
+    /// Executes a single rebroadcast cycle: fetches mempool contents from both nodes,
+    /// filters underpriced transactions, computes the diff, and rebroadcasts missing
+    /// transactions in each direction.
     pub async fn run(&self) -> Result<RebroadcasterResult, Box<dyn Error>> {
         let (base_fee, gas_price) = self.fetch_network_fees().await?;
         let (geth_mempool_contents, reth_mempool_contents) = self.fetch_mempool_contents().await?;
@@ -167,6 +182,7 @@ impl Rebroadcaster {
         Ok((geth_mempool_contents, reth_mempool_contents))
     }
 
+    /// Returns a copy of the given mempool contents with underpriced transactions removed.
     pub fn filter_underpriced_txns(
         &self,
         content: &TxpoolContent,
@@ -241,6 +257,8 @@ impl Rebroadcaster {
         (pending_count, queued_count)
     }
 
+    /// Computes the symmetric difference between two mempool snapshots, returning
+    /// transactions unique to each pool sorted by nonce.
     pub fn compute_diff(
         &self,
         geth_mempool: &TxpoolContent,

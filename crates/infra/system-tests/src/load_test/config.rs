@@ -2,15 +2,18 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-#[derive(Parser)]
+/// Top-level CLI for the load testing tool.
+#[derive(Debug, Parser)]
 #[command(name = "load-test")]
 #[command(about = "Load testing tool for TIPS ingress service", long_about = None)]
 pub struct Cli {
+    /// Subcommand to execute.
     #[command(subcommand)]
     pub command: Commands,
 }
 
-#[derive(Subcommand)]
+/// Available load test subcommands.
+#[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Setup: Fund N wallets from a master wallet
     Setup(SetupArgs),
@@ -18,7 +21,8 @@ pub enum Commands {
     Load(LoadArgs),
 }
 
-#[derive(Parser)]
+/// Arguments for the wallet setup subcommand.
+#[derive(Debug, Parser)]
 pub struct SetupArgs {
     /// Master wallet private key (must have funds)
     #[arg(long, env = "MASTER_KEY")]
@@ -41,7 +45,8 @@ pub struct SetupArgs {
     pub output: PathBuf,
 }
 
-#[derive(Parser)]
+/// Arguments for the load test execution subcommand.
+#[derive(Debug, Parser)]
 pub struct LoadArgs {
     /// TIPS ingress RPC URL
     #[arg(long, env = "INGRESS_URL", default_value = "http://localhost:8080")]

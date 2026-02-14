@@ -12,6 +12,7 @@ use tracing::{debug, error, info};
 
 use crate::metrics::HealthcheckMetrics;
 
+/// Alloy-based Ethereum client implementation.
 pub mod alloy_client;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,14 +34,19 @@ impl HealthState {
     }
 }
 
+/// Configuration for block-production health checks.
 #[derive(Debug, Clone)]
 pub struct HealthcheckConfig {
+    /// How often to poll the node for the latest header, in milliseconds.
     pub poll_interval_ms: u64,
+    /// Maximum acceptable block age (in milliseconds) before the node is considered delayed.
     pub grace_period_ms: u64,
+    /// Block age threshold (in milliseconds) beyond which the node is considered unhealthy.
     pub unhealthy_node_threshold_ms: u64,
 }
 
 impl HealthcheckConfig {
+    /// Creates a new [`HealthcheckConfig`] with the given timing parameters.
     pub const fn new(
         poll_interval_ms: u64,
         grace_period_ms: u64,
@@ -50,42 +56,58 @@ impl HealthcheckConfig {
     }
 }
 
+/// Describes a node to be health-checked.
 #[derive(Debug, Clone)]
 pub struct Node {
+    /// RPC endpoint URL for the node.
     pub url: String,
+    /// Whether this node is a newly launched instance that has not yet synced.
     pub is_new_instance: bool,
 }
 
 impl Node {
+    /// Creates a new [`Node`] with the given URL and new-instance flag.
     pub fn new(url: impl Into<String>, is_new_instance: bool) -> Self {
         Self { url: url.into(), is_new_instance }
     }
 }
 
+/// Summary of a block header used for health-check classification.
 #[derive(Debug, Clone)]
 pub struct HeaderSummary {
+    /// Block number.
     pub number: u64,
+    /// Block timestamp as Unix epoch seconds.
     pub timestamp_unix_seconds: u64,
+    /// Number of transactions in the block.
     pub transaction_count: usize,
 }
 
+/// Trait for fetching the latest block header from an Ethereum-compatible node.
 #[async_trait]
 pub trait EthClient: Send + Sync {
+    /// Returns a [`HeaderSummary`] for the most recent block.
     async fn latest_header(
         &self,
     ) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>>;
 }
 
+/// Periodically polls a node and classifies block production as healthy, delayed,
+/// unhealthy, or errored based on block age relative to configured thresholds.
 #[derive(Debug)]
 pub struct BlockProductionHealthChecker<C: EthClient> {
+    /// The node being monitored.
     pub node: Node,
+    /// Client used to fetch the latest header.
     pub client: C,
+    /// Timing configuration for the health check.
     pub config: HealthcheckConfig,
     status_code: Arc<AtomicU8>,
     metrics: HealthcheckMetrics,
 }
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
+    /// Creates a new health checker for the given node, initially marked as healthy.
     pub fn new(
         node: Node,
         client: C,
@@ -97,6 +119,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
         Self { node, client, config, status_code: Arc::new(AtomicU8::new(initial_status)), metrics }
     }
 
+    /// Spawns a background task that emits health status metrics at the given period.
     pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
         let status = Arc::clone(&self.status_code);
         let metrics = self.metrics.clone();
@@ -115,6 +138,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
         })
     }
 
+    /// Performs a single health check cycle: fetches the latest header and classifies the node state.
     pub async fn run_health_check(&mut self) {
         let url = &self.node.url;
 
@@ -201,6 +225,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
         }
     }
 
+    /// Runs health checks in a loop at the configured poll interval.
     pub async fn poll_for_health_checks(&mut self) {
         let mut ticker = interval(Duration::from_millis(self.config.poll_interval_ms));
         loop {

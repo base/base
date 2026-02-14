@@ -17,8 +17,9 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "r", description: "Refresh config" },
 ];
 
+/// View displaying chain configuration and L1 system config parameters.
 #[derive(Debug)]
-pub struct ConfigView {
+pub(crate) struct ConfigView {
     needs_refresh: bool,
 }
 
@@ -29,7 +30,8 @@ impl Default for ConfigView {
 }
 
 impl ConfigView {
-    pub const fn new() -> Self {
+    /// Creates a new config view.
+    pub(crate) const fn new() -> Self {
         Self { needs_refresh: true }
     }
 }
@@ -104,15 +106,25 @@ fn render_chain_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     f.render_widget(para, area);
 }
 
-#[allow(clippy::option_if_let_else)]
 fn render_system_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let block = Block::default()
         .title(" L1 SystemConfig ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 
-    let content = match &resources.system_config {
-        Some(sys) => {
+    let content = resources.system_config.as_ref().map_or_else(
+        || {
+            let lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Loading system config...",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::styled("(Requires L1 RPC)", Style::default().fg(Color::DarkGray))),
+            ];
+            Paragraph::new(lines).alignment(Alignment::Center)
+        },
+        |sys| {
             let gas_limit_str =
                 sys.gas_limit.map(|g| g.to_string()).unwrap_or_else(|| "-".to_string());
             let elasticity_str =
@@ -135,19 +147,8 @@ fn render_system_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
                 ]),
             ];
             Paragraph::new(lines)
-        }
-        None => {
-            let lines = vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Loading system config...",
-                    Style::default().fg(Color::DarkGray),
-                )),
-                Line::from(Span::styled("(Requires L1 RPC)", Style::default().fg(Color::DarkGray))),
-            ];
-            Paragraph::new(lines).alignment(Alignment::Center)
-        }
-    };
+        },
+    );
 
     f.render_widget(content.block(block), area);
 }

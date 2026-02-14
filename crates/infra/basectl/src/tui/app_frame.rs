@@ -8,17 +8,22 @@ use super::Keybinding;
 
 const HELP_SIDEBAR_WIDTH: u16 = 30;
 
+/// Layout regions produced by splitting the terminal area.
 #[derive(Debug)]
-pub struct AppLayout {
+pub(crate) struct AppLayout {
+    /// Main content area for the active view.
     pub content: Rect,
+    /// Optional help sidebar area.
     pub sidebar: Option<Rect>,
 }
 
+/// Handles the top-level application frame layout and help sidebar rendering.
 #[derive(Debug)]
-pub struct AppFrame;
+pub(crate) struct AppFrame;
 
 impl AppFrame {
-    pub fn split_layout(area: Rect, show_help: bool) -> AppLayout {
+    /// Splits the terminal area into content and optional help sidebar.
+    pub(crate) fn split_layout(area: Rect, show_help: bool) -> AppLayout {
         if show_help && area.width > HELP_SIDEBAR_WIDTH + 20 {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -31,7 +36,8 @@ impl AppFrame {
         }
     }
 
-    pub fn render(
+    /// Renders the help sidebar if it is visible in the layout.
+    pub(crate) fn render(
         f: &mut Frame<'_>,
         layout: &AppLayout,
         config_name: &str,

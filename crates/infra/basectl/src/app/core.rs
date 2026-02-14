@@ -10,19 +10,22 @@ use crate::{
     tui::{AppFrame, restore_terminal, setup_terminal},
 };
 
+/// Main TUI application that manages views, routing, and the event loop.
 #[derive(Debug)]
-pub struct App {
+pub(crate) struct App {
     router: Router,
     resources: Resources,
     show_help: bool,
 }
 
 impl App {
-    pub const fn new(resources: Resources, initial_view: ViewId) -> Self {
+    /// Creates a new application with the given resources and initial view.
+    pub(crate) const fn new(resources: Resources, initial_view: ViewId) -> Self {
         Self { router: Router::new(initial_view), resources, show_help: false }
     }
 
-    pub async fn run<F>(mut self, mut view_factory: F) -> Result<()>
+    /// Runs the application event loop using the given view factory.
+    pub(crate) async fn run<F>(mut self, mut view_factory: F) -> Result<()>
     where
         F: FnMut(ViewId) -> Box<dyn View>,
     {

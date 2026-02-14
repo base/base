@@ -20,7 +20,7 @@ use op_alloy_network::Optimism;
 use tips_audit_lib::BundleEvent;
 use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
-    types::ParsedBundle,
+    ParsedBundle,
 };
 use tokio::{
     sync::{broadcast, mpsc},
@@ -35,10 +35,14 @@ use crate::{
     validation::validate_bundle,
 };
 
-/// RPC providers for different endpoints
+/// RPC providers for different endpoints.
+#[derive(Debug)]
 pub struct Providers {
+    /// Provider for sending transactions to the mempool.
     pub mempool: RootProvider<Optimism>,
+    /// Provider for simulating bundles.
     pub simulation: RootProvider<Optimism>,
+    /// Optional provider for forwarding raw transactions.
     pub raw_tx_forward: Option<RootProvider<Optimism>>,
 }
 
@@ -48,6 +52,7 @@ pub trait IngressApi {
     #[method(name = "sendBundle")]
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
 
+    /// `eth_sendBackrunBundle` submits a backrun bundle to the builder.
     #[method(name = "sendBackrunBundle")]
     async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
 
@@ -60,6 +65,7 @@ pub trait IngressApi {
     async fn send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
 }
 
+/// Core ingress RPC service that handles bundle and transaction submission.
 pub struct IngressService<Q: MessageQueue> {
     mempool_provider: Arc<RootProvider<Optimism>>,
     simulation_provider: Arc<RootProvider<Optimism>>,
@@ -80,7 +86,14 @@ pub struct IngressService<Q: MessageQueue> {
     send_to_builder: bool,
 }
 
+impl<Q: MessageQueue> std::fmt::Debug for IngressService<Q> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IngressService").finish_non_exhaustive()
+    }
+}
+
 impl<Q: MessageQueue> IngressService<Q> {
+    /// Creates a new ingress service with the given providers and configuration.
     pub fn new(
         providers: Providers,
         queue: Q,
@@ -491,7 +504,7 @@ mod tests {
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
             log_level: String::from("info"),
-            log_format: tips_core::logger::LogFormat::Pretty,
+            log_format: tips_core::LogFormat::Pretty,
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             metrics_addr: SocketAddr::from(([127, 0, 0, 1], 9002)),

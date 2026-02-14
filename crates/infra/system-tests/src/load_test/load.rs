@@ -16,6 +16,7 @@ use super::{
 };
 use crate::{client::TipsRpcClient, fixtures::create_optimism_provider};
 
+/// Executes the load test with the given arguments.
 pub async fn run(args: LoadArgs) -> Result<()> {
     let wallets = load_wallets(&args.wallets).context("Failed to load wallets")?;
 

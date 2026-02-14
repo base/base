@@ -14,6 +14,7 @@ use crate::{
     tui::Toast,
 };
 
+/// Launches the TUI application starting from the home view.
 pub async fn run_app(config: ChainConfig) -> Result<()> {
     let mut resources = Resources::new(config.clone());
 
@@ -23,6 +24,7 @@ pub async fn run_app(config: ChainConfig) -> Result<()> {
     app.run(create_view).await
 }
 
+/// Launches the TUI application starting from the specified view.
 pub async fn run_app_with_view(config: ChainConfig, initial_view: ViewId) -> Result<()> {
     let mut resources = Resources::new(config.clone());
 

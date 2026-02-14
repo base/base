@@ -1,11 +1,23 @@
-//! Tips ingress RPC library.
-#![allow(missing_docs, missing_debug_implementations)]
+#![doc = include_str!("../README.md")]
 
-pub mod health;
-pub mod metrics;
-pub mod queue;
-pub mod service;
-pub mod validation;
+/// Health check HTTP server.
+mod health;
+pub use health::bind_health_server;
+
+/// Prometheus metrics for the ingress RPC service.
+mod metrics;
+pub use metrics::{Metrics, record_histogram};
+
+/// Kafka message queue publishing.
+mod queue;
+pub use queue::{BundleQueuePublisher, KafkaMessageQueue, MessageQueue};
+
+/// Core RPC service implementation.
+mod service;
+pub use service::{IngressApiServer, IngressService, Providers};
+
+/// Transaction validation implementation.
+mod validation;
 use std::{
     net::{IpAddr, SocketAddr},
     str::FromStr,
@@ -19,12 +31,18 @@ use tips_core::{AcceptedBundle, MeterBundleResponse};
 use tokio::sync::broadcast;
 use tracing::{error, warn};
 use url::Url;
+pub use validation::{AccountInfo, AccountInfoLookup, L1BlockInfoLookup, validate_bundle};
 
+/// Method used to submit transactions to the mempool and/or Kafka.
 #[derive(Debug, Clone, Copy)]
 pub enum TxSubmissionMethod {
+    /// Submit via the mempool RPC only.
     Mempool,
+    /// Submit via Kafka only.
     Kafka,
+    /// Submit via both mempool RPC and Kafka.
     MempoolAndKafka,
+    /// Do not submit transactions.
     None,
 }
 
@@ -44,6 +62,7 @@ impl FromStr for TxSubmissionMethod {
     }
 }
 
+/// Configuration for the tips ingress RPC service.
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Config {
@@ -79,11 +98,13 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC", default_value = "tips-audit")]
     pub audit_topic: String,
 
+    /// Log verbosity level
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
     pub log_level: String,
 
+    /// Log output format (pretty or json)
     #[arg(long, env = "TIPS_INGRESS_LOG_FORMAT", default_value = "pretty")]
-    pub log_format: tips_core::logger::LogFormat,
+    pub log_format: tips_core::LogFormat,
 
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(
@@ -154,6 +175,7 @@ pub struct Config {
     pub send_to_builder: bool,
 }
 
+/// Spawns background tasks that forward metering and backrun data to the builder RPC.
 pub fn connect_ingress_to_builder(
     metering_rx: broadcast::Receiver<MeterBundleResponse>,
     backrun_rx: broadcast::Receiver<AcceptedBundle>,

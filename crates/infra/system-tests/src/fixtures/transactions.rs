@@ -16,12 +16,14 @@ pub fn create_optimism_provider(url: &str) -> Result<RootProvider<Optimism>> {
         .connect_http(url.parse()?))
 }
 
+/// Creates a test signer using a well-known hardhat private key.
 pub fn create_test_signer() -> PrivateKeySigner {
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         .parse()
         .expect("Valid test private key")
 }
 
+/// Creates a signer for a pre-funded account in builder-playground.
 pub fn create_funded_signer() -> PrivateKeySigner {
     // This is the same account used in justfile that has funds in builder-playground
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
@@ -29,6 +31,7 @@ pub fn create_funded_signer() -> PrivateKeySigner {
         .expect("Valid funded private key")
 }
 
+/// Creates and signs an EIP-1559 transaction with the given parameters.
 pub fn create_signed_transaction(
     signer: &PrivateKeySigner,
     to: Address,

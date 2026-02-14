@@ -13,11 +13,14 @@ use uuid::Uuid;
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Bundle {
+    /// Raw RLP-encoded transaction bytes included in this bundle.
     pub txs: Vec<Bytes>,
 
+    /// Target L2 block number for bundle inclusion.
     #[serde(with = "alloy_serde::quantity")]
     pub block_number: u64,
 
+    /// Minimum flashblock index within the target block for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -25,6 +28,7 @@ pub struct Bundle {
     )]
     pub flashblock_number_min: Option<u64>,
 
+    /// Maximum flashblock index within the target block for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -32,6 +36,7 @@ pub struct Bundle {
     )]
     pub flashblock_number_max: Option<u64>,
 
+    /// Earliest block timestamp at which this bundle is valid.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -39,6 +44,7 @@ pub struct Bundle {
     )]
     pub min_timestamp: Option<u64>,
 
+    /// Latest block timestamp at which this bundle is valid.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -46,27 +52,41 @@ pub struct Bundle {
     )]
     pub max_timestamp: Option<u64>,
 
+    /// Transaction hashes that are allowed to revert without invalidating the bundle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reverting_tx_hashes: Vec<TxHash>,
 
+    /// UUID used to identify and replace a previously submitted bundle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_uuid: Option<String>,
 
+    /// Transaction hashes whose pending bundles should be dropped when this bundle is accepted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropping_tx_hashes: Vec<TxHash>,
 }
 
 /// `ParsedBundle` is the type that contains utility methods for the `Bundle` type.
+///
+/// Unlike [`Bundle`], transactions are decoded and signer-recovered.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParsedBundle {
+    /// Decoded and signer-recovered transaction envelopes.
     pub txs: Vec<Recovered<OpTxEnvelope>>,
+    /// Target L2 block number for bundle inclusion.
     pub block_number: u64,
+    /// Minimum flashblock index within the target block for inclusion.
     pub flashblock_number_min: Option<u64>,
+    /// Maximum flashblock index within the target block for inclusion.
     pub flashblock_number_max: Option<u64>,
+    /// Earliest block timestamp at which this bundle is valid.
     pub min_timestamp: Option<u64>,
+    /// Latest block timestamp at which this bundle is valid.
     pub max_timestamp: Option<u64>,
+    /// Transaction hashes that are allowed to revert without invalidating the bundle.
     pub reverting_tx_hashes: Vec<TxHash>,
+    /// Parsed UUID used to identify and replace a previously submitted bundle.
     pub replacement_uuid: Option<Uuid>,
+    /// Transaction hashes whose pending bundles should be dropped when this bundle is accepted.
     pub dropping_tx_hashes: Vec<TxHash>,
 }
 
@@ -123,28 +143,38 @@ impl From<AcceptedBundle> for ParsedBundle {
     }
 }
 
+/// Response payload containing the computed hash of a submitted bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BundleHash {
+    /// Keccak-256 hash over the concatenated transaction hashes in the bundle.
     pub bundle_hash: B256,
 }
 
+/// Request payload for cancelling a previously submitted bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelBundle {
+    /// UUID identifying the bundle to cancel.
     pub replacement_uuid: String,
 }
 
 /// `AcceptedBundle` is the type that is sent over the wire.
+///
+/// Wraps a [`ParsedBundle`] with an assigned UUID and simulation results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptedBundle {
+    /// Unique identifier for this bundle, derived from `replacement_uuid` or the bundle hash.
     pub uuid: Uuid,
 
+    /// Decoded and signer-recovered transaction envelopes.
     pub txs: Vec<Recovered<OpTxEnvelope>>,
 
+    /// Target L2 block number for bundle inclusion.
     #[serde(with = "alloy_serde::quantity")]
     pub block_number: u64,
 
+    /// Minimum flashblock index within the target block for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -152,6 +182,7 @@ pub struct AcceptedBundle {
     )]
     pub flashblock_number_min: Option<u64>,
 
+    /// Maximum flashblock index within the target block for inclusion.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -159,6 +190,7 @@ pub struct AcceptedBundle {
     )]
     pub flashblock_number_max: Option<u64>,
 
+    /// Earliest block timestamp at which this bundle is valid.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -166,6 +198,7 @@ pub struct AcceptedBundle {
     )]
     pub min_timestamp: Option<u64>,
 
+    /// Latest block timestamp at which this bundle is valid.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
@@ -173,27 +206,39 @@ pub struct AcceptedBundle {
     )]
     pub max_timestamp: Option<u64>,
 
+    /// Transaction hashes that are allowed to revert without invalidating the bundle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reverting_tx_hashes: Vec<TxHash>,
 
+    /// Parsed UUID used to identify and replace a previously submitted bundle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_uuid: Option<Uuid>,
 
+    /// Transaction hashes whose pending bundles should be dropped when this bundle is accepted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropping_tx_hashes: Vec<TxHash>,
 
+    /// Simulation results for the bundle from the meter service.
     pub meter_bundle_response: MeterBundleResponse,
 }
 
+/// Provides access to the recovered transactions within a bundle.
 pub trait BundleTxs {
+    /// Returns a reference to the bundle's recovered transactions.
     fn transactions(&self) -> &Vec<Recovered<OpTxEnvelope>>;
 }
 
+/// Derived properties computed from a bundle's transactions.
 pub trait BundleExtensions {
+    /// Computes the bundle hash as the keccak-256 of the concatenated transaction hashes.
     fn bundle_hash(&self) -> B256;
+    /// Returns the transaction hashes of all transactions in the bundle.
     fn txn_hashes(&self) -> Vec<TxHash>;
+    /// Returns the recovered sender address of each transaction in the bundle.
     fn senders(&self) -> Vec<Address>;
+    /// Returns the total gas limit across all transactions in the bundle.
     fn gas_limit(&self) -> u64;
+    /// Returns the estimated total data-availability size (Fjord encoding) across all transactions.
     fn da_size(&self) -> u64;
 }
 
@@ -237,6 +282,7 @@ impl BundleTxs for AcceptedBundle {
 }
 
 impl AcceptedBundle {
+    /// Creates a new [`AcceptedBundle`] from a parsed bundle and its simulation results.
     pub fn new(bundle: ParsedBundle, meter_bundle_response: MeterBundleResponse) -> Self {
         Self {
             uuid: bundle.replacement_uuid.unwrap_or_else(|| {
@@ -255,44 +301,68 @@ impl AcceptedBundle {
         }
     }
 
+    /// Returns the UUID assigned to this bundle.
     pub const fn uuid(&self) -> &Uuid {
         &self.uuid
     }
 }
 
+/// Per-transaction simulation result from the meter service.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionResult {
+    /// Change in coinbase balance caused by this transaction.
     pub coinbase_diff: U256,
+    /// ETH explicitly transferred to the coinbase address.
     pub eth_sent_to_coinbase: U256,
+    /// Sender address of the transaction.
     pub from_address: Address,
+    /// Total gas fees paid by this transaction.
     pub gas_fees: U256,
+    /// Effective gas price of this transaction.
     pub gas_price: U256,
+    /// Amount of gas consumed during execution.
     pub gas_used: u64,
+    /// Recipient address, or `None` for contract creation.
     pub to_address: Option<Address>,
+    /// Hash of the transaction.
     pub tx_hash: TxHash,
+    /// ETH value transferred by this transaction.
     pub value: U256,
+    /// Wall-clock execution time of this transaction in microseconds.
     pub execution_time_us: u128,
 }
 
+/// Aggregate simulation results for an entire bundle from the meter service.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MeterBundleResponse {
+    /// Effective gas price for the bundle as a whole.
     pub bundle_gas_price: U256,
+    /// Computed hash of the bundle.
     pub bundle_hash: B256,
+    /// Total change in coinbase balance caused by all transactions in the bundle.
     pub coinbase_diff: U256,
+    /// Total ETH explicitly transferred to the coinbase address across the bundle.
     pub eth_sent_to_coinbase: U256,
+    /// Total gas fees paid across all transactions in the bundle.
     pub gas_fees: U256,
+    /// Per-transaction simulation results.
     pub results: Vec<TransactionResult>,
+    /// Block number of the state used for simulation.
     pub state_block_number: u64,
+    /// Flashblock index of the state used for simulation, if applicable.
     #[serde(
         default,
         deserialize_with = "alloy_serde::quantity::opt::deserialize",
         skip_serializing_if = "Option::is_none"
     )]
     pub state_flashblock_index: Option<u64>,
+    /// Total gas consumed by all transactions in the bundle.
     pub total_gas_used: u64,
+    /// Total wall-clock execution time for the bundle in microseconds.
     pub total_execution_time_us: u128,
+    /// Time spent computing the state root in microseconds.
     #[serde(default)]
     pub state_root_time_us: u128,
 }

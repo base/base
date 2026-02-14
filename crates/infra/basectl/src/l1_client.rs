@@ -21,52 +21,37 @@ sol! {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SystemConfigParams {
-    pub gas_limit: u64,
-    pub elasticity: Option<u64>,
-}
-
 /// Full system configuration with all available fields.
 /// Fields are `Option` because not all contracts have all functions (version differences).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FullSystemConfig {
+pub(crate) struct FullSystemConfig {
+    /// Block gas limit.
     pub gas_limit: Option<u64>,
+    /// EIP-1559 elasticity multiplier.
     pub eip1559_elasticity: Option<u32>,
+    /// EIP-1559 denominator.
     pub eip1559_denominator: Option<u32>,
+    /// Batcher hash (32 bytes).
     pub batcher_hash: Option<[u8; 32]>,
+    /// L1 fee overhead.
     pub overhead: Option<U256>,
+    /// L1 fee scalar.
     pub scalar: Option<U256>,
+    /// Unsafe block signer address.
     pub unsafe_block_signer: Option<Address>,
+    /// `SystemConfig` start block.
     pub start_block: Option<U256>,
+    /// Base fee scalar for L1 cost computation.
     pub basefee_scalar: Option<u32>,
+    /// Blob base fee scalar for L1 cost computation.
     pub blobbasefee_scalar: Option<u32>,
-}
-
-/// Fetch gas limit and elasticity from the L1 `SystemConfig` contract.
-///
-/// The `eip1559Elasticity()` function may not be available on older `SystemConfig` versions,
-/// in which case `elasticity` will be `None`.
-pub async fn fetch_system_config_params(
-    l1_rpc_url: &str,
-    system_config_address: Address,
-) -> Result<SystemConfigParams> {
-    let provider = ProviderBuilder::new().connect(l1_rpc_url).await?;
-    let contract = ISystemConfig::new(system_config_address, provider);
-
-    let gas_limit = contract.gasLimit().call().await?;
-
-    // Try to fetch elasticity - may fail on older SystemConfig versions
-    let elasticity = contract.eip1559Elasticity().call().await.ok().map(|r| r as u64);
-
-    Ok(SystemConfigParams { gas_limit, elasticity })
 }
 
 /// Fetch all available `SystemConfig` values from the L1 contract.
 ///
 /// Uses Multicall3 via `CallBatchLayer` to batch all calls into a single RPC request.
 /// Each field is wrapped in `Option` to handle version differences in the `SystemConfig` contract.
-pub async fn fetch_full_system_config(
+pub(crate) async fn fetch_full_system_config(
     l1_rpc_url: &str,
     system_config_address: Address,
 ) -> Result<FullSystemConfig> {

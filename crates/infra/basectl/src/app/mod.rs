@@ -1,15 +1,21 @@
 mod action;
+pub(crate) use action::Action;
+
 mod core;
+pub(crate) use core::App;
+
 mod resources;
+pub(crate) use resources::Resources;
+
 mod router;
+pub(crate) use router::Router;
+pub use router::ViewId;
+
 mod runner;
-mod view;
-pub mod views;
-
-pub use core::App;
-
-pub use action::Action;
-pub use resources::{DaState, FlashState, Resources};
-pub use router::{Router, ViewId};
 pub use runner::{run_app, run_app_with_view};
-pub use view::View;
+
+mod view;
+pub(crate) use view::View;
+
+/// TUI view implementations.
+mod views;

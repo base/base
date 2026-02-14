@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Integration tests for the Kafka publisher and S3 archiver pipeline.
 
 use std::time::Duration;
 
