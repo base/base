@@ -1621,6 +1621,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "audit-archiver"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "clap",
+ "dotenvy",
+ "rdkafka",
+ "tips-audit-lib",
+ "tips-core",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aurora-engine-modexp"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6522,6 +6539,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
 dependencies = [
  "rustversion",
+]
+
+[[package]]
+name = "ingress-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-provider",
+ "anyhow",
+ "clap",
+ "dotenvy",
+ "jsonrpsee",
+ "op-alloy-network",
+ "rdkafka",
+ "tips-audit-lib",
+ "tips-core",
+ "tips-ingress-rpc-lib",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -15827,23 +15862,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
-name = "tips-audit"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "clap",
- "dotenvy",
- "rdkafka",
- "tips-audit-lib",
- "tips-core",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "tips-audit-lib"
 version = "0.0.0"
 dependencies = [
@@ -15887,24 +15905,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "uuid",
-]
-
-[[package]]
-name = "tips-ingress-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-provider",
- "anyhow",
- "clap",
- "dotenvy",
- "jsonrpsee",
- "op-alloy-network",
- "rdkafka",
- "tips-audit-lib",
- "tips-core",
- "tips-ingress-rpc-lib",
- "tokio",
- "tracing",
 ]
 
 [[package]]
