@@ -33,7 +33,7 @@ use reth_primitives_traits::{
 #[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(rlp))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Eq)]
-pub(super) struct OpTransactionSigned {
+pub(crate) struct OpTransactionSigned {
     /// Transaction hash
     #[cfg_attr(feature = "serde", serde(skip))]
     hash: OnceLock<TxHash>,

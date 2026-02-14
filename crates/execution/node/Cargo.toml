@@ -66,7 +66,7 @@ eyre.workspace = true
 url.workspace = true
 
 # test-utils dependencies
-reth-db-api = { workspace = true, optional = true }
+reth-db-api = { workspace = true, optional = true, features = ["op"] }
 reth-e2e-test-utils = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -112,7 +112,6 @@ test-utils = [
 	"reth-codec",
 	"reth-tasks",
 	"dep:reth-db-api",
-	"reth-db-api/op",
 	"reth-e2e-test-utils",
 	"alloy-genesis",
 	"serde_json",
@@ -132,7 +131,8 @@ test-utils = [
 	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",
 	"reth-stages-types/test-utils",
-	"reth-db-api?/test-utils"
+	"reth-db-api?/test-utils",
+	"reth-tasks?/test-utils"
 ]
 reth-codec = ["reth-optimism-primitives/reth-codec"]
 
