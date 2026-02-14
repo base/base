@@ -2,7 +2,8 @@
 name = "websocket-proxy-bin"
 version.workspace = true
 edition.workspace = true
-
+edition.workspace = true
+rust-version.workspace = true
 [[bin]]
 name = "websocket-proxy"
 path = "src/main.rs"
