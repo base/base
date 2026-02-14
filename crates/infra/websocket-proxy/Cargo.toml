@@ -1,9 +1,12 @@
 [package]
 name = "websocket-proxy"
+description = "WebSocket Proxy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license = "MIT"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [lib]
 name = "websocket_proxy"
