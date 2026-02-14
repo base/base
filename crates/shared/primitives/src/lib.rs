@@ -11,8 +11,7 @@ pub use engine::{
     EngineApiResult, LegacyPayloadSupport, ProofProvider, RollupConfigProvider, StorageKey,
 };
 
-/// Bundle types and test utilities for the TIPS transaction inclusion system.
-pub mod bundles;
+mod bundles;
 pub use bundles::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, BundleTxs, CancelBundle,
     MeterBundleResponse, ParsedBundle, TransactionResult,
@@ -26,7 +25,5 @@ pub use flashblocks::{
 
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
-
-// These dependencies are only used in test-utils feature
 #[cfg(feature = "test-utils")]
 pub use test_utils::*;

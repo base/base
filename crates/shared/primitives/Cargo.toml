@@ -38,13 +38,13 @@ op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # misc
-eyre = { workspace = true, optional = true }
-uuid = { workspace = true, features = ["v5", "serde"] }
 bytes.workspace = true
 serde.workspace = true
 brotli.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
+eyre = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v5", "serde"] }
 
 [dev-dependencies]
 rstest.workspace = true

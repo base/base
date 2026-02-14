@@ -6,6 +6,9 @@ pub use accounts::Account;
 mod genesis;
 pub use genesis::{DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, build_test_genesis};
 
+mod bundles;
+pub use bundles::*;
+
 mod contracts;
 pub use contracts::{
     AccessListContract, ContractFactory, DoubleCounter, Logic, Logic2, Minimal7702Account,

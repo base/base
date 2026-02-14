@@ -9,10 +9,6 @@ use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Test utilities and fixtures.
-#[cfg(any(test, feature = "test-utils"))]
-pub mod test_utils;
-
 /// `Bundle` is the type that mirrors `EthSendBundle` and is used for the API.
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -371,14 +367,14 @@ pub struct MeterBundleResponse {
     pub state_root_time_us: u128,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::Keccak256;
     use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
-    use crate::bundles::test_utils::{create_test_meter_bundle_response, create_transaction};
+    use crate::test_utils::{create_test_meter_bundle_response, create_transaction};
 
     #[test]
     fn test_bundle_types() {

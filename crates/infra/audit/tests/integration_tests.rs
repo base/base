@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_primitives::{BundleExtensions, bundles::test_utils::create_bundle_from_txn_data};
+use base_primitives::{BundleExtensions, create_bundle_from_txn_data};
 use tips_audit_lib::{
     BundleEvent, BundleEventPublisher, BundleEventS3Reader, DropReason, KafkaAuditArchiver,
     KafkaAuditLogReader, KafkaBundleEventPublisher, S3EventReaderWriter,

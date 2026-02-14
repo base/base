@@ -14,13 +14,6 @@ Add the dependency to your `Cargo.toml`:
 base-primitives = { git = "https://github.com/base/base" }
 ```
 
-For flashblock types:
-
-```toml
-[dependencies]
-base-primitives = { git = "https://github.com/base/base", features = ["flashblocks"] }
-```
-
 For test utilities:
 
 ```toml
