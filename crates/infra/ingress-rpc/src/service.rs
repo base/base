@@ -9,6 +9,10 @@ use alloy_consensus::{
 };
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
+use base_primitives::{
+    AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
+    ParsedBundle,
+};
 use base_reth_rpc_types::EthApiError;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -18,10 +22,6 @@ use moka::future::Cache;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use tips_audit_lib::BundleEvent;
-use tips_core::{
-    AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
-    ParsedBundle,
-};
 use tokio::{
     sync::{broadcast, mpsc},
     time::{Duration, Instant, timeout},
@@ -477,7 +477,8 @@ mod tests {
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
-    use tips_core::test_utils::create_test_meter_bundle_response;
+    use base_cli_utils::{LogFormat, LogLevel};
+    use base_primitives::create_test_meter_bundle_response;
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
@@ -503,8 +504,8 @@ mod tests {
             ingress_topic: String::new(),
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
-            log_level: String::from("info"),
-            log_format: tips_core::LogFormat::Pretty,
+            log_level: LogLevel::Info,
+            log_format: LogFormat::Pretty,
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             metrics_addr: SocketAddr::from(([127, 0, 0, 1], 9002)),

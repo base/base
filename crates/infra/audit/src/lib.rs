@@ -10,6 +10,9 @@
 mod archiver;
 pub use archiver::KafkaAuditArchiver;
 
+mod kafka_config;
+pub use kafka_config::load_kafka_config_from_file;
+
 mod metrics;
 pub use metrics::Metrics;
 

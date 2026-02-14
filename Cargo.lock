@@ -1628,11 +1628,11 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "base-cli-utils",
  "clap",
  "dotenvy",
  "rdkafka",
  "tips-audit-lib",
- "tips-core",
  "tokio",
  "tracing",
 ]
@@ -2805,6 +2805,8 @@ dependencies = [
  "bytes",
  "eyre",
  "kona-genesis",
+ "op-alloy-consensus",
+ "op-alloy-flz",
  "op-alloy-network",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
@@ -2812,6 +2814,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "uuid",
 ]
 
 [[package]]
@@ -6547,13 +6550,14 @@ version = "0.0.0"
 dependencies = [
  "alloy-provider",
  "anyhow",
+ "base-cli-utils",
+ "base-primitives",
  "clap",
  "dotenvy",
  "jsonrpsee",
  "op-alloy-network",
  "rdkafka",
  "tips-audit-lib",
- "tips-core",
  "tips-ingress-rpc-lib",
  "tokio",
  "tracing",
@@ -15871,6 +15875,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
+ "base-primitives",
  "bytes",
  "futures",
  "metrics",
@@ -15880,30 +15885,8 @@ dependencies = [
  "serde_json",
  "testcontainers",
  "testcontainers-modules",
- "tips-core",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "tips-core"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-serde",
- "alloy-signer-local",
- "metrics-exporter-prometheus 0.18.1",
- "op-alloy-consensus",
- "op-alloy-flz",
- "op-alloy-rpc-types",
- "serde",
- "serde_json",
- "tracing",
- "tracing-subscriber 0.3.22",
  "uuid",
 ]
 
@@ -15919,6 +15902,8 @@ dependencies = [
  "async-trait",
  "axum 0.8.8",
  "backon",
+ "base-cli-utils",
+ "base-primitives",
  "base-reth-rpc-types",
  "clap",
  "jsonrpsee",
@@ -15931,7 +15916,6 @@ dependencies = [
  "rdkafka",
  "serde_json",
  "tips-audit-lib",
- "tips-core",
  "tokio",
  "tracing",
  "url",
@@ -15952,6 +15936,7 @@ dependencies = [
  "async-trait",
  "aws-credential-types",
  "aws-sdk-s3",
+ "base-primitives",
  "bytes",
  "clap",
  "dashmap 6.1.0",
@@ -15967,7 +15952,6 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tips-audit-lib",
- "tips-core",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",

@@ -7,11 +7,11 @@ use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
+use base_primitives::Bundle;
 use base_reth_rpc_types::{EthApiError, SignError, extract_l1_info_from_tx};
 use jsonrpsee::core::RpcResult;
 use op_alloy_network::Optimism;
 use op_revm::l1block::L1BlockInfo;
-use tips_core::Bundle;
 use tokio::time::Instant;
 use tracing::warn;
 

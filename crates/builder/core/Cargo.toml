@@ -56,7 +56,7 @@ test-utils = [
 # workspace
 base-bundles.workspace = true
 base-client-node.workspace = true
-base-primitives = { workspace = true, features = ["flashblocks"] }
+base-primitives.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true
 

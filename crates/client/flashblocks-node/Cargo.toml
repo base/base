@@ -14,8 +14,7 @@ workspace = true
 [features]
 test-utils = [
 	"base-client-node/test-utils",
-	"base-primitives/flashblocks",
-	"base-primitives?/test-utils",
+	"base-primitives/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
 	"dep:alloy-primitives",

@@ -2,7 +2,7 @@ use alloy_network::Network;
 use alloy_primitives::{Bytes, TxHash};
 use alloy_provider::{Provider, RootProvider};
 use anyhow::Result;
-use tips_core::{Bundle, BundleHash, CancelBundle};
+use base_primitives::{Bundle, BundleHash, CancelBundle};
 
 /// Client for TIPS-specific RPC methods (`eth_sendBundle`, `eth_cancelBundle`)
 ///

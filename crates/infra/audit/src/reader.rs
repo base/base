@@ -8,11 +8,10 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::Message,
 };
-use tips_core::load_kafka_config_from_file;
 use tokio::time::sleep;
 use tracing::{error, info};
 
-use crate::types::BundleEvent;
+use crate::{load_kafka_config_from_file, types::BundleEvent};
 
 /// Creates a Kafka consumer from a properties file.
 pub fn create_kafka_consumer(kafka_properties_file: &str) -> Result<StreamConsumer> {

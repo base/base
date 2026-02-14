@@ -15,7 +15,7 @@ bytes.workspace = true
 metrics.workspace = true
 async-trait.workspace = true
 metrics-derive.workspace = true
-tips-core = { workspace = true, features = ["test-utils"] }
+base-primitives.workspace = true
 serde = { workspace = true, features = ["std", "derive"] }
 tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true, features = ["v5", "serde"] }
@@ -29,6 +29,7 @@ aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "
 futures = { workspace = true }
 
 [dev-dependencies]
+base-primitives = { workspace = true, features = ["test-utils"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }

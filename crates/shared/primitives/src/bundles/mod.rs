@@ -2,8 +2,8 @@ use alloy_consensus::{
     Transaction,
     transaction::{Recovered, SignerRecoverable},
 };
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, keccak256};
-use alloy_provider::network::eip2718::{Decodable2718, Encodable2718};
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
@@ -367,10 +367,10 @@ pub struct MeterBundleResponse {
     pub state_root_time_us: u128,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-utils"))]
 mod tests {
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::Keccak256;
-    use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
 
     use super::*;

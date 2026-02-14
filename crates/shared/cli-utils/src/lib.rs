@@ -23,7 +23,8 @@ pub use styles::CliStyles;
 
 mod logging;
 pub use logging::{
-    FileLogConfig, LogConfig, LogFormat, LogRotation, StdoutLogConfig, verbosity_to_level_filter,
+    FileLogConfig, LogConfig, LogFormat, LogLevel, LogRotation, StdoutLogConfig,
+    verbosity_to_level_filter,
 };
 
 mod tracing;

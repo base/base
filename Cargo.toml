@@ -147,7 +147,6 @@ based = { path = "crates/infra/based" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Tips
-tips-core = { path = "crates/infra/core" }
 tips-audit-lib = { path = "crates/infra/audit" }
 tips-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 tips-system-tests = { path = "crates/infra/system-tests" }

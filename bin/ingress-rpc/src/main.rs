@@ -1,14 +1,14 @@
 //! Tips ingress RPC binary entry point.
 
 use alloy_provider::ProviderBuilder;
+use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
+use base_primitives::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
 use jsonrpsee::server::Server;
 use op_alloy_network::Optimism;
 use rdkafka::{ClientConfig, producer::FutureProducer};
-use tips_audit_lib::{BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher};
-use tips_core::{
-    AcceptedBundle, MeterBundleResponse, init_logger_with_format, init_prometheus_exporter,
-    load_kafka_config_from_file,
+use tips_audit_lib::{
+    BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
 };
 use tips_ingress_rpc_lib::{
     Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers, bind_health_server,
@@ -24,9 +24,16 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::parse();
     let cfg = config.clone();
 
-    init_logger_with_format(&config.log_level, config.log_format);
+    LogConfig {
+        global_level: config.log_level.into(),
+        stdout_logs: Some(StdoutLogConfig { format: config.log_format }),
+        file_logs: None,
+    }
+    .init_tracing_subscriber()
+    .expect("Failed to initialize tracing");
 
-    init_prometheus_exporter(config.metrics_addr).expect("Failed to install Prometheus exporter");
+    PrometheusServer::init(config.metrics_addr.ip(), config.metrics_addr.port(), None)
+        .expect("Failed to install Prometheus exporter");
 
     info!(
         message = "Starting ingress service",
