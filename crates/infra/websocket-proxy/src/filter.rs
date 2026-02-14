@@ -4,22 +4,38 @@ use brotli::DecompressorWriter;
 use serde_json::{self, Value};
 use tracing::{debug, info, trace, warn};
 
+/// Determines how multiple filter conditions are combined.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum MatchMode {
+    /// OR logic - match if any condition is true.
     #[default]
-    Any, // OR logic - match if any condition is true
-    All, // AND logic - match only if all conditions are true
+    Any,
+    /// AND logic - match only if all conditions are true.
+    All,
 }
 
+/// Specifies which criteria to use when filtering incoming payloads.
 #[derive(Debug, Clone)]
 pub enum FilterType {
+    /// Filter by a set of contract or account addresses.
     Addresses(HashSet<String>),
+    /// Filter by a set of event log topics.
     Topics(HashSet<String>),
-    Combined { addresses: HashSet<String>, topics: HashSet<String>, match_mode: MatchMode },
+    /// Filter by both addresses and topics using the given [`MatchMode`].
+    Combined {
+        /// The set of addresses to match against.
+        addresses: HashSet<String>,
+        /// The set of topics to match against.
+        topics: HashSet<String>,
+        /// How to combine address and topic match results.
+        match_mode: MatchMode,
+    },
+    /// No filter applied; all payloads match.
     None,
 }
 
 impl FilterType {
+    /// Creates an address-only filter, or [`FilterType::None`] if the list is empty.
     pub fn new_addresses(addresses: Vec<String>) -> Self {
         if addresses.is_empty() {
             Self::None
@@ -30,6 +46,7 @@ impl FilterType {
         }
     }
 
+    /// Creates a topic-only filter, or [`FilterType::None`] if the list is empty.
     pub fn new_topics(topics: Vec<String>) -> Self {
         if topics.is_empty() {
             Self::None
@@ -40,6 +57,7 @@ impl FilterType {
         }
     }
 
+    /// Creates a combined address-and-topic filter with the specified [`MatchMode`].
     pub fn new_combined_with_mode(
         addresses: Vec<String>,
         topics: Vec<String>,
@@ -64,8 +82,9 @@ impl FilterType {
         }
     }
 
+    /// Returns `true` if the payload matches this filter's criteria.
     pub fn matches(&self, payload: &[u8], enable_compression: bool) -> bool {
-        if let FilterType::None = self {
+        if let Self::None = self {
             return true;
         }
 
@@ -110,9 +129,9 @@ impl FilterType {
 
     fn json_matches(&self, json: &Value) -> bool {
         match self {
-            FilterType::Addresses(addresses) => self.contains_any_address(json, addresses),
-            FilterType::Topics(topics) => self.contains_any_topic(json, topics),
-            FilterType::Combined { addresses, topics, match_mode } => {
+            Self::Addresses(addresses) => self.contains_any_address(json, addresses),
+            Self::Topics(topics) => self.contains_any_topic(json, topics),
+            Self::Combined { addresses, topics, match_mode } => {
                 let address_matches = self.contains_any_address(json, addresses);
                 let topic_matches = self.contains_any_topic(json, topics);
 
@@ -127,7 +146,7 @@ impl FilterType {
                     }
                 }
             }
-            FilterType::None => true,
+            Self::None => true,
         }
     }
 
@@ -161,11 +180,10 @@ impl FilterType {
                             for log in logs {
                                 if let Some(addr_str) =
                                     log.get("address").and_then(|addr| addr.as_str())
+                                    && addresses.contains(&addr_str.to_lowercase())
                                 {
-                                    if addresses.contains(&addr_str.to_lowercase()) {
-                                        debug!("Found address in logs: {}", addr_str);
-                                        return true;
-                                    }
+                                    debug!("Found address in logs: {}", addr_str);
+                                    return true;
                                 }
                             }
                         }
@@ -210,11 +228,11 @@ impl FilterType {
                                     log.get("topics").and_then(|topics| topics.as_array())
                                 {
                                     for topic_value in log_topics {
-                                        if let Some(topic_str) = topic_value.as_str() {
-                                            if topics.contains(&topic_str.to_lowercase()) {
-                                                debug!("Found topic in logs: {}", topic_str);
-                                                return true;
-                                            }
+                                        if let Some(topic_str) = topic_value.as_str()
+                                            && topics.contains(&topic_str.to_lowercase())
+                                        {
+                                            debug!("Found topic in logs: {}", topic_str);
+                                            return true;
                                         }
                                     }
                                 }

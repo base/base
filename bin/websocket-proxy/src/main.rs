@@ -1,23 +1,11 @@
-mod auth;
-mod client;
-mod filter;
-mod metrics;
-mod rate_limit;
-mod registry;
-mod server;
-mod subscriber;
+//! Websocket proxy binary entry point.
 
 use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{extract::ws::Message, http::Uri};
 use clap::Parser;
 use dotenvy::dotenv;
-use metrics::Metrics;
 use metrics_exporter_prometheus::PrometheusBuilder;
-use rate_limit::{InMemoryRateLimit, RateLimit, RedisRateLimit};
-use registry::Registry;
-use server::Server;
-use subscriber::{SubscriberOptions, WebsocketSubscriber};
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::broadcast,
@@ -26,6 +14,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
+use websocket_proxy::{
+    Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
+    WebsocketSubscriber,
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -127,16 +119,6 @@ struct Args {
     #[arg(
         long,
         env,
-        help = "Redis URL for distributed rate limiting (e.g., redis://localhost:6379). If not provided, in-memory rate limiting will be used."
-    )]
-    redis_url: Option<String>,
-
-    #[arg(long, env, default_value = "flashblocks", help = "Prefix for Redis keys")]
-    redis_key_prefix: String,
-
-    #[arg(
-        long,
-        env,
         default_value = "false",
         help = "Allow unauthenticated access to endpoints even if api-keys are provided"
     )]
@@ -195,10 +177,10 @@ async fn main() {
     let authentication = if api_keys.is_empty() {
         None
     } else {
-        match auth::Authentication::try_from(api_keys) {
+        match Authentication::try_from(api_keys) {
             Ok(auth) => Some(auth),
             Err(e) => {
-                panic!("Failed to parse API Keys: {}", e)
+                panic!("Failed to parse API Keys: {e}")
             }
         }
     };
@@ -232,7 +214,7 @@ async fn main() {
     info!(message = "using upstream URIs", uris = ?args.upstream_ws);
 
     let metrics = Arc::new(Metrics::default());
-    let metrics_clone = metrics.clone();
+    let metrics_clone = Arc::clone(&metrics);
 
     let (send, _rec) = broadcast::channel(args.message_buffer_size);
     let sender = send.clone();
@@ -272,7 +254,7 @@ async fn main() {
         let uri_clone = uri.clone();
         let listener_clone = listener.clone();
         let token_clone = token.clone();
-        let metrics_clone = metrics.clone();
+        let metrics_clone = Arc::clone(&metrics);
 
         let options = SubscriberOptions::default()
             .with_max_backoff_interval(Duration::from_millis(args.subscriber_max_interval_ms))
@@ -296,7 +278,7 @@ async fn main() {
         let ping_sender = sender.clone();
         let ping_token = token.clone();
         let ping_interval = args.client_ping_interval_ms;
-        let ping_metrics = metrics.clone();
+        let ping_metrics = Arc::clone(&metrics);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(ping_interval));
@@ -326,47 +308,17 @@ async fn main() {
 
     let registry = Registry::new(
         sender,
-        metrics.clone(),
+        Arc::clone(&metrics),
         args.enable_compression,
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
         Duration::from_millis(args.client_send_timeout_ms),
     );
 
-    let rate_limiter = match &args.redis_url {
-        Some(redis_url) => {
-            info!(message = "Using Redis rate limiter", redis_url = redis_url);
-            match RedisRateLimit::new(
-                redis_url,
-                args.instance_connection_limit,
-                args.per_ip_connection_limit,
-                &args.redis_key_prefix,
-            ) {
-                Ok(limiter) => {
-                    info!(message = "Connected to Redis successfully");
-                    Arc::new(limiter) as Arc<dyn RateLimit>
-                }
-                Err(e) => {
-                    error!(
-                        message =
-                            "Failed to connect to Redis, falling back to in-memory rate limiting",
-                        error = e.to_string()
-                    );
-                    Arc::new(InMemoryRateLimit::new(
-                        args.instance_connection_limit,
-                        args.per_ip_connection_limit,
-                    )) as Arc<dyn RateLimit>
-                }
-            }
-        }
-        None => {
-            info!(message = "Using in-memory rate limiter");
-            Arc::new(InMemoryRateLimit::new(
-                args.instance_connection_limit,
-                args.per_ip_connection_limit,
-            )) as Arc<dyn RateLimit>
-        }
-    };
+    let rate_limiter: Arc<dyn RateLimit> = Arc::new(InMemoryRateLimit::new(
+        args.instance_connection_limit,
+        args.per_ip_connection_limit,
+    ));
 
     let server = Server::new(
         args.listen_addr,
@@ -421,8 +373,8 @@ fn parse_global_metrics(metrics: String) -> Vec<(String, String)> {
             continue;
         }
 
-        let label = parts[0].to_string();
-        let value = parts[1].to_string();
+        let label = parts[0].clone();
+        let value = parts[1].clone();
 
         if label.is_empty() || value.is_empty() {
             warn!(message = "malformed global metric: empty value", metric = metric);
@@ -441,7 +393,7 @@ mod test {
 
     #[test]
     fn test_parse_global_metrics() {
-        assert_eq!(parse_global_metrics("".into()), Vec::<(String, String)>::new(),);
+        assert_eq!(parse_global_metrics(String::new()), Vec::<(String, String)>::new(),);
 
         assert_eq!(parse_global_metrics("key=value".into()), vec![("key".into(), "value".into())]);
 

@@ -13,14 +13,13 @@ use crate::{client::ClientConnection, metrics::Metrics};
 fn get_message_size(msg: &Message) -> u64 {
     match msg {
         Message::Text(text) => text.len() as u64,
-        Message::Binary(data) => data.len() as u64,
-        Message::Ping(data) => data.len() as u64,
-        Message::Pong(data) => data.len() as u64,
+        Message::Binary(data) | Message::Ping(data) | Message::Pong(data) => data.len() as u64,
         Message::Close(_) => 0,
     }
 }
 
-#[derive(Clone)]
+/// Manages broadcast subscriptions for connected WebSocket clients.
+#[derive(Clone, Debug)]
 pub struct Registry {
     sender: Sender<Message>,
     metrics: Arc<Metrics>,
@@ -31,7 +30,8 @@ pub struct Registry {
 }
 
 impl Registry {
-    pub fn new(
+    /// Creates a new registry with the given broadcast sender and configuration.
+    pub const fn new(
         sender: Sender<Message>,
         metrics: Arc<Metrics>,
         compressed: bool,
@@ -42,11 +42,12 @@ impl Registry {
         Self { sender, metrics, compressed, ping_enabled, pong_timeout_ms, send_timeout_ms }
     }
 
+    /// Subscribes a client to the broadcast channel and forwards matching messages.
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
         let mut receiver = self.sender.subscribe();
-        let metrics = self.metrics.clone();
+        let metrics = Arc::clone(&self.metrics);
         metrics.new_connections.increment(1);
 
         let filter = client.filter.clone();
@@ -141,7 +142,7 @@ impl Registry {
     ) -> tokio::task::JoinHandle<()> {
         let ping_enabled = self.ping_enabled;
         let pong_timeout_ms = self.pong_timeout_ms;
-        let metrics = self.metrics.clone();
+        let metrics = Arc::clone(&self.metrics);
 
         tokio::spawn(async move {
             let mut ws_receiver = ws_receiver;

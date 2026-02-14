@@ -16,37 +16,51 @@ use tracing::{error, info, trace, warn};
 
 use crate::metrics::Metrics;
 
+/// Configuration options for a [`WebsocketSubscriber`].
 #[derive(Debug, Clone)]
 pub struct SubscriberOptions {
+    /// Maximum duration between reconnection attempts.
     pub max_backoff_interval: Duration,
+    /// Initial duration between reconnection attempts before exponential increase.
     pub backoff_initial_interval: Duration,
+    /// Interval at which ping frames are sent to the upstream server.
     pub ping_interval: Duration,
+    /// Maximum time to wait for a pong response before considering the connection dead.
     pub pong_timeout: Duration,
+    /// Grace period after initial connection before enforcing pong deadlines.
     pub initial_grace_period: Duration,
 }
 
 impl SubscriberOptions {
-    pub fn with_max_backoff_interval(mut self, max_backoff_interval: Duration) -> Self {
+    /// Sets the maximum backoff interval.
+    pub const fn with_max_backoff_interval(mut self, max_backoff_interval: Duration) -> Self {
         self.max_backoff_interval = max_backoff_interval;
         self
     }
 
-    pub fn with_ping_interval(mut self, ping_interval: Duration) -> Self {
+    /// Sets the ping interval.
+    pub const fn with_ping_interval(mut self, ping_interval: Duration) -> Self {
         self.ping_interval = ping_interval;
         self
     }
 
-    pub fn with_pong_timeout(mut self, pong_timeout: Duration) -> Self {
+    /// Sets the pong timeout.
+    pub const fn with_pong_timeout(mut self, pong_timeout: Duration) -> Self {
         self.pong_timeout = pong_timeout;
         self
     }
 
-    pub fn with_backoff_initial_interval(mut self, backoff_initial_interval: Duration) -> Self {
+    /// Sets the initial backoff interval.
+    pub const fn with_backoff_initial_interval(
+        mut self,
+        backoff_initial_interval: Duration,
+    ) -> Self {
         self.backoff_initial_interval = backoff_initial_interval;
         self
     }
 
-    pub fn with_initial_grace_period(mut self, initial_grace_period: Duration) -> Self {
+    /// Sets the initial grace period.
+    pub const fn with_initial_grace_period(mut self, initial_grace_period: Duration) -> Self {
         self.initial_grace_period = initial_grace_period;
         self
     }
@@ -64,6 +78,8 @@ impl Default for SubscriberOptions {
     }
 }
 
+/// Maintains a persistent websocket connection to an upstream server, automatically
+/// reconnecting with exponential backoff and monitoring liveness via ping/pong.
 pub struct WebsocketSubscriber<F>
 where
     F: Fn(String) + Send + Sync + 'static,
@@ -75,10 +91,23 @@ where
     options: SubscriberOptions,
 }
 
+impl<F> std::fmt::Debug for WebsocketSubscriber<F>
+where
+    F: Fn(String) + Send + Sync + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebsocketSubscriber")
+            .field("uri", &self.uri)
+            .field("options", &self.options)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<F> WebsocketSubscriber<F>
 where
     F: Fn(String) + Send + Sync + 'static,
 {
+    /// Creates a new subscriber targeting the given URI with the provided message handler.
     pub fn new(uri: Uri, handler: F, metrics: Arc<Metrics>, options: SubscriberOptions) -> Self {
         let backoff = ExponentialBackoff {
             initial_interval: options.backoff_initial_interval,
@@ -90,6 +119,7 @@ where
         Self { uri, handler, backoff, metrics, options }
     }
 
+    /// Runs the subscriber loop, reconnecting on failure until the token is cancelled.
     pub async fn run(&mut self, token: CancellationToken) {
         info!(message = "starting upstream subscription", uri = self.uri.to_string());
         loop {
@@ -167,7 +197,7 @@ where
 
         let (ping_error_tx, mut ping_error_rx) = oneshot::channel();
         let options = self.options.clone();
-        let metrics = self.metrics.clone();
+        let metrics = Arc::clone(&self.metrics);
         let mut pong_deadline = Instant::now() + options.initial_grace_period;
 
         let ping_task = tokio::spawn(async move {
@@ -316,7 +346,7 @@ mod tests {
                                     });
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to accept: {}", e);
+                                    eprintln!("Failed to accept: {e}");
                                     break;
                                 }
                             }
@@ -336,7 +366,7 @@ mod tests {
             let ws_stream = match accept_async(stream).await {
                 Ok(ws_stream) => ws_stream,
                 Err(e) => {
-                    eprintln!("Failed to accept websocket: {}", e);
+                    eprintln!("Failed to accept websocket: {e}");
                     return;
                 }
             };
@@ -354,7 +384,7 @@ mod tests {
                         match msg {
                             Ok(text) => {
                                 if let Err(e) = ws_sender.send(Message::Text(text.into())).await {
-                                    eprintln!("Error sending message: {}", e);
+                                    eprintln!("Error sending message: {e}");
                                     break;
                                 }
                             }
@@ -387,13 +417,13 @@ mod tests {
     async fn test_ping_pong_reconnection() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let uri: Uri = format!("ws://{}", addr).parse().unwrap();
+        let uri: Uri = format!("ws://{addr}").parse().unwrap();
 
         let shutdown = CancellationToken::new();
         let shutdown_server = shutdown.clone();
 
         let connection_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let connection_count_server = connection_count.clone();
+        let connection_count_server = Arc::clone(&connection_count);
 
         tokio::spawn(async move {
             loop {
@@ -447,8 +477,7 @@ mod tests {
         let connections = connection_count.load(std::sync::atomic::Ordering::SeqCst);
         assert!(
             connections >= 2,
-            "Expected at least 2 connection attempts due to ping timeout, got {}",
-            connections
+            "Expected at least 2 connection attempts due to ping timeout, got {connections}"
         );
 
         shutdown.cancel();
@@ -461,7 +490,7 @@ mod tests {
         let server2 = MockServer::new().await;
 
         let received_messages = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = received_messages.clone();
+        let received_clone = Arc::clone(&received_messages);
 
         let listener = move |data: String| {
             if let Ok(mut messages) = received_clone.lock() {
@@ -477,7 +506,7 @@ mod tests {
 
         let uri1 = server1.uri();
         let listener_clone1 = listener.clone();
-        let metrics_clone1 = metrics.clone();
+        let metrics_clone1 = Arc::clone(&metrics);
 
         let mut subscriber1 = WebsocketSubscriber::new(
             uri1.clone(),
@@ -488,7 +517,7 @@ mod tests {
 
         let uri2 = server2.uri();
         let listener_clone2 = listener.clone();
-        let metrics_clone2 = metrics.clone();
+        let metrics_clone2 = Arc::clone(&metrics);
 
         let mut subscriber2 = WebsocketSubscriber::new(
             uri2.clone(),

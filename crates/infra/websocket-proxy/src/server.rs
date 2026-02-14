@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
@@ -35,6 +36,8 @@ struct ServerState {
     ip_addr_http_header: String,
 }
 
+/// WebSocket proxy server that accepts client connections and forwards messages
+/// from a shared registry of upstream sources.
 #[derive(Clone)]
 pub struct Server {
     listen_addr: SocketAddr,
@@ -46,6 +49,19 @@ pub struct Server {
     public_access_enabled: bool,
 }
 
+impl fmt::Debug for Server {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Server")
+            .field("listen_addr", &self.listen_addr)
+            .field("registry", &self.registry)
+            .field("metrics", &self.metrics)
+            .field("ip_addr_http_header", &self.ip_addr_http_header)
+            .field("authentication", &self.authentication)
+            .field("public_access_enabled", &self.public_access_enabled)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Deserialize)]
 struct FilterQuery {
     addresses: Option<String>,
@@ -54,6 +70,7 @@ struct FilterQuery {
 }
 
 impl Server {
+    /// Creates a new server with the given configuration.
     pub fn new(
         listen_addr: SocketAddr,
         registry: Registry,
@@ -74,6 +91,8 @@ impl Server {
         }
     }
 
+    /// Starts the HTTP/WebSocket server and listens for incoming connections
+    /// until the cancellation token is triggered.
     pub async fn listen(&self, cancellation_token: CancellationToken) {
         let mut router: Router<ServerState> = Router::new().route("/healthz", get(healthz_handler));
 
@@ -94,8 +113,8 @@ impl Server {
 
         let router = router.with_state(ServerState {
             registry: self.registry.clone(),
-            rate_limiter: self.rate_limiter.clone(),
-            metrics: self.metrics.clone(),
+            rate_limiter: Arc::clone(&self.rate_limiter),
+            metrics: Arc::clone(&self.metrics),
             auth: self.authentication.clone().unwrap_or_else(Authentication::none),
             ip_addr_http_header: self.ip_addr_http_header.clone(),
         });
@@ -219,10 +238,9 @@ fn websocket_handler(
 ) -> Response {
     let connect_addr = addr.ip();
 
-    let client_addr = match headers.get(state.ip_addr_http_header) {
-        None => connect_addr,
-        Some(value) => extract_addr(value, connect_addr),
-    };
+    let client_addr = headers
+        .get(state.ip_addr_http_header)
+        .map_or(connect_addr, |value| extract_addr(value, connect_addr));
 
     let ticket = match state.rate_limiter.try_acquire(client_addr) {
         Ok(ticket) => ticket,
@@ -304,7 +322,7 @@ mod tests {
         assert_eq!(parse_comma_separated(None), Vec::<String>::new());
 
         // Test empty string
-        let empty = Some("".to_string());
+        let empty = Some(String::new());
         assert_eq!(parse_comma_separated(empty), Vec::<String>::new());
 
         // Test with empty values

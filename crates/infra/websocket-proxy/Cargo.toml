@@ -1,42 +1,32 @@
 [package]
-name = "flashblocks-websocket-proxy"
-version = "0.1.0"
-edition = "2021"
-rust-version = "1.85"
+name = "websocket-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 license = "MIT"
-
-[dependencies]
-tracing.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
-clap = { workspace = true, features = ["derive", "env"] }
-futures.workspace = true
-thiserror.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-metrics.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tokio-tungstenite.workspace = true
-tokio-util.workspace = true
-brotli.workspace = true
-http.workspace = true
-dotenvy.workspace = true
-metrics-derive.workspace = true
-backoff.workspace = true
-hostname.workspace = true
-redis.workspace = true
-
-metrics-exporter-prometheus = { workspace = true, features = [
-    "http-listener",
-] }
-axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
-reqwest = { workspace = true, features = [
-    "native-tls",
-] }
-uuid = { workspace = true, features = ["v4"] }
 
 [lib]
 name = "websocket_proxy"
 
+[lints]
+workspace = true
+
+[dependencies]
+http.workspace = true
+brotli.workspace = true
+metrics.workspace = true
+futures.workspace = true
+backoff.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
+serde_json.workspace = true
+metrics-derive.workspace = true
+tokio-tungstenite.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
+
 [dev-dependencies]
-testcontainers.workspace = true
-testcontainers-modules = { workspace = true, features = ["redis"] }
+reqwest.workspace = true
+tokio-tungstenite.workspace = true

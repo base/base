@@ -5232,36 +5232,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flashblocks-websocket-proxy"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.8",
- "backoff",
- "brotli",
- "clap",
- "dotenvy",
- "futures",
- "hostname",
- "http 1.4.0",
- "metrics",
- "metrics-derive",
- "metrics-exporter-prometheus 0.18.1",
- "redis",
- "reqwest 0.13.1",
- "serde",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "thiserror 2.0.17",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
- "tracing",
- "tracing-subscriber 0.3.22",
- "uuid",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10375,23 +10345,6 @@ name = "recvmsg"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
-
-[[package]]
-name = "redis"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "438a4e5f8e9aa246d6f3666d6978441bf1b37d5f417b50c4dd220be09f5fcc17"
-dependencies = [
- "arc-swap",
- "combine",
- "itoa",
- "num-bigint",
- "percent-encoding",
- "ryu",
- "sha1_smol",
- "socket2 0.5.10",
- "url",
-]
 
 [[package]]
 name = "redox_syscall"
@@ -17074,6 +17027,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12bed680863276c63889429bfd6cab3b99943659923822de1c8a39c49e4d722c"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "websocket-proxy"
+version = "0.0.0"
+dependencies = [
+ "axum 0.8.8",
+ "backoff",
+ "brotli",
+ "futures",
+ "http 1.4.0",
+ "metrics",
+ "metrics-derive",
+ "reqwest 0.13.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "websocket-proxy-bin"
+version = "0.0.0"
+dependencies = [
+ "axum 0.8.8",
+ "brotli",
+ "clap",
+ "dotenvy",
+ "futures",
+ "hostname",
+ "metrics-exporter-prometheus 0.18.1",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "websocket-proxy",
 ]
 
 [[package]]
