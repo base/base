@@ -3,15 +3,15 @@
 use std::net::SocketAddr;
 
 use anyhow::Result;
+use audit_archiver_lib::{
+    KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
+};
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use base_cli_utils::{LogConfig, LogFormat, LogLevel, PrometheusServer, StdoutLogConfig};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
-use tips_audit_lib::{
-    KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
-};
 use tracing::info;
 
 #[derive(Debug, Clone, ValueEnum)]

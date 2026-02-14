@@ -7,12 +7,12 @@ use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, TxHash, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, bail};
+use audit_archiver_lib::BundleEvent;
 use base_primitives::{Bundle, BundleExtensions};
 use common::kafka::wait_for_audit_event_by_hash;
 use op_alloy_network::Optimism;
 use serial_test::serial;
-use tips_audit_lib::BundleEvent;
-use tips_system_tests::{
+use system_tests::{
     TipsRpcClient, create_funded_signer, create_optimism_provider, create_signed_transaction,
 };
 use tokio::time::{Duration, Instant, sleep};

@@ -1625,6 +1625,7 @@ name = "audit-archiver"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "audit-archiver-lib",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
@@ -1632,9 +1633,33 @@ dependencies = [
  "clap",
  "dotenvy",
  "rdkafka",
- "tips-audit-lib",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "audit-archiver-lib"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "base-primitives",
+ "bytes",
+ "futures",
+ "metrics",
+ "metrics-derive",
+ "rdkafka",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6520,17 +6545,50 @@ version = "0.0.0"
 dependencies = [
  "alloy-provider",
  "anyhow",
+ "audit-archiver-lib",
  "base-cli-utils",
  "base-primitives",
  "clap",
  "dotenvy",
+ "ingress-rpc-lib",
  "jsonrpsee",
  "op-alloy-network",
  "rdkafka",
- "tips-audit-lib",
- "tips-ingress-rpc-lib",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "ingress-rpc-lib"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "anyhow",
+ "async-trait",
+ "audit-archiver-lib",
+ "axum 0.8.8",
+ "backon",
+ "base-cli-utils",
+ "base-primitives",
+ "base-reth-rpc-types",
+ "clap",
+ "jsonrpsee",
+ "metrics",
+ "metrics-derive",
+ "moka",
+ "op-alloy-consensus",
+ "op-alloy-network",
+ "op-revm 15.0.0",
+ "rdkafka",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+ "wiremock",
 ]
 
 [[package]]
@@ -15540,6 +15598,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-tests"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "anyhow",
+ "async-trait",
+ "audit-archiver-lib",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "base-primitives",
+ "bytes",
+ "clap",
+ "dashmap 6.1.0",
+ "hex",
+ "indicatif",
+ "jsonrpsee",
+ "op-alloy-consensus",
+ "op-alloy-network",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "rdkafka",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "tabwriter"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15814,100 +15908,6 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
-
-[[package]]
-name = "tips-audit-lib"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "anyhow",
- "async-trait",
- "aws-config",
- "aws-sdk-s3",
- "base-primitives",
- "bytes",
- "futures",
- "metrics",
- "metrics-derive",
- "rdkafka",
- "serde",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "tips-ingress-rpc-lib"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "anyhow",
- "async-trait",
- "axum 0.8.8",
- "backon",
- "base-cli-utils",
- "base-primitives",
- "base-reth-rpc-types",
- "clap",
- "jsonrpsee",
- "metrics",
- "metrics-derive",
- "moka",
- "op-alloy-consensus",
- "op-alloy-network",
- "op-revm 15.0.0",
- "rdkafka",
- "serde_json",
- "tips-audit-lib",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "tips-system-tests"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "anyhow",
- "async-trait",
- "aws-credential-types",
- "aws-sdk-s3",
- "base-primitives",
- "bytes",
- "clap",
- "dashmap 6.1.0",
- "hex",
- "indicatif",
- "jsonrpsee",
- "op-alloy-consensus",
- "op-alloy-network",
- "rand 0.9.2",
- "rand_chacha 0.9.0",
- "rdkafka",
- "serde",
- "serde_json",
- "serial_test",
- "tips-audit-lib",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.22",
- "url",
- "uuid",
-]
 
 [[package]]
 name = "tls_codec"

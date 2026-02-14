@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use base_primitives::{BundleExtensions, create_bundle_from_txn_data};
-use tips_audit_lib::{
+use audit_archiver_lib::{
     BundleEvent, BundleEventPublisher, BundleEventS3Reader, DropReason, KafkaAuditArchiver,
     KafkaAuditLogReader, KafkaBundleEventPublisher, S3EventReaderWriter,
 };
+use base_primitives::{BundleExtensions, create_bundle_from_txn_data};
 use uuid::Uuid;
 mod common;
 use common::TestHarness;

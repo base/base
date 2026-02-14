@@ -1,5 +1,5 @@
 [package]
-name = "tips-ingress-rpc-lib"
+name = "ingress-rpc-lib"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,7 +16,7 @@ base-primitives.workspace = true
 base-cli-utils.workspace = true
 op-revm.workspace = true
 metrics.workspace = true
-tips-audit-lib.workspace = true
+audit-archiver-lib.workspace = true
 async-trait.workspace = true
 metrics-derive.workspace = true
 op-alloy-network.workspace = true
