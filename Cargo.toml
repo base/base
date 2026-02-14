@@ -405,3 +405,6 @@ serial_test = "3"
 mockall = "0.13"
 wiremock = { version = "0.6.2", default-features = false }
 testcontainers-modules = { version = "0.14.0", default-features = false }
+backoff = "0.4.0"
+hostname = "0.4.0"
+redis = "0.30.0"
