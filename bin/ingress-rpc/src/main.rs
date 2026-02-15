@@ -1,19 +1,19 @@
-//! Tips ingress RPC binary entry point.
+//! Ingress RPC binary entry point.
 
 use alloy_provider::ProviderBuilder;
+use audit_archiver_lib::{
+    BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
+};
 use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
 use base_primitives::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
-use jsonrpsee::server::Server;
-use op_alloy_network::Optimism;
-use rdkafka::{ClientConfig, producer::FutureProducer};
-use tips_audit_lib::{
-    BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
-};
-use tips_ingress_rpc_lib::{
+use ingress_rpc_lib::{
     Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers, bind_health_server,
     connect_ingress_to_builder,
 };
+use jsonrpsee::server::Server;
+use op_alloy_network::Optimism;
+use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 

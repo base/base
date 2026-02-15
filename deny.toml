@@ -5,7 +5,7 @@ ignore = [
     # No safe upgrade available, waiting for upstream to migrate to rustls-pki-types
     "RUSTSEC-2025-0134",
 
-    # number_prefix is unmaintained but comes from indicatif -> tips-system-tests (dev dependency)
+    # number_prefix is unmaintained but comes from indicatif -> system-tests (dev dependency)
     # No safe upgrade available
     "RUSTSEC-2025-0119",
 

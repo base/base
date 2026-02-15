@@ -9,6 +9,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
+use audit_archiver_lib::BundleEvent;
 use base_primitives::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
     ParsedBundle,
@@ -21,7 +22,6 @@ use jsonrpsee::{
 use moka::future::Cache;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
-use tips_audit_lib::BundleEvent;
 use tokio::{
     sync::{broadcast, mpsc},
     time::{Duration, Instant, timeout},

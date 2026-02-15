@@ -1,5 +1,5 @@
 [package]
-name = "tips-system-tests"
+name = "system-tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -21,7 +21,7 @@ url = { workspace = true }
 base-primitives.workspace = true
 bytes = { workspace = true }
 async-trait = { workspace = true }
-tips-audit-lib = { workspace = true }
+audit-archiver-lib = { workspace = true }
 alloy-network = { workspace = true }
 op-alloy-network = { workspace = true }
 alloy-signer-local = { workspace = true }

@@ -20,7 +20,7 @@ Each test confirms:
 #  - builder-playground + op-rbuilder are running
 
 # Run the tests
-INTEGRATION_TESTS=1 cargo test --package tips-system-tests --test integration_tests
+INTEGRATION_TESTS=1 cargo test --package system-tests --test integration_tests
 ```
 
 **Note:** Tests that share the funded wallet use `#[serial]` to avoid nonce conflicts.

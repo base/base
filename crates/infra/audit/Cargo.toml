@@ -1,5 +1,5 @@
 [package]
-name = "tips-audit-lib"
+name = "audit-archiver-lib"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,19 +14,19 @@ workspace = true
 bytes.workspace = true
 metrics.workspace = true
 async-trait.workspace = true
+futures = { workspace = true }
 metrics-derive.workspace = true
 base-primitives.workspace = true
-serde = { workspace = true, features = ["std", "derive"] }
 tokio = { workspace = true, features = ["full"] }
-uuid = { workspace = true, features = ["v5", "serde"] }
-tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
+uuid = { workspace = true, features = ["v5", "serde"] }
+serde = { workspace = true, features = ["std", "derive"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
+rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
-futures = { workspace = true }
 
 [dev-dependencies]
 base-primitives = { workspace = true, features = ["test-utils"] }

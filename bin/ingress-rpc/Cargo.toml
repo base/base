@@ -11,10 +11,6 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
-base-cli-utils.workspace = true
-base-primitives.workspace = true
-tips-audit-lib.workspace = true
-tips-ingress-rpc-lib.workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
@@ -22,5 +18,9 @@ tracing.workspace = true
 dotenvy.workspace = true
 rdkafka.workspace = true
 jsonrpsee.workspace = true
-op-alloy-network.workspace = true
 alloy-provider.workspace = true
+base-cli-utils.workspace = true
+base-primitives.workspace = true
+ingress-rpc-lib.workspace = true
+op-alloy-network.workspace = true
+audit-archiver-lib.workspace = true

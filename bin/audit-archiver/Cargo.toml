@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 base-cli-utils.workspace = true
-tips-audit-lib.workspace = true
+audit-archiver-lib.workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true

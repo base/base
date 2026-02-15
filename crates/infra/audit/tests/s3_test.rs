@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::TxHash;
-use tips_audit_lib::{BundleEvent, BundleEventS3Reader, Event, EventWriter, S3EventReaderWriter};
+use audit_archiver_lib::{
+    BundleEvent, BundleEventS3Reader, Event, EventWriter, S3EventReaderWriter,
+};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
