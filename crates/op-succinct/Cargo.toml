@@ -228,7 +228,7 @@ substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-s
 p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.0.0" }
 k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0" }
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }
-kzg-rs = { git = "https://github.com/succinctlabs/kzg-rs", branch = "fakedev9999/patch-6.0.0" }
+kzg-rs = { git = "https://github.com/succinctlabs/kzg-rs" }
 
 # Note: alloy-tx-macros crates.io version must match alloy-consensus version
 # Both are now at 1.4.x for hokulea v1.1.4 compatibility
