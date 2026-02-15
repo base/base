@@ -78,6 +78,9 @@ op-enclave-core = { git = "https://github.com/jackchuma/op-enclave.git", rev = "
 # Retry
 backon = { version = "1", features = ["tokio-sleep"] }
 
+# HTTP server (health + admin)
+axum = "0.8"
+
 # Misc
 url = "2.5.4"
 hex = "0.4.3"
