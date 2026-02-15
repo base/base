@@ -143,11 +143,11 @@ base-builder-publish = { path = "crates/builder/publish" }
 
 # Infra
 based = { path = "crates/infra/based" }
-system-tests = { path = "crates/infra/system-tests" }
 basectl-cli = { path = "crates/infra/basectl" }
+audit-archiver-lib = { path = "crates/infra/audit" }
+system-tests = { path = "crates/infra/system-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
-audit-archiver-lib = { path = "crates/infra/audit" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Kona

@@ -1,4 +1,4 @@
-//! Integration tests for tips system.
+//! Integration tests for the ingress RPC system.
 
 #[path = "common/mod.rs"]
 mod common;

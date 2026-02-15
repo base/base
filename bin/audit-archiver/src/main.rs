@@ -1,4 +1,4 @@
-//! Tips audit binary entry point.
+//! Audit archiver binary entry point.
 
 use std::net::SocketAddr;
 
