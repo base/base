@@ -54,7 +54,7 @@ pub trait TxPoolManagementApi {
 
 /// Implementation of the transaction status RPC API.
 #[derive(Debug)]
-pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
+pub(crate) struct TransactionStatusApiImpl<Pool: TransactionPool> {
     sequencer_client: Option<HttpClient>,
     pool: Pool,
 }
@@ -64,7 +64,7 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiImpl<Pool> {
     ///
     /// If `sequencer_url` is provided, status queries will be forwarded to the sequencer.
     /// Otherwise, the local transaction pool will be queried.
-    pub fn new(
+    pub(crate) fn new(
         sequencer_url: Option<String>,
         pool: Pool,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -111,13 +111,13 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 
 /// Implementation of the transaction pool management RPC API.
 #[derive(Debug)]
-pub struct TxPoolManagementApiImpl<Pool: TransactionPool> {
+pub(crate) struct TxPoolManagementApiImpl<Pool: TransactionPool> {
     pool: Pool,
 }
 
 impl<Pool: TransactionPool + 'static> TxPoolManagementApiImpl<Pool> {
     /// Creates a new transaction pool management API instance.
-    pub const fn new(pool: Pool) -> Self {
+    pub(crate) const fn new(pool: Pool) -> Self {
         Self { pool }
     }
 }

@@ -3,7 +3,7 @@
 use base_client_node::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
 use crate::{
-    TransactionStatusApiImpl, TransactionStatusApiServer, TxPoolManagementApiImpl,
+    rpc::{TransactionStatusApiImpl, TxPoolManagementApiImpl}, TransactionStatusApiServer,
     TxPoolManagementApiServer,
 };
 
