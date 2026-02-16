@@ -73,17 +73,21 @@ impl Tracker {
     pub fn handle_canon_state_notification<N: NodePrimitives>(
         &mut self,
         notification: CanonStateNotification<N>,
+        received_at: Instant,
     ) {
-        self.track_committed_chain(&notification.committed());
+        self.track_committed_chain(&notification.committed(), received_at);
     }
 
     /// Parse flashblock updates and track transaction inclusion in flashblocks.
-    pub fn handle_flashblock_notification(&mut self, pending_blocks: Arc<PendingBlocks>) {
-        self.track_flashblock_transactions(&pending_blocks);
+    pub fn handle_flashblock_notification(
+        &mut self,
+        pending_blocks: Arc<PendingBlocks>,
+        received_at: Instant,
+    ) {
+        self.track_flashblock_transactions(&pending_blocks, received_at);
     }
 
-    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) {
-        let received_at = Instant::now();
+    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>, received_at: Instant) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
                 self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion, received_at);
@@ -91,9 +95,7 @@ impl Tracker {
         }
     }
 
-    fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks) {
-        let received_at = Instant::now();
-
+    fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks, received_at: Instant) {
         // Get all transaction hashes from pending blocks
         for tx_hash in pending_blocks.get_pending_transaction_hashes() {
             self.transaction_fb_included(tx_hash, received_at);
@@ -605,7 +607,7 @@ mod tests {
         assert_eq!(ptxs[1], tx_hash);
 
         let pb = state.as_ref().unwrap().deref();
-        tracker.track_flashblock_transactions(pb);
+        tracker.track_flashblock_transactions(pb, Instant::now());
 
         // It should still be in the tracker
         assert!(tracker.txs.get(&tx_hash).is_some());
@@ -637,7 +639,7 @@ mod tests {
 
         tokio::spawn(async move {
             while let Ok(pending_blocks) = stream.recv().await {
-                t.handle_flashblock_notification(pending_blocks);
+                t.handle_flashblock_notification(pending_blocks, Instant::now());
                 // Signal that we received a flashblock
                 if let Some(signal) = tx_signal.take() {
                     let _ = signal.send(());
