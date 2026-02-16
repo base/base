@@ -36,7 +36,7 @@ struct Args {
 async fn load_aggregation_proof_data(
     proof_names: Vec<String>,
     range_vkey: &SP1VerifyingKey,
-    prover: &ProverClient,
+    prover: &impl Prover,
 ) -> (Vec<SP1Proof>, Vec<BootInfoStruct>) {
     let metadata = MetadataCommand::new().exec().unwrap();
     let workspace_root = metadata.workspace_root;
@@ -52,7 +52,7 @@ async fn load_aggregation_proof_data(
         }
         let mut deserialized_proof =
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
-        prover.verify(&deserialized_proof, range_vkey, None).await.expect("proof verification failed");
+        prover.verify(&deserialized_proof, range_vkey, None).expect("proof verification failed");
         proofs.push(deserialized_proof.proof);
 
         // The public values are the BootInfoStruct.
