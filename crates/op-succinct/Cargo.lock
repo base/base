@@ -762,7 +762,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -2406,20 +2406,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bls12_381"
-version = "0.8.0"
-source = "git+https://github.com/sp1-patches/bls12_381?tag=patch-0.8.0-sp1-6.0.0#49db1a4c27a44ef7c18e2ef448a12128972e449d"
-dependencies = [
- "cfg-if",
- "ff 0.13.1",
- "group 0.13.0",
- "pairing 0.23.0",
- "rand_core 0.6.4",
- "sp1-lib",
- "subtle",
-]
-
-[[package]]
 name = "blst"
 version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2622,7 +2608,7 @@ dependencies = [
 [[package]]
 name = "canoe-bindings"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-sol-types",
  "serde",
@@ -2631,7 +2617,7 @@ dependencies = [
 [[package]]
 name = "canoe-provider"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2645,7 +2631,7 @@ dependencies = [
 [[package]]
 name = "canoe-sp1-cc-host"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-client",
@@ -2668,7 +2654,7 @@ dependencies = [
 [[package]]
 name = "canoe-sp1-cc-verifier"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2687,7 +2673,7 @@ dependencies = [
 [[package]]
 name = "canoe-verifier"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
@@ -2703,7 +2689,7 @@ dependencies = [
 [[package]]
 name = "canoe-verifier-address-fetcher"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "eigenda-cert",
@@ -3772,7 +3758,7 @@ dependencies = [
 [[package]]
 name = "eigenda-cert"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -4800,7 +4786,7 @@ dependencies = [
 [[package]]
 name = "hokulea-client"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-consensus",
  "alloy-evm 0.24.2",
@@ -4821,7 +4807,7 @@ dependencies = [
 [[package]]
 name = "hokulea-client-bin"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-evm 0.24.2",
  "alloy-op-evm 0.24.2",
@@ -4841,7 +4827,7 @@ dependencies = [
 [[package]]
 name = "hokulea-compute-proof"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -4856,7 +4842,7 @@ dependencies = [
 [[package]]
 name = "hokulea-eigenda"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -4872,7 +4858,7 @@ dependencies = [
 [[package]]
 name = "hokulea-host-bin"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -4899,7 +4885,7 @@ dependencies = [
 [[package]]
 name = "hokulea-proof"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -4921,7 +4907,7 @@ dependencies = [
 [[package]]
 name = "hokulea-witgen"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -4941,7 +4927,7 @@ dependencies = [
 [[package]]
 name = "hokulea-zkvm-verification"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#ad82af1bb18034e43b112e6a2aa040755393dea1"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
 dependencies = [
  "canoe-verifier",
  "canoe-verifier-address-fetcher",
@@ -5670,7 +5656,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a575df5f985fe1cd5b2b05664ff6accfc46559032b954529fd225a2168d27b0f"
 dependencies = [
  "bitvec",
- "bls12_381 0.7.1",
+ "bls12_381",
  "ff 0.12.1",
  "group 0.12.1",
  "rand_core 0.6.4",
@@ -6151,19 +6137,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
-]
-
-[[package]]
-name = "kzg-rs"
-version = "0.2.7"
-source = "git+https://github.com/succinctlabs/kzg-rs?branch=fakedev9999%2Fpatch-6.0.0#38633464cfb2c720bfad06ccfb6dec47669b36b3"
-dependencies = [
- "bls12_381 0.8.0",
- "ff 0.13.1",
- "hex",
- "serde_arrays",
- "sha2 0.10.9",
- "spin 0.9.8",
 ]
 
 [[package]]
@@ -7308,7 +7281,7 @@ dependencies = [
  "kona-preimage",
  "kona-proof",
  "kona-protocol",
- "kzg-rs 0.2.8",
+ "kzg-rs",
  "op-alloy-consensus",
  "op-revm 14.1.0",
  "revm 33.1.0",
@@ -7487,7 +7460,7 @@ dependencies = [
  "kona-proof",
  "kona-protocol",
  "kona-registry",
- "kzg-rs 0.2.8",
+ "kzg-rs",
  "lazy_static",
  "metrics",
  "metrics-exporter-prometheus 0.16.2",
@@ -8780,7 +8753,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "once_cell",
@@ -8813,7 +8786,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -8826,7 +8799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -10482,7 +10455,7 @@ dependencies = [
 [[package]]
 name = "rsp-client-executor"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#89ad62ef4079b335a23a8838814f8f21df4963c1"
+source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#969e2adbbc0fed1c331b6840b45f110728aff1ae"
 dependencies = [
  "alloy-consensus",
  "alloy-evm 0.23.3",
@@ -10490,7 +10463,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "itertools 0.13.0",
- "kzg-rs 0.2.7",
+ "kzg-rs",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
@@ -10515,7 +10488,7 @@ dependencies = [
 [[package]]
 name = "rsp-mpt"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#89ad62ef4079b335a23a8838814f8f21df4963c1"
+source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#969e2adbbc0fed1c331b6840b45f110728aff1ae"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -10530,7 +10503,7 @@ dependencies = [
 [[package]]
 name = "rsp-primitives"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#89ad62ef4079b335a23a8838814f8f21df4963c1"
+source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#969e2adbbc0fed1c331b6840b45f110728aff1ae"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -10547,7 +10520,7 @@ dependencies = [
 [[package]]
 name = "rsp-rpc-db"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#89ad62ef4079b335a23a8838814f8f21df4963c1"
+source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#969e2adbbc0fed1c331b6840b45f110728aff1ae"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -10571,7 +10544,7 @@ dependencies = [
 [[package]]
 name = "rsp-witness-db"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#89ad62ef4079b335a23a8838814f8f21df4963c1"
+source = "git+https://github.com/succinctlabs/rsp?branch=fakedev9999%2Fbump-sp1-v6-rc1#969e2adbbc0fed1c331b6840b45f110728aff1ae"
 dependencies = [
  "alloy-primitives",
  "reth-storage-errors",
@@ -12028,7 +12001,7 @@ dependencies = [
 [[package]]
 name = "sp1-cc-client-executor"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/sp1-contract-call.git?branch=fakedev9999%2Fbump-sp1-v6-rc1#2e0b8623cd81bac6adf68458e1d34cf512491b8e"
+source = "git+https://github.com/succinctlabs/sp1-contract-call.git?branch=fakedev9999%2Fbump-sp1-v6-rc1#86ba5bcf3d228a0edcbe892f1334f50265eb1f09"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -12062,7 +12035,7 @@ dependencies = [
 [[package]]
 name = "sp1-cc-host-executor"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/sp1-contract-call.git?branch=fakedev9999%2Fbump-sp1-v6-rc1#2e0b8623cd81bac6adf68458e1d34cf512491b8e"
+source = "git+https://github.com/succinctlabs/sp1-contract-call.git?branch=fakedev9999%2Fbump-sp1-v6-rc1#86ba5bcf3d228a0edcbe892f1334f50265eb1f09"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -15130,7 +15103,7 @@ dependencies = [
  "ark-std 0.4.0",
  "bitvec",
  "blake2",
- "bls12_381 0.7.1",
+ "bls12_381",
  "byteorder",
  "cfg-if",
  "group 0.12.1",
