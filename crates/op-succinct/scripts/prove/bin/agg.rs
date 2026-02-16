@@ -7,7 +7,6 @@ use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin};
 use op_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{
-    blocking::{self, Prover as BlockingProver},
     utils, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1Proof,
     SP1ProofWithPublicValues, SP1VerifyingKey,
 };
@@ -34,9 +33,10 @@ struct Args {
 }
 
 /// Load the aggregation proof data.
-fn load_aggregation_proof_data(
+async fn load_aggregation_proof_data(
     proof_names: Vec<String>,
     range_vkey: &SP1VerifyingKey,
+    prover: &ProverClient,
 ) -> (Vec<SP1Proof>, Vec<BootInfoStruct>) {
     let metadata = MetadataCommand::new().exec().unwrap();
     let workspace_root = metadata.workspace_root;
@@ -45,9 +45,6 @@ fn load_aggregation_proof_data(
     let mut proofs = Vec::with_capacity(proof_names.len());
     let mut boot_infos = Vec::with_capacity(proof_names.len());
 
-    // Use blocking prover for synchronous verification
-    let prover = blocking::CpuProver::new();
-
     for proof_name in proof_names.iter() {
         let proof_path = format!("{proof_directory}/{proof_name}.bin");
         if fs::metadata(&proof_path).is_err() {
@@ -55,7 +52,7 @@ fn load_aggregation_proof_data(
         }
         let mut deserialized_proof =
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
-        prover.verify(&deserialized_proof, range_vkey, None).expect("proof verification failed");
+        prover.verify(&deserialized_proof, range_vkey, None).await.expect("proof verification failed");
         proofs.push(deserialized_proof.proof);
 
         // The public values are the BootInfoStruct.
@@ -81,7 +78,7 @@ async fn main() -> Result<()> {
     let range_pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
     let vkey = range_pk.verifying_key().clone();
 
-    let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey);
+    let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey, &prover).await;
 
     let header = fetcher.get_latest_l1_head_in_batch(&boot_infos).await?;
     let headers = fetcher.get_header_preimages(&boot_infos, header.hash_slow()).await?;
