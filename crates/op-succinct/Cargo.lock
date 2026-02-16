@@ -2608,7 +2608,7 @@ dependencies = [
 [[package]]
 name = "canoe-bindings"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-sol-types",
  "serde",
@@ -2617,7 +2617,7 @@ dependencies = [
 [[package]]
 name = "canoe-provider"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2631,7 +2631,7 @@ dependencies = [
 [[package]]
 name = "canoe-sp1-cc-host"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-client",
@@ -2654,7 +2654,7 @@ dependencies = [
 [[package]]
 name = "canoe-sp1-cc-verifier"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2673,7 +2673,7 @@ dependencies = [
 [[package]]
 name = "canoe-verifier"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
@@ -2689,7 +2689,7 @@ dependencies = [
 [[package]]
 name = "canoe-verifier-address-fetcher"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "eigenda-cert",
@@ -3758,7 +3758,7 @@ dependencies = [
 [[package]]
 name = "eigenda-cert"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -4786,7 +4786,7 @@ dependencies = [
 [[package]]
 name = "hokulea-client"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-consensus",
  "alloy-evm 0.24.2",
@@ -4807,7 +4807,7 @@ dependencies = [
 [[package]]
 name = "hokulea-client-bin"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-evm 0.24.2",
  "alloy-op-evm 0.24.2",
@@ -4827,7 +4827,7 @@ dependencies = [
 [[package]]
 name = "hokulea-compute-proof"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -4842,7 +4842,7 @@ dependencies = [
 [[package]]
 name = "hokulea-eigenda"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -4858,7 +4858,7 @@ dependencies = [
 [[package]]
 name = "hokulea-host-bin"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -4885,7 +4885,7 @@ dependencies = [
 [[package]]
 name = "hokulea-proof"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-primitives",
  "ark-bn254",
@@ -4907,7 +4907,7 @@ dependencies = [
 [[package]]
 name = "hokulea-witgen"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -4927,7 +4927,7 @@ dependencies = [
 [[package]]
 name = "hokulea-zkvm-verification"
 version = "0.1.0"
-source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#107849954b2cc5bbac073cde0c0e3150d0a7089f"
+source = "git+https://github.com/fakedev9999/hokulea?branch=fakedev9999%2Fbump-sp1-v6#1e5068982840587cb1a86fdd4ebe9c696f00887b"
 dependencies = [
  "canoe-verifier",
  "canoe-verifier-address-fetcher",
