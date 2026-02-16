@@ -59,10 +59,8 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
 
             // Take the canoe proof bytes from the witness data
             if let Some(proof_bytes) = eigenda_witness.canoe_proof_bytes.take() {
-                // SP1 v6's blocking ProverClient creates its own internal tokio runtime.
-                // When get_sp1_stdin is called from an async context (e.g. #[tokio::test]),
-                // this causes "Cannot start a runtime from within a runtime" panics.
-                // Isolate the prover setup on a separate OS thread to avoid nesting.
+                // blocking::ProverClient creates its own tokio runtime; run on a separate
+                // thread to avoid nesting when called from an async context.
                 let canoe_vk = std::thread::spawn(|| {
                     let client = sp1_sdk::blocking::ProverClient::from_env();
                     let pk = client
@@ -73,7 +71,6 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
                 .join()
                 .map_err(|e| anyhow::anyhow!("Prover setup thread panicked: {:?}", e))??;
 
-                // Deserialize the recursion proof (serialized by CanoeSp1CCReducedProofProvider)
                 let reduced_proof: SP1RecursionProof<SP1GlobalContext, SP1PcsProofInner> =
                     serde_cbor::from_slice(&proof_bytes)
                         .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
