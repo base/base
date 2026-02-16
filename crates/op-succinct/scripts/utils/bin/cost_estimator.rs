@@ -117,9 +117,7 @@ where
     let execution_inputs = stdins.into_iter().zip(block_data.into_iter()).collect::<Vec<_>>();
 
     // Execute the program for each block range in parallel.
-    // Use spawn_blocking to avoid "Cannot start a runtime from within a runtime" error.
-    // CpuProver::new() creates its own tokio runtime internally, so it must be constructed
-    // outside the main tokio runtime context (i.e., inside spawn_blocking).
+    // CpuProver creates its own tokio runtime, so run it outside the async context.
     let report_path_clone = report_path.clone();
     tokio::task::spawn_blocking(move || {
         let prover = CpuProver::new();

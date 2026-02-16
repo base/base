@@ -18,8 +18,7 @@ pub async fn execute_multi(
 ) -> Result<(Vec<BlockInfo>, ExecutionReport, Duration)> {
     let start_time = Instant::now();
 
-    // CpuProver::new() creates its own tokio runtime internally, so it must be constructed
-    // and run outside the main tokio runtime context via spawn_blocking.
+    // CpuProver creates its own tokio runtime, so run it outside the async context.
     let (_, report) = tokio::task::spawn_blocking(move || {
         let prover = CpuProver::new();
         prover
