@@ -2801,6 +2801,7 @@ dependencies = [
  "reth-revm",
  "reth-transaction-pool",
  "reth-trie-common",
+ "revm-bytecode 8.0.0",
  "revm-context-interface 14.0.0",
  "revm-database 10.0.0",
  "serde",

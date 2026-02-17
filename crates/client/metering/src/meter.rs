@@ -10,7 +10,7 @@ use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_primitives_traits::{Account, SealedHeader};
+use reth_primitives_traits::{Bytecode, Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
@@ -154,10 +154,13 @@ where
     // Pre-fetch account information for all transactions before creating builder. The
     // account information is used to validate the transaction.
     let mut accounts: HashMap<Address, Option<Account>> = HashMap::new();
+    let mut sender_codes: HashMap<Address, Option<Bytecode>> = HashMap::new();
     for tx in bundle.transactions() {
         let from = tx.recover_signer()?;
         let account = db.database.basic_account(&from)?;
+        let code = db.database.account_code(&from)?;
         accounts.insert(from, account);
+        sender_codes.insert(from, code);
     }
 
     // Execute transactions
@@ -183,9 +186,11 @@ where
                 .get(&from)
                 .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?
                 .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
+            let sender_code = sender_codes
+                .get(&from)
+                .ok_or_else(|| eyre!("Sender code not found in HashMap for address: {}", from))?;
 
-            // Don't waste resources metering invalid transactions
-            validate_tx(account, tx, &mut l1_block_info)
+            validate_tx(account, sender_code.as_ref(), tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
             let gas_used = builder
