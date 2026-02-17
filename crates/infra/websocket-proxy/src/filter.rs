@@ -281,6 +281,43 @@ mod tests {
         data.as_bytes().to_vec()
     }
 
+    fn get_real_payload() -> Vec<u8> {
+        let flashblock_data = r#"
+  {
+    "payload_id": "0x0307de8ff1df8ed8",
+    "index": 0,
+    "diff": {
+      "transactions": [
+        "0x7ef90104a0799b8b5182a2612920c032590217fd987cdcf1e07a2de17907e02eea535cc30694deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be0000044d000a118b000000000000000000000000683f28fc0000000000813aea000000000000000000000000000000000000000000000000000000000000094a0000000000000000000000000000000000000000000000000000000000000001f10c9d7f8fab954891476f8daa9189f45ee736b02bc43cb190e4f891c82e7edf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3000000000000000000000000"
+      ]
+    },
+    "metadata": {
+      "block_number": 26600873,
+      "new_account_balances": {
+        "0x336f495c2d3d764f541426228178a2369c9b78db": "0x13fbe85edc90000",
+        "0x4200000000000000000000000000000000000007": "0xf61bc4ad468f1bd"
+      },
+      "receipts": {
+        "0x3fb39b336c13a09d04a34f72cd88a7b0066d65dcf246288ac5bdbba33376eb41": {
+          "Deposit": {
+            "logs": [
+              {
+                "address": "0x4200000000000000000000000000000000000010",
+                "topics": [
+                  "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89",
+                  "0x0000000000000000000000000000000000000000000000000000000000000000"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+"#;
+        flashblock_data.as_bytes().to_vec()
+    }
+
     #[test]
     fn test_multiple_addresses_filter() {
         let payload = get_test_payload();
@@ -375,41 +412,46 @@ mod tests {
     }
 
     #[test]
+    fn test_compressed_payload() {
+        let payload = get_test_payload();
+        
+        let mut compressed_payload = Vec::new();
+        {
+            let mut compressor = brotli::CompressorWriter::new(&mut compressed_payload, 4096, 5, 22);
+            compressor.write_all(&payload).unwrap();
+        }
+
+        // test multiple address filter with compressed payload
+        let filter = FilterType::new_addresses(vec![
+            "0x1111111111111111111111111111111111111111".to_string(),
+            "0x4200000000000000000000000000000000000010".to_string(),
+        ]);
+        assert!(filter.matches(&compressed_payload, true));
+
+        // test address filter that should not match with compressed payload
+        let filter = FilterType::new_addresses(vec![
+            "0x1111111111111111111111111111111111111111".to_string(),
+        ]);
+        assert!(!filter.matches(&compressed_payload, true));
+
+        // test multiple topic filter with compressed payload
+        let filter = FilterType::new_topics(vec![
+            "0x1111111111111111111111111111111111111112222222222222222222222233".to_string(),
+            "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string(),
+        ]);
+        assert!(filter.matches(&compressed_payload, true));
+
+        // test topic filter that should not match with compressed payload
+        let filter = FilterType::new_topics(vec![
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+        ]);
+        assert!(!filter.matches(&compressed_payload, true));
+    }
+
+    #[test]
     fn test_with_real_data() {
         // Test against real flashblocks payload data structure
-        let payload = r#"
-  {
-    "payload_id": "0x0307de8ff1df8ed8",
-    "index": 0,
-    "diff": {
-      "transactions": [
-        "0x7ef90104a0799b8b5182a2612920c032590217fd987cdcf1e07a2de17907e02eea535cc30694deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be0000044d000a118b000000000000000000000000683f28fc0000000000813aea000000000000000000000000000000000000000000000000000000000000094a0000000000000000000000000000000000000000000000000000000000000001f10c9d7f8fab954891476f8daa9189f45ee736b02bc43cb190e4f891c82e7edf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3000000000000000000000000"
-      ]
-    },
-    "metadata": {
-      "block_number": 26600873,
-      "new_account_balances": {
-        "0x336f495c2d3d764f541426228178a2369c9b78db": "0x13fbe85edc90000",
-        "0x4200000000000000000000000000000000000007": "0xf61bc4ad468f1bd"
-      },
-      "receipts": {
-        "0x3fb39b336c13a09d04a34f72cd88a7b0066d65dcf246288ac5bdbba33376eb41": {
-          "Deposit": {
-            "logs": [
-              {
-                "address": "0x4200000000000000000000000000000000000010",
-                "topics": [
-                  "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89",
-                  "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ]
-              }
-            ]
-          }
-        }
-      }
-    }
-  }
-"#.to_string().into_bytes();
+        let payload = get_real_payload();
 
         // Test address filter that should match (in logs)
         let filter = FilterType::new_addresses(vec![
@@ -440,5 +482,47 @@ mod tests {
             "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
         ]);
         assert!(!filter.matches(&payload, false));
+    }
+
+    #[test]
+    fn test_with_real_data_compressed() {
+        // Test against real flashblocks payload data structure with compression enabled
+         let payload = get_real_payload();
+
+        let mut compressed_payload = Vec::new();
+        {
+            let mut compressor = brotli::CompressorWriter::new(&mut compressed_payload, 4096, 5, 22);
+            compressor.write_all(&payload).unwrap();
+        }
+
+        // Test address filter that should match (in logs)
+        let filter = FilterType::new_addresses(vec![
+            "0x4200000000000000000000000000000000000010".to_string(),
+        ]);
+        assert!(filter.matches(&compressed_payload, true));
+
+        // Test address filter that should match (in account balances)
+        let filter = FilterType::new_addresses(vec![
+            "0x4200000000000000000000000000000000000007".to_string(),
+        ]);
+        assert!(filter.matches(&compressed_payload, true));
+
+        // Test address filter that should not match
+        let filter = FilterType::new_addresses(vec![
+            "0x1111111111111111111111111111111111111111".to_string(),
+        ]);
+        assert!(!filter.matches(&compressed_payload, true));
+
+        // Test topic filter that should match
+        let filter = FilterType::new_topics(vec![
+            "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string(),
+        ]);
+        assert!(filter.matches(&compressed_payload, true));
+
+        // Test topic filter that should not match
+        let filter = FilterType::new_topics(vec![
+            "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        ]);
+        assert!(!filter.matches(&compressed_payload, true));
     }
 }
