@@ -432,6 +432,23 @@ mod tests {
         }
     }
 
+    /// Creates a transaction with independent resource usage per dimension.
+    fn tx_multi(
+        priority: u64,
+        gas: u64,
+        exec_us: u128,
+        state_root_us: u128,
+        da_bytes: u64,
+    ) -> MeteredTransaction {
+        MeteredTransaction {
+            priority_fee_per_gas: U256::from(priority),
+            gas_used: gas,
+            execution_time_us: exec_us,
+            state_root_time_us: state_root_us,
+            data_availability_bytes: da_bytes,
+        }
+    }
+
     #[test]
     fn compute_estimate_congested_resource() {
         // Limit: 30, Demand: 15
@@ -602,5 +619,52 @@ mod tests {
         let gas_estimate = estimates.gas_used.expect("gas estimate present");
         assert_eq!(gas_estimate.threshold_priority_fee, U256::from(10));
         assert_eq!(max_fee, U256::from(10));
+    }
+
+    #[test]
+    fn estimate_independent_dimensions() {
+        // Demonstrate that each resource dimension is evaluated independently.
+        //
+        // Transactions have low gas but high execution time:
+        //   priority=10: gas=5,  exec_time=15
+        //   priority=5:  gas=5,  exec_time=15
+        //   priority=2:  gas=5,  exec_time=15
+        //
+        // Gas (limit 100, demand 10):
+        //   Total usage = 15, remaining = 85 >= 10 → uncongested → default fee
+        //
+        // Execution time (limit 30, demand 15):
+        //   Include priority=10: remaining = 30-15 = 15 >= 15 → ok
+        //   Include priority=5:  remaining = 15-15 = 0 < 15 → stop
+        //   Congested → threshold = 10
+        let txs =
+            vec![tx_multi(10, 5, 15, 0, 0), tx_multi(5, 5, 15, 0, 0), tx_multi(2, 5, 15, 0, 0)];
+        let demand = ResourceDemand {
+            gas_used: Some(10),
+            execution_time_us: Some(15),
+            ..Default::default()
+        };
+        let limits = ResourceLimits {
+            gas_used: Some(100),
+            execution_time_us: Some(30),
+            ..Default::default()
+        };
+
+        let (estimates, max_fee) =
+            estimate_from_transactions(&txs, demand, &limits, 0.5, DEFAULT_FEE)
+                .expect("no error")
+                .expect("has estimates");
+
+        // Gas is uncongested → default fee
+        let gas_est = estimates.gas_used.expect("gas estimate");
+        assert_eq!(gas_est.recommended_priority_fee, DEFAULT_FEE);
+
+        // Execution time is congested → fee driven by competition
+        let exec_est = estimates.execution_time.expect("exec estimate");
+        assert_eq!(exec_est.threshold_priority_fee, U256::from(10));
+        assert!(exec_est.recommended_priority_fee > DEFAULT_FEE);
+
+        // Max fee is driven by the congested dimension (execution time)
+        assert_eq!(max_fee, exec_est.recommended_priority_fee);
     }
 }
