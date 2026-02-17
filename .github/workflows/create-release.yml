@@ -49,7 +49,12 @@ jobs:
       - name: Read tag
         id: read-tag
         run: |
-          TAG=$(cat "${{ runner.temp }}/release_tag")
+          TAG_FILE="${{ runner.temp }}/release_tag"
+          if [[ ! -f "$TAG_FILE" ]]; then
+            echo "::error::release_tag file not found — create-tag.sh may have failed"
+            exit 1
+          fi
+          TAG=$(cat "$TAG_FILE")
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Release tag: $TAG"
 
@@ -82,7 +87,7 @@ jobs:
 
       - name: Prepare
         run: |
-          platform=${{ matrix.settings.arch }}
+          platform="${{ matrix.settings.arch }}"
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Checkout
@@ -189,6 +194,13 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
+          shopt -s nullglob
+          DIGESTS=(*)
+          if [[ ${#DIGESTS[@]} -eq 0 ]]; then
+            echo "::error::No digests found — build-and-push may have failed"
+            exit 1
+          fi
+
           IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.docker_tags }}"
           TAG_ARGS=""
           for tag in "${TAGS[@]}"; do
@@ -196,7 +208,7 @@ jobs:
           done
 
           docker buildx imagetools create $TAG_ARGS \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' "${DIGESTS[@]}")
 
       - name: Inspect image
         run: |
