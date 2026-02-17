@@ -23,6 +23,10 @@ permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: release-${{ inputs.release_branch }}
+  cancel-in-progress: false
+
 jobs:
   create-tag:
     runs-on: ubuntu-latest
