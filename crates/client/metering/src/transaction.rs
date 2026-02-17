@@ -393,6 +393,37 @@ mod tests {
     }
 
     #[test]
+    fn test_valid_7702_tx_from_eoa() {
+        let signer = BaseAccount::Alice.signer();
+        let delegate_to = Address::random();
+        let authorization = create_signed_authorization(1, delegate_to, 0, &BaseAccount::Alice);
+
+        let mut tx = TxEip7702 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21000,
+            max_fee_per_gas: 20000000000u128,
+            max_priority_fee_per_gas: 1000000000u128,
+            to: Address::random(),
+            value: U256::from(10000000000000u128),
+            authorization_list: vec![authorization],
+            access_list: Default::default(),
+            input: bytes!(""),
+        };
+
+        let account = create_account(0, U256::from(1000000000000000000u128));
+        let mut l1_block_info = create_l1_block_info();
+
+        let signature = signer.sign_transaction_sync(&mut tx).unwrap();
+        let envelope = OpTxEnvelope::Eip7702(tx.into_signed(signature));
+        let recovered_tx = envelope.try_into_recovered().unwrap();
+        assert!(
+            validate_tx(account, None, &recovered_tx, &mut l1_block_info).is_ok(),
+            "EOA setting up delegation for the first time should be valid"
+        );
+    }
+
+    #[test]
     fn test_err_7702_tx_with_empty_authorization_list() {
         let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip7702 {
