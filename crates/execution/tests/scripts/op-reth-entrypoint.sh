@@ -14,52 +14,47 @@ require_value() {
   fi
 }
 
-# Parse arguments
-i=1
-while [ "$i" -le "$#" ]; do
-  eval arg="\${$i}"
+# Parse arguments using a prev_flag pattern to avoid eval
+prev_flag=""
+for arg in "$@"; do
+  if [ -n "$prev_flag" ]; then
+    require_value "$prev_flag" "$arg"
+    case "$prev_flag" in
+      --datadir) DATADIR="$arg" ;;
+      --proofs-history.storage-path) PROOFS_PATH="$arg" ;;
+      --chain) CHAIN="$arg" ;;
+    esac
+    prev_flag=""
+    continue
+  fi
 
   case "$arg" in
     --datadir=*)
       DATADIR="${arg#*=}"
       ;;
-
     --datadir)
-      eval next="\${$((i+1))}"
-      require_value "$arg" "$next"
-      DATADIR="$next"
-      i=$((i+1))
+      prev_flag="$arg"
       ;;
-
     --proofs-history.storage-path=*)
       PROOFS_PATH="${arg#*=}"
       ;;
-
     --proofs-history.storage-path)
-      eval next="\${$((i+1))}"
-      require_value "$arg" "$next"
-      PROOFS_PATH="$next"
-      i=$((i+1))
+      prev_flag="$arg"
       ;;
-
     --chain=*)
       CHAIN="${arg#*=}"
       ;;
-
     --chain)
-      eval next="\${$((i+1))}"
-      require_value "$arg" "$next"
-      CHAIN="$next"
-      i=$((i+1))
-      ;;
-
-    *)
-      # ignore unknown args—OR log them
+      prev_flag="$arg"
       ;;
   esac
-
-  i=$((i+1))
 done
+
+# Check if a flag was left without a value at the end
+if [ -n "$prev_flag" ]; then
+  echo "ERROR: Missing value for $prev_flag" >&2
+  exit 1
+fi
 
 # Log extracted values
 echo "extracted --datadir: ${DATADIR:-<not-set>}"

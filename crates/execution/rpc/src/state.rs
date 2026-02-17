@@ -3,7 +3,7 @@
 use alloy_eips::BlockId;
 use derive_more::Constructor;
 use jsonrpsee_types::error::ErrorObject;
-use reth_optimism_trie::{provider::OpProofsStateProviderRef, OpProofsStorage, OpProofsStore};
+use reth_optimism_trie::{OpProofsStorage, OpProofsStore, provider::OpProofsStateProviderRef};
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;

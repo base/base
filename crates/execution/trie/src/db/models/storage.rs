@@ -1,8 +1,8 @@
 use alloy_primitives::{B256, U256};
 use derive_more::{Constructor, From, Into};
 use reth_db::{
-    table::{Compress, Decode, Decompress, Encode},
     DatabaseError,
+    table::{Compress, Decode, Decompress, Encode},
 };
 use reth_trie_common::StoredNibbles;
 use serde::{Deserialize, Serialize};

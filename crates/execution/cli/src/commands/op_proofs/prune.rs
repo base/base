@@ -7,7 +7,7 @@ use reth_node_core::version::version_metadata;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_trie::{
-    db::MdbxProofsStorage, OpProofStoragePruner, OpProofsStorage, OpProofsStore,
+    OpProofStoragePruner, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
 };
 use std::{path::PathBuf, sync::Arc};
 use tracing::info;

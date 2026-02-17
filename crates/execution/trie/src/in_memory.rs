@@ -1,11 +1,11 @@
 //! In-memory implementation of [`OpProofsStore`] for testing purposes
 
 use crate::{
+    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
     api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
     db::{HashedStorageKey, StorageTrieKey},
-    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
 };
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
+use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use parking_lot::RwLock;
 use reth_db::DatabaseError;
@@ -15,7 +15,7 @@ use reth_trie::{
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
 use reth_trie_common::{
-    updates::TrieUpdatesSorted, BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles,
+    BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -411,11 +411,7 @@ impl InMemoryStorageCursor {
             .into_iter()
             .filter_map(
                 |(slot, (_, value))| {
-                    if value.is_zero() {
-                        None
-                    } else {
-                        Some((slot, value))
-                    }
+                    if value.is_zero() { None } else { Some((slot, value)) }
                 },
             )
             .collect();
@@ -549,13 +545,7 @@ impl OpProofsStore for InMemoryProofsStorage {
         let inner = self.inner.read();
         // Find the latest block number from trie_updates
         let latest_block = inner.trie_updates.keys().max().copied();
-        if let Some(block) = latest_block {
-            // We don't have a hash stored, so return a default
-            Ok(Some((block, B256::ZERO)))
-        } else {
-            // otherwise return earliest block if set
-            Ok(inner.earliest_block)
-        }
+        Ok(latest_block.map_or(inner.earliest_block, |block| Some((block, B256::ZERO))))
     }
 
     fn storage_trie_cursor<'tx>(

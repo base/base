@@ -1,17 +1,17 @@
 //! Common test suite for [`OpProofsStore`] implementations.
 
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
+use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use reth_optimism_trie::{
-    db::MdbxProofsStorage, BlockStateDiff, InMemoryProofsStorage, OpProofsInitialStateStore,
-    OpProofsStorageError, OpProofsStore,
+    BlockStateDiff, InMemoryProofsStorage, OpProofsInitialStateStore, OpProofsStorageError,
+    OpProofsStore, db::MdbxProofsStorage,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
+    BranchNodeCompact, HashedPostState, HashedPostStateSorted, HashedStorage, Nibbles, TrieMask,
     hashed_cursor::HashedCursor,
     trie_cursor::TrieCursor,
     updates::{TrieUpdates, TrieUpdatesSorted},
-    BranchNodeCompact, HashedPostState, HashedPostStateSorted, HashedStorage, Nibbles, TrieMask,
 };
 use serial_test::serial;
 use std::sync::Arc;
@@ -1241,8 +1241,7 @@ fn test_store_trie_updates_with_wiped_storage<S: OpProofsStore + OpProofsInitial
     assert_eq!(
         found_slots_after_wipe.len(),
         0,
-        "All storage slots should be deleted after wipe. Found: {:?}",
-        found_slots_after_wipe
+        "All storage slots should be deleted after wipe. Found: {found_slots_after_wipe:?}"
     );
 
     // Verify individual seeks also return None
@@ -1251,8 +1250,7 @@ fn test_store_trie_updates_with_wiped_storage<S: OpProofsStore + OpProofsInitial
         let result = seek_cursor.seek(*slot)?;
         assert!(
             result.is_none() || result.unwrap().0 != *slot,
-            "Storage slot {:?} should be deleted after wipe",
-            slot
+            "Storage slot {slot:?} should be deleted after wipe"
         );
     }
 
@@ -1281,7 +1279,7 @@ fn test_store_trie_updates_with_wiped_storage<S: OpProofsStore + OpProofsInitial
 fn test_store_trie_updates_comprehensive<S: OpProofsStore + OpProofsInitialStateStore>(
     storage: S,
 ) -> Result<(), OpProofsStorageError> {
-    use reth_trie::{updates::StorageTrieUpdates, HashedStorage};
+    use reth_trie::{HashedStorage, updates::StorageTrieUpdates};
 
     let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(100, B256::repeat_byte(0x96)));
 
@@ -1455,7 +1453,7 @@ fn test_store_trie_updates_comprehensive<S: OpProofsStore + OpProofsInitialState
 fn test_replace_updates_applies_all_updates<S: OpProofsStore + OpProofsInitialStateStore>(
     storage: S,
 ) -> Result<(), OpProofsStorageError> {
-    use reth_trie::{updates::StorageTrieUpdates, HashedStorage};
+    use reth_trie::{HashedStorage, updates::StorageTrieUpdates};
 
     let block_ref_50 = BlockWithParent::new(B256::ZERO, NumHash::new(50, B256::repeat_byte(0x96)));
 

@@ -1,11 +1,11 @@
 //! Provider for external proofs storage
 
 use crate::{
+    OpProofsStorage, OpProofsStorageError, OpProofsStore,
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
     },
-    OpProofsStorage, OpProofsStorageError, OpProofsStore,
 };
 use alloy_primitives::keccak256;
 use derive_more::Constructor;
@@ -16,17 +16,17 @@ use reth_provider::{
 };
 use reth_revm::{
     db::BundleState,
-    primitives::{alloy_primitives::BlockNumber, Address, Bytes, StorageValue, B256},
+    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 use reth_trie::{
+    StateRoot, StorageRoot,
     hashed_cursor::HashedCursor,
     proof::{self, Proof},
     witness::TrieWitness,
-    StateRoot, StorageRoot,
 };
 use reth_trie_common::{
-    updates::TrieUpdates, AccountProof, HashedPostState, HashedStorage, KeccakKeyHasher,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    AccountProof, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof, MultiProofTargets,
+    StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 use std::fmt::Debug;
 

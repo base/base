@@ -1,11 +1,11 @@
 [package]
 name = "reth-optimism-exex"
-version.workspace = true
+version = "1.10.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-homepage.workspace = true
-repository.workspace = true
+homepage = "https://paradigmxyz.github.io/reth"
+repository = "https://github.com/paradigmxyz/reth"
 description = "Execution extensions for OP-Reth"
 
 [lints]
@@ -15,7 +15,6 @@ workspace = true
 # reth
 reth-exex.workspace = true
 reth-execution-types.workspace = true
-reth-node-types.workspace = true
 reth-node-api.workspace = true
 reth-trie.workspace = true
 reth-provider.workspace = true
@@ -55,7 +54,10 @@ test-utils = [
     "reth-ethereum-primitives/test-utils",
     "reth-primitives-traits/test-utils",
 ]
-metrics = ["reth-optimism-trie/metrics"]
+metrics = [
+	"reth-optimism-trie/metrics",
+	"reth-trie/metrics"
+]
 
 [package.metadata.cargo-udeps.ignore]
 development = [

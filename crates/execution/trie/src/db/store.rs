@@ -1,35 +1,35 @@
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
 use crate::{
-    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
-    db::{
-        cursor::Dup,
-        models::{
-            kv::IntoKV, AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
-            HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory,
-            StorageTrieKey, StorageValue, VersionedValue,
-        },
-        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
-    },
     BlockStateDiff, OpProofsStorageError,
     OpProofsStorageError::NoBlocksFound,
     OpProofsStorageResult, OpProofsStore,
+    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
+    db::{
+        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+        cursor::Dup,
+        models::{
+            AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
+            HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory,
+            StorageTrieKey, StorageValue, VersionedValue, kv::IntoKV,
+        },
+    },
 };
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
-use alloy_primitives::{map::HashMap, B256, U256};
+use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+use alloy_primitives::{B256, U256, map::HashMap};
 #[cfg(feature = "metrics")]
-use metrics::{gauge, Label};
+use metrics::{Label, gauge};
 use reth_db::{
+    Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW},
-    mdbx::{init_db_for, DatabaseArguments},
+    mdbx::{DatabaseArguments, init_db_for},
     table::{DupSort, Table},
     transaction::{DbTx, DbTxMut},
-    Database, DatabaseEnv, DatabaseError,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
 use reth_trie_common::{
-    updates::{StorageTrieUpdates, TrieUpdates},
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
+    updates::{StorageTrieUpdates, TrieUpdates},
 };
 use std::{ops::RangeBounds, path::Path};
 
@@ -567,10 +567,8 @@ impl MdbxProofsStorage {
         let block_number = block_ref.block.number;
 
         // Check the latest stored block is the parent of the incoming block
-        let latest_block_hash = match self.inner_get_latest_block_number_hash(tx)? {
-            Some((_num, hash)) => hash,
-            None => B256::ZERO,
-        };
+        let latest_block_hash =
+            self.inner_get_latest_block_number_hash(tx)?.map_or(B256::ZERO, |(_num, hash)| hash);
 
         if latest_block_hash != block_ref.parent {
             return Err(OpProofsStorageError::OutOfOrder {
@@ -716,7 +714,7 @@ impl OpProofsStore for MdbxProofsStorage {
                             return Err(OpProofsStorageError::MissingAccountTrieHistory(
                                 key.0,
                                 block_number,
-                            ))
+                            ));
                         }
                     };
 
@@ -736,7 +734,7 @@ impl OpProofsStore for MdbxProofsStorage {
                                 key.hashed_address,
                                 key.path.0,
                                 block_number,
-                            ))
+                            ));
                         }
                     };
 
@@ -763,7 +761,7 @@ impl OpProofsStore for MdbxProofsStorage {
                         return Err(OpProofsStorageError::MissingHashedAccountHistory(
                             key,
                             block_number,
-                        ))
+                        ));
                     }
                 };
 
@@ -779,7 +777,7 @@ impl OpProofsStore for MdbxProofsStorage {
                                 hashed_address: key.hashed_address,
                                 hashed_storage_key: key.hashed_storage_key,
                                 block_number,
-                            })
+                            });
                         }
                     };
 
@@ -1092,10 +1090,11 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
             .env
             .view(|tx| {
                 for table in Tables::ALL.iter().map(Tables::name) {
-                    let table_db = tx.inner.open_db(Some(table)).wrap_err("Could not open db.")?;
+                    let table_db =
+                        tx.inner().open_db(Some(table)).wrap_err("Could not open db.")?;
 
                     let stats = tx
-                        .inner
+                        .inner()
                         .db_stat(table_db.dbi())
                         .wrap_err(format!("Could not find table: {table}"))?;
 
@@ -1163,19 +1162,19 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
 mod tests {
     use super::*;
     use crate::db::{
-        models::{AccountTrieHistory, StorageTrieHistory},
         StorageTrieKey,
+        models::{AccountTrieHistory, StorageTrieHistory},
     };
     use alloy_eips::NumHash;
     use alloy_primitives::B256;
     use reth_db::{
+        DatabaseError,
         cursor::DbDupCursorRO,
         transaction::{DbTx, DbTxMut},
-        DatabaseError,
     };
     use reth_trie::{
-        updates::{StorageTrieUpdates, TrieUpdatesSorted},
         BranchNodeCompact, HashedPostStateSorted, HashedStorage, Nibbles, StoredNibbles,
+        updates::{StorageTrieUpdates, TrieUpdatesSorted},
     };
     use tempfile::TempDir;
 
@@ -2979,11 +2978,7 @@ mod tests {
                 let vv =
                     cur.seek_by_key_subkey(key, BLOCK.block.number).expect("seek").expect("exists");
                 assert_eq!(vv.block_number, BLOCK.block.number);
-                assert!(
-                    vv.value.0.is_none(),
-                    "expected tombstone at wipe block for path {:?}",
-                    path
-                );
+                assert!(vv.value.0.is_none(), "expected tombstone at wipe block for path {path:?}");
             }
         }
 
@@ -3535,21 +3530,30 @@ mod tests {
 
         // Verify storage history
         let mut storage_cur = tx.new_cursor::<HashedStorageHistory>().expect("cursor");
-        assert!(storage_cur
-            .seek_by_key_subkey(HashedStorageKey::new(addr1, slot1), 1)
-            .unwrap()
-            .is_some());
-        assert!(storage_cur
-            .seek_by_key_subkey(HashedStorageKey::new(addr2, slot2), 2)
-            .unwrap()
-            .is_none());
+        assert!(
+            storage_cur
+                .seek_by_key_subkey(HashedStorageKey::new(addr1, slot1), 1)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            storage_cur
+                .seek_by_key_subkey(HashedStorageKey::new(addr2, slot2), 2)
+                .unwrap()
+                .is_none()
+        );
 
         // Verify storage trie history
         let mut storage_trie_cur = tx.cursor_dup_read::<StorageTrieHistory>().expect("cursor");
-        assert!(storage_trie_cur
-            .seek_by_key_subkey(StorageTrieKey::new(addr1, StoredNibbles::from(storage_path1)), 1)
-            .unwrap()
-            .is_some());
+        assert!(
+            storage_trie_cur
+                .seek_by_key_subkey(
+                    StorageTrieKey::new(addr1, StoredNibbles::from(storage_path1)),
+                    1
+                )
+                .unwrap()
+                .is_some()
+        );
 
         // Verify ProofWindow LatestBlock is updated
         let mut proof_window_cur = tx.cursor_read::<ProofWindow>().expect("cursor");

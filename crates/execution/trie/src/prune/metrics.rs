@@ -1,7 +1,7 @@
 use crate::PrunerOutput;
 use reth_metrics::{
-    metrics::{Gauge, Histogram},
     Metrics,
+    metrics::{Gauge, Histogram},
 };
 
 #[derive(Metrics)]

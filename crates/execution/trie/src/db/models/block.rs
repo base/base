@@ -3,8 +3,8 @@ use alloy_primitives::B256;
 use bytes::BufMut;
 use derive_more::{From, Into};
 use reth_db::{
-    table::{Compress, Decompress},
     DatabaseError,
+    table::{Compress, Decompress},
 };
 use serde::{Deserialize, Serialize};
 

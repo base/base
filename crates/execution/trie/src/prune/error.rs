@@ -1,4 +1,4 @@
-use crate::{api::WriteCounts, OpProofsStorageError};
+use crate::{OpProofsStorageError, api::WriteCounts};
 use reth_provider::ProviderError;
 use std::{
     fmt,
@@ -89,7 +89,7 @@ mod tests {
             end_block: 2,
             write_counts: WriteCounts::new(1, 2, 3, 4),
         };
-        let formatted_pruner_output = format!("{}", pruner_output);
+        let formatted_pruner_output = format!("{pruner_output}");
 
         assert_eq!(formatted_pruner_output, "Pruned 1→2 (1 blocks), entries=10, elapsed=10.000s");
     }

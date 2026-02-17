@@ -1,8 +1,8 @@
 use crate::db::{HashedStorageKey, StorageTrieKey};
 use alloy_primitives::B256;
 use reth_db::{
-    table::{self, Decode, Encode},
     DatabaseError,
+    table::{self, Decode, Encode},
 };
 use reth_trie_common::StoredNibbles;
 use serde::{Deserialize, Serialize};
@@ -24,13 +24,16 @@ impl table::Encode for ChangeSet {
     type Encoded = Vec<u8>;
 
     fn encode(self) -> Self::Encoded {
-        bincode::serialize(&self).expect("ChangeSet serialization should not fail")
+        bincode::serde::encode_to_vec(&self, bincode::config::standard())
+            .expect("ChangeSet serialization should not fail")
     }
 }
 
 impl table::Decode for ChangeSet {
     fn decode(value: &[u8]) -> Result<Self, DatabaseError> {
-        bincode::deserialize(value).map_err(|_| DatabaseError::Decode)
+        bincode::serde::decode_from_slice(value, bincode::config::standard())
+            .map(|(v, _)| v)
+            .map_err(|_| DatabaseError::Decode)
     }
 }
 

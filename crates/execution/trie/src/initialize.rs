@@ -2,18 +2,18 @@
 //! storage.
 
 use crate::{
+    OpProofsStorageError, OpProofsStore,
     api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore},
     db::{HashedStorageKey, StorageTrieKey},
-    OpProofsStorageError, OpProofsStore,
 };
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use derive_more::Constructor;
 use reth_db::{
+    DatabaseError,
     cursor::{DbCursorRO, DbDupCursorRO},
     tables,
     transaction::DbTx,
-    DatabaseError,
 };
 use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie_common::{
@@ -153,7 +153,7 @@ impl<Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         let mut source = source.peekable();
         let Some(first_entry) = source.peek() else {
             debug!(target: "reth::cli", "No entries to store for table");
-            return Ok(0)
+            return Ok(0);
         };
         let initial_progress = match first_entry {
             Ok(i) => i.0.estimate_progress(),
@@ -463,14 +463,14 @@ impl<C> InitTable for StoragesTrieInit<C> {
 mod tests {
     use super::*;
     use crate::MdbxProofsStorage;
-    use alloy_primitives::{keccak256, Address, U256};
+    use alloy_primitives::{Address, U256, keccak256};
     use reth_db::{
-        cursor::DbCursorRW, test_utils::create_test_rw_db, transaction::DbTxMut, Database,
+        Database, cursor::DbCursorRW, test_utils::create_test_rw_db, transaction::DbTxMut,
     };
     use reth_primitives_traits::Account;
     use reth_trie::{
-        hashed_cursor::HashedCursor, trie_cursor::TrieCursor, BranchNodeCompact, StorageTrieEntry,
-        StoredNibbles, StoredNibblesSubKey, TrieMask,
+        BranchNodeCompact, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey, TrieMask,
+        hashed_cursor::HashedCursor, trie_cursor::TrieCursor,
     };
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -639,7 +639,7 @@ mod tests {
         let mut trie_cursor = storage.account_trie_cursor(100).unwrap();
         let mut count = 0;
         while let Some((path, _node)) = trie_cursor.next().unwrap() {
-            assert_eq!(path, nodes[count].0 .0);
+            assert_eq!(path, nodes[count].0.0);
             count += 1;
         }
         assert_eq!(count, 3);

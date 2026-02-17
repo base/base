@@ -18,7 +18,9 @@ pub enum OpProofsStorageError {
     #[error("Parent block number is less than earliest stored block number")]
     UnknownParent,
     /// Block is out of order
-    #[error("Block {block_number} is out of order (parent: {parent_block_hash}, latest stored block hash: {latest_block_hash})")]
+    #[error(
+        "Block {block_number} is out of order (parent: {parent_block_hash}, latest stored block hash: {latest_block_hash})"
+    )]
     OutOfOrder {
         /// The block number being inserted
         block_number: u64,
@@ -28,7 +30,9 @@ pub enum OpProofsStorageError {
         latest_block_hash: B256,
     },
     /// Block update failed since parent state
-    #[error("Cannot execute block updates for block {block_number} without parent state {parent_block_number} (latest stored block number: {latest_block_number})")]
+    #[error(
+        "Cannot execute block updates for block {block_number} without parent state {parent_block_number} (latest stored block number: {latest_block_number})"
+    )]
     MissingParentBlock {
         /// The block number being executed
         block_number: u64,
@@ -38,7 +42,9 @@ pub enum OpProofsStorageError {
         latest_block_number: u64,
     },
     /// State root mismatch
-    #[error("State root mismatch for block {block_number} (have: {current_state_hash}, expected: {expected_state_hash})")]
+    #[error(
+        "State root mismatch for block {block_number} (have: {current_state_hash}, expected: {expected_state_hash})"
+    )]
     StateRootMismatch {
         /// Block number
         block_number: u64,
@@ -60,7 +66,9 @@ pub enum OpProofsStorageError {
     #[error("Missing hashed account history for key {0:?} at block {1}")]
     MissingHashedAccountHistory(B256, u64),
     /// Missing hashed storage history for a specific address and key at a specific block number
-    #[error("Missing hashed storage history for address {hashed_address:?}, key {hashed_storage_key:?} at block {block_number}")]
+    #[error(
+        "Missing hashed storage history for address {hashed_address:?}, key {hashed_storage_key:?} at block {block_number}"
+    )]
     MissingHashedStorageHistory {
         /// The hashed address
         hashed_address: B256,
@@ -70,7 +78,9 @@ pub enum OpProofsStorageError {
         block_number: u64,
     },
     /// Attempted to unwind to a block beyond the earliest stored block
-    #[error("Attempted to unwind to block {unwind_block_number} beyond earliest stored block {earliest_block_number}")]
+    #[error(
+        "Attempted to unwind to block {unwind_block_number} beyond earliest stored block {earliest_block_number}"
+    )]
     UnwindBeyondEarliest {
         /// The block number being unwound to
         unwind_block_number: u64,
@@ -123,7 +133,7 @@ impl From<DatabaseError> for OpProofsStorageError {
         if let DatabaseError::Custom(ref err) = error &&
             let Some(err) = err.downcast_ref::<Self>()
         {
-            return err.clone()
+            return err.clone();
         }
         Self::DatabaseError(error)
     }

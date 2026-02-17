@@ -1,7 +1,7 @@
 use bytes::{Buf, BufMut};
 use reth_db::{
-    table::{Compress, Decompress},
     DatabaseError,
+    table::{Compress, Decompress},
 };
 use reth_primitives_traits::ValueWithSubKey;
 use serde::{Deserialize, Serialize};

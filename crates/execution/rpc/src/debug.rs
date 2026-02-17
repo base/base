@@ -14,12 +14,12 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
 use reth_basic_payload_builder::PayloadConfig;
-use reth_evm::{execute::Executor, ConfigureEvm};
+use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_node_api::{BuildNextEnv, NodePrimitives, PayloadBuilderError};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_payload_builder::{
-    builder::{OpBuilder, OpPayloadBuilderCtx},
     OpAttributes, OpPayloadPrimitives,
+    builder::{OpBuilder, OpPayloadBuilderCtx},
 };
 use reth_optimism_trie::{OpProofsStorage, OpProofsStore};
 use reth_optimism_txpool::OpPooledTransaction as OpPooledTx2;
@@ -29,14 +29,14 @@ use reth_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, NodePrimitivesProvider, ProviderError,
     ProviderResult, StateProviderFactory,
 };
-use reth_revm::{database::StateProviderDatabase, witness::ExecutionWitnessRecord, State};
+use reth_revm::{State, database::StateProviderDatabase, witness::ExecutionWitnessRecord};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
-use reth_rpc_server_types::{result::internal_rpc_err, ToRpcResult};
+use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_tasks::TaskSpawner;
 use serde::{Deserialize, Serialize};
 use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::{Semaphore, oneshot};
 
 /// Represents the current proofs sync status.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -201,7 +201,7 @@ where
 
                 let (tx, rx) = oneshot::channel();
                 let this = self.inner.clone();
-                self.inner.task_spawner.spawn_blocking(Box::pin(async move {
+                self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
                     let result = async {
                         let parent_hash = parent_header.hash();
                         let attributes = Attrs::try_new(parent_hash, attributes, 3)
@@ -287,14 +287,10 @@ where
                 let mut exec_witness =
                     ExecutionWitness { state, codes, keys, ..Default::default() };
 
-                let smallest = match lowest_block_number {
-                    Some(smallest) => smallest,
-                    None => {
-                        // Return only the parent header, if there were no calls to the
-                        // BLOCKHASH opcode.
-                        block_number.saturating_sub(1)
-                    }
-                };
+                // If there were no calls to the BLOCKHASH opcode, return only the
+                // parent header.
+                let smallest =
+                    lowest_block_number.unwrap_or_else(|| block_number.saturating_sub(1));
 
                 let range = smallest..block_number;
                 exec_witness.headers = self

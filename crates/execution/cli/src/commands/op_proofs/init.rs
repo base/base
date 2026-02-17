@@ -8,7 +8,7 @@ use reth_node_core::version::version_metadata;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_trie::{
-    db::MdbxProofsStorage, InitializationJob, OpProofsStorage, OpProofsStore,
+    InitializationJob, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
 };
 use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use std::{path::PathBuf, sync::Arc};

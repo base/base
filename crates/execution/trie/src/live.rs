@@ -1,19 +1,19 @@
 //! Live trie collector for external proofs storage.
 
 use crate::{
-    api::OperationDurations, provider::OpProofsStateProviderRef, BlockStateDiff, OpProofsStorage,
-    OpProofsStorageError, OpProofsStore,
+    BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore, api::OperationDurations,
+    provider::OpProofsStateProviderRef,
 };
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
+use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use derive_more::Constructor;
-use reth_evm::{execute::Executor, ConfigureEvm};
+use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_primitives_traits::{AlloyBlockHeader, BlockTy, RecoveredBlock};
 use reth_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
-use reth_trie_common::{updates::TrieUpdatesSorted, HashedPostStateSorted};
+use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
 use std::{sync::Arc, time::Instant};
 use tracing::info;
 

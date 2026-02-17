@@ -1,4 +1,4 @@
-use crate::{prune::OpProofStoragePruner, OpProofsStorage, OpProofsStore};
+use crate::{OpProofsStorage, OpProofsStore, prune::OpProofStoragePruner};
 use reth_provider::BlockHashReader;
 use reth_tasks::shutdown::GracefulShutdown;
 use tokio::{

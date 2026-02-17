@@ -1,10 +1,10 @@
 //! Storage API for external storage of intermediary trie nodes.
 
 use crate::{
-    db::{HashedStorageKey, StorageTrieKey},
     OpProofsStorageResult,
+    db::{HashedStorageKey, StorageTrieKey},
 };
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash};
+use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use auto_impl::auto_impl;
 use derive_more::{AddAssign, Constructor};
@@ -14,7 +14,7 @@ use reth_trie::{
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
 use reth_trie_common::{
-    updates::TrieUpdatesSorted, BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles,
+    BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
 use std::{fmt::Debug, time::Duration};
 
@@ -155,7 +155,7 @@ pub trait OpProofsStore: Send + Sync + Debug {
 
     /// Set the earliest block number and hash that has been stored
     fn set_earliest_block_number(&self, block_number: u64, hash: B256)
-        -> OpProofsStorageResult<()>;
+    -> OpProofsStorageResult<()>;
 }
 
 /// Status of the initial state anchor.

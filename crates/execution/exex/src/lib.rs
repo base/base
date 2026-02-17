@@ -13,13 +13,12 @@ use alloy_eips::eip1898::BlockWithParent;
 use futures_util::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_node_api::{FullNodeComponents, NodePrimitives};
-use reth_node_types::NodeTypes;
+use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_optimism_trie::{
-    live::LiveTrieCollector, OpProofStoragePrunerTask, OpProofsStorage, OpProofsStore,
+    OpProofStoragePrunerTask, OpProofsStorage, OpProofsStore, live::LiveTrieCollector,
 };
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
-use reth_trie::{updates::TrieUpdatesSorted, HashedPostStateSorted, SortedTrieData};
+use reth_trie::{HashedPostStateSorted, SortedTrieData, updates::TrieUpdatesSorted};
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, task, time};
 use tracing::{debug, error, info};
@@ -124,8 +123,8 @@ where
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
 /// use reth_optimism_chainspec::BASE_MAINNET;
 /// use reth_optimism_exex::OpProofsExEx;
-/// use reth_optimism_node::{args::RollupArgs, OpNode};
-/// use reth_optimism_trie::{db::MdbxProofsStorage, InMemoryProofsStorage, OpProofsStorage};
+/// use reth_optimism_node::{OpNode, args::RollupArgs};
+/// use reth_optimism_trie::{InMemoryProofsStorage, OpProofsStorage, db::MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
@@ -276,8 +275,8 @@ where
                     "Configuration requires pruning {} blocks, which exceeds the safety threshold of {}. \
                      Huge prune operations can stall the node. \
                      Please run 'op-reth proofs prune' manually before starting the node.",
-                        blocks_to_prune,
-                        MAX_PRUNE_BLOCKS_STARTUP
+                    blocks_to_prune,
+                    MAX_PRUNE_BLOCKS_STARTUP
                 ));
             }
         }
@@ -304,7 +303,7 @@ where
         let task_provider = self.ctx.provider().clone();
         let task_evm_config = self.ctx.evm_config().clone();
 
-        self.ctx.task_executor().spawn_critical(
+        self.ctx.task_executor().spawn_critical_task(
             "optimism::exex::proofs_storage_sync_loop",
             async move {
                 let storage = task_storage.clone();
@@ -641,15 +640,15 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::private::alloy_primitives::B256;
-    use alloy_eips::{eip1898::BlockWithParent, BlockNumHash, NumHash};
+    use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
     use reth_optimism_trie::{
-        db::MdbxProofsStorage, BlockStateDiff, OpProofsStorage, OpProofsStore,
+        BlockStateDiff, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
     };
     use reth_primitives_traits::RecoveredBlock;
-    use reth_trie::{updates::TrieUpdatesSorted, HashedPostStateSorted, LazyTrieData};
+    use reth_trie::{HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted};
     use std::{collections::BTreeMap, default::Default, sync::Arc, time::Duration};
 
     // -------------------------------------------------------------------------

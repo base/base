@@ -1,34 +1,46 @@
 //! End-to-end test of the live trie collector.
 
-use alloy_consensus::{constants::ETH_TO_WEI, BlockHeader, Header, TxEip2930};
+use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
-use alloy_primitives::{Address, TxKind, B256, U256};
+use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use derive_more::Constructor;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
 use reth_db::Database;
 use reth_db_common::init::init_genesis;
-use reth_ethereum_primitives::{Block, BlockBody, Receipt, TransactionSigned};
-use reth_evm::{execute::Executor, ConfigureEvm};
+use reth_ethereum_primitives::{Block, BlockBody, Receipt, Transaction, TransactionSigned};
+use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_evm_ethereum::EthEvmConfig;
 use reth_node_api::{NodePrimitives, NodeTypesWithDB};
 use reth_optimism_trie::{
-    initialize::InitializationJob, live::LiveTrieCollector, MdbxProofsStorage, OpProofsStorage,
-    OpProofsStorageError,
+    MdbxProofsStorage, OpProofsStorage, OpProofsStorageError, initialize::InitializationJob,
+    live::LiveTrieCollector,
 };
-use reth_primitives_traits::{
-    crypto::secp256k1::public_key_to_address, Block as _, RecoveredBlock,
-};
+use reth_primitives_traits::{Block as _, RecoveredBlock};
 use reth_provider::{
-    providers::{BlockchainProvider, ProviderNodeTypes},
-    test_utils::create_test_provider_factory_with_chain_spec,
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
     ProviderFactory, StateRootProvider,
+    providers::{BlockchainProvider, ProviderNodeTypes},
+    test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_revm::database::StateProviderDatabase;
-use reth_testing_utils::generators::sign_tx_with_key_pair;
-use secp256k1::{rand::thread_rng, Keypair, Secp256k1};
+use secp256k1::{Keypair, Secp256k1, rand::rng};
 use std::sync::Arc;
 use tempfile::TempDir;
+
+/// Converts a secp256k1 public key to an Ethereum address.
+fn public_key_to_address(pubkey: secp256k1::PublicKey) -> Address {
+    let hash = keccak256(&pubkey.serialize_uncompressed()[1..]);
+    Address::from_slice(&hash[12..])
+}
+
+/// Signs a transaction with the given keypair.
+fn sign_tx_with_key_pair(key_pair: Keypair, tx: Transaction) -> TransactionSigned {
+    use alloy_consensus::SignableTransaction;
+    use reth_primitives_traits::crypto::secp256k1::sign_message;
+    let secret = B256::from_slice(&key_pair.secret_bytes());
+    let sig = sign_message(secret, tx.signature_hash()).unwrap();
+    tx.into_signed(sig).into()
+}
 
 /// Specification for a transaction within a block
 #[derive(Debug, Clone)]
@@ -290,7 +302,7 @@ fn test_execute_and_store_block_updates() {
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut thread_rng());
+    let key_pair = Keypair::new(&secp, &mut rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     // Create chain spec with the sender address funded in genesis
@@ -322,7 +334,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut thread_rng());
+    let key_pair = Keypair::new(&secp, &mut rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
@@ -373,7 +385,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut thread_rng());
+    let key_pair = Keypair::new(&secp, &mut rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
@@ -434,7 +446,7 @@ fn test_multiple_blocks_before_and_after_initialization() {
     let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut thread_rng());
+    let key_pair = Keypair::new(&secp, &mut rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
@@ -471,7 +483,7 @@ fn test_blocks_with_multiple_transactions() {
     let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut thread_rng());
+    let key_pair = Keypair::new(&secp, &mut rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);

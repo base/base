@@ -1,10 +1,10 @@
 #[cfg(feature = "metrics")]
 use crate::prune::metrics::Metrics;
 use crate::{
-    prune::error::{OpProofStoragePrunerResult, PrunerError, PrunerOutput},
     OpProofsStorage, OpProofsStore,
+    prune::error::{OpProofStoragePrunerResult, PrunerError, PrunerOutput},
 };
-use alloy_eips::{eip1898::BlockWithParent, BlockNumHash};
+use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use reth_provider::BlockHashReader;
 use std::cmp;
 use tokio::time::Instant;
@@ -55,13 +55,13 @@ where
         let latest_block_opt = self.provider.get_latest_block_number()?;
         if latest_block_opt.is_none() {
             trace!(target: "trie::pruner", "No latest blocks in the proof storage");
-            return Ok(PrunerOutput::default())
+            return Ok(PrunerOutput::default());
         }
 
         let earliest_block_opt = self.provider.get_earliest_block_number()?;
         if earliest_block_opt.is_none() {
             trace!(target: "trie::pruner", "No earliest blocks in the proof storage");
-            return Ok(PrunerOutput::default())
+            return Ok(PrunerOutput::default());
         }
 
         let latest_block = latest_block_opt.unwrap().0;
@@ -70,7 +70,7 @@ where
         let interval = latest_block.saturating_sub(earliest_block);
         if interval <= self.min_block_interval {
             trace!(target: "trie::pruner", "Nothing to prune");
-            return Ok(PrunerOutput::default())
+            return Ok(PrunerOutput::default());
         }
 
         // at this point `latest_block` is always greater than `min_block_interval`
@@ -178,17 +178,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{db::MdbxProofsStorage, BlockStateDiff};
+    use crate::{BlockStateDiff, db::MdbxProofsStorage};
     use alloy_eips::{BlockHashOrNumber, NumHash};
-    use alloy_primitives::{BlockNumber, B256, U256};
+    use alloy_primitives::{B256, BlockNumber, U256};
     use mockall::mock;
     use reth_primitives_traits::Account;
     use reth_storage_errors::provider::ProviderResult;
     use reth_trie::{
+        BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
         hashed_cursor::HashedCursor,
         trie_cursor::TrieCursor,
         updates::{StorageTrieUpdates, TrieUpdates, TrieUpdatesSorted},
-        BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
     };
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -520,7 +520,7 @@ mod tests {
 
         let earliest = store.get_earliest_block_number().unwrap();
         let latest = store.get_latest_block_number().unwrap();
-        println!("{:?} {:?}", earliest, latest);
+        println!("{earliest:?} {latest:?}");
         assert!(earliest.is_none());
         assert!(latest.is_none());
 

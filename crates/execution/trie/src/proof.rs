@@ -4,22 +4,21 @@ use crate::{
     OpProofsHashedAccountCursorFactory, OpProofsStorage, OpProofsStore, OpProofsTrieCursorFactory,
 };
 use alloy_primitives::{
-    keccak256,
+    Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
-    Address, Bytes, B256,
 };
 use reth_execution_errors::{StateProofError, StateRootError, StorageRootError, TrieWitnessError};
 use reth_trie::{
+    StateRoot, StorageRoot, TrieType,
     hashed_cursor::HashedPostStateCursorFactory,
     metrics::TrieRootMetrics,
     proof::{self, Proof},
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
-    StateRoot, StorageRoot, TrieType,
 };
 use reth_trie_common::{
-    updates::TrieUpdates, AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage,
-    MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
+    AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage, MultiProof,
+    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 
 /// Extends [`Proof`] with operations specific for working with [`OpProofsStorage`].

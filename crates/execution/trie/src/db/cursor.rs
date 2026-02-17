@@ -1,18 +1,18 @@
 use std::marker::PhantomData;
 
 use crate::{
+    OpProofsStorageResult,
     db::{
         AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey,
         MaybeDeleted, StorageTrieHistory, StorageTrieKey, VersionedValue,
     },
-    OpProofsStorageResult,
 };
 use alloy_primitives::{B256, U256};
 use reth_db::{
+    Database, DatabaseEnv, DatabaseError,
     cursor::{DbCursorRO, DbDupCursorRO},
     table::{DupSort, Table},
     transaction::DbTx,
-    Database, DatabaseEnv, DatabaseError,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
@@ -69,7 +69,7 @@ where
                 return Ok(self.cursor.prev_dup()?);
             }
             // already at the dup = max
-            return Ok(Some((key, vv)))
+            return Ok(Some((key, vv)));
         }
 
         // No dup >= max ⇒ either key absent or all dups < max. Check if key exists:
@@ -158,10 +158,10 @@ pub struct MdbxTrieCursor<T: Table + DupSort, Cursor> {
 }
 
 impl<
-        V,
-        T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-        Cursor: DbCursorRO<T> + DbDupCursorRO<T>,
-    > MdbxTrieCursor<T, Cursor>
+    V,
+    T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+    Cursor: DbCursorRO<T> + DbDupCursorRO<T>,
+> MdbxTrieCursor<T, Cursor>
 {
     /// Initializes new [`MdbxTrieCursor`].
     pub const fn new(cursor: Cursor, max_block_number: u64, hashed_address: Option<B256>) -> Self {
@@ -218,7 +218,7 @@ where
             let key = StorageTrieKey::new(address, StoredNibbles(path));
             return Ok(self.inner.seek_exact(key).map(|opt| {
                 opt.and_then(|(k, node)| (k.hashed_address == address).then_some((k.path.0, node)))
-            })?)
+            })?);
         }
         Ok(None)
     }
@@ -231,7 +231,7 @@ where
             let key = StorageTrieKey::new(address, StoredNibbles(path));
             return Ok(self.inner.seek(key).map(|opt| {
                 opt.and_then(|(k, node)| (k.hashed_address == address).then_some((k.path.0, node)))
-            })?)
+            })?);
         }
         Ok(None)
     }
@@ -249,7 +249,7 @@ where
 
             return Ok(self.inner.next().map(|opt| {
                 opt.and_then(|(k, node)| (k.hashed_address == address).then_some((k.path.0, node)))
-            })?)
+            })?);
         }
         Ok(None)
     }
@@ -404,15 +404,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{models, StorageValue};
+    use crate::db::{StorageValue, models};
     use reth_db::{
-        mdbx::{init_db_for, DatabaseArguments},
         DatabaseEnv,
+        mdbx::{DatabaseArguments, init_db_for},
     };
     use reth_db_api::{
+        Database,
         cursor::DbDupCursorRW,
         transaction::{DbTx, DbTxMut},
-        Database,
     };
     use reth_trie::{BranchNodeCompact, Nibbles, StoredNibbles};
     use tempfile::TempDir;
@@ -744,7 +744,7 @@ mod tests {
             // Key 0x10 latest ≤ max is deleted
             append_account_trie(&wtx, k1.clone(), 10, Some(node()));
             append_account_trie(&wtx, k1.clone(), 20, None); // tombstone at latest ≤ max
-                                                             // Next key has live
+            // Next key has live
             append_account_trie(&wtx, k2.clone(), 5, Some(node()));
             wtx.commit().expect("commit");
         }

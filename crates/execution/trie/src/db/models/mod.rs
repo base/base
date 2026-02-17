@@ -18,8 +18,9 @@ pub use kv::*;
 
 use alloy_primitives::B256;
 use reth_db::{
+    TableSet, TableType, TableViewer,
     table::{DupSort, TableInfo},
-    tables, TableSet, TableType, TableViewer,
+    tables,
 };
 use reth_primitives_traits::Account;
 use reth_trie_common::{BranchNodeCompact, StoredNibbles};
