@@ -1622,7 +1622,7 @@ dependencies = [
 
 [[package]]
 name = "audit-archiver"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "audit-archiver-lib",
@@ -1639,7 +1639,7 @@ dependencies = [
 
 [[package]]
 name = "audit-archiver-lib"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -2232,7 +2232,7 @@ dependencies = [
 
 [[package]]
 name = "base-access-lists"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2253,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "base-builder-bin"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "base-builder-core",
  "base-builder-metering",
@@ -2270,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "base-builder-core"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "base-builder-metering"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "base-builder-core",
@@ -2414,7 +2414,7 @@ dependencies = [
 
 [[package]]
 name = "base-builder-publish"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "futures",
  "metrics",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "base-bundles"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -2446,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "base-cli-utils"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-cli"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -2504,7 +2504,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-engine"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2547,7 +2547,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-node"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "base-consensus"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-rpc-types-engine",
  "base-cli-utils",
@@ -2622,7 +2622,7 @@ dependencies = [
 
 [[package]]
 name = "base-consensus-rpc"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "base-protocol",
  "jsonrpsee",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "base-engine-ext"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -2646,7 +2646,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashblocks"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashblocks-node"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "base-jwt"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -2768,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "base-metering"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "base-primitives"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "base-proofs-extension"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "base-client-node",
  "eyre",
@@ -2861,7 +2861,7 @@ dependencies = [
 
 [[package]]
 name = "base-protocol"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2879,7 +2879,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-node"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "base-cli-utils",
  "base-client-node",
@@ -2897,7 +2897,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-rpc-types"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "reth-optimism-evm",
  "reth-rpc-eth-types",
@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "base-txpool-rpc"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "base-client-node",
@@ -2921,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "base-txpool-tracing"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3004,7 +3004,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "basectl"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "basectl-cli",
@@ -3014,7 +3014,7 @@ dependencies = [
 
 [[package]]
 name = "basectl-cli"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-contract",
  "alloy-eips",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "based"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -3059,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "based-bin"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "based",
  "cadence",
@@ -4590,7 +4590,7 @@ dependencies = [
 
 [[package]]
 name = "devnet"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -6541,7 +6541,7 @@ dependencies = [
 
 [[package]]
 name = "ingress-rpc"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-provider",
  "anyhow",
@@ -6560,7 +6560,7 @@ dependencies = [
 
 [[package]]
 name = "ingress-rpc-lib"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -8167,7 +8167,7 @@ dependencies = [
 
 [[package]]
 name = "mempool-rebroadcaster"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8184,7 +8184,7 @@ dependencies = [
 
 [[package]]
 name = "mempool-rebroadcaster-bin"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "clap",
  "dotenvy",
@@ -15599,7 +15599,7 @@ dependencies = [
 
 [[package]]
 name = "system-tests"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -17012,7 +17012,7 @@ dependencies = [
 
 [[package]]
 name = "websocket-proxy"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "axum 0.8.8",
  "backoff",
@@ -17033,7 +17033,7 @@ dependencies = [
 
 [[package]]
 name = "websocket-proxy-bin"
-version = "0.0.0"
+version = "0.5.0"
 dependencies = [
  "axum 0.8.8",
  "brotli",
