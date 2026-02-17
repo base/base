@@ -224,7 +224,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.tags.outputs.tag }}"
-          gh release create "$TAG" --title "$TAG" --generate-notes
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists, skipping creation"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
 
       - name: Summary
         run: |
