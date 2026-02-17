@@ -16,6 +16,9 @@ pub enum TxValidationError {
     /// Signer account has non-EIP-7702 bytecode (i.e., it's a contract, not an EOA)
     #[display("Signer account has bytecode that is not EIP-7702 delegation")]
     SignerAccountHasBytecode,
+    /// EIP-7702 transaction has empty authorization list
+    #[display("EIP-7702 transaction has empty authorization list")]
+    AuthorizationListIsEmpty,
     /// Transaction nonce is too low
     #[display("Transaction nonce: {_0} is too low, account nonce: {_1}")]
     TransactionNonceTooLow(u64, u64),
@@ -58,10 +61,16 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     }
 
     // If an account has bytecode, it MUST be EIP-7702 bytecode
-    if let Some(bytecode) = sender_code {
-        if !bytecode.is_eip7702() {
-            return Err(TxValidationError::SignerAccountHasBytecode);
-        }
+    if let Some(bytecode) = sender_code
+        && !bytecode.is_eip7702()
+    {
+        return Err(TxValidationError::SignerAccountHasBytecode);
+    }
+
+    // If tx is 7702 type, it needs a valid authorization list
+    // https://github.com/paradigmxyz/reth/blob/68e4ff1f7d9f5b40bc02ba7433077dcba0456783/crates/transaction-pool/src/validate/eth.rs#L476
+    if txn.is_eip7702() && txn.authorization_list().is_none_or(|l| l.is_empty()) {
+        return Err(TxValidationError::AuthorizationListIsEmpty);
     }
 
     // error if tx nonce is not equal to or greater than the latest on chain
@@ -94,14 +103,16 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559, TxEip7702, transaction::SignerRecoverable,
     };
-    use alloy_primitives::{Address, Bytes, bytes};
-    use base_client_node::test_utils::Account as BaseAccount;
+    use alloy_eips::eip7702::Authorization;
+    use alloy_primitives::{Address, Bytes, U256, bytes};
+    use base_client_node::test_utils::{Account as BaseAccount, SignerSync};
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_network::TxSignerSync;
-    use std::sync::Arc;
     use revm_bytecode::eip7702::Eip7702Bytecode;
     use revm_context_interface::transaction::{AccessList, AccessListItem};
 
@@ -112,7 +123,9 @@ mod tests {
     }
 
     fn create_eip7702_bytecode() -> Bytecode {
-        Bytecode(revm_bytecode::Bytecode::Eip7702(Arc::new(Eip7702Bytecode::new(Address::random()))))
+        Bytecode(revm_bytecode::Bytecode::Eip7702(Arc::new(
+            Eip7702Bytecode::new(Address::random()),
+        )))
     }
 
     fn create_contract_bytecode() -> Bytecode {
@@ -123,8 +136,21 @@ mod tests {
         L1BlockInfo::default()
     }
 
+    fn create_signed_authorization(
+        chain_id: u64,
+        contract_address: Address,
+        nonce: u64,
+        account: &BaseAccount,
+    ) -> alloy_eips::eip7702::SignedAuthorization {
+        let auth =
+            Authorization { chain_id: U256::from(chain_id), address: contract_address, nonce };
+        let signature = account.signer().sign_hash_sync(&auth.signature_hash()).unwrap();
+        auth.into_signed(signature)
+    }
+
     #[test]
     fn test_valid_tx_no_bytecode() {
+        // Create a sample EIP-1559 transaction
         let signer = BaseAccount::Alice.signer();
         let mut tx = TxEip1559 {
             chain_id: 1,
@@ -177,6 +203,9 @@ mod tests {
     #[test]
     fn test_valid_7702_tx_from_delegated_account() {
         let signer = BaseAccount::Alice.signer();
+        let delegate_to = Address::random();
+        let authorization = create_signed_authorization(1, delegate_to, 0, &BaseAccount::Alice);
+
         let mut tx = TxEip7702 {
             chain_id: 1,
             nonce: 0,
@@ -185,7 +214,7 @@ mod tests {
             max_priority_fee_per_gas: 1000000000u128,
             to: Address::random(),
             value: U256::from(10000000000000u128),
-            authorization_list: Default::default(),
+            authorization_list: vec![authorization],
             access_list: Default::default(),
             input: bytes!(""),
         };
@@ -342,6 +371,7 @@ mod tests {
             input: bytes!(""),
         };
 
+        // fund the account with enough funds to cover the txn cost but not enough to cover the l1 cost
         let account_balance = U256::from(4201000000u128);
         let account = create_account(0, account_balance);
         let mut l1_block_info = create_l1_block_info();
@@ -359,6 +389,35 @@ mod tests {
         assert_eq!(
             validate_tx(account, None, &recovered_tx, &mut l1_block_info),
             Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account_balance))
+        );
+    }
+
+    #[test]
+    fn test_err_7702_tx_with_empty_authorization_list() {
+        let signer = BaseAccount::Alice.signer();
+        let mut tx = TxEip7702 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21000,
+            max_fee_per_gas: 20000000000u128,
+            max_priority_fee_per_gas: 1000000000u128,
+            to: Address::random(),
+            value: U256::from(10000000000000u128),
+            authorization_list: vec![],
+            access_list: Default::default(),
+            input: bytes!(""),
+        };
+
+        let account = create_account(0, U256::from(1000000000000000000u128));
+        let mut l1_block_info = create_l1_block_info();
+
+        let signature = signer.sign_transaction_sync(&mut tx).unwrap();
+        let envelope = OpTxEnvelope::Eip7702(tx.into_signed(signature));
+        let recovered_tx = envelope.try_into_recovered().unwrap();
+
+        assert_eq!(
+            validate_tx(account, None, &recovered_tx, &mut l1_block_info),
+            Err(TxValidationError::AuthorizationListIsEmpty)
         );
     }
 }

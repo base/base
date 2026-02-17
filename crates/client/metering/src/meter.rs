@@ -10,7 +10,7 @@ use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_primitives_traits::{Bytecode, Account, SealedHeader};
+use reth_primitives_traits::{Account, Bytecode, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
@@ -190,6 +190,7 @@ where
                 .get(&from)
                 .ok_or_else(|| eyre!("Sender code not found in HashMap for address: {}", from))?;
 
+            // Don't waste resources metering invalid transactions
             validate_tx(account, sender_code.as_ref(), tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
