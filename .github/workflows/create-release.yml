@@ -16,14 +16,22 @@ on:
           - final
         default: rc
 
-# Permissions:
-# - contents:write is required to push tags (create-tag.sh)
+env:
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
+
 permissions:
   contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ inputs.release_branch }}
+  cancel-in-progress: false
 
 jobs:
   create-tag:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read-tag.outputs.tag }}
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -42,15 +50,202 @@ jobs:
         run: |
           ./etc/scripts/release/create-tag.sh "${{ inputs.release_branch }}" "${{ inputs.release_type }}"
 
-      - name: Summary
+      - name: Read tag
+        id: read-tag
         run: |
           TAG_FILE="${{ runner.temp }}/release_tag"
-          if [[ -f "$TAG_FILE" ]]; then
-            TAG=$(cat "$TAG_FILE")
-            echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
-            echo "**Type**: ${{ inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "The [Release workflow](../actions/workflows/release.yml) will now build and publish this release." >> $GITHUB_STEP_SUMMARY
+          if [[ ! -f "$TAG_FILE" ]]; then
+            echo "::error::release_tag file not found — create-tag.sh may have failed"
+            exit 1
           fi
+          TAG=$(cat "$TAG_FILE")
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Summary
+        run: |
+          TAG="${{ steps.read-tag.outputs.tag }}"
+          echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Type**: ${{ inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
+
+  # Build multi-arch Docker images
+  build-and-push:
+    needs: [create-tag]
+    strategy:
+      matrix:
+        settings:
+          - arch: linux/amd64
+            runs-on: ubuntu-24.04
+          - arch: linux/arm64
+            runs-on: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.settings.runs-on }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Prepare
+        run: |
+          platform="${{ matrix.settings.arch }}"
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.create-tag.outputs.tag }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: etc/docker/Dockerfile.client
+          tags: ${{ env.REGISTRY_IMAGE }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.settings.arch }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=release-docker
+          cache-to: type=gha,mode=max,scope=release-docker
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Merge manifests and create release
+  publish:
+    needs: [create-tag, build-and-push]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.create-tag.outputs.tag }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Login to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Determine Docker tags
+        id: tags
+        run: |
+          TAG="${{ needs.create-tag.outputs.tag }}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # Check if this is an RC tag (contains -rc.)
+          if [[ "$TAG" =~ -rc\. ]]; then
+            echo "is_rc=true" >> $GITHUB_OUTPUT
+            echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_OUTPUT
+          else
+            echo "is_rc=false" >> $GITHUB_OUTPUT
+            # For final release, extract version components
+            VERSION="${TAG#v}"
+            IFS='.' read -r major minor patch <<< "$VERSION"
+            echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG},${{ env.REGISTRY_IMAGE }}:${major}.${minor},${{ env.REGISTRY_IMAGE }}:${major},${{ env.REGISTRY_IMAGE }}:latest" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          shopt -s nullglob
+          DIGESTS=(*)
+          if [[ ${#DIGESTS[@]} -eq 0 ]]; then
+            echo "::error::No digests found — build-and-push may have failed"
+            exit 1
+          fi
+
+          IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.docker_tags }}"
+          TAG_ARGS=""
+          for tag in "${TAGS[@]}"; do
+            TAG_ARGS="$TAG_ARGS -t $tag"
+          done
+
+          docker buildx imagetools create $TAG_ARGS \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' "${DIGESTS[@]}")
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
+
+      - name: Create GitHub Release
+        if: steps.tags.outputs.is_rc == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tags.outputs.tag }}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists, skipping creation"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
+      - name: Summary
+        run: |
+          TAG="${{ steps.tags.outputs.tag }}"
+          IS_RC="${{ steps.tags.outputs.is_rc }}"
+
+          echo "## Release Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          if [[ "$IS_RC" == "true" ]]; then
+            echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Type**: Final Release" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

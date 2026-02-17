@@ -43,15 +43,20 @@ main() {
     fi
 
     if tag_exists "$TAG"; then
-        echo "Error: Release tag $TAG already exists"
-        exit 1
+        TAG_SHA=$(git rev-parse "refs/tags/$TAG^{}")
+        HEAD_SHA=$(git rev-parse HEAD)
+        if [[ "$TAG_SHA" == "$HEAD_SHA" ]]; then
+            echo "Tag $TAG already exists at HEAD, skipping creation"
+        else
+            echo "Error: Tag $TAG already exists but points at $TAG_SHA, not HEAD ($HEAD_SHA)"
+            exit 1
+        fi
+    else
+        configure_git
+        create_and_push_tag "$TAG"
+        echo ""
+        echo "=== Tag $TAG created and pushed ==="
     fi
-
-    configure_git
-    create_and_push_tag "$TAG"
-
-    echo ""
-    echo "=== Tag $TAG created and pushed ==="
 
     if [[ -n "${RUNNER_TEMP:-}" ]]; then
         echo "$TAG" > "${RUNNER_TEMP}/release_tag"
