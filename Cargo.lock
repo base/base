@@ -2904,6 +2904,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-roxy"
+version = "0.0.0"
+dependencies = [
+ "alloy-json-rpc",
+ "async-trait",
+ "derive_more",
+ "rstest",
+]
+
+[[package]]
 name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
