@@ -70,6 +70,68 @@ jobs:
           echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "**Type**: ${{ inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
 
+  # Build native binaries for release artifacts
+  build-binaries:
+    needs: [create-tag]
+    strategy:
+      matrix:
+        target:
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            os: linux
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            os: linux
+          - triple: aarch64-apple-darwin
+            runner: macos-14
+            os: macos
+
+    runs-on: ${{ matrix.target.runner }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        if: matrix.target.os == 'linux'
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.create-tag.outputs.tag }}
+
+      - name: Install system dependencies (Linux)
+        if: matrix.target.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+
+      - name: Build binaries
+        run: cargo build --profile maxperf --bin base-reth-node --bin basectl
+
+      - name: Package binaries
+        run: |
+          TAG="${{ needs.create-tag.outputs.tag }}"
+          TARGET="${{ matrix.target.triple }}"
+          for bin in base-reth-node basectl; do
+            ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
+            tar -czf "$ARCHIVE" -C target/maxperf "$bin"
+            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: binaries-${{ matrix.target.triple }}
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
   # Build multi-arch Docker images
   build-and-push:
     needs: [create-tag]
@@ -144,7 +206,7 @@ jobs:
 
   # Merge manifests and create release
   publish:
-    needs: [create-tag, build-and-push]
+    needs: [create-tag, build-and-push, build-binaries]
     runs-on: ubuntu-latest
 
     steps:
@@ -229,6 +291,22 @@ jobs:
           else
             gh release create "$TAG" --title "$TAG" --generate-notes
           fi
+
+      - name: Download binary artifacts
+        if: steps.tags.outputs.is_rc == 'false'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/binaries
+          pattern: binaries-*
+          merge-multiple: true
+
+      - name: Upload binaries to GitHub Release
+        if: steps.tags.outputs.is_rc == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tags.outputs.tag }}"
+          gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256
 
       - name: Summary
         run: |
