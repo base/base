@@ -1023,10 +1023,10 @@ where
     let block_hash = sealed_block.hash();
 
     // pick the new transactions from the info field and update the last flashblock index
-    let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
-
-    let new_transactions_encoded =
-        new_transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
+    let new_transactions_encoded = info.executed_transactions[info.extra.last_flashblock_index..]
+        .iter()
+        .map(|tx| tx.encoded_2718().into())
+        .collect::<Vec<_>>();
 
     let min_tx_index = info.extra.last_flashblock_index as u64;
     let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
