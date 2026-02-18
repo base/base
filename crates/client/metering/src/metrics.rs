@@ -21,4 +21,12 @@ pub(crate) struct Metrics {
     /// Time taken to compute pending trie (cache miss).
     #[metric(describe = "Time taken to compute pending trie on cache miss")]
     pub pending_trie_compute_duration: Histogram,
+
+    /// Number of storage slots modified.
+    #[metric(describe = "Number of storage slots modified")]
+    pub storage_slots_modified: Histogram,
+
+    /// Number of accounts modified.
+    #[metric(describe = "Number of accounts modified")]
+    pub accounts_modified: Histogram,
 }
