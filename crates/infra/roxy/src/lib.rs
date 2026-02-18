@@ -4,7 +4,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod backends;
-pub use backends::{Backend};
+pub use backends::{
+    Backend, BackendConfig, EmaHealthTracker, HealthConfig, HealthTracker, HttpBackend,
+};
 
 mod primitives;
 pub use primitives::{HealthStatus, RoxyError};

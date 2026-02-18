@@ -16,10 +16,15 @@ workspace = true
 # alloy
 alloy-json-rpc.workspace = true
 
-# general
-derive_more.workspace = true
+# networking
+reqwest = { workspace = true, features = ["json"] }
+
+# async
+tokio.workspace = true
 async-trait.workspace = true
 
+# general
+derive_more = { workspace = true, features = ["debug", "display", "error"] }
 
 [dev-dependencies]
 rstest.workspace = true

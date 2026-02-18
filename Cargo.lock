@@ -2910,7 +2910,9 @@ dependencies = [
  "alloy-json-rpc",
  "async-trait",
  "derive_more",
+ "reqwest 0.13.1",
  "rstest",
+ "tokio",
 ]
 
 [[package]]
@@ -10594,6 +10596,8 @@ dependencies = [
  "rustls 0.23.31",
  "rustls-pki-types",
  "rustls-platform-verifier 0.6.2",
+ "serde",
+ "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls 0.26.4",

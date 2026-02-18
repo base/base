@@ -53,7 +53,6 @@ impl RoxyError {
     /// Backend timeout error code.
     pub const BACKEND_TIMEOUT: i64 = -32011;
 
-
     /// Convert to an alloy [`ErrorPayload`] for JSON-RPC responses.
     #[must_use]
     pub fn to_error_payload(&self) -> ErrorPayload {
@@ -107,9 +106,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::rate_limited(RoxyError::RateLimited { retry_after: Duration::from_secs(5) }, error_codes::RATE_LIMITED)]
-    #[case::backend_offline(RoxyError::BackendOffline { backend: "primary".to_string() }, error_codes::BACKEND_OFFLINE)]
-    #[case::backend_timeout(RoxyError::BackendTimeout { backend: "slow".to_string() }, error_codes::BACKEND_TIMEOUT)]
+    #[case::rate_limited(RoxyError::RateLimited { retry_after: Duration::from_secs(5) }, RoxyError::RATE_LIMITED)]
+    #[case::backend_offline(RoxyError::BackendOffline { backend: "primary".to_string() }, RoxyError::BACKEND_OFFLINE)]
+    #[case::backend_timeout(RoxyError::BackendTimeout { backend: "slow".to_string() }, RoxyError::BACKEND_TIMEOUT)]
     #[case::no_healthy_backends(RoxyError::NoHealthyBackends, RoxyError::BACKEND_OFFLINE)]
     #[case::cache_error(RoxyError::CacheError("connection failed".to_string()), -32603)]
     #[case::internal_error(RoxyError::Internal("unexpected state".to_string()), -32603)]
@@ -128,9 +127,7 @@ mod tests {
     fn test_error_display(#[case] error: RoxyError, #[case] expected_substring: &str) {
         assert!(
             error.to_string().contains(expected_substring),
-            "Expected '{}' to contain '{}'",
-            error,
-            expected_substring
+            "Expected '{error}' to contain '{expected_substring}'"
         );
     }
 
