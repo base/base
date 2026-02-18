@@ -86,7 +86,6 @@ string-lit-as-bytes = "warn"
 debug = "line-tables-only"
 split-debuginfo = "packed"
 incremental = false
-force-frame-pointers = true
 
 [profile.release]
 opt-level = 3
@@ -95,7 +94,6 @@ debug = "none"
 strip = "symbols"
 panic = "unwind"
 codegen-units = 16
-force-frame-pointers = true
 
 [profile.maxperf]
 inherits = "release"
@@ -104,7 +102,8 @@ codegen-units = 1
 
 [profile.profiling]
 inherits = "release"
-debug = 2
+lto = false
+debug = "line-tables-only"
 strip = "none"
 force-frame-pointers = true
 
