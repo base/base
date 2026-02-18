@@ -322,8 +322,7 @@ where
             flashblocks_interval = self.config.flashblocks.interval.as_millis(),
         );
         ctx.metrics.reduced_flashblocks_number.record(
-            self.config.flashblocks_per_block().saturating_sub(ctx.target_flashblock_count())
-                as f64,
+           self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
         );
         ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
