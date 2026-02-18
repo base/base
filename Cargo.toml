@@ -101,6 +101,13 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+[profile.profiling]
+inherits = "release"
+lto = false
+debug = "line-tables-only"
+strip = "none"
+force-frame-pointers = true
+
 # CI profile: optimized for minimal disk usage in CI environments
 # - Inherits from dev for fast compilation
 # - No debug info to minimize artifact size

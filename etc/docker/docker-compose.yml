@@ -159,7 +159,7 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.builder
       args:
-        - PROFILE=dev
+        - PROFILE=${CARGO_PROFILE:-dev}
     container_name: base-builder
     depends_on:
       setup-l2:
@@ -319,7 +319,7 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.client
       args:
-        - PROFILE=dev
+        - PROFILE=${CARGO_PROFILE:-dev}
     container_name: base-client
     depends_on:
       setup-l2:
@@ -461,6 +461,33 @@ services:
       - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
 
+  pyroscope:
+    image: grafana/pyroscope:1.18.1
+    container_name: pyroscope
+    profiles: ["profiling"]
+    ports:
+      - "4040:4040"
+    command:
+      - "server"
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:v1.13.1
+    container_name: alloy
+    profiles: ["profiling"]
+    privileged: true
+    pid: host
+    volumes:
+      - ../scripts/devnet/alloy.config:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    depends_on:
+      - pyroscope
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: prometheus
@@ -483,6 +510,7 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_INSTALL_PLUGINS=grafana-pyroscope-app
     volumes:
       - ../scripts/devnet/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../scripts/devnet/grafana/dashboards:/var/lib/grafana/dashboards:ro

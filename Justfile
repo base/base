@@ -156,9 +156,13 @@ bench-flashblocks:
 devnet: devnet-down
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --build --scale contender=0
 
+# Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
+devnet-profiling: devnet-down
+    CARGO_PROFILE=profiling docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling up -d --build --scale contender=0
+
 # Stops devnet and deletes all data
 devnet-down:
-    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml down
+    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling down
     rm -rf .devnet
 
 # Shows devnet block numbers and sync status
