@@ -16,6 +16,7 @@ members = [
     "crates/shared/*",
     "crates/builder/*",
     "crates/infra/*",
+    "crates/alloy/*",
     "devnet"
 ]
 default-members = [
@@ -279,7 +280,16 @@ alloy-network-primitives = "1.4.3"
 alloy-evm = { version = "0.26.3", default-features = false }
 alloy-primitives = { version = "1.5.0", default-features = false }
 
-# op-alloy
+# base-alloy (local)
+base-alloy-network = { path = "crates/alloy/network" }
+base-alloy-provider = { path = "crates/alloy/provider" }
+base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
+base-alloy-consensus = { path = "crates/alloy/consensus" }
+base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
+base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine" }
+
+# op-alloy (external)
+# TODO: remove these once reth and kona no longer depend on upstream op-alloy
 alloy-op-hardforks = "0.4.4"
 op-alloy-flz = { version = "0.13.1", default-features = false }
 alloy-op-evm = { version = "0.26.3", default-features = false }
@@ -412,6 +422,11 @@ serial_test = "3"
 mockall = "0.13"
 wiremock = { version = "0.6.2", default-features = false }
 testcontainers-modules = { version = "0.14.0", default-features = false }
+sha2 = "0.10"
+snap = "1"
+bincode = "2"
+arbtest = "0.3"
 backoff = "0.4.0"
 hostname = "0.4.0"
 redis = "0.30.0"
+similar-asserts = "1"

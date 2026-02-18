@@ -1,0 +1,32 @@
+[package]
+name = "base-alloy-provider"
+description = "Interface with a Base blockchain"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+
+# Alloy
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-transport.workspace = true
+alloy-primitives = { workspace = true, features = ["rlp", "serde"] }
+alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+
+# misc
+async-trait.workspace = true
+
+[features]
+std = [ "base-alloy-rpc-types-engine/std" ]
+serde = [ "base-alloy-rpc-types-engine/serde" ]
