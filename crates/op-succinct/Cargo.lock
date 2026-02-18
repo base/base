@@ -30,7 +30,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aggregation"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -7143,7 +7143,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-bindings"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy",
  "alloy-sol-types",
@@ -7153,7 +7153,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-build-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "cargo_metadata",
  "sp1-build",
@@ -7161,7 +7161,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-celestia-client-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7179,7 +7179,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-celestia-host-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7207,7 +7207,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-client-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7261,7 +7261,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-eigenda-host-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -7292,11 +7292,11 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-elfs"
-version = "4.0.1"
+version = "4.0.2"
 
 [[package]]
 name = "op-succinct-ethereum-client-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7312,7 +7312,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-ethereum-host-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -7331,7 +7331,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-fp"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy",
  "alloy-contract",
@@ -7378,7 +7378,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-host-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -7433,7 +7433,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-proof-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "cfg-if",
  "op-succinct-celestia-host-utils",
@@ -7446,7 +7446,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-prove"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-contract",
  "alloy-eips",
@@ -7480,7 +7480,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-range-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "anyhow",
  "kona-proof",
@@ -7493,7 +7493,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-scripts"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-eips",
  "alloy-network",
@@ -7527,7 +7527,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-signer-utils"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7549,7 +7549,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-validity"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -9003,7 +9003,7 @@ dependencies = [
 
 [[package]]
 name = "range"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "kona-proof",
  "op-succinct-client-utils",
@@ -9016,7 +9016,7 @@ dependencies = [
 
 [[package]]
 name = "range-celestia"
-version = "4.0.1"
+version = "4.0.2"
 dependencies = [
  "kona-proof",
  "op-succinct-celestia-client-utils",
