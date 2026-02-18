@@ -159,7 +159,7 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.builder
       args:
-        - PROFILE=profiling
+        - PROFILE=${CARGO_PROFILE:-dev}
     container_name: base-builder
     depends_on:
       setup-l2:
@@ -319,7 +319,7 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.client
       args:
-        - PROFILE=profiling
+        - PROFILE=${CARGO_PROFILE:-dev}
     container_name: base-client
     depends_on:
       setup-l2:
@@ -464,6 +464,7 @@ services:
   pyroscope:
     image: grafana/pyroscope:1.18.1
     container_name: pyroscope
+    profiles: ["profiling"]
     ports:
       - "4040:4040"
     command:
@@ -473,6 +474,7 @@ services:
   alloy:
     image: grafana/alloy:v1.13.1
     container_name: alloy
+    profiles: ["profiling"]
     privileged: true
     pid: host
     volumes:
@@ -514,6 +516,5 @@ services:
       - ../scripts/devnet/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
-      - pyroscope
       - jaeger
     restart: unless-stopped
