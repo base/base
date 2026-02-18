@@ -116,10 +116,11 @@ jobs:
         run: |
           TAG="${{ needs.create-tag.outputs.tag }}"
           TARGET="${{ matrix.target.triple }}"
+          SHASUM=$(command -v sha256sum || echo "shasum -a 256")
           for bin in base-reth-node basectl; do
             ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
             tar -czf "$ARCHIVE" -C target/maxperf "$bin"
-            shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+            $SHASUM "$ARCHIVE" > "${ARCHIVE}.sha256"
           done
 
       - name: Upload artifacts
