@@ -1,6 +1,6 @@
 //! Tracex canonical block subscription.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use base_flashblocks::{FlashblocksAPI, PendingBlocks};
 use futures::StreamExt;
@@ -45,12 +45,14 @@ pub async fn tracex_subscription<N, Pool, FB>(
 
             // Use canonical state notifications to track time to inclusion.
             Some(Ok(notification)) = canonical_stream.next() => {
-                tracker.handle_canon_state_notification(notification);
+                let received_at = Instant::now();
+                tracker.handle_canon_state_notification(notification, received_at);
             }
 
             // Track flashblock inclusion timing.
             Ok(pending_blocks) = flashblock_stream.recv() => {
-                tracker.handle_flashblock_notification(pending_blocks);
+                let received_at = Instant::now();
+                tracker.handle_flashblock_notification(pending_blocks, received_at);
             }
         }
     }
