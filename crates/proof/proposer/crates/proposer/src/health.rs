@@ -147,11 +147,7 @@ async fn admin_rpc(
             let running = driver.is_running();
             JsonRpcResponse::success(request.id, serde_json::json!(running))
         }
-        other => JsonRpcResponse::error(
-            request.id,
-            -32601,
-            format!("method not found: {other}"),
-        ),
+        other => JsonRpcResponse::error(request.id, -32601, format!("method not found: {other}")),
     };
 
     Json(response)
@@ -265,10 +261,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
 
         let has_admin = driver.is_some();
-        let state = ServerState {
-            ready,
-            driver,
-        };
+        let state = ServerState { ready, driver };
 
         let mut app = Router::new()
             .route("/healthz", get(liveness))
@@ -307,9 +300,7 @@ mod tests {
         let ready = Arc::new(AtomicBool::new(false));
         let (addr, cancel) = start_test_server(ready, None).await;
 
-        let resp = reqwest::get(format!("http://{addr}/readyz"))
-            .await
-            .unwrap();
+        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 503);
 
         cancel.cancel();
@@ -320,9 +311,7 @@ mod tests {
         let ready = Arc::new(AtomicBool::new(true));
         let (addr, cancel) = start_test_server(ready, None).await;
 
-        let resp = reqwest::get(format!("http://{addr}/readyz"))
-            .await
-            .unwrap();
+        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 200);
 
         cancel.cancel();
@@ -334,25 +323,19 @@ mod tests {
         let (addr, cancel) = start_test_server(Arc::clone(&ready), None).await;
 
         // Initially not ready
-        let resp = reqwest::get(format!("http://{addr}/readyz"))
-            .await
-            .unwrap();
+        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 503);
 
         // Mark as ready
         ready.store(true, Ordering::SeqCst);
 
-        let resp = reqwest::get(format!("http://{addr}/readyz"))
-            .await
-            .unwrap();
+        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 200);
 
         // Mark as not ready (shutdown)
         ready.store(false, Ordering::SeqCst);
 
-        let resp = reqwest::get(format!("http://{addr}/readyz"))
-            .await
-            .unwrap();
+        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 503);
 
         cancel.cancel();
@@ -433,10 +416,12 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(body["error"]["code"], -32601);
-        assert!(body["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("method not found"));
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("method not found")
+        );
 
         cancel.cancel();
     }

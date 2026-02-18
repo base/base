@@ -4,7 +4,7 @@ use std::{net::IpAddr, time::Duration};
 
 use alloy::signers::k256::ecdsa::SigningKey;
 use alloy::signers::local::PrivateKeySigner;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use backon::ExponentialBuilder;
 use base_cli_utils::LogConfig;
 use thiserror::Error;
@@ -90,10 +90,14 @@ pub struct ProposerConfig {
     pub l2_eth_rpc: Url,
     /// Use reth-specific RPC calls for L2.
     pub l2_reth: bool,
-    /// Minimum number of blocks between proposals.
-    pub min_proposal_interval: u64,
-    /// Address of the on-chain verifier contract.
-    pub onchain_verifier_addr: Address,
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    pub anchor_state_registry_addr: Address,
+    /// Address of the `DisputeGameFactory` contract on L1.
+    pub dispute_game_factory_addr: Address,
+    /// Game type ID for `AggregateVerifier` dispute games.
+    pub game_type: u32,
+    /// Keccak256 hash of the TEE image PCR0.
+    pub tee_image_hash: B256,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
     /// RPC request timeout.
@@ -135,15 +139,6 @@ impl ProposerConfig {
             });
         }
 
-        // Validate min_proposal_interval > 0
-        if cli.proposer.min_proposal_interval == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "min-proposal-interval",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
-
         // Validate metrics port when enabled
         if cli.metrics.enabled && cli.metrics.port == 0 {
             return Err(ConfigError::Metrics(
@@ -174,8 +169,10 @@ impl ProposerConfig {
             l1_eth_rpc: cli.proposer.l1_eth_rpc,
             l2_eth_rpc: cli.proposer.l2_eth_rpc,
             l2_reth: cli.proposer.l2_reth,
-            min_proposal_interval: cli.proposer.min_proposal_interval,
-            onchain_verifier_addr: cli.proposer.onchain_verifier_addr,
+            anchor_state_registry_addr: cli.proposer.anchor_state_registry_addr,
+            dispute_game_factory_addr: cli.proposer.dispute_game_factory_addr,
+            game_type: cli.proposer.game_type,
+            tee_image_hash: cli.proposer.tee_image_hash,
             poll_interval: cli.proposer.poll_interval,
             rpc_timeout: cli.proposer.rpc_timeout,
             retry,
@@ -394,10 +391,14 @@ mod tests {
                 l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
                 l2_eth_rpc: Url::parse("http://localhost:9545").unwrap(),
                 l2_reth: false,
-                min_proposal_interval: 512,
-                onchain_verifier_addr: "0x1234567890123456789012345678901234567890"
+                anchor_state_registry_addr: "0x1234567890123456789012345678901234567890"
                     .parse()
                     .unwrap(),
+                dispute_game_factory_addr: "0x2234567890123456789012345678901234567890"
+                    .parse()
+                    .unwrap(),
+                game_type: 1,
+                tee_image_hash: B256::repeat_byte(0x01),
                 poll_interval: Duration::from_secs(12),
                 rpc_timeout: Duration::from_secs(30),
                 rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
@@ -436,7 +437,7 @@ mod tests {
         let cli = minimal_cli();
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert!(!config.allow_non_finalized);
-        assert_eq!(config.min_proposal_interval, 512);
+        assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
     }
@@ -450,20 +451,6 @@ mod tests {
             result,
             Err(ConfigError::OutOfRange {
                 field: "poll-interval",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn test_zero_min_proposal_interval() {
-        let mut cli = minimal_cli();
-        cli.proposer.min_proposal_interval = 0;
-        let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange {
-                field: "min-proposal-interval",
                 ..
             })
         ));

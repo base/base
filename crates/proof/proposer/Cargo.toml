@@ -72,8 +72,8 @@ jsonrpsee = { version = "0.26.0", features = ["http-client", "ws-client"] }
 moka = { version = "0.12", features = ["future"] }
 
 # Enclave
-op-enclave-client = { git = "https://github.com/jackchuma/op-enclave.git", rev = "c1ffea9022e367ef566d51215fbf89e202054ed6", package = "op-enclave-client" }
-op-enclave-core = { git = "https://github.com/jackchuma/op-enclave.git", rev = "c1ffea9022e367ef566d51215fbf89e202054ed6", package = "op-enclave-core" }
+op-enclave-client = { git = "https://github.com/jackchuma/op-enclave.git", branch = "jack/rust", package = "op-enclave-client" }
+op-enclave-core = { git = "https://github.com/jackchuma/op-enclave.git", branch = "jack/rust", package = "op-enclave-core" }
 
 # Retry
 backon = { version = "1", features = ["tokio-sleep"] }
@@ -147,3 +147,15 @@ codegen-units = 1
 [profile.dev]
 opt-level = 1
 overflow-checks = true
+
+# Patch crates.io to use the same op-alloy versions as the enclave's kona deps.
+# Without this, the proposer would compile with crates.io op-alloy types that are
+# incompatible with the git-sourced types used by kona inside the enclave.
+[patch.crates-io]
+op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy-network = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }

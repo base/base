@@ -43,6 +43,10 @@ pub struct Prover<L1, L2, E> {
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     enclave_client: E,
+    /// The proposer address included in the signed journal.
+    proposer: alloy_primitives::Address,
+    /// The keccak256 hash of the TEE image PCR0.
+    tee_image_hash: B256,
 }
 
 impl<L1, L2, E> Prover<L1, L2, E>
@@ -60,6 +64,8 @@ where
     /// * `l1_client` - L1 RPC client
     /// * `l2_client` - L2 RPC client
     /// * `enclave_client` - Enclave RPC client
+    /// * `proposer` - The proposer address for the signed journal
+    /// * `tee_image_hash` - The TEE image hash for the signed journal
     #[must_use]
     pub fn new(
         mut config: PerChainConfig,
@@ -67,6 +73,8 @@ where
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         enclave_client: E,
+        proposer: alloy_primitives::Address,
+        tee_image_hash: B256,
     ) -> Self {
         config.force_defaults();
         let config_hash = config.hash();
@@ -77,6 +85,8 @@ where
             l1_client,
             l2_client,
             enclave_client,
+            proposer,
+            tee_image_hash,
         }
     }
 
@@ -177,6 +187,8 @@ where
                 witness: witness.clone(),
                 message_account: msg_account.clone(),
                 prev_message_account_hash: prev_msg_account.storage_hash,
+                proposer: self.proposer,
+                tee_image_hash: self.tee_image_hash,
             };
 
             match tokio::time::timeout(
@@ -189,37 +201,54 @@ where
                 Err(_) => return Err(ProposerError::Enclave("enclave execution timed out".into())),
                 Ok(Err(err)) => {
                     let err_str = err.to_string();
-                    let Some(missing_hash) = extract_missing_trie_hash(&err_str) else {
-                        return Err(ProposerError::Enclave(err_str));
-                    };
 
-                    if repairs >= MAX_MISSING_TRIE_NODE_REPAIRS {
+                    // Try to repair missing trie nodes.
+                    if let Some(missing_hash) = extract_missing_trie_hash(&err_str) {
+                        if repairs >= MAX_MISSING_TRIE_NODE_REPAIRS {
+                            tracing::warn!(
+                                block_number = block.header.number,
+                                repairs,
+                                hash = %missing_hash,
+                                "Reached maximum trie node repairs from debug_dbGet"
+                            );
+                            return Err(ProposerError::Enclave(err_str));
+                        }
+
+                        let key = format!("{missing_hash:#x}");
+                        if witness.state.contains_key(&key) {
+                            return Err(ProposerError::Enclave(err_str));
+                        }
+
+                        let preimage = self.l2_client.db_get(missing_hash).await?;
+                        witness
+                            .state
+                            .insert(key, format!("0x{}", hex::encode(preimage)));
+                        repairs += 1;
+
                         tracing::warn!(
                             block_number = block.header.number,
                             repairs,
                             hash = %missing_hash,
-                            "Reached maximum trie node repairs from debug_dbGet"
+                            "Recovered missing trie node via debug_dbGet; retrying enclave execution"
+                        );
+                        continue;
+                    }
+
+                    // Missing header errors are not recoverable from the proposer side.
+                    // The enclave's kona executor needs all referenced headers in its
+                    // trie DB, and it looks them up by computing the hash from the
+                    // consensus header. If the kona version doesn't correctly hash
+                    // post-Pectra headers, this lookup will always fail regardless of
+                    // whether the header data is present.
+                    if extract_missing_header_hash(&err_str).is_some() {
+                        tracing::warn!(
+                            block_number = block.header.number,
+                            "Enclave cannot find header by hash -- this is likely a kona executor version issue with post-Pectra header hashing"
                         );
                         return Err(ProposerError::Enclave(err_str));
                     }
 
-                    let key = format!("{missing_hash:#x}");
-                    if witness.state.contains_key(&key) {
-                        return Err(ProposerError::Enclave(err_str));
-                    }
-
-                    let preimage = self.l2_client.db_get(missing_hash).await?;
-                    witness
-                        .state
-                        .insert(key, format!("0x{}", hex::encode(preimage)));
-                    repairs += 1;
-
-                    tracing::warn!(
-                        block_number = block.header.number,
-                        repairs,
-                        hash = %missing_hash,
-                        "Recovered missing trie node via debug_dbGet; retrying enclave execution"
-                    );
+                    return Err(ProposerError::Enclave(err_str));
                 }
             }
         };
@@ -283,12 +312,19 @@ where
     /// - Multiple proposals are aggregated via the enclave, with withdrawal
     ///   flags OR'd and block ranges tracked via `from`/`to`
     ///
+    /// # Arguments
+    ///
+    /// * `prev_output_root` - The output root before the first proposal
+    /// * `prev_block_number` - The L2 block number before the first proposal
+    /// * `proposals` - The proposals to aggregate
+    ///
     /// # Errors
     ///
     /// Returns an error if no proposals are provided or enclave aggregation fails.
     pub async fn aggregate(
         &self,
         prev_output_root: B256,
+        prev_block_number: u64,
         proposals: Vec<ProverProposal>,
     ) -> Result<ProverProposal, ProposerError> {
         if proposals.is_empty() {
@@ -305,7 +341,7 @@ where
         let to = proposals.last().unwrap().to.clone();
 
         let output = self
-            .aggregate_enclave(prev_output_root, enclave_proposals)
+            .aggregate_enclave(prev_output_root, prev_block_number, enclave_proposals)
             .await?;
 
         Ok(ProverProposal {
@@ -320,12 +356,19 @@ where
     async fn aggregate_enclave(
         &self,
         prev_output_root: B256,
+        prev_block_number: u64,
         proposals: Vec<Proposal>,
     ) -> Result<Proposal, ProposerError> {
         tokio::time::timeout(
             ENCLAVE_TIMEOUT,
-            self.enclave_client
-                .aggregate(self.config_hash, prev_output_root, proposals),
+            self.enclave_client.aggregate(
+                self.config_hash,
+                prev_output_root,
+                prev_block_number,
+                proposals,
+                self.proposer,
+                self.tee_image_hash,
+            ),
         )
         .await
         .map_err(|_| ProposerError::Enclave("enclave aggregation timed out".into()))?
@@ -445,6 +488,30 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
     }
 
     config
+}
+
+/// Extracts a missing header hash from enclave error text.
+///
+/// Looks for the substring "header not found for hash: 0x...".
+fn extract_missing_header_hash(err: &str) -> Option<B256> {
+    let marker = "header not found for hash:";
+    let idx = err.find(marker)?;
+    let suffix = err.get(idx + marker.len()..)?.trim_start();
+    let mut end = suffix.len();
+    for (i, c) in suffix.char_indices() {
+        if !(c.is_ascii_hexdigit() || c == 'x') {
+            end = i;
+            break;
+        }
+    }
+    let candidate = suffix
+        .get(..end)?
+        .trim_end_matches('"')
+        .trim_end_matches(',');
+    if !candidate.starts_with("0x") {
+        return None;
+    }
+    candidate.parse().ok()
 }
 
 /// Extracts a missing trie node hash from enclave error text.
@@ -621,7 +688,10 @@ mod tests {
             &self,
             _config_hash: B256,
             _prev_output_root: B256,
+            _prev_block_number: u64,
             _proposals: Vec<Proposal>,
+            _proposer: alloy_primitives::Address,
+            _tee_image_hash: B256,
         ) -> Result<Proposal, ClientError> {
             Ok(self.aggregate_result.clone())
         }
@@ -640,7 +710,7 @@ mod tests {
             },
         });
 
-        let result = prover.aggregate(B256::ZERO, vec![]).await;
+        let result = prover.aggregate(B256::ZERO, 0, vec![]).await;
         assert!(result.is_err());
         assert!(
             result
@@ -664,7 +734,7 @@ mod tests {
         });
 
         let single = test_proposal(5, 5, true);
-        let result = prover.aggregate(B256::ZERO, vec![single.clone()]).await;
+        let result = prover.aggregate(B256::ZERO, 0, vec![single.clone()]).await;
         let agg = result.unwrap();
 
         // Single proposal is returned as-is
@@ -694,7 +764,7 @@ mod tests {
             test_proposal(21, 25, false),
         ];
 
-        let result = prover.aggregate(B256::ZERO, proposals).await.unwrap();
+        let result = prover.aggregate(B256::ZERO, 0, proposals).await.unwrap();
 
         assert_eq!(result.from.number, 10);
         assert_eq!(result.to.number, 25);
@@ -719,6 +789,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![
                     test_proposal(1, 1, false),
                     test_proposal(2, 2, false),
@@ -736,6 +807,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![
                     test_proposal(1, 1, true),
                     test_proposal(2, 2, false),
@@ -753,6 +825,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![
                     test_proposal(1, 1, false),
                     test_proposal(2, 2, true),
@@ -770,6 +843,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![
                     test_proposal(1, 1, false),
                     test_proposal(2, 2, false),
@@ -787,6 +861,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![
                     test_proposal(1, 1, true),
                     test_proposal(2, 2, true),
@@ -815,7 +890,10 @@ mod tests {
             &self,
             _: B256,
             _: B256,
+            _: u64,
             _: Vec<Proposal>,
+            _: alloy_primitives::Address,
+            _: B256,
         ) -> Result<Proposal, ClientError> {
             Err(ClientError::ClientCreation(
                 "enclave aggregate failed".into(),
@@ -830,6 +908,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![test_proposal(1, 1, false), test_proposal(2, 2, false)],
             )
             .await;
@@ -857,7 +936,10 @@ mod tests {
             &self,
             _: B256,
             _: B256,
+            _: u64,
             _: Vec<Proposal>,
+            _: alloy_primitives::Address,
+            _: B256,
         ) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
             Ok(Proposal {
@@ -878,6 +960,7 @@ mod tests {
         let result = prover
             .aggregate(
                 B256::ZERO,
+                0,
                 vec![test_proposal(1, 1, false), test_proposal(2, 2, false)],
             )
             .await;
