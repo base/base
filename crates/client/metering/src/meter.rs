@@ -10,7 +10,7 @@ use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_primitives_traits::{Account, SealedHeader};
+use reth_primitives_traits::{Account, Bytecode, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
@@ -153,11 +153,12 @@ where
 
     // Pre-fetch account information for all transactions before creating builder. The
     // account information is used to validate the transaction.
-    let mut accounts: HashMap<Address, Option<Account>> = HashMap::new();
+    let mut account_infos: HashMap<Address, (Option<Account>, Option<Bytecode>)> = HashMap::new();
     for tx in bundle.transactions() {
         let from = tx.recover_signer()?;
         let account = db.database.basic_account(&from)?;
-        accounts.insert(from, account);
+        let code = db.database.account_code(&from)?;
+        account_infos.insert(from, (account, code));
     }
 
     // Execute transactions
@@ -179,13 +180,13 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
-            let account = accounts
+            let (account, sender_code) = account_infos
                 .get(&from)
-                .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?
-                .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
+                .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?;
+            let account = account.ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
 
             // Don't waste resources metering invalid transactions
-            validate_tx(account, tx, &mut l1_block_info)
+            validate_tx(account, sender_code.as_ref(), tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
             let gas_used = builder

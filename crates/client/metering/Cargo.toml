@@ -68,6 +68,7 @@ reth-db = { workspace = true, features = ["op", "test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # revm
+revm-bytecode.workspace = true
 revm-context-interface.workspace = true
 
 # alloy
