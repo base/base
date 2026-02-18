@@ -140,6 +140,7 @@ base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 base-builder-core = { path = "crates/builder/core" }
 base-builder-metering = { path = "crates/builder/metering" }
 base-builder-publish = { path = "crates/builder/publish" }
+base-payload-builder = { path = "crates/builder/payload" }
 
 # Infra
 based = { path = "crates/infra/based" }

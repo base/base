@@ -1,3 +1,4 @@
+/// Build arguments for payload construction.
 use std::sync::Arc;
 
 use parking_lot::Mutex;

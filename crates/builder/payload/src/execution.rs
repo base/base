@@ -1,7 +1,6 @@
-//! Transaction execution types and errors.
-//!
-//! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
-
+/// Transaction execution types and errors.
+///
+/// Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, U256};
@@ -10,7 +9,7 @@ use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use thiserror::Error;
 
-use crate::flashblocks::FlashblocksExecutionInfo;
+use crate::FlashblocksExecutionInfo;
 
 /// Resource limits configuration for transaction and block constraints.
 ///
@@ -65,14 +64,18 @@ pub struct TxResources {
 /// These can operate in dry-run or enforcement mode via the execution metering mode setting.
 #[derive(Debug, Error, Clone)]
 pub enum ExecutionMeteringLimitExceeded {
+    /// Transaction execution time exceeded the per-transaction limit.
     #[error("transaction execution time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionExecutionTime(u128, u128),
+    /// Flashblock execution time exceeded the flashblock-level limit.
     #[error(
         "flashblock execution time exceeded: flashblock_used_us={0} tx_time_us={1} limit_us={2}"
     )]
     FlashblockExecutionTime(u128, u128, u128),
+    /// Transaction state root time exceeded the per-transaction limit.
     #[error("transaction state root time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionStateRootTime(u128, u128),
+    /// Block state root time exceeded the block-level limit.
     #[error("block state root time exceeded: cumulative_us={0} tx_time_us={1} block_limit_us={2}")]
     BlockStateRootTime(u128, u128, u128),
 }
@@ -173,6 +176,7 @@ pub enum TxnOutcome {
     RevertedAndExcluded,
 }
 
+/// Aggregated execution information for the current block.
 #[derive(Default, Debug)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).

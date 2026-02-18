@@ -1,15 +1,10 @@
-//! Trait bounds for OP Stack builder components.
-
-use alloy_consensus::Header;
+/// Trait bounds for OP Stack builder node types.
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::OpEngineTypes;
-use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
-use reth_optimism_txpool::OpPooledTx;
-use reth_payload_util::PayloadTransactions;
-use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
-use reth_transaction_pool::TransactionPool;
+use reth_optimism_primitives::OpPrimitives;
 
+/// Trait alias bounding a full node to OP Stack types.
 pub trait NodeBounds:
     FullNodeTypes<
     Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = OpChainSpec, Primitives = OpPrimitives>,
@@ -25,45 +20,5 @@ impl<T> NodeBounds for T where
             Primitives = OpPrimitives,
         >,
     >
-{
-}
-
-pub trait PoolBounds:
-    TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>> + Unpin + 'static
-where
-    <Self as TransactionPool>::Transaction: OpPooledTx,
-{
-}
-
-impl<T> PoolBounds for T
-where
-    T: TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>> + Unpin + 'static,
-    <Self as TransactionPool>::Transaction: OpPooledTx,
-{
-}
-
-pub trait ClientBounds:
-    StateProviderFactory
-    + ChainSpecProvider<ChainSpec = OpChainSpec>
-    + BlockReaderIdExt<Header = Header>
-    + Clone
-{
-}
-
-impl<T> ClientBounds for T where
-    T: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
-        + BlockReaderIdExt<Header = Header>
-        + Clone
-{
-}
-
-pub trait PayloadTxsBounds:
-    PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
-{
-}
-
-impl<T> PayloadTxsBounds for T where
-    T: PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
 {
 }

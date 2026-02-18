@@ -1,8 +1,11 @@
+/// Builder metrics for tracking payload building performance.
 use metrics::IntoF64;
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Gauge, Histogram},
 };
+
+use crate::{ExecutionMeteringLimitExceeded, TxnExecutionError};
 
 /// base-builder metrics
 #[derive(Metrics, Clone)]
@@ -143,6 +146,80 @@ pub struct BuilderMetrics {
 }
 
 impl BuilderMetrics {
+    /// Record metrics for a limit that can be evaluated via static analysis (always enforced).
+    pub fn record_static_limit_exceeded(&self, err: &TxnExecutionError) {
+        match err {
+            TxnExecutionError::TransactionDASizeExceeded(_, _) => {
+                self.tx_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionError::BlockDASizeExceeded { .. } => {
+                self.block_da_size_exceeded_total.increment(1);
+            }
+            TxnExecutionError::DAFootprintLimitExceeded { .. } => {
+                self.da_footprint_exceeded_total.increment(1);
+            }
+            TxnExecutionError::TransactionGasLimitExceeded { .. } => {
+                self.gas_limit_exceeded_total.increment(1);
+            }
+            _ => {}
+        }
+    }
+
+    /// Record metrics for a limit that requires execution data (enforcement is configurable).
+    pub fn record_execution_metering_limit_exceeded(
+        &self,
+        limit: &ExecutionMeteringLimitExceeded,
+    ) {
+        self.resource_limit_would_reject_total.increment(1);
+        match limit {
+            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
+                self.tx_execution_time_exceeded_total.increment(1);
+            }
+            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+                self.flashblock_execution_time_exceeded_total.increment(1);
+            }
+            ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
+                self.tx_state_root_time_exceeded_total.increment(1);
+            }
+            ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
+                self.block_state_root_time_exceeded_total.increment(1);
+            }
+        }
+    }
+
+    /// Record the priority fee of a rejected transaction with the rejection reason as a label.
+    pub fn record_rejected_tx_priority_fee(&self, reason: &TxnExecutionError, priority_fee: f64) {
+        let r = match reason {
+            TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
+            TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
+            TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
+            TxnExecutionError::TransactionGasLimitExceeded { .. } => {
+                "transaction_gas_limit_exceeded"
+            }
+            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
+                    "tx_execution_time_exceeded"
+                }
+                ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+                    "flashblock_execution_time_exceeded"
+                }
+                ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
+                    "tx_state_root_time_exceeded"
+                }
+                ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
+                    "block_state_root_time_exceeded"
+                }
+            },
+            _ => "unknown",
+        };
+        reth_metrics::metrics::histogram!(
+            "base_builder_rejected_tx_priority_fee",
+            "reason" => r
+        )
+        .record(priority_fee);
+    }
+
+    /// Record payload builder metrics for a completed flashblock.
     pub fn set_payload_builder_metrics(
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,

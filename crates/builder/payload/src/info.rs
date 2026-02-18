@@ -1,5 +1,4 @@
-//! Contains flashblocks execution info.
-
+/// Contains flashblocks execution info.
 use base_access_lists::FlashblockAccessListBuilder;
 
 /// Execution information specific to flashblocks.

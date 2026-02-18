@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base-primitives.workspace = true
+base-payload-builder.workspace = true
+eyre.workspace = true
 futures.workspace = true
 metrics.workspace = true
 serde.workspace = true

@@ -4,6 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use base_payload_builder::{BlockCell, BuildArguments, PayloadBuilder};
 use futures_util::Future;
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig};
@@ -14,7 +15,7 @@ use reth_tasks::TaskSpawner;
 use tokio::{sync::oneshot, time::Sleep};
 use tokio_util::sync::CancellationToken;
 
-use crate::{BlockCell, BuildArguments, PayloadBuilder, ResolvePayload};
+use crate::ResolvePayload;
 
 /// A [`PayloadJob`] that builds empty blocks.
 pub struct BlockPayloadJob<Tasks, Builder>

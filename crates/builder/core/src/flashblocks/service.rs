@@ -17,8 +17,8 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
 use crate::{
-    BlockPayloadJobGenerator, BuilderConfig, BuilderMetrics, NodeBounds, OpPayloadBuilder,
-    PayloadHandler, PoolBounds,
+    BlockPayloadJobGenerator, BuilderConfig, BuilderMetrics, FlashblockPublisher, NodeBounds,
+    OpPayloadBuilder, PayloadHandler, PoolBounds,
 };
 
 /// Builder for the flashblocks payload service.
@@ -42,13 +42,13 @@ impl FlashblocksServiceBuilder {
         let metrics = Arc::new(BuilderMetrics::default());
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
-        let ws_pub: Arc<WebSocketPublisher> =
-            WebSocketPublisher::new(self.0.flashblocks.ws_addr)?.into();
+        let ws_pub: Arc<dyn FlashblockPublisher> =
+            Arc::new(WebSocketPublisher::new(self.0.flashblocks.ws_addr)?);
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
-            self.0.clone(),
+            self.0.payload_config(),
             built_payload_tx,
             ws_pub,
             metrics,

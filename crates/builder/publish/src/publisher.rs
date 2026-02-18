@@ -73,6 +73,12 @@ impl WebSocketPublisher {
     }
 }
 
+impl base_payload_builder::FlashblockPublisher for WebSocketPublisher {
+    fn publish(&self, payload: &base_primitives::FlashblocksPayloadV1) -> eyre::Result<usize> {
+        Ok(self.publish(payload)?)
+    }
+}
+
 impl Drop for WebSocketPublisher {
     fn drop(&mut self) {
         self.cancel.cancel();

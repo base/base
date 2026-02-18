@@ -1,3 +1,4 @@
+/// A cell that holds a value and allows waiting for it to be set.
 use std::{
     pin::Pin,
     sync::Arc,
@@ -13,21 +14,26 @@ use tokio::sync::Notify;
 /// Values can be overwritten by calling [`BlockCell::set`] multiple times.
 #[derive(Clone, Debug)]
 pub struct BlockCell<T> {
+    /// The inner value.
     pub inner: Arc<Mutex<Option<T>>>,
+    /// Notification channel for value changes.
     pub notify: Arc<Notify>,
 }
 
 impl<T: Clone> BlockCell<T> {
+    /// Creates a new empty [`BlockCell`].
     pub fn new() -> Self {
         Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
     }
 
+    /// Sets the value and notifies waiters.
     pub fn set(&self, value: T) {
         let mut inner = self.inner.lock();
         *inner = Some(value);
         self.notify.notify_one();
     }
 
+    /// Returns the current value, if set.
     pub fn get(&self) -> Option<T> {
         let inner = self.inner.lock();
         inner.clone()
@@ -42,6 +48,7 @@ impl<T: Clone> BlockCell<T> {
 /// Future that resolves when a value is set in [`BlockCell`].
 #[derive(Clone)]
 pub struct WaitForValue<T> {
+    /// The cell being waited on.
     pub cell: BlockCell<T>,
 }
 

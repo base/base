@@ -24,9 +24,11 @@ min-warn-logs = [ "tracing/release_max_level_warn" ]
 min-info-logs = [ "tracing/release_max_level_info" ]
 min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
+cli = [ "base-payload-builder/cli" ]
 test-utils = [
 	"base-bundles/test-utils",
 	"base-client-node/test-utils",
+	"base-payload-builder/test-utils",
 	"base-primitives/test-utils",
 	"ctor",
 	"http-body-util",
@@ -58,6 +60,7 @@ base-bundles.workspace = true
 base-client-node.workspace = true
 base-primitives.workspace = true
 base-access-lists.workspace = true
+base-payload-builder.workspace = true
 base-builder-publish.workspace = true
 
 # reth

@@ -1,36 +1,30 @@
-#![allow(missing_docs)]
 #![doc = include_str!("../README.md")]
 #![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
+// Re-export types from the payload builder crate.
+pub use base_payload_builder::{
+    BestFlashblocksTxs, BlockAssembler, BlockCell, BlockRoots, BuildArguments, BuilderMetrics,
+    ClientBounds, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
+    FlashblockBatchLimits, FlashblockLimits, FlashblockPublisher, FlashblockScheduler,
+    FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx, GuardedPublisher,
+    MeteringProvider, NoopFlashblockPublisher, NoopMeteringProvider, OpPayloadBuilder,
+    OpPayloadBuilderCtx, PayloadBuilder, PayloadBuilderConfig, PayloadTxsBounds, PoolBounds,
+    PublishResult, ResourceLimits, SharedMeteringProvider, TxExecutor, TxResources,
+    TxnExecutionError, TxnOutcome, WaitForValue,
+};
+
 mod config;
 pub use config::BuilderConfig;
 
-mod metrics;
-pub use metrics::BuilderMetrics;
-
-mod execution;
-pub use execution::{
-    ExecutionInfo, ExecutionMeteringLimitExceeded, ResourceLimits, TxResources, TxnExecutionError,
-    TxnOutcome,
-};
-
-mod execution_metering_mode;
-pub use execution_metering_mode::ExecutionMeteringMode;
-
 mod traits;
-pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
-
-mod metering;
-pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
+pub use traits::NodeBounds;
 
 mod flashblocks;
 pub use flashblocks::{
-    BestFlashblocksTxs, BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments,
-    FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx, FlashblocksServiceBuilder,
-    OpPayloadBuilder, OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload,
-    WaitForValue,
+    BlockPayloadJob, BlockPayloadJobGenerator, FlashblocksServiceBuilder, PayloadHandler,
+    ResolvePayload,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

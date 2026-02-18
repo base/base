@@ -3,11 +3,11 @@
 use core::time::Duration;
 use std::sync::Arc;
 
-use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
-
-use crate::{
-    ExecutionMeteringMode, FlashblocksConfig, NoopMeteringProvider, SharedMeteringProvider,
+use base_payload_builder::{
+    ExecutionMeteringMode, FlashblocksConfig, NoopMeteringProvider, PayloadBuilderConfig,
+    SharedMeteringProvider,
 };
+use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -92,6 +92,31 @@ impl Default for BuilderConfig {
             execution_metering_mode: ExecutionMeteringMode::Off,
             metering_provider: Arc::new(NoopMeteringProvider),
         }
+    }
+}
+
+impl BuilderConfig {
+    /// Creates a [`PayloadBuilderConfig`] from this builder config.
+    pub fn payload_config(&self) -> PayloadBuilderConfig {
+        PayloadBuilderConfig {
+            block_time: self.block_time,
+            flashblocks: self.flashblocks.clone(),
+            da_config: self.da_config.clone(),
+            gas_limit_config: self.gas_limit_config.clone(),
+            max_gas_per_txn: self.max_gas_per_txn,
+            max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
+            max_state_root_time_per_tx_us: self.max_state_root_time_per_tx_us,
+            flashblock_execution_time_budget_us: self.flashblock_execution_time_budget_us,
+            block_state_root_time_budget_us: self.block_state_root_time_budget_us,
+            execution_metering_mode: self.execution_metering_mode,
+            sampling_ratio: self.sampling_ratio,
+            metering_provider: Arc::clone(&self.metering_provider),
+        }
+    }
+
+    /// Returns the number of flashblocks per block.
+    pub fn flashblocks_per_block(&self) -> u64 {
+        self.payload_config().flashblocks_per_block()
     }
 }
 

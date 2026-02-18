@@ -1,0 +1,79 @@
+[package]
+name = "base-payload-builder"
+description = "Payload building types, traits, and components for the Base builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-bundles.workspace = true
+base-primitives.workspace = true
+base-access-lists.workspace = true
+
+# reth
+reth-evm.workspace = true
+reth-trie.workspace = true
+reth-revm.workspace = true
+reth-metrics.workspace = true
+reth-provider.workspace = true
+reth-node-api.workspace = true
+reth-chainspec.workspace = true
+reth-primitives.workspace = true
+reth-payload-util.workspace = true
+reth-payload-builder.workspace = true
+reth-primitives-traits.workspace = true
+reth-optimism-evm.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-forks.workspace = true
+reth-optimism-txpool.workspace = true
+reth-transaction-pool.workspace = true
+reth-payload-primitives.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-optimism-consensus.workspace = true
+reth-optimism-primitives.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-optimism-payload-builder.workspace = true
+
+# revm
+revm.workspace = true
+op-revm.workspace = true
+
+# alloy
+alloy-evm.workspace = true
+alloy-eips.workspace = true
+alloy-op-evm.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
+op-alloy-flz.workspace = true
+op-alloy-consensus.workspace = true
+
+# misc
+eyre.workspace = true
+either.workspace = true
+serde.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+parking_lot.workspace = true
+async-trait.workspace = true
+derive_more.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-util = { workspace = true, features = ["rt"] }
+clap = { workspace = true, optional = true }
+
+[dev-dependencies]
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+
+[features]
+cli = [ "clap" ]
+test-utils = [ "base-bundles/test-utils", "base-primitives/test-utils" ]

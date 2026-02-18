@@ -1,11 +1,10 @@
-use clap::ValueEnum;
-
 /// Mode for execution metering limits (execution time and state root time).
 ///
 /// Controls how the builder handles execution metering limits that depend on
 /// metering service predictions. These limits can be gradually rolled out
 /// via dry-run mode before enforcement.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum ExecutionMeteringMode {
     /// Execution metering limits are disabled. No time limit checks are performed.
     #[default]

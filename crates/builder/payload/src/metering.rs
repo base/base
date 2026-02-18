@@ -1,5 +1,4 @@
-//! Trait abstraction for resource metering providers.
-
+/// Trait abstraction for resource metering providers.
 use core::fmt::Debug;
 use std::sync::Arc;
 

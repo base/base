@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+use base_payload_builder::{BlockCell, PayloadBuilder};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
@@ -14,7 +15,7 @@ use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::{BlockCell, BlockPayloadJob, PayloadBuilder};
+use crate::BlockPayloadJob;
 
 /// The generator type that creates new jobs that build empty blocks.
 #[derive(Debug)]
@@ -224,6 +225,7 @@ mod tests {
 
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
+    use base_payload_builder::BuildArguments;
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
@@ -240,7 +242,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::BuildArguments;
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {

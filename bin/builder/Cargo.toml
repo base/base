@@ -19,7 +19,7 @@ workspace = true
 # workspace
 base-cli-utils.workspace = true
 base-client-node.workspace = true
-base-builder-core.workspace = true
+base-builder-core = { workspace = true, features = ["cli"] }
 base-builder-metering.workspace = true
 base-txpool-rpc.workspace = true
 

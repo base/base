@@ -1,5 +1,4 @@
-//! An adapter over `BestPayloadTransactions`
-
+/// An adapter over `BestPayloadTransactions` for flashblock building.
 use std::{collections::HashSet, sync::Arc};
 
 use alloy_primitives::{Address, TxHash};
@@ -37,6 +36,7 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
+    /// Creates a new [`BestFlashblocksTxs`] wrapping the given iterator.
     pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self { inner, committed_transactions: Default::default() }
     }
@@ -90,7 +90,7 @@ mod tests {
         test_utils::{MockTransaction, MockTransactionFactory},
     };
 
-    use crate::flashblocks::best_txs::BestFlashblocksTxs;
+    use crate::best_txs::BestFlashblocksTxs;
 
     #[test]
     fn test_simple_case() {

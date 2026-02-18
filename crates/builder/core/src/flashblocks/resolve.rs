@@ -3,10 +3,9 @@ use std::{
     task::{Context, Poll},
 };
 
+use base_payload_builder::WaitForValue;
 use futures_util::FutureExt;
 use reth_payload_builder::PayloadBuilderError;
-
-use crate::flashblocks::cell::WaitForValue;
 
 /// A future that resolves when a payload becomes available in the [`BlockCell`].
 pub struct ResolvePayload<T> {
