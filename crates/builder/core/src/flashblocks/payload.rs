@@ -550,7 +550,6 @@ where
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
-            .to_vec()
             .iter()
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
