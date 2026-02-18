@@ -63,6 +63,10 @@ sol! {
         /// @notice The L2 sequence number (block number) for which this game is proposing an output root.
         function l2SequenceNumber() public pure returns (uint256 l2SequenceNumber_);
 
+        /// @notice The L2 block number for which this game is proposing an output root.
+        /// @dev Alias for l2SequenceNumber() for backward compatibility.
+        function l2BlockNumber() public pure returns (uint256 l2BlockNumber_);
+
         /// @notice Only the starting block number of the game.
         function startingBlockNumber() external view returns (uint256 startingBlockNumber_);
 
