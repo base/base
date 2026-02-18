@@ -3,7 +3,7 @@
 use alloy_serde::OtherFields;
 use serde::de::Error;
 
-/// Container type for all Optimism specific fields in a genesis file.
+/// Container type for all OP chain-specific fields in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpChainInfo {
@@ -14,7 +14,7 @@ pub struct OpChainInfo {
 }
 
 impl OpChainInfo {
-    /// Extracts the Optimism specific fields from a genesis file. These fields are expected to be
+    /// Extracts the OP chain-specific fields from a genesis file. These fields are expected to be
     /// contained in the `genesis.config` under `extra_fields` property.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
@@ -32,7 +32,7 @@ impl TryFrom<&OtherFields> for OpChainInfo {
     }
 }
 
-/// The Optimism-specific genesis block specification.
+/// The OP chain-specific genesis block specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpGenesisInfo {
@@ -59,7 +59,7 @@ pub struct OpGenesisInfo {
 }
 
 impl OpGenesisInfo {
-    /// Extract the Optimism-specific genesis info from a genesis file.
+    /// Extract the OP chain-specific genesis info from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
@@ -73,7 +73,7 @@ impl TryFrom<&OtherFields> for OpGenesisInfo {
     }
 }
 
-/// The Optimism-specific base fee specification.
+/// The OP chain-specific base fee specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpBaseFeeInfo {
@@ -86,7 +86,7 @@ pub struct OpBaseFeeInfo {
 }
 
 impl OpBaseFeeInfo {
-    /// Extracts the Optimism base fee info by looking for the `optimism` key. It is intended to be
+    /// Extracts the OP chain base fee info by looking for the `optimism` key. It is intended to be
     /// parsed from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
@@ -97,8 +97,8 @@ impl TryFrom<&OtherFields> for OpBaseFeeInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        if let Some(Ok(optimism_base_fee_info)) = others.get_deserialized::<Self>("optimism") {
-            Ok(optimism_base_fee_info)
+        if let Some(Ok(op_chain_base_fee_info)) = others.get_deserialized::<Self>("optimism") {
+            Ok(op_chain_base_fee_info)
         } else {
             Err(serde_json::Error::missing_field("optimism"))
         }
@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_optimism_genesis_info() {
+    fn test_extract_op_chain_genesis_info() {
         let genesis_info = r#"
         {
           "bedrockBlock": 10,
@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_optimism_base_fee_info() {
+    fn test_extract_op_chain_base_fee_info() {
         let base_fee_info = r#"
         {
           "optimism": {
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_optimism_chain_info() {
+    fn test_extract_op_chain_info() {
         let chain_info = r#"
         {
           "bedrockBlock": 10,
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_optimism_chain_info_no_base_fee() {
+    fn test_extract_op_chain_info_no_base_fee() {
         let chain_info = r#"
         {
           "bedrockBlock": 10,

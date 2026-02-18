@@ -44,7 +44,7 @@ pub enum OpTxEnvelope {
     Deposit(Sealed<TxDeposit>),
 }
 
-/// Represents an Optimism transaction envelope.
+/// Represents a transaction envelope for OP chains.
 ///
 /// Compared to Ethereum it can tell whether the transaction is a deposit.
 pub trait OpTransaction {
@@ -266,7 +266,7 @@ impl OpTxEnvelope {
         self.try_into_pooled().map(Into::into)
     }
 
-    /// Attempts to convert the optimism variant into an ethereum [`TxEnvelope`].
+    /// Attempts to convert the L2 variant into an ethereum [`TxEnvelope`].
     ///
     /// Returns the envelope as error if it is a variant unsupported on ethereum: [`TxDeposit`]
     pub fn try_into_eth_envelope(self) -> Result<TxEnvelope, ValueError<Self>> {
@@ -298,7 +298,7 @@ impl OpTxEnvelope {
         Ok(OpTransactionInfo::new(tx_info, deposit_meta))
     }
 
-    /// Attempts to convert an ethereum [`TxEnvelope`] into the optimism variant.
+    /// Attempts to convert an ethereum [`TxEnvelope`] into the L2 variant.
     ///
     /// Returns the given envelope as error if [`OpTxEnvelope`] doesn't support the variant
     /// (EIP-4844)
@@ -329,7 +329,7 @@ impl OpTxEnvelope {
         }
     }
 
-    /// Attempts to convert an ethereum [`TxEnvelope`] into the optimism variant.
+    /// Attempts to convert an ethereum [`TxEnvelope`] into the L2 variant.
     ///
     /// Returns the given envelope as error if [`OpTxEnvelope`] doesn't support the variant
     /// (EIP-4844)
@@ -460,7 +460,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            // Optimism's Deposit transaction does not have a signature. Directly return the
+            // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
         };
@@ -482,7 +482,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             Self::Eip2930(tx) => tx.signature_hash(),
             Self::Eip1559(tx) => tx.signature_hash(),
             Self::Eip7702(tx) => tx.signature_hash(),
-            // Optimism's Deposit transaction does not have a signature. Directly return the
+            // The Deposit transaction does not have a signature. Directly return the
             // `from` address.
             Self::Deposit(tx) => return Ok(tx.from),
         };

@@ -1,4 +1,4 @@
-//! Transaction types for Optimism.
+//! Transaction types for OP chains.
 
 mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};

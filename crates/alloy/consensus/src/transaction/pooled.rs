@@ -89,7 +89,7 @@ impl OpPooledTransaction {
         }
     }
 
-    /// Converts the transaction into the optimism [`OpTxEnvelope`].
+    /// Converts the transaction into the OP chain [`OpTxEnvelope`].
     pub fn into_op_envelope(self) -> OpTxEnvelope {
         match self {
             Self::Legacy(tx) => tx.into(),

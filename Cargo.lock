@@ -2261,18 +2261,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-alloy"
-version = "0.0.0"
-dependencies = [
- "base-alloy-consensus",
- "base-alloy-network",
- "base-alloy-provider",
- "base-alloy-rpc-jsonrpsee",
- "base-alloy-rpc-types",
- "base-alloy-rpc-types-engine",
-]
-
-[[package]]
 name = "base-alloy-consensus"
 version = "0.0.0"
 dependencies = [

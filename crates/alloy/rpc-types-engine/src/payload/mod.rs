@@ -1,4 +1,4 @@
-//! Versioned Optimism execution payloads
+//! Versioned execution payloads
 
 pub mod error;
 pub mod v3;

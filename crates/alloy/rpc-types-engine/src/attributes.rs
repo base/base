@@ -1,4 +1,4 @@
-//! Optimism-specific payload attributes.
+//! Payload attributes for OP chains.
 
 use alloc::vec::Vec;
 
@@ -16,7 +16,7 @@ use base_alloy_consensus::{
 };
 use sha2::Digest;
 
-/// Optimism Payload Attributes
+/// Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

@@ -1,4 +1,4 @@
-//! Optimism flashblock errors.
+//! Flashblock errors.
 
 /// Flashblock related errors.
 #[derive(Debug, thiserror::Error)]

@@ -1,4 +1,4 @@
-//! Optimism receipt type for execution and storage.
+//! Receipt type for execution and storage.
 
 use alloc::vec::Vec;
 use core::fmt::Debug;
@@ -14,7 +14,7 @@ use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 use super::{OpDepositReceipt, OpTxReceipt};
 use crate::{OpReceiptEnvelope, OpTxType};
 
-/// Typed Optimism transaction receipt.
+/// Transaction receipt for OP chains.
 ///
 /// Receipt containing result of transaction execution.
 #[derive(Clone, Debug, PartialEq, Eq)]

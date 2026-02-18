@@ -1,4 +1,4 @@
-//! Optimism execution payload envelope V3.
+//! Execution payload envelope V3.
 
 use alloc::vec::Vec;
 
@@ -185,7 +185,7 @@ impl ssz::Encode for OpExecutionPayloadV4 {
 /// V4.
 ///
 /// See also:
-/// [Optimism execution payload envelope v4] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv4>
+/// [execution payload envelope v4] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv4>
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

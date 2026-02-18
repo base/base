@@ -1,4 +1,4 @@
-//! Receipt types for Optimism.
+//! Receipt types for OP chains.
 
 use alloy_consensus::TxReceipt;
 

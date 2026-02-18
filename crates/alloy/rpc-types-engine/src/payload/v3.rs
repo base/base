@@ -1,4 +1,4 @@
-//! Optimism execution payload envelope V3.
+//! Execution payload envelope V3.
 
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
 /// V3.
 ///
 /// See also:
-/// [Optimism execution payload envelope v3] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv3>
+/// [execution payload envelope v3] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv3>
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

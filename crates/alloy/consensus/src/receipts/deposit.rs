@@ -1,4 +1,4 @@
-//! Transaction receipt types for Optimism.
+//! Transaction receipt types for OP chains.
 
 use alloy_consensus::{
     Eip658Value, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt,
@@ -25,7 +25,7 @@ pub struct OpDepositReceipt<T = Log> {
     /// The inner receipt type.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub inner: Receipt<T>,
-    /// Deposit nonce for Optimism deposit transactions
+    /// Deposit nonce for deposit transactions
     #[cfg_attr(
         feature = "serde",
         serde(
@@ -35,7 +35,7 @@ pub struct OpDepositReceipt<T = Log> {
         )
     )]
     pub deposit_nonce: Option<u64>,
-    /// Deposit receipt version for Optimism deposit transactions
+    /// Deposit receipt version for deposit transactions
     ///
     /// The deposit receipt version was introduced in Canyon to indicate an update to how
     /// receipt hashes should be computed when set. The state transition process

@@ -153,7 +153,7 @@ impl OpTypedTransaction {
         self.into_signed(signature).into()
     }
 
-    /// Attempts to convert the optimism variant into an ethereum [`TypedTransaction`].
+    /// Attempts to convert the L2 variant into an ethereum [`TypedTransaction`].
     ///
     /// Returns the typed transaction as error if it is a variant unsupported on ethereum:
     /// [`TxDeposit`]
@@ -161,7 +161,7 @@ impl OpTypedTransaction {
         self.try_into_eth_variant()
     }
 
-    /// Attempts to convert the optimism variant into an ethereum [`TypedTransaction`].
+    /// Attempts to convert the L2 variant into an ethereum [`TypedTransaction`].
     ///
     /// Returns the typed transaction as error if it is a variant unsupported on ethereum:
     /// [`TxDeposit`]

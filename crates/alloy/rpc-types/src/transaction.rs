@@ -1,4 +1,4 @@
-//! Optimism specific types related to transactions.
+//! Types related to transactions for OP chains.
 
 use alloy_consensus::{Transaction as TransactionTrait, Typed2718, transaction::Recovered};
 use alloy_eips::{Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization};
@@ -168,9 +168,8 @@ impl<T: TransactionTrait + Encodable2718> alloy_network_primitives::TransactionR
     }
 }
 
-/// Optimism specific transaction fields
+/// OP chain-specific transaction fields
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[doc(alias = "OptimismTxFields")]
 #[serde(rename_all = "camelCase")]
 pub struct OpTransactionFields {
     /// The ETH value to mint on L2
@@ -341,7 +340,7 @@ mod tests {
     #[test]
     fn can_deserialize_deposit() {
         // cast rpc eth_getTransactionByHash
-        // 0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9 --rpc-url optimism
+        // 0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9
         let rpc_tx = r#"{"blockHash":"0x9d86bb313ebeedf4f9f82bf8a19b426be656a365648a7c089b618771311db9f9","blockNumber":"0x798ad0b","hash":"0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9","transactionIndex":"0x0","type":"0x7e","nonce":"0x152ea95","input":"0x440a5e200000146b000f79c50000000000000003000000006725333f000000000141e287000000000000000000000000000000000000000000000000000000012439ee7e0000000000000000000000000000000000000000000000000000000063f363e973e96e7145ff001c81b9562cba7b6104eeb12a2bc4ab9f07c27d45cd81a986620000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985","mint":"0x0","sourceHash":"0x04e9a69416471ead93b02f0c279ab11ca0b635db5c1726a56faf22623bafde52","r":"0x0","s":"0x0","v":"0x0","yParity":"0x0","gas":"0xf4240","from":"0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001","to":"0x4200000000000000000000000000000000000015","depositReceiptVersion":"0x1","value":"0x0","gasPrice":"0x0"}"#;
 
         let tx = serde_json::from_str::<Transaction>(rpc_tx).unwrap();

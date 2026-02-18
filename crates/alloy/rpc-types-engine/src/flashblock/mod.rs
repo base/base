@@ -1,4 +1,4 @@
-//! # Flashblock Support for Optimism
+//! # Flashblock Support
 //!
 //! This module implements support for [Flashblocks](https://docs.base.org/chain/flashblocks),
 //! which provide real-time block-like structures for faster state insight.

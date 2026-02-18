@@ -1,4 +1,4 @@
-//! Optimism execution payload envelope in network format and related types.
+//! Execution payload envelope in network format and related types.
 //!
 //! This module uses the `snappy` compression algorithm to decompress the payload.
 //! The license for snappy can be found in the `SNAPPY-LICENSE` at the root of the repository.
@@ -347,9 +347,9 @@ impl OpExecutionData {
     }
 }
 
-/// Optimism execution payload envelope in network format.
+/// Execution payload envelope in network format.
 ///
-/// This struct is used to represent payloads that are sent over the Optimism
+/// This struct is used to represent payloads that are sent over the
 /// CL p2p network in a snappy-compressed format.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpNetworkPayloadEnvelope {

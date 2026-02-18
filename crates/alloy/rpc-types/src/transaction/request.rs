@@ -94,7 +94,7 @@ impl OpTransactionRequest {
     /// Builds [`OpTypedTransaction`] from this builder. See [`TransactionRequest::build_typed_tx`]
     /// for more info.
     ///
-    /// Note that EIP-4844 transactions are not supported by Optimism and will be converted into
+    /// Note that EIP-4844 transactions are not supported on OP chains and will be converted into
     /// EIP-1559 transactions.
     #[allow(clippy::result_large_err)]
     pub fn build_typed_tx(self) -> Result<OpTypedTransaction, Self> {

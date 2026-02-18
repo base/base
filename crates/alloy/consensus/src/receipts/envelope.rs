@@ -1,4 +1,4 @@
-//! Receipt envelope types for Optimism.
+//! Receipt envelope types for OP chains.
 
 use alloc::vec::Vec;
 

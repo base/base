@@ -1,8 +1,8 @@
-//! Optimism payload errors.
+//! Payload errors.
 
 use alloy_rpc_types_engine::PayloadError;
 
-/// Extends [`PayloadError`] for Optimism.
+/// Extends [`PayloadError`].
 #[derive(Debug, thiserror::Error)]
 pub enum OpPayloadError {
     /// Non-empty list of L1 withdrawals (Shanghai).

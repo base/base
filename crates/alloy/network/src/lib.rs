@@ -13,13 +13,13 @@ use alloy_rpc_types_eth::AccessList;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction};
 use base_alloy_rpc_types::OpTransactionRequest;
 
-/// Types for an Op-stack network.
+/// Types for a Base chain network.
 #[derive(Clone, Copy, Debug)]
-pub struct Optimism {
+pub struct Base {
     _private: (),
 }
 
-impl Network for Optimism {
+impl Network for Base {
     type TxType = OpTxType;
 
     type TxEnvelope = base_alloy_consensus::OpTxEnvelope;
@@ -42,7 +42,7 @@ impl Network for Optimism {
         alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;
 }
 
-impl TransactionBuilder<Optimism> for OpTransactionRequest {
+impl TransactionBuilder<Base> for OpTransactionRequest {
     fn chain_id(&self) -> Option<ChainId> {
         self.as_ref().chain_id()
     }
@@ -181,7 +181,7 @@ impl TransactionBuilder<Optimism> for OpTransactionRequest {
         self.as_mut().prep_for_submission();
     }
 
-    fn build_unsigned(self) -> BuildResult<OpTypedTransaction, Optimism> {
+    fn build_unsigned(self) -> BuildResult<OpTypedTransaction, Base> {
         if let Err((tx_type, missing)) = self.as_ref().missing_keys() {
             let tx_type = OpTxType::try_from(tx_type as u8).unwrap();
             return Err(TransactionBuilderError::InvalidTransactionRequest(tx_type, missing)
@@ -190,15 +190,15 @@ impl TransactionBuilder<Optimism> for OpTransactionRequest {
         Ok(self.build_typed_tx().expect("checked by missing_keys"))
     }
 
-    async fn build<W: NetworkWallet<Optimism>>(
+    async fn build<W: NetworkWallet<Base>>(
         self,
         wallet: &W,
-    ) -> Result<<Optimism as Network>::TxEnvelope, TransactionBuilderError<Optimism>> {
+    ) -> Result<<Base as Network>::TxEnvelope, TransactionBuilderError<Base>> {
         Ok(wallet.sign_request(self).await?)
     }
 }
 
-impl NetworkWallet<Optimism> for EthereumWallet {
+impl NetworkWallet<Base> for EthereumWallet {
     fn default_signer_address(&self) -> Address {
         NetworkWallet::<Ethereum>::default_signer_address(self)
     }
@@ -241,7 +241,7 @@ use alloy_provider::fillers::{
     ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
 
-impl RecommendedFillers for Optimism {
+impl RecommendedFillers for Base {
     type RecommendedFillers = JoinFill<GasFiller, JoinFill<NonceFiller, ChainIdFiller>>;
 
     fn recommended_fillers() -> Self::RecommendedFillers {

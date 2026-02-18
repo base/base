@@ -188,7 +188,7 @@ impl TxDeposit {
         keccak256(&buf)
     }
 
-    /// Returns the signature for the optimism deposit transactions, which don't include a
+    /// Returns the signature for deposit transactions, which don't include a
     /// signature.
     pub const fn signature() -> Signature {
         Signature::new(U256::ZERO, U256::ZERO, false)

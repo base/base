@@ -1,6 +1,6 @@
-//! Optimism Block Type.
+//! Block type for OP chains.
 
 use crate::OpTxEnvelope;
 
-/// An Optimism block type.
+/// A block type for OP chains.
 pub type OpBlock = alloy_consensus::Block<OpTxEnvelope>;

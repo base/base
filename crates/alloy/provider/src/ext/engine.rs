@@ -11,12 +11,12 @@ use base_alloy_rpc_types_engine::{
     OpPayloadAttributes, ProtocolVersion,
 };
 
-/// Extension trait that gives access to Optimism engine API RPC methods.
+/// Extension trait for engine API RPC methods.
 ///
 /// Note:
 /// > The provider should use a JWT authentication layer.
 ///
-/// This follows the Optimism specs that can be found at:
+/// This follows the OP Stack specs:
 /// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]

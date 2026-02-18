@@ -79,10 +79,9 @@ impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
     }
 }
 
-/// Additional fields for Optimism transaction receipts: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
+/// Additional fields for OP chain transaction receipts: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[doc(alias = "OptimismTxReceiptFields")]
 pub struct OpTransactionReceiptFields {
     /// L1 block info.
     #[serde(flatten)]
@@ -294,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn serialize_empty_optimism_transaction_receipt_fields_struct() {
+    fn serialize_empty_op_chain_transaction_receipt_fields_struct() {
         let op_fields = OpTransactionReceiptFields::default();
 
         let json = serde_json::to_value(op_fields).unwrap();

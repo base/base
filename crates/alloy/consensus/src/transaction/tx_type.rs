@@ -1,10 +1,10 @@
-//! Contains the transaction type identifier for Optimism.
+//! Contains the transaction type identifier for OP chains.
 
 use core::fmt::Display;
 
 use crate::transaction::envelope::OpTxType;
 
-/// Identifier for an Optimism deposit transaction
+/// Identifier for a deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 
 #[allow(clippy::derivable_impls)]
