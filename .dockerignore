@@ -11,7 +11,8 @@ docs/
 # Config/docs not needed in build context
 Justfile
 LICENSE
-*.md
+/README.md
+/CHANGELOG.md
 clippy.toml
 deny.toml
 lychee.toml
