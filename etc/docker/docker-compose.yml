@@ -462,7 +462,7 @@ services:
     restart: unless-stopped
 
   pyroscope:
-    image: grafana/pyroscope:latest
+    image: grafana/pyroscope:1.18.1
     container_name: pyroscope
     ports:
       - "4040:4040"
@@ -471,7 +471,7 @@ services:
     restart: unless-stopped
 
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.13.1
     container_name: alloy
     privileged: true
     pid: host
