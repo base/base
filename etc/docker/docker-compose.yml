@@ -175,11 +175,15 @@ services:
       - ../../.devnet/l2/builder:/data
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      - OTEL_SERVICE_NAME=base-builder
     entrypoint: /app/base-builder
     command:
       - node
       - --chain=/genesis/l2/genesis.json
       - --datadir=/data
+      - --tracing-otlp=http://jaeger:4318
+      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_BUILDER_HTTP_PORT}
@@ -329,11 +333,15 @@ services:
       - ../../.devnet/l2/client:/data
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      - OTEL_SERVICE_NAME=base-client
     entrypoint: /app/base-client
     command:
       - node
       - --chain=/genesis/l2/genesis.json
       - --datadir=/data
+      - --tracing-otlp=http://jaeger:4318
+      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_CLIENT_HTTP_PORT}
@@ -443,6 +451,15 @@ services:
       - ${CONTENDER_GEN_REPORT:+--gen-report}
     restart: always
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.56
+    container_name: jaeger
+    ports:
+      - "3001:16686"  # Jaeger UI
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v2.51.0
     container_name: prometheus
@@ -470,4 +487,5 @@ services:
       - ../scripts/devnet/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+      - jaeger
     restart: unless-stopped
