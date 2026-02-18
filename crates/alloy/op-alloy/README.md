@@ -55,7 +55,7 @@ Notice, provider crates do not support `no_std` compatibility.
 - [`op-alloy-rpc-types-engine`][op-alloy-rpc-types-engine]
 - [`op-alloy-rpc-types`][op-alloy-rpc-types]
 
-If you would like to add no_std support to a crate,
+If you would like to add `no_std` support to a crate,
 please make sure to update [scripts/check_no_std.sh][check-no-std].
 
 

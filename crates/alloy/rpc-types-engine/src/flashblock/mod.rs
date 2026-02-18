@@ -30,11 +30,11 @@
 //! Convert a sequence of flashblocks to a full execution payload:
 //!
 //! ```rust,ignore
-//! use op_alloy_rpc_types_engine::{OpExecutionData, OpFlashblockPayload};
+//! use base_alloy_rpc_types_engine::{OpExecutionData, OpFlashblockPayload};
 //!
 //! let flashblocks: Vec<OpFlashblockPayload> = vec![/* ... */];
 //! let execution_data = OpExecutionData::from_flashblocks(flashblocks)?;
-//! # Ok::<(), op_alloy_rpc_types_engine::OpFlashblockError>(())
+//! # Ok::<(), base_alloy_rpc_types_engine::OpFlashblockError>(())
 //! ```
 //!
 //! ## Validation Rules

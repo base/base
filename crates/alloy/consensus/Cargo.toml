@@ -1,11 +1,10 @@
 [package]
-name = "op-alloy-consensus"
-description = "Optimism alloy consensus types"
+name = "base-alloy-consensus"
+description = "Base alloy consensus types"
 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -42,29 +41,28 @@ rand.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 alloy-signer.workspace = true
-tokio = { workspace = true, features = ["macros"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
-default = ["std"]
-std = ["alloy-eips/std", "alloy-consensus/std", "derive_more/std"]
-alloy-compat = ["serde", "dep:alloy-network", "dep:alloy-rpc-types-eth"]
-k256 = ["alloy-primitives/k256", "alloy-consensus/k256"]
-kzg = ["alloy-eips/kzg", "alloy-consensus/kzg", "std"]
+default = [ "std" ]
+std = [ "alloy-consensus/std", "alloy-eips/std", "derive_more/std" ]
+alloy-compat = [ "dep:alloy-network", "dep:alloy-rpc-types-eth", "serde" ]
+k256 = [ "alloy-consensus/k256", "alloy-primitives/k256" ]
+kzg = [ "alloy-consensus/kzg", "alloy-eips/kzg", "std" ]
 arbitrary = [
-    "std",
-    "dep:arbitrary",
-    "alloy-consensus/arbitrary",
-    "alloy-eips/arbitrary",
-    "alloy-primitives/rand",
-    "alloy-primitives/arbitrary",
+	"alloy-consensus/arbitrary",
+	"alloy-eips/arbitrary",
+	"alloy-primitives/arbitrary",
+	"alloy-primitives/rand",
+	"dep:arbitrary",
+	"std",
 ]
 serde = [
-    "dep:serde",
-    "dep:alloy-serde",
-    "alloy-primitives/serde",
-    "alloy-consensus/serde",
-    "alloy-eips/serde",
+	"alloy-consensus/serde",
+	"alloy-eips/serde",
+	"alloy-primitives/serde",
+	"dep:alloy-serde",
+	"dep:serde",
 ]
-serde-bincode-compat = ["serde_with", "alloy-consensus/serde-bincode-compat"]
+serde-bincode-compat = [ "alloy-consensus/serde-bincode-compat", "serde_with" ]

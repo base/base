@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use alloy_transport::{Transport, TransportResult};
-use op_alloy_rpc_types_engine::{
+use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion,
 };
@@ -144,7 +144,7 @@ pub trait OpEngineApi<N, T> {
     /// Returns the execution payload bodies by the range starting at `start`, containing `count`
     /// blocks.
     ///
-    /// WARNING: This method is associated with the BeaconBlocksByRange message in the consensus
+    /// WARNING: This method is associated with the `BeaconBlocksByRange` message in the consensus
     /// layer p2p specification, meaning the input should be treated as untrusted or potentially
     /// adversarial.
     ///
@@ -305,7 +305,7 @@ where
         recommended: ProtocolVersion,
         required: ProtocolVersion,
     ) -> TransportResult<ProtocolVersion> {
-        let signal = op_alloy_rpc_types_engine::SuperchainSignal { recommended, required };
+        let signal = base_alloy_rpc_types_engine::SuperchainSignal { recommended, required };
         self.client().request("engine_signalSuperchainV1", (signal,)).await
     }
 

@@ -1,8 +1,9 @@
 //! Flashblock metadata types.
 
 use alloc::collections::BTreeMap;
+
 use alloy_primitives::{Address, B256, U256};
-use op_alloy_consensus::OpReceipt;
+use base_alloy_consensus::OpReceipt;
 
 /// Provides metadata about the block that may be useful for indexing or analysis.
 // Note: this uses mixed camel, snake case: <https://github.com/flashbots/rollup-boost/blob/dd12e8e8366004b4758bfa0cfa98efa6929b7e9f/crates/flashblocks-rpc/src/cache.rs#L31>
@@ -29,7 +30,7 @@ where
     D: serde::Deserializer<'de>,
 {
     use alloy_consensus::Receipt;
-    use op_alloy_consensus::OpDepositReceipt;
+    use base_alloy_consensus::OpDepositReceipt;
     use serde::Deserialize;
 
     #[derive(Deserialize)]
@@ -71,10 +72,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec::Vec;
+
     use alloy_consensus::{Eip658Value, Receipt};
     use alloy_primitives::{Log, address};
+
+    use super::*;
 
     fn sample_metadata() -> OpFlashblockPayloadMetadata {
         let mut balances = BTreeMap::new();

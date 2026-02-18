@@ -1,6 +1,7 @@
 //! Optimism-specific payload attributes.
 
 use alloc::vec::Vec;
+
 use alloy_eips::{
     Decodable2718,
     eip1559::BaseFeeParams,
@@ -9,7 +10,7 @@ use alloy_eips::{
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
-use op_alloy_consensus::{
+use base_alloy_consensus::{
     EIP1559ParamError, OpTxEnvelope, decode_eip_1559_params, encode_holocene_extra_data,
     encode_jovian_extra_data,
 };
@@ -220,11 +221,13 @@ impl OpPayloadAttributes {
 
 #[cfg(all(test, feature = "serde"))]
 mod test {
-    use super::*;
     use alloc::vec;
+    use core::str::FromStr;
+
     use alloy_primitives::{Address, B256, FixedBytes, address, b64, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use core::str::FromStr;
+
+    use super::*;
 
     #[test]
     fn test_payload_id_parity_op_geth() {

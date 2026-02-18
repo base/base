@@ -1,7 +1,8 @@
 //! Contains the transaction type identifier for Optimism.
 
-use crate::transaction::envelope::OpTxType;
 use core::fmt::Display;
+
+use crate::transaction::envelope::OpTxType;
 
 /// Identifier for an Optimism deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
@@ -38,9 +39,11 @@ impl OpTxType {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::{vec, vec::Vec};
+
     use alloy_rlp::{Decodable, Encodable};
+
+    use super::*;
 
     #[test]
     fn test_all_tx_types() {

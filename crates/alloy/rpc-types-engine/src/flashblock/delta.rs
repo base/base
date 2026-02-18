@@ -1,6 +1,7 @@
 //! Flashblock delta execution payload types.
 
 use alloc::vec::Vec;
+
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, Bloom, Bytes};
 
@@ -45,8 +46,9 @@ pub struct OpFlashblockPayloadDelta {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     #[cfg(feature = "serde")]

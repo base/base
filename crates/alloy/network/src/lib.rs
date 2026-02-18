@@ -6,13 +6,12 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub use alloy_network::*;
-
 use alloy_consensus::{ReceiptWithBloom, TxEnvelope, TxType, TypedTransaction};
+pub use alloy_network::*;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
-use op_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction};
-use op_alloy_rpc_types::OpTransactionRequest;
+use base_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction};
+use base_alloy_rpc_types::OpTransactionRequest;
 
 /// Types for an Op-stack network.
 #[derive(Clone, Copy, Debug)]
@@ -23,19 +22,19 @@ pub struct Optimism {
 impl Network for Optimism {
     type TxType = OpTxType;
 
-    type TxEnvelope = op_alloy_consensus::OpTxEnvelope;
+    type TxEnvelope = base_alloy_consensus::OpTxEnvelope;
 
-    type UnsignedTx = op_alloy_consensus::OpTypedTransaction;
+    type UnsignedTx = base_alloy_consensus::OpTypedTransaction;
 
     type ReceiptEnvelope = ReceiptWithBloom<OpReceipt>;
 
     type Header = alloy_consensus::Header;
 
-    type TransactionRequest = op_alloy_rpc_types::OpTransactionRequest;
+    type TransactionRequest = base_alloy_rpc_types::OpTransactionRequest;
 
-    type TransactionResponse = op_alloy_rpc_types::Transaction;
+    type TransactionResponse = base_alloy_rpc_types::Transaction;
 
-    type ReceiptResponse = op_alloy_rpc_types::OpTransactionReceipt;
+    type ReceiptResponse = base_alloy_rpc_types::OpTransactionReceipt;
 
     type HeaderResponse = alloy_rpc_types_eth::Header;
 

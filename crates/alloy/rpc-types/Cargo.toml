@@ -1,13 +1,12 @@
 [package]
-name = "op-alloy-rpc-types"
-description = "Optimism RPC types"
+name = "base-alloy-rpc-types"
+description = "Base RPC types"
 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
-authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
@@ -16,7 +15,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-op-alloy-consensus = { workspace = true, features = ["serde"] }
+base-alloy-consensus = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-serde.workspace = true
@@ -49,21 +48,21 @@ alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
 similar-asserts.workspace = true
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-  "alloy-network-primitives/std",
-  "alloy-eips/std",
-  "alloy-primitives/std",
-  "alloy-rpc-types-eth/std",
-  "op-alloy-consensus/std",
+	"alloy-eips/std",
+	"alloy-network-primitives/std",
+	"alloy-primitives/std",
+	"alloy-rpc-types-eth/std",
+	"base-alloy-consensus/std",
 ]
 arbitrary = [
-  "std",
-  "dep:arbitrary",
-  "alloy-primitives/arbitrary",
-  "alloy-rpc-types-eth/arbitrary",
-  "op-alloy-consensus/arbitrary",
+	"alloy-primitives/arbitrary",
+	"alloy-rpc-types-eth/arbitrary",
+	"base-alloy-consensus/arbitrary",
+	"dep:arbitrary",
+	"std",
 ]
-k256 = ["alloy-rpc-types-eth/k256", "op-alloy-consensus/k256"]
-serde = ["op-alloy-consensus/serde"]
-jsonrpsee = ["dep:jsonrpsee"]
+k256 = [ "alloy-rpc-types-eth/k256", "base-alloy-consensus/k256" ]
+serde = [ "base-alloy-consensus/serde" ]
+jsonrpsee = [ "dep:jsonrpsee" ]

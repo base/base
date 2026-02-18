@@ -57,7 +57,7 @@ impl core::fmt::Display for ProtocolVersion {
     }
 }
 
-/// An error that can occur when encoding or decoding a ProtocolVersion.
+/// An error that can occur when encoding or decoding a `ProtocolVersion`.
 #[derive(Copy, Clone, thiserror::Error, Debug, Display, From)]
 pub enum ProtocolVersionError {
     /// An unsupported version was encountered.
@@ -114,14 +114,14 @@ impl ProtocolVersion {
         }
     }
 
-    /// Returns the inner value of the ProtocolVersion enum
+    /// Returns the inner value of the `ProtocolVersion` enum
     pub const fn inner(&self) -> ProtocolVersionFormatV0 {
         match self {
             Self::V0(value) => *value,
         }
     }
 
-    /// Returns the inner value of the ProtocolVersion enum if it is V0, otherwise None
+    /// Returns the inner value of the `ProtocolVersion` enum if it is V0, otherwise None
     pub const fn as_v0(&self) -> Option<ProtocolVersionFormatV0> {
         match self {
             Self::V0(value) => Some(*value),
@@ -163,7 +163,7 @@ impl ProtocolVersion {
         }
     }
 
-    /// Returns a human-readable string representation of the ProtocolVersion
+    /// Returns a human-readable string representation of the `ProtocolVersion`
     pub fn display(&self) -> String {
         match self {
             Self::V0(value) => format!("{value}"),

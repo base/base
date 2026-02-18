@@ -4,8 +4,8 @@ pub mod error;
 pub mod v3;
 pub mod v4;
 
-use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloc::vec::Vec;
+
 use alloy_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
 use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, Sealable, U256};
@@ -14,6 +14,8 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV3, PayloadError,
 };
 use error::OpPayloadError;
+
+use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
 /// [`OpExecutionPayloadV4`].
@@ -53,6 +55,7 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
                 A: serde::de::MapAccess<'de>,
             {
                 use alloc::string::String;
+
                 use alloy_primitives::{U64, map::HashMap};
                 use alloy_rpc_types_engine::ExecutionPayloadV1;
 
@@ -520,7 +523,7 @@ impl OpExecutionPayload {
     ///
     /// Caution: This does not set fields that are not part of the payload and only part of the
     /// [`OpExecutionPayloadSidecar`]:
-    /// - parent_beacon_block_root
+    /// - `parent_beacon_block_root`
     ///
     /// See also: [`OpExecutionPayload::into_block_with_sidecar_raw`]
     pub fn into_block_raw(self) -> Result<Block<alloy_primitives::Bytes>, PayloadError> {
@@ -576,7 +579,7 @@ impl OpExecutionPayload {
     ///
     /// Caution: This does not set fields that are not part of the payload and only part of the
     /// [`OpExecutionPayloadSidecar`]:
-    /// - parent_beacon_block_root
+    /// - `parent_beacon_block_root`
     ///
     /// See also: [`OpExecutionPayload::try_into_block_with_sidecar`]
     pub fn try_into_block<T: Decodable2718 + Typed2718>(self) -> Result<Block<T>, OpPayloadError> {
@@ -596,7 +599,7 @@ impl OpExecutionPayload {
     ///
     /// Caution: This does not set fields that are not part of the payload and only part of the
     /// [`OpExecutionPayloadSidecar`]:
-    /// - parent_beacon_block_root
+    /// - `parent_beacon_block_root`
     ///
     /// See also: [`OpExecutionPayload::try_into_block_with_sidecar_with`]
     pub fn try_into_block_with<T, F, E>(self, f: F) -> Result<Block<T>, OpPayloadError>

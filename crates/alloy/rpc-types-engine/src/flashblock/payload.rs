@@ -1,10 +1,11 @@
 //! Flashblock payload types.
 
-use super::{OpFlashblockPayloadBase, OpFlashblockPayloadDelta};
-use crate::flashblock::metadata::OpFlashblockPayloadMetadata;
 use alloy_eips::{Decodable2718, eip2718::Eip2718Result};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::PayloadId;
+
+use super::{OpFlashblockPayloadBase, OpFlashblockPayloadDelta};
+use crate::flashblock::metadata::OpFlashblockPayloadMetadata;
 
 /// Flashblock payload.
 ///
@@ -81,12 +82,14 @@ impl OpFlashblockPayload {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{collections::BTreeMap, vec};
+
+    use alloy_primitives::{B256, Bloom, Bytes, U256, address};
+
     use super::*;
     use crate::flashblock::{
         OpFlashblockPayloadBase, OpFlashblockPayloadDelta, OpFlashblockPayloadMetadata,
     };
-    use alloc::{collections::BTreeMap, vec};
-    use alloy_primitives::{B256, Bloom, Bytes, U256, address};
 
     fn sample_payload() -> OpFlashblockPayload {
         let base = OpFlashblockPayloadBase {

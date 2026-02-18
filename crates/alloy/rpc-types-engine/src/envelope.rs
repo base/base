@@ -3,17 +3,19 @@
 //! This module uses the `snappy` compression algorithm to decompress the payload.
 //! The license for snappy can be found in the `SNAPPY-LICENSE` at the root of the repository.
 
-use crate::{
-    OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4, OpFlashblockError,
-    OpFlashblockPayload,
-};
 use alloc::vec::Vec;
+
 use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
 use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{B256, Signature, keccak256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PraguePayloadFields,
+};
+
+use crate::{
+    OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4, OpFlashblockError,
+    OpFlashblockPayload,
 };
 
 /// A thin wrapper around [`OpExecutionPayload`] that includes the parent beacon block root.
@@ -228,7 +230,7 @@ impl OpExecutionData {
         let (transactions, withdrawals) =
             flashblocks.iter().fold((Vec::new(), Vec::new()), |(mut txs, mut withdrawals), p| {
                 txs.extend(p.diff.transactions.iter().cloned());
-                withdrawals.extend(p.diff.withdrawals.iter().cloned());
+                withdrawals.extend(p.diff.withdrawals.iter().copied());
                 (txs, withdrawals)
             });
 
@@ -630,8 +632,9 @@ impl PayloadHash {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::b256;
+
+    use super::*;
 
     #[test]
     #[cfg(feature = "std")]
@@ -727,12 +730,14 @@ mod tests {
     // Helper function to create a test flashblock
     #[cfg(test)]
     fn create_test_flashblock(index: u64, with_base: bool) -> OpFlashblockPayload {
+        use alloc::collections::BTreeMap;
+
+        use alloy_primitives::{Address, Bloom, Bytes, U256};
+        use alloy_rpc_types_engine::PayloadId;
+
         use crate::flashblock::{
             OpFlashblockPayloadBase, OpFlashblockPayloadDelta, OpFlashblockPayloadMetadata,
         };
-        use alloc::collections::BTreeMap;
-        use alloy_primitives::{Address, Bloom, Bytes, U256};
-        use alloy_rpc_types_engine::PayloadId;
 
         let base = if with_base {
             Some(OpFlashblockPayloadBase {

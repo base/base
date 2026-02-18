@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+
 use alloy_consensus::{
     Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
 };
@@ -6,7 +7,7 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
-use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction, TxDeposit};
+use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction, TxDeposit};
 use serde::{Deserialize, Serialize};
 
 /// Builder for [`OpTypedTransaction`].
@@ -95,6 +96,7 @@ impl OpTransactionRequest {
     ///
     /// Note that EIP-4844 transactions are not supported by Optimism and will be converted into
     /// EIP-1559 transactions.
+    #[allow(clippy::result_large_err)]
     pub fn build_typed_tx(self) -> Result<OpTypedTransaction, Self> {
         let tx = self.0.build_typed_tx().map_err(Self)?;
         match tx {

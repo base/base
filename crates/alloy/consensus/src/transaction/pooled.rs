@@ -1,7 +1,8 @@
 //! Defines the exact transaction variants that are allowed to be propagated over the eth p2p
 //! protocol in op.
 
-use crate::OpTxEnvelope;
+use core::hash::Hash;
+
 use alloy_consensus::{
     Extended, SignableTransaction, Signed, TransactionEnvelope, TxEip7702, TxEnvelope,
     error::ValueError,
@@ -9,7 +10,8 @@ use alloy_consensus::{
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Signature, TxHash, bytes};
-use core::hash::Hash;
+
+use crate::OpTxEnvelope;
 
 /// All possible transactions that can be included in a response to `GetPooledTransactions`.
 /// A response to `GetPooledTransactions`. This can include a typed signed transaction, but cannot
@@ -250,11 +252,12 @@ impl<Tx> TryFrom<Extended<OpTxEnvelope, Tx>> for OpPooledTransaction {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::Transaction;
     use alloy_primitives::{address, hex};
     use alloy_rlp::Decodable;
     use bytes::Bytes;
+
+    use super::*;
 
     #[test]
     fn invalid_legacy_pooled_decoding_input_too_short() {

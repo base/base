@@ -1,6 +1,7 @@
 //! Classification of deposit transaction source
 
 use alloc::string::String;
+
 use alloy_primitives::{B256, keccak256};
 
 /// Source domain identifiers for deposit transactions.
@@ -52,7 +53,7 @@ pub struct UserDepositSource {
 }
 
 impl UserDepositSource {
-    /// Creates a new [UserDepositSource].
+    /// Creates a new [`UserDepositSource`].
     pub const fn new(l1_block_hash: B256, log_index: u64) -> Self {
         Self { l1_block_hash, log_index }
     }
@@ -81,7 +82,7 @@ pub struct L1InfoDepositSource {
 }
 
 impl L1InfoDepositSource {
-    /// Creates a new [L1InfoDepositSource].
+    /// Creates a new [`L1InfoDepositSource`].
     pub const fn new(l1_block_hash: B256, seq_number: u64) -> Self {
         Self { l1_block_hash, seq_number }
     }
@@ -115,7 +116,7 @@ pub struct UpgradeDepositSource {
 }
 
 impl UpgradeDepositSource {
-    /// Creates a new [UpgradeDepositSource].
+    /// Creates a new [`UpgradeDepositSource`].
     pub const fn new(intent: String) -> Self {
         Self { intent }
     }
@@ -147,7 +148,7 @@ pub struct InteropBlockReplacementDepositSource {
 }
 
 impl InteropBlockReplacementDepositSource {
-    /// Creates a new [InteropBlockReplacementDepositSource].
+    /// Creates a new [`InteropBlockReplacementDepositSource`].
     pub const fn new(output_root: B256) -> Self {
         Self { output_root }
     }

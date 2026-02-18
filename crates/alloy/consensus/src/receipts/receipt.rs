@@ -1,10 +1,8 @@
 //! Optimism receipt type for execution and storage.
 
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
-use super::{OpDepositReceipt, OpTxReceipt};
-use crate::{OpReceiptEnvelope, OpTxType};
-use alloc::vec::Vec;
 use alloy_consensus::{
     Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom,
     RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
@@ -12,6 +10,9 @@ use alloy_consensus::{
 use alloy_eips::eip2718::{Eip2718Error, Eip2718Result, IsTyped2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
+
+use super::{OpDepositReceipt, OpTxReceipt};
+use crate::{OpReceiptEnvelope, OpTxType};
 
 /// Typed Optimism transaction receipt.
 ///
@@ -475,7 +476,7 @@ pub(crate) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use op_alloy_consensus::{OpReceipt, serde_bincode_compat};
+    /// use base_alloy_consensus::{OpReceipt, serde_bincode_compat};
     /// use serde::{Deserialize, Serialize, de::DeserializeOwned};
     /// use serde_with::serde_as;
     ///
@@ -544,11 +545,12 @@ pub(crate) mod serde_bincode_compat {
 
     #[cfg(test)]
     mod tests {
-        use crate::OpReceipt;
         use arbitrary::Arbitrary;
         use rand::Rng;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
+
+        use crate::OpReceipt;
 
         #[test]
         fn test_tx_bincode_roundtrip() {
@@ -579,11 +581,13 @@ pub(crate) mod serde_bincode_compat {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
     use alloy_rlp::Encodable;
+
+    use super::*;
 
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]

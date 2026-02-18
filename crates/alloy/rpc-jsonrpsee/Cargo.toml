@@ -1,13 +1,12 @@
 [package]
-name = "op-alloy-rpc-jsonrpsee"
-description = "Optimism RPC Client"
+name = "base-alloy-rpc-jsonrpsee"
+description = "Base RPC Client"
 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
-authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
@@ -19,10 +18,7 @@ workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # rpc
-jsonrpsee.workspace = true
+jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [features]
-client = [
-    "jsonrpsee/client",
-    "jsonrpsee/async-client",
-]
+client = [ "jsonrpsee/async-client", "jsonrpsee/client" ]

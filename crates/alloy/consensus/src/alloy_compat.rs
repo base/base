@@ -1,12 +1,14 @@
 //! Additional compatibility implementations.
 
-use crate::{DEPOSIT_TX_TYPE_ID, OpTxEnvelope, TxDeposit};
 use alloc::string::ToString;
+
 use alloy_consensus::Sealed;
 use alloy_eips::Typed2718;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, UnknownTxEnvelope, UnknownTypedTransaction};
 use alloy_rpc_types_eth::{ConversionError, Transaction as AlloyRpcTransaction};
 use alloy_serde::WithOtherFields;
+
+use crate::{DEPOSIT_TX_TYPE_ID, OpTxEnvelope, TxDeposit};
 
 impl TryFrom<UnknownTxEnvelope> for TxDeposit {
     type Error = ConversionError;

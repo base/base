@@ -1,13 +1,12 @@
 [package]
-name = "op-alloy-rpc-types-engine"
-description = "Optimism RPC types for the `engine` namespace"
+name = "base-alloy-rpc-types-engine"
+description = "Base RPC types for the `engine` namespace"
 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
-authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
@@ -16,7 +15,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-op-alloy-consensus.workspace = true
+base-alloy-consensus.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
@@ -50,27 +49,27 @@ arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary", "getrandom"] }
 
 [features]
-default = ["std", "serde"]
+default = [ "serde", "std" ]
 std = [
-  "dep:snap",
-  "dep:ethereum_ssz",
-  "dep:ethereum_ssz_derive",
-  "alloy-rpc-types-engine/ssz",
-  "alloy-primitives/std",
-  "alloy-rpc-types-engine/std",
-  "op-alloy-consensus/std",
+	"alloy-primitives/std",
+	"alloy-rpc-types-engine/ssz",
+	"alloy-rpc-types-engine/std",
+	"base-alloy-consensus/std",
+	"dep:ethereum_ssz",
+	"dep:ethereum_ssz_derive",
+	"dep:snap",
 ]
 serde = [
-	"dep:serde",
-	"dep:alloy-serde",
 	"alloy-rpc-types-engine/serde",
-	"op-alloy-consensus/serde"
+	"base-alloy-consensus/serde",
+	"dep:alloy-serde",
+	"dep:serde",
 ]
-k256 = ["op-alloy-consensus/k256"]
+k256 = [ "base-alloy-consensus/k256" ]
 arbitrary = [
-  "std",
-  "dep:arbitrary",
-  "alloy-primitives/arbitrary",
-  "alloy-primitives/rand",
-  "op-alloy-consensus/arbitrary"
+	"alloy-primitives/arbitrary",
+	"alloy-primitives/rand",
+	"base-alloy-consensus/arbitrary",
+	"dep:arbitrary",
+	"std",
 ]

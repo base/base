@@ -1,11 +1,10 @@
 [package]
-name = "op-alloy-network"
-description = "Optimism blockchain RPC behavior abstraction"
+name = "base-alloy-network"
+description = "Base blockchain RPC behavior abstraction"
 
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -16,8 +15,8 @@ workspace = true
 
 [dependencies]
 # Workspace
-op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
-op-alloy-rpc-types.workspace = true
+base-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
+base-alloy-rpc-types.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
@@ -28,5 +27,5 @@ alloy-rpc-types-eth.workspace = true
 alloy-signer.workspace = true
 
 [features]
-std = ["op-alloy-consensus/std", "op-alloy-rpc-types/std"]
-serde = ["op-alloy-consensus/serde", "op-alloy-rpc-types/serde"]
+std = [ "base-alloy-consensus/std", "base-alloy-rpc-types/std" ]
+serde = [ "base-alloy-consensus/serde", "base-alloy-rpc-types/serde" ]

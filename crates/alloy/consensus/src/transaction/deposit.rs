@@ -1,7 +1,8 @@
 //! Deposit Transaction type.
 
-use super::OpTxType;
 use alloc::vec::Vec;
+use core::mem;
+
 use alloy_consensus::{Sealable, Transaction, Typed2718};
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
@@ -9,7 +10,8 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
-use core::mem;
+
+use super::OpTxType;
 
 /// Deposit transactions, also known as deposits are initiated on L1, and executed on L2.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -50,7 +52,7 @@ pub struct TxDeposit {
 }
 
 impl TxDeposit {
-    /// Decodes the inner [TxDeposit] fields from RLP bytes.
+    /// Decodes the inner [`TxDeposit`] fields from RLP bytes.
     ///
     /// NOTE: This assumes a RLP header has already been decoded, and _just_ decodes the following
     /// RLP fields in the following order:
@@ -123,7 +125,7 @@ impl TxDeposit {
         self.input.encode(out);
     }
 
-    /// Calculates a heuristic for the in-memory size of the [TxDeposit] transaction.
+    /// Calculates a heuristic for the in-memory size of the [`TxDeposit`] transaction.
     #[inline]
     pub fn size(&self) -> usize {
         mem::size_of::<B256>() + // source_hash
@@ -418,9 +420,10 @@ pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::hex;
     use alloy_rlp::BytesMut;
+
+    use super::*;
 
     #[test]
     fn test_deposit_transaction_trait() {
@@ -617,6 +620,7 @@ mod tests {
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(super) mod serde_bincode_compat {
     use alloc::borrow::Cow;
+
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
@@ -625,7 +629,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use op_alloy_consensus::{TxDeposit, serde_bincode_compat};
+    /// use base_alloy_consensus::{TxDeposit, serde_bincode_compat};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///

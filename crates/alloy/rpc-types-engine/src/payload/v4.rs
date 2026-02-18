@@ -1,6 +1,7 @@
 //! Optimism execution payload envelope V3.
 
 use alloc::vec::Vec;
+
 use alloy_consensus::Block;
 use alloy_eips::Decodable2718;
 use alloy_primitives::{B256, Bytes, U256};

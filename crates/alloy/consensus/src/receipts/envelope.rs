@@ -1,7 +1,7 @@
 //! Receipt envelope types for Optimism.
 
-use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
 use alloc::vec::Vec;
+
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::{
     Typed2718,
@@ -9,6 +9,8 @@ use alloy_eips::{
 };
 use alloy_primitives::{Bloom, Log, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
+
+use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
 
 /// Receipt envelope, as defined in [EIP-2718], modified for OP Stack chains.
 ///
@@ -144,15 +146,14 @@ impl<T> OpReceiptEnvelope<T> {
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
-            Self::Legacy(t) => &t.logs_bloom,
-            Self::Eip2930(t) => &t.logs_bloom,
-            Self::Eip1559(t) => &t.logs_bloom,
-            Self::Eip7702(t) => &t.logs_bloom,
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => {
+                &t.logs_bloom
+            }
             Self::Deposit(t) => &t.logs_bloom,
         }
     }
 
-    /// Return the receipt's deposit_nonce if it is a deposit receipt.
+    /// Return the receipt's `deposit_nonce` if it is a deposit receipt.
     pub fn deposit_nonce(&self) -> Option<u64> {
         self.as_deposit_receipt().and_then(|r| r.deposit_nonce)
     }
@@ -202,10 +203,7 @@ impl OpReceiptEnvelope {
     /// Get the length of the inner receipt in the 2718 encoding.
     pub fn inner_length(&self) -> usize {
         match self {
-            Self::Legacy(t) => t.length(),
-            Self::Eip2930(t) => t.length(),
-            Self::Eip1559(t) => t.length(),
-            Self::Eip7702(t) => t.length(),
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => t.length(),
             Self::Deposit(t) => t.length(),
         }
     }
@@ -364,14 +362,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
+
     use alloy_consensus::{Receipt, ReceiptWithBloom};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::Encodable;
 
-    #[cfg(not(feature = "std"))]
-    use alloc::vec;
+    use super::*;
 
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]

@@ -9,24 +9,19 @@
 
 #[cfg(feature = "consensus")]
 #[doc(inline)]
-pub use op_alloy_consensus as consensus;
-
-#[cfg(feature = "provider")]
-#[doc(inline)]
-pub use op_alloy_provider as provider;
-
+pub use base_alloy_consensus as consensus;
 #[cfg(feature = "network")]
 #[doc(inline)]
-pub use op_alloy_network as network;
-
-#[cfg(feature = "rpc-types")]
+pub use base_alloy_network as network;
+#[cfg(feature = "provider")]
 #[doc(inline)]
-pub use op_alloy_rpc_types as rpc_types;
-
-#[cfg(feature = "rpc-types-engine")]
-#[doc(inline)]
-pub use op_alloy_rpc_types_engine as rpc_types_engine;
-
+pub use base_alloy_provider as provider;
 #[cfg(feature = "rpc-jsonrpsee")]
 #[doc(inline)]
-pub use op_alloy_rpc_jsonrpsee as rpc_jsonrpsee;
+pub use base_alloy_rpc_jsonrpsee as rpc_jsonrpsee;
+#[cfg(feature = "rpc-types")]
+#[doc(inline)]
+pub use base_alloy_rpc_types as rpc_types;
+#[cfg(feature = "rpc-types-engine")]
+#[doc(inline)]
+pub use base_alloy_rpc_types_engine as rpc_types_engine;

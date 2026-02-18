@@ -142,8 +142,9 @@ pub enum EIP1559ParamError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::str::FromStr;
+
+    use super::*;
 
     #[test]
     fn test_get_extra_data_post_holocene() {
