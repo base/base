@@ -1,55 +1,44 @@
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
 use alloy_primitives::B256;
-use futures_util::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
 };
-use reth_node_api::{NodePrimitives, PayloadBuilderAttributes, PayloadKind};
-use reth_payload_builder::{
-    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
-};
-use reth_payload_primitives::BuiltPayload;
-use reth_primitives_traits::HeaderTy;
+use reth_node_api::{NodePrimitives, PayloadBuilderAttributes};
+use reth_payload_builder::{PayloadBuilderError, PayloadJobGenerator};
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::TaskSpawner;
-use tokio::{
-    sync::{Notify, oneshot},
-    time::{Duration, Sleep},
-};
+use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::PayloadBuilder;
+use crate::{BlockCell, BlockPayloadJob, PayloadBuilder};
 
 /// The generator type that creates new jobs that build empty blocks.
 #[derive(Debug)]
 pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// The client that can interact with the chain.
-    client: Client,
+    pub client: Client,
     /// How to spawn building tasks
-    executor: Tasks,
+    pub executor: Tasks,
     /// The configuration for the job generator.
-    _config: BasicPayloadJobGeneratorConfig,
+    pub _config: BasicPayloadJobGeneratorConfig,
     /// The type responsible for building payloads.
     ///
     /// See [`PayloadBuilder`]
-    builder: Builder,
+    pub builder: Builder,
     /// Whether to ensure only one payload is being processed at a time
-    ensure_only_one_payload: bool,
+    pub ensure_only_one_payload: bool,
     /// The last payload being processed
-    last_payload: Arc<Mutex<CancellationToken>>,
+    pub last_payload: Arc<Mutex<CancellationToken>>,
     /// The extra block deadline in seconds
-    extra_block_deadline: std::time::Duration,
+    pub extra_block_deadline: std::time::Duration,
     /// Stored `cached_reads` for new payload jobs.
-    pre_cached: Option<PrecachedState>,
+    pub pre_cached: Option<PrecachedState>,
     /// Whether to compute state root only on finalization (when `get_payload` is called).
-    compute_state_root_on_finalize: bool,
+    pub compute_state_root_on_finalize: bool,
 }
 
 // === impl BlockPayloadJobGenerator ===
@@ -83,6 +72,31 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// block.
     fn maybe_pre_cached(&self, parent: B256) -> Option<CachedReads> {
         self.pre_cached.as_ref().filter(|pc| pc.block == parent).map(|pc| pc.cached.clone())
+    }
+
+    /// Computes the job deadline from a unix timestamp.
+    ///
+    /// Returns a [`Duration`] representing how long until the given timestamp.
+    /// If the timestamp is in the past or current, returns a minimum of 1 second.
+    pub fn deadline(unix_timestamp_secs: u64) -> Duration {
+        let unix_now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(e) => {
+                warn!(error = %e, "System clock went backward, returning zero deadline");
+                return Duration::ZERO;
+            }
+        };
+
+        // Safe subtraction that handles the case where timestamp is in the past
+        let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
+
+        if duration_until == 0 {
+            // Enforce a minimum block time of 1 second by rounding up any duration less than 1
+            // second
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(duration_until)
+        }
     }
 }
 
@@ -154,7 +168,7 @@ where
         // "remember" the payloads long enough to accommodate this corner-case
         // (without it we are losing blocks). Postponing the deadline for 5s
         // (not just 0.5s) because of that.
-        let deadline = job_deadline(attributes.timestamp()) + self.extra_block_deadline;
+        let deadline = Self::deadline(attributes.timestamp()) + self.extra_block_deadline;
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
 
@@ -204,298 +218,18 @@ where
     }
 }
 
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
-
-/// A [`PayloadJob`] that builds empty blocks.
-pub struct BlockPayloadJob<Tasks, Builder>
-where
-    Builder: PayloadBuilder,
-{
-    /// The configuration for how the payload will be created.
-    pub(crate) config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
-    /// How to spawn building tasks
-    pub(crate) executor: Tasks,
-    /// The type responsible for building payloads.
-    ///
-    /// See [`PayloadBuilder`]
-    pub(crate) builder: Builder,
-    /// The cell that holds the built payload (intermediate flashblocks, may not have state root).
-    pub(crate) cell: BlockCell<Builder::BuiltPayload>,
-    /// The cell that holds the finalized payload with state root computed.
-    pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
-    /// Whether to compute state root only on finalization (when `get_payload` is called).
-    pub(crate) compute_state_root_on_finalize: bool,
-    /// Cancellation token for the running job
-    pub(crate) cancel: CancellationToken,
-    /// Mutex to synchronize cancellation with payload publishing.
-    pub(crate) publish_guard: Arc<Mutex<()>>,
-    pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
-    pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
-    /// Caches all disk reads for the state the new payloads build on
-    ///
-    /// This is used to avoid reading the same state over and over again when new attempts are
-    /// triggered, because during the building process we'll repeatedly execute the transactions.
-    pub(crate) cached_reads: Option<CachedReads>,
-}
-
-impl<Tasks, Builder> std::fmt::Debug for BlockPayloadJob<Tasks, Builder>
-where
-    Builder: PayloadBuilder,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BlockPayloadJob")
-            .field("compute_state_root_on_finalize", &self.compute_state_root_on_finalize)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>
-where
-    Tasks: TaskSpawner + Clone + 'static,
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
-{
-    type PayloadAttributes = Builder::Attributes;
-    type ResolvePayloadFuture = ResolvePayload<Self::BuiltPayload>;
-    type BuiltPayload = Builder::BuiltPayload;
-
-    fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        self.cell.get().ok_or_else(|| PayloadBuilderError::MissingPayload)
-    }
-
-    fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
-        Ok(self.config.attributes.clone())
-    }
-
-    fn resolve_kind(
-        &mut self,
-        kind: PayloadKind,
-    ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
-        tracing::info!("Resolve kind {:?}", kind);
-
-        // Acquire mutex before cancelling to synchronize with payload publishing.
-        {
-            let _guard = self.publish_guard.lock();
-            self.cancel.cancel();
-        }
-
-        let resolve_future = if self.compute_state_root_on_finalize {
-            ResolvePayload::new(self.finalized_cell.wait_for_value())
-        } else {
-            ResolvePayload::new(self.cell.wait_for_value())
-        };
-
-        (resolve_future, KeepPayloadJobAlive::No)
-    }
-}
-
-/// Build arguments
-#[derive(Debug)]
-pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
-    /// Previously cached disk reads
-    pub cached_reads: CachedReads,
-    /// How to configure the payload.
-    pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
-    /// A marker that can be used to cancel the job.
-    pub cancel: CancellationToken,
-    /// Mutex to synchronize cancellation with payload publishing.
-    pub publish_guard: Arc<Mutex<()>>,
-    /// Cell to store the finalized payload with state root.
-    pub finalized_cell: BlockCell<Payload>,
-    /// Whether to compute state root only on finalization (when `get_payload` is called).
-    pub compute_state_root_on_finalize: bool,
-}
-
-/// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
-impl<Tasks, Builder> BlockPayloadJob<Tasks, Builder>
-where
-    Tasks: TaskSpawner + Clone + 'static,
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
-{
-    pub fn spawn_build_job(&mut self) {
-        let builder = self.builder.clone();
-        let payload_config = self.config.clone();
-        let cell = self.cell.clone();
-        let cancel = self.cancel.clone();
-        let publish_guard = Arc::clone(&self.publish_guard);
-        let finalized_cell = self.finalized_cell.clone();
-        let compute_state_root_on_finalize = self.compute_state_root_on_finalize;
-
-        let (tx, rx) = oneshot::channel();
-        self.build_complete = Some(rx);
-        let cached_reads = self.cached_reads.take().unwrap_or_default();
-        self.executor.spawn_blocking(Box::pin(async move {
-            let args = BuildArguments {
-                cached_reads,
-                config: payload_config,
-                cancel,
-                publish_guard,
-                finalized_cell,
-                compute_state_root_on_finalize,
-            };
-
-            let result = builder.try_build(args, cell).await;
-            let _ = tx.send(result);
-        }));
-    }
-}
-
-/// A [`PayloadJob`] is a future that's being polled by the `PayloadBuilderService`
-impl<Tasks, Builder> Future for BlockPayloadJob<Tasks, Builder>
-where
-    Tasks: TaskSpawner + Clone + 'static,
-    Builder: PayloadBuilder + Unpin + 'static,
-    Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
-{
-    type Output = Result<(), PayloadBuilderError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!("Polling job");
-        let this = self.get_mut();
-
-        // Check if deadline is reached
-        if this.deadline.as_mut().poll(cx).is_ready() {
-            this.cancel.cancel();
-            tracing::debug!("Deadline reached");
-            return Poll::Ready(Ok(()));
-        }
-
-        // If cancelled via resolve_kind()
-        if this.cancel.is_cancelled() {
-            tracing::debug!("Job cancelled");
-            return Poll::Ready(Ok(()));
-        }
-
-        Poll::Pending
-    }
-}
-
-/// A future that resolves when a payload becomes available in the [`BlockCell`].
-pub struct ResolvePayload<T> {
-    future: WaitForValue<T>,
-}
-
-impl<T> std::fmt::Debug for ResolvePayload<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResolvePayload").finish_non_exhaustive()
-    }
-}
-
-impl<T> ResolvePayload<T> {
-    pub const fn new(future: WaitForValue<T>) -> Self {
-        Self { future }
-    }
-}
-
-impl<T: Clone> Future for ResolvePayload<T> {
-    type Output = Result<T, PayloadBuilderError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().future.poll_unpin(cx) {
-            Poll::Ready(value) => Poll::Ready(Ok(value)),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-/// A cell that holds a value and allows waiting for it to be set.
-///
-/// Values can be overwritten by calling [`BlockCell::set`] multiple times.
-#[derive(Clone, Debug)]
-pub struct BlockCell<T> {
-    inner: Arc<Mutex<Option<T>>>,
-    notify: Arc<Notify>,
-}
-
-impl<T: Clone> BlockCell<T> {
-    pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
-    }
-
-    pub fn set(&self, value: T) {
-        let mut inner = self.inner.lock();
-        *inner = Some(value);
-        self.notify.notify_one();
-    }
-
-    pub fn get(&self) -> Option<T> {
-        let inner = self.inner.lock();
-        inner.clone()
-    }
-
-    /// Return a future that resolves when a value is set.
-    pub fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
-    }
-}
-
-/// Future that resolves when a value is set in [`BlockCell`].
-#[derive(Clone)]
-pub struct WaitForValue<T> {
-    cell: BlockCell<T>,
-}
-
-impl<T> std::fmt::Debug for WaitForValue<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WaitForValue").finish_non_exhaustive()
-    }
-}
-
-impl<T: Clone> Future for WaitForValue<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
-    }
-}
-
-impl<T: Clone> Default for BlockCell<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
-    let unix_now = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_secs(),
-        Err(e) => {
-            warn!(error = %e, "System clock went backward, returning zero deadline");
-            return Duration::ZERO;
-        }
-    };
-
-    // Safe subtraction that handles the case where timestamp is in the past
-    let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
-
-    if duration_until == 0 {
-        // Enforce a minimum block time of 1 second by rounding up any duration less than 1 second
-        Duration::from_secs(1)
-    } else {
-        Duration::from_secs(duration_until)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;
+    use reth_payload_builder::PayloadJob;
+    use reth_payload_primitives::BuiltPayload;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::TokioTaskExecutor;
@@ -506,6 +240,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::BuildArguments;
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {
@@ -660,23 +395,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_job_deadline() {
+    async fn test_deadline() {
         // Test future deadline
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let future_timestamp = now + Duration::from_secs(2);
         // 2 seconds from now
-        let deadline = job_deadline(future_timestamp.as_secs());
+        let deadline = BlockPayloadJobGenerator::<(), (), ()>::deadline(future_timestamp.as_secs());
         assert!(deadline <= Duration::from_secs(2));
         assert!(deadline > Duration::from_secs(0));
 
         // Test past deadline
         let past_timestamp = now - Duration::from_secs(10);
-        let deadline = job_deadline(past_timestamp.as_secs());
+        let deadline = BlockPayloadJobGenerator::<(), (), ()>::deadline(past_timestamp.as_secs());
         // Should default to 1 second when timestamp is in the past
         assert_eq!(deadline, Duration::from_secs(1));
 
         // Test current timestamp
-        let deadline = job_deadline(now.as_secs());
+        let deadline = BlockPayloadJobGenerator::<(), (), ()>::deadline(now.as_secs());
         // Should use 1 second when timestamp is current
         assert_eq!(deadline, Duration::from_secs(1));
     }

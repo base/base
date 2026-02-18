@@ -11,7 +11,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
-use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
+use base_access_lists::FlashblockAccessList;
 use base_builder_publish::WebSocketPublisher;
 use base_primitives::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -44,13 +44,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, ExecutionInfo, PayloadBuilder,
+    BlockCell, BuildArguments, BuilderConfig, ExecutionInfo, PayloadBuilder,
     flashblocks::{
-        FlashblocksExtraCtx,
-        best_txs::BestFlashblocksTxs,
-        config::FlashBlocksConfigExt,
+        FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
-        generator::{BlockCell, BuildArguments},
     },
     metrics::BuilderMetrics,
     traits::{ClientBounds, PoolBounds},
@@ -69,22 +66,9 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
-/// Execution information specific to flashblocks.
-///
-/// Tracks the last consumed flashblock index and manages the
-/// flashblock-level access list builder for progressive block construction.
-#[derive(Debug, Default, Clone)]
-pub struct FlashblocksExecutionInfo {
-    /// Index of the last consumed flashblock
-    pub(crate) last_flashblock_index: usize,
-
-    /// Flashblock-level access list builder
-    pub(crate) access_list_builder: FlashblockAccessListBuilder,
-}
-
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub(super) struct OpPayloadBuilder<Pool, Client> {
+pub struct OpPayloadBuilder<Pool, Client> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -105,7 +89,7 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     /// `OpPayloadBuilder` constructor.
-    pub(super) const fn new(
+    pub const fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
