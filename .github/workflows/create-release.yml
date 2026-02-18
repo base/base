@@ -107,7 +107,7 @@ jobs:
           sudo apt-get install -y libclang-dev pkg-config
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
 
       - name: Build binaries
         run: cargo build --profile maxperf --bin base-reth-node --bin basectl
