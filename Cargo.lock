@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "base-access-lists"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "base-builder"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base-cli-utils",
  "op-rbuilder",
@@ -1730,7 +1730,7 @@ dependencies = [
 
 [[package]]
 name = "base-builder-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "clap",
  "clap_builder",
@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "base-bundles"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -1757,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "base-cli-utils"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-engine"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1856,7 +1856,7 @@ dependencies = [
 
 [[package]]
 name = "base-client-node"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
@@ -1908,7 +1908,7 @@ dependencies = [
 
 [[package]]
 name = "base-consensus"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-rpc-types-engine",
  "base-cli-utils",
@@ -1933,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "base-engine-ext"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -1949,7 +1949,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashblocks"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashblocks-node"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "base-flashtypes"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-engine",
@@ -2068,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "base-jwt"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -2086,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "base-metering"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "base-primitives"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-node"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base-cli-utils",
  "base-client-node",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-rpc-types"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "reth-optimism-evm",
  "reth-rpc-eth-types",
@@ -2176,7 +2176,7 @@ dependencies = [
 
 [[package]]
 name = "base-txpool"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7452,7 +7452,7 @@ dependencies = [
 
 [[package]]
 name = "op-rbuilder"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -13915,7 +13915,9 @@ checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
+ "native-tls",
  "tokio",
+ "tokio-native-tls",
  "tungstenite 0.28.0",
 ]
 
@@ -14425,6 +14427,7 @@ dependencies = [
  "http",
  "httparse",
  "log",
+ "native-tls",
  "rand 0.9.2",
  "sha1",
  "thiserror 2.0.17",
