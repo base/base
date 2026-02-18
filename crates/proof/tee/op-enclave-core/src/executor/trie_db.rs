@@ -31,6 +31,9 @@ pub struct EnclaveTrieDB {
 
     /// Cached parent block hash (computed once on construction).
     parent_hash: B256,
+
+    /// All witness headers indexed by hash, for BLOCKHASH opcode support.
+    headers_by_hash: HashMap<B256, Header>,
 }
 
 impl EnclaveTrieDB {
@@ -43,6 +46,7 @@ impl EnclaveTrieDB {
             state: witness.state,
             parent_header: witness.previous_header,
             parent_hash,
+            headers_by_hash: witness.headers_by_hash,
         }
     }
 
@@ -59,6 +63,7 @@ impl EnclaveTrieDB {
             state,
             parent_header,
             parent_hash,
+            headers_by_hash: HashMap::new(),
         }
     }
 
@@ -75,19 +80,22 @@ impl EnclaveTrieDB {
 
     /// Returns a header by its hash.
     ///
-    /// Currently only supports the parent header.
+    /// Checks the parent header first, then falls back to the full headers map
+    /// (populated from all witness headers for BLOCKHASH opcode support).
     ///
     /// # Errors
     ///
     /// Returns `ExecutorError::ExecutionFailed` if the header is not found.
     pub fn header_by_hash(&self, hash: B256) -> Result<Header, ExecutorError> {
         if hash == self.parent_hash {
-            Ok(self.parent_header.clone())
-        } else {
-            Err(ExecutorError::ExecutionFailed(format!(
-                "header not found for hash: {hash}"
-            )))
+            return Ok(self.parent_header.clone());
         }
+        if let Some(header) = self.headers_by_hash.get(&hash) {
+            return Ok(header.clone());
+        }
+        Err(ExecutorError::ExecutionFailed(format!(
+            "header not found for hash: {hash}"
+        )))
     }
 
     /// Returns a state trie node by its hash.
@@ -172,12 +180,14 @@ impl TrieDBProvider for EnclaveTrieDB {
 
     fn header_by_hash(&self, hash: B256) -> Result<Header, Self::Error> {
         if hash == self.parent_hash {
-            Ok(self.parent_header.clone())
-        } else {
-            Err(TrieProviderError(format!(
-                "header not found for hash: {hash}"
-            )))
+            return Ok(self.parent_header.clone());
         }
+        if let Some(header) = self.headers_by_hash.get(&hash) {
+            return Ok(header.clone());
+        }
+        Err(TrieProviderError(format!(
+            "header not found for hash: {hash}"
+        )))
     }
 }
 

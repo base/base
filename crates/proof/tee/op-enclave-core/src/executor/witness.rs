@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 
 use alloy_consensus::Header;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, keccak256};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 
 use crate::error::ExecutorError;
 
@@ -15,16 +16,21 @@ use crate::error::ExecutorError;
 ///
 /// This is the JSON representation received from the client, where codes and state
 /// are hex-encoded string maps.
+///
+/// Uses `#[serde(alias)]` to accept both PascalCase (Go JSON encoding) and
+/// camelCase/lowercase (geth `debug_executionWitness` RPC response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
 pub struct ExecutionWitness {
     /// Block headers (previous block header is at index 0).
+    #[serde(alias = "Headers")]
     pub headers: Vec<Header>,
 
     /// Bytecode map: hex-encoded `code_hash` -> hex-encoded bytecode.
+    #[serde(alias = "Codes")]
     pub codes: HashMap<String, String>,
 
     /// State trie nodes: hex-encoded `node_hash` -> hex-encoded RLP node.
+    #[serde(alias = "State")]
     pub state: HashMap<String, String>,
 }
 
@@ -41,6 +47,9 @@ pub struct TransformedWitness {
 
     /// State trie nodes: `node_hash` -> RLP-encoded node.
     pub state: HashMap<B256, Bytes>,
+
+    /// All witness headers indexed by hash, for BLOCKHASH opcode support.
+    pub headers_by_hash: HashMap<B256, Header>,
 }
 
 impl TransformedWitness {
@@ -84,25 +93,85 @@ impl TransformedWitness {
 /// - Headers is empty
 /// - Any hex decoding fails
 pub fn transform_witness(witness: ExecutionWitness) -> Result<TransformedWitness, ExecutorError> {
-    // Extract previous header
+    // Extract previous header (headers[0])
     let previous_header = witness
         .headers
         .first()
         .ok_or_else(|| ExecutorError::WitnessTransformFailed("headers is empty".to_string()))?
         .clone();
 
+    // Build a hash-indexed map of ALL headers for BLOCKHASH opcode support.
+    // The EVM's BLOCKHASH opcode (and EIP-2935) needs to look up historical
+    // block headers by their hash during execution.
+    let mut headers_by_hash = HashMap::with_capacity(witness.headers.len());
+    for header in &witness.headers {
+        let hash = header.hash_slow();
+        headers_by_hash.insert(hash, header.clone());
+    }
+
     // Transform codes map
-    // Note: The Go implementation stores values in a set keyed by the decoded bytes.
-    // For our purposes, we need to decode the hex values and associate them with their hashes.
     let codes = transform_code_map(&witness.codes)?;
 
     // Transform state map
     let state = transform_state_map(&witness.state)?;
 
+    // Witness integrity check: verify each state entry's key matches keccak256(value).
+    // A mismatch here would mean the witness provider sent corrupt trie node data.
+    let mut integrity_mismatches = 0u64;
+    for (hash, node_bytes) in &state {
+        let computed = keccak256(node_bytes);
+        if computed != *hash {
+            integrity_mismatches += 1;
+            warn!(
+                key = %hash,
+                computed_hash = %computed,
+                node_len = node_bytes.len(),
+                "Witness integrity: state node hash mismatch"
+            );
+        }
+    }
+    if integrity_mismatches > 0 {
+        warn!(
+            mismatches = integrity_mismatches,
+            total_entries = state.len(),
+            "Witness integrity check found hash mismatches"
+        );
+    } else {
+        debug!(
+            entries = state.len(),
+            "Witness state integrity check passed"
+        );
+    }
+
+    // Code integrity check: verify each code entry's key matches keccak256(value)
+    let mut code_mismatches = 0u64;
+    for (hash, bytecode) in &codes {
+        let computed = keccak256(bytecode);
+        if computed != *hash {
+            code_mismatches += 1;
+            warn!(
+                key = %hash,
+                computed_hash = %computed,
+                code_len = bytecode.len(),
+                "Witness integrity: code hash mismatch"
+            );
+        }
+    }
+    if code_mismatches > 0 {
+        warn!(
+            mismatches = code_mismatches,
+            total_entries = codes.len(),
+            "Witness code integrity check found hash mismatches"
+        );
+    } else {
+        debug!(entries = codes.len(), "Witness code integrity check passed");
+    }
+
     Ok(TransformedWitness {
         previous_header,
         codes,
         state,
+        headers_by_hash,
     })
 }
 

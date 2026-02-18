@@ -251,6 +251,8 @@ impl Server {
         witness: ExecutionWitness,
         message_account: &AccountResult,
         prev_message_account_hash: B256,
+        proposer: Address,
+        tee_image_hash: B256,
     ) -> Result<Proposal, ServerError> {
         // Extract previous block header from witness before consuming it
         // (matches Go: previousBlockHeader := w.Headers[0])
@@ -273,19 +275,25 @@ impl Server {
         .map_err(|e| ProposalError::ExecutionFailed(e.to_string()))?;
 
         let l1_origin_hash = l1_origin.hash_slow();
+        let l1_origin_number = U256::from(l1_origin.number);
 
         // Compute output roots (matching Go implementation exactly)
         let prev_output_root = output_root_v0(&previous_header, prev_message_account_hash);
         let output_root = output_root_v0(block_header, message_account.storage_hash);
-        let l2_block_number = U256::from(block_header.number);
+        let starting_l2_block = U256::from(previous_header.number);
+        let ending_l2_block = U256::from(block_header.number);
 
-        // Build signing data matching Go's format
+        // Build signing data matching the AggregateVerifier contract's journal
         let signing_data = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash,
-            l2_block_number,
+            l1_origin_number,
             prev_output_root,
+            starting_l2_block,
             output_root,
+            ending_l2_block,
+            config_hash,
+            tee_image_hash,
         );
 
         // Sign the proposal
@@ -296,7 +304,8 @@ impl Server {
             output_root,
             signature,
             l1_origin_hash,
-            l2_block_number,
+            l1_origin_number,
+            ending_l2_block,
             prev_output_root,
             config_hash,
         ))
@@ -356,11 +365,15 @@ impl Server {
     /// Returns an error if:
     /// - No proposals are provided
     /// - Any signature verification fails
+    #[allow(clippy::too_many_arguments)]
     pub fn aggregate(
         &self,
         config_hash: B256,
         prev_output_root: B256,
+        prev_block_number: u64,
         proposals: &[Proposal],
+        proposer: Address,
+        tee_image_hash: B256,
     ) -> Result<Proposal, ServerError> {
         if proposals.is_empty() {
             return Err(ProposalError::EmptyProposals.into());
@@ -377,22 +390,27 @@ impl Server {
         // Verify the signature chain
         let mut output_root = prev_output_root;
         let mut l1_origin_hash = B256::ZERO;
+        let mut l1_origin_number = U256::ZERO;
         let mut l2_block_number = U256::ZERO;
+        let mut prev_l2_block = U256::from(prev_block_number);
 
         for (index, proposal) in proposals.iter().enumerate() {
             l1_origin_hash = proposal.l1_origin_hash;
+            l1_origin_number = proposal.l1_origin_number;
             l2_block_number = proposal.l2_block_number;
 
-            // Build the signing data for this proposal
             let signing_data = build_signing_data(
-                config_hash,
+                proposer,
                 l1_origin_hash,
-                l2_block_number,
+                l1_origin_number,
                 output_root,
+                prev_l2_block,
                 proposal.output_root,
+                l2_block_number,
+                config_hash,
+                tee_image_hash,
             );
 
-            // Verify the signature
             let valid = verify_proposal_signature(&public_key, &signing_data, &proposal.signature)
                 .map_err(|_| ProposalError::InvalidSignature { index })?;
 
@@ -401,21 +419,25 @@ impl Server {
             }
 
             output_root = proposal.output_root;
+            prev_l2_block = l2_block_number;
         }
 
         // Create the aggregated proposal
         let final_output_root = output_root;
+        let starting_l2_block = U256::from(prev_block_number);
 
-        // Build signing data for the aggregated proposal
         let signing_data = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash,
-            l2_block_number,
+            l1_origin_number,
             prev_output_root,
+            starting_l2_block,
             final_output_root,
+            l2_block_number,
+            config_hash,
+            tee_image_hash,
         );
 
-        // Sign the aggregated proposal
         let signer = self.signer_key.read();
         let signature = sign_proposal_data_sync(&signer, &signing_data)?;
 
@@ -423,6 +445,7 @@ impl Server {
             final_output_root,
             signature,
             l1_origin_hash,
+            l1_origin_number,
             l2_block_number,
             prev_output_root,
             config_hash,
@@ -504,7 +527,14 @@ mod tests {
     fn test_aggregate_empty_proposals() {
         let server = Server::new_for_testing().expect("failed to create server");
 
-        let result = server.aggregate(B256::ZERO, B256::ZERO, &[]);
+        let result = server.aggregate(
+            B256::ZERO,
+            B256::ZERO,
+            99u64,
+            &[],
+            Address::ZERO,
+            B256::ZERO,
+        );
 
         assert!(matches!(
             result,
@@ -516,19 +546,26 @@ mod tests {
     fn test_aggregate_single_proposal() {
         let server = Server::new_for_testing().expect("failed to create server");
 
-        // Create a proposal signed by this server
         let config_hash = B256::repeat_byte(0x11);
         let l1_origin_hash = B256::repeat_byte(0x22);
+        let l1_origin_number = U256::from(100);
         let l2_block_number = U256::from(100);
         let prev_output_root = B256::repeat_byte(0x33);
         let output_root = B256::repeat_byte(0x44);
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let prev_block_number = 99u64;
 
         let signing_data = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash,
-            l2_block_number,
+            l1_origin_number,
             prev_output_root,
+            U256::from(prev_block_number),
             output_root,
+            l2_block_number,
+            config_hash,
+            tee_image_hash,
         );
 
         let signer = server.signer();
@@ -539,16 +576,23 @@ mod tests {
             output_root,
             signature,
             l1_origin_hash,
+            l1_origin_number,
             l2_block_number,
             prev_output_root,
             config_hash,
         );
 
-        let result = server.aggregate(config_hash, prev_output_root, &[proposal.clone()]);
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            &[proposal.clone()],
+            proposer,
+            tee_image_hash,
+        );
 
         assert!(result.is_ok());
         let aggregated = result.unwrap();
-        // Single proposal should be returned as-is
         assert_eq!(aggregated, proposal);
     }
 
@@ -559,17 +603,25 @@ mod tests {
         let config_hash = B256::repeat_byte(0x11);
         let l1_origin_hash_1 = B256::repeat_byte(0x22);
         let l1_origin_hash_2 = B256::repeat_byte(0x23);
+        let l1_origin_number = U256::from(100);
         let prev_output_root = B256::repeat_byte(0x33);
         let output_root_1 = B256::repeat_byte(0x44);
         let output_root_2 = B256::repeat_byte(0x55);
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let prev_block_number = 99u64;
 
-        // Create first proposal
+        // Create first proposal (block 100, previous block 99)
         let signing_data_1 = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash_1,
-            U256::from(100),
+            l1_origin_number,
             prev_output_root,
+            U256::from(prev_block_number),
             output_root_1,
+            U256::from(100),
+            config_hash,
+            tee_image_hash,
         );
 
         let signer = server.signer();
@@ -581,18 +633,23 @@ mod tests {
             output_root_1,
             signature_1,
             l1_origin_hash_1,
+            l1_origin_number,
             U256::from(100),
             prev_output_root,
             config_hash,
         );
 
-        // Create second proposal (chained from first)
+        // Create second proposal (block 101, chained from first)
         let signing_data_2 = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash_2,
-            U256::from(101),
-            output_root_1, // prev_output_root is the output_root of proposal 1
+            l1_origin_number,
+            output_root_1,
+            U256::from(100),
             output_root_2,
+            U256::from(101),
+            config_hash,
+            tee_image_hash,
         );
 
         let signer = server.signer();
@@ -604,17 +661,24 @@ mod tests {
             output_root_2,
             signature_2,
             l1_origin_hash_2,
+            l1_origin_number,
             U256::from(101),
             output_root_1,
             config_hash,
         );
 
-        let result = server.aggregate(config_hash, prev_output_root, &[proposal_1, proposal_2]);
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            &[proposal_1, proposal_2],
+            proposer,
+            tee_image_hash,
+        );
 
         assert!(result.is_ok());
         let aggregated = result.unwrap();
 
-        // Aggregated proposal should span from first to last
         assert_eq!(aggregated.output_root, output_root_2);
         assert_eq!(aggregated.prev_output_root, prev_output_root);
         assert_eq!(aggregated.l1_origin_hash, l1_origin_hash_2);
@@ -629,17 +693,25 @@ mod tests {
         let config_hash = B256::repeat_byte(0x11);
         let l1_origin_hash_1 = B256::repeat_byte(0x22);
         let l1_origin_hash_2 = B256::repeat_byte(0x23);
+        let l1_origin_number = U256::from(100);
         let prev_output_root = B256::repeat_byte(0x33);
         let output_root_1 = B256::repeat_byte(0x44);
         let output_root_2 = B256::repeat_byte(0x55);
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let prev_block_number = 99u64;
 
         // Create a valid first proposal
         let signing_data_1 = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash_1,
-            U256::from(100),
+            l1_origin_number,
             prev_output_root,
+            U256::from(prev_block_number),
             output_root_1,
+            U256::from(100),
+            config_hash,
+            tee_image_hash,
         );
 
         let signer = server.signer();
@@ -651,6 +723,7 @@ mod tests {
             output_root_1,
             signature_1,
             l1_origin_hash_1,
+            l1_origin_number,
             U256::from(100),
             prev_output_root,
             config_hash,
@@ -663,12 +736,20 @@ mod tests {
             output_root_2,
             invalid_signature,
             l1_origin_hash_2,
+            l1_origin_number,
             U256::from(101),
             output_root_1,
             config_hash,
         );
 
-        let result = server.aggregate(config_hash, prev_output_root, &[proposal_1, proposal_2]);
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            &[proposal_1, proposal_2],
+            proposer,
+            tee_image_hash,
+        );
 
         // The second proposal (index 1) should fail signature verification
         assert!(

@@ -1,7 +1,7 @@
 //! RPC request types shared between client and server.
 
 use alloy_consensus::{Header, ReceiptEnvelope};
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use kona_genesis::ChainConfig;
 use serde::{Deserialize, Serialize};
 
@@ -43,4 +43,10 @@ pub struct ExecuteStatelessRequest {
 
     /// The storage hash of the message account in the previous block.
     pub prev_message_account_hash: B256,
+
+    /// The proposer address included in the signed journal for on-chain verification.
+    pub proposer: Address,
+
+    /// The keccak256 hash of the TEE image PCR0, included in the signed journal.
+    pub tee_image_hash: B256,
 }
