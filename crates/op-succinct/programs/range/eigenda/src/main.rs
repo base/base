@@ -13,6 +13,7 @@ use canoe_sp1_cc_verifier::CanoeSp1CCVerifier;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::eigenda_witness::EigenDAWitness;
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
+use kona_proof::BootInfo;
 use op_succinct_client_utils::witness::{EigenDAWitnessData, WitnessData};
 use op_succinct_eigenda_client_utils::executor::EigenDAWitnessExecutor;
 use op_succinct_range_utils::run_range_program;
@@ -39,8 +40,13 @@ fn main() {
             &witness_data.eigenda_data.clone().expect("eigenda witness data is not present"),
         )
         .expect("cannot deserialize eigenda witness");
+        let boot_info = BootInfo::load(oracle.as_ref())
+            .await
+            .expect("Failed to load boot info");
+
         let preloaded_preimage_provider = eigenda_witness_to_preloaded_provider(
             oracle.clone(),
+            &boot_info,
             CanoeSp1CCVerifier {},
             CanoeVerifierAddressFetcherDeployedByEigenLabs {},
             eigenda_witness,
