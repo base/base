@@ -354,7 +354,7 @@ where
             return Ok(());
         }
 
-        let l2_block_number = contract.l2SequenceNumber().call().await?;
+        let l2_block_number = contract.l2BlockNumber().call().await?;
         let computed_output_root =
             self.l2_provider.compute_output_root_at_block(l2_block_number).await?;
         let output_root = contract.rootClaim().call().await?;
