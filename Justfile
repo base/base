@@ -162,7 +162,7 @@ devnet-profiling: devnet-down
 
 # Stops devnet and deletes all data
 devnet-down:
-    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml down
+    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling down
     rm -rf .devnet
 
 # Shows devnet block numbers and sync status
