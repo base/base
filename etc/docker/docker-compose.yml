@@ -184,6 +184,7 @@ services:
       - --datadir=/data
       - --tracing-otlp=http://jaeger:4318
       - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
+      - --telemetry.sampling-ratio=1
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_BUILDER_HTTP_PORT}
