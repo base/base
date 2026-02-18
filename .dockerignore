@@ -5,6 +5,28 @@ assets/
 .github/
 .idea/
 docs/
-docker/docker-compose.yml
 .claude/
 .config/
+
+# Config/docs not needed in build context
+Justfile
+LICENSE
+/README.md
+/CHANGELOG.md
+clippy.toml
+deny.toml
+lychee.toml
+rustfmt.toml
+.gitignore
+
+# Docker config (dockerfiles are sent separately by compose, not from context)
+etc/docker/
+
+# Devnet tooling not needed in container builds
+etc/scripts/devnet/grafana/
+etc/scripts/devnet/load/
+etc/scripts/devnet/prometheus.yml
+etc/scripts/devnet/status.sh
+etc/scripts/devnet/accounts.sh
+etc/scripts/devnet/common.sh
+etc/scripts/devnet/smoke.sh
