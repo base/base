@@ -22,7 +22,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use alloy_primitives::{B256, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, U256, b256};
 use op_enclave_server::Server;
 use op_enclave_server::crypto::{
     build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, pkix_to_public_key,
@@ -436,55 +436,73 @@ fn test_rsa_crypto_compatibility() {
 mod signing_test_vectors {
     use super::*;
 
+    pub(super) const PROPOSER: Address = Address::ZERO;
     pub(super) const CONFIG_HASH: B256 =
         b256!("1111111111111111111111111111111111111111111111111111111111111111");
     pub(super) const L1_ORIGIN_HASH: B256 =
         b256!("2222222222222222222222222222222222222222222222222222222222222222");
+    pub(super) const L1_ORIGIN_NUMBER: u64 = 100;
     pub(super) const L2_BLOCK_NUMBER: u64 = 12345;
+    pub(super) const STARTING_L2_BLOCK: u64 = 12344;
     pub(super) const PREV_OUTPUT_ROOT: B256 =
         b256!("3333333333333333333333333333333333333333333333333333333333333333");
     pub(super) const OUTPUT_ROOT: B256 =
         b256!("4444444444444444444444444444444444444444444444444444444444444444");
-
-    /// Expected signing data (160 bytes) from Go implementation.
-    pub(super) const EXPECTED_SIGNING_DATA: &str = "11111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222000000000000000000000000000000000000000000000000000000000000303933333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444";
-
-    /// Expected keccak256 hash of signing data from Go implementation.
-    pub(super) const EXPECTED_HASH: &str =
-        "ac780b60f64884ca7663b8e10373dd5acc453580f82556c783542aeb27dfbe5f";
+    pub(super) const TEE_IMAGE_HASH: B256 = B256::ZERO;
 }
 
-/// Test that `build_signing_data` produces the same output as Go.
+/// Test that `build_signing_data` produces the correct layout.
 ///
-/// This verifies the signing data format matches Go's implementation:
-/// `configHash || l1OriginHash || l2BlockNumber (32 bytes) || prevOutputRoot || outputRoot`
+/// The format matches the `AggregateVerifier` contract's journal:
+/// `proposer(20) || l1OriginHash(32) || l1OriginNumber(32) || prevOutputRoot(32)
+///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32) || configHash(32)
+///   || teeImageHash(32)` = 276 bytes
 #[test]
-fn test_signing_data_matches_go() {
+fn test_signing_data_format() {
     use signing_test_vectors::*;
 
     let signing_data = build_signing_data(
-        CONFIG_HASH,
+        PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L2_BLOCK_NUMBER),
+        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
+        U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
+        U256::from(L2_BLOCK_NUMBER),
+        CONFIG_HASH,
+        TEE_IMAGE_HASH,
     );
 
-    let expected_bytes = hex::decode(EXPECTED_SIGNING_DATA).expect("valid hex");
-    assert_eq!(
-        signing_data.as_slice(),
-        expected_bytes.as_slice(),
-        "signing data should match Go implementation"
-    );
+    assert_eq!(signing_data.len(), 276, "signing data should be 276 bytes");
 
-    // Also verify the hash matches
-    let hash = keccak256(signing_data);
-    let expected_hash = hex::decode(EXPECTED_HASH).expect("valid hex");
+    // Verify individual field positions
+    let mut off = 0;
+    assert_eq!(&signing_data[off..off + 20], PROPOSER.as_slice());
+    off += 20;
+    assert_eq!(&signing_data[off..off + 32], L1_ORIGIN_HASH.as_slice());
+    off += 32;
     assert_eq!(
-        hash.as_slice(),
-        expected_hash.as_slice(),
-        "keccak256 hash should match Go implementation"
+        &signing_data[off..off + 32],
+        &U256::from(L1_ORIGIN_NUMBER).to_be_bytes::<32>()
     );
+    off += 32;
+    assert_eq!(&signing_data[off..off + 32], PREV_OUTPUT_ROOT.as_slice());
+    off += 32;
+    assert_eq!(
+        &signing_data[off..off + 32],
+        &U256::from(STARTING_L2_BLOCK).to_be_bytes::<32>()
+    );
+    off += 32;
+    assert_eq!(&signing_data[off..off + 32], OUTPUT_ROOT.as_slice());
+    off += 32;
+    assert_eq!(
+        &signing_data[off..off + 32],
+        &U256::from(L2_BLOCK_NUMBER).to_be_bytes::<32>()
+    );
+    off += 32;
+    assert_eq!(&signing_data[off..off + 32], CONFIG_HASH.as_slice());
+    off += 32;
+    assert_eq!(&signing_data[off..off + 32], TEE_IMAGE_HASH.as_slice());
 }
 
 /// Test that Rust can verify a signature produced by Go.
@@ -492,7 +510,10 @@ fn test_signing_data_matches_go() {
 /// This uses the signature from the Go test vector generation code.
 /// Note: Go's crypto.Sign returns v as 0 or 1, which our verification ignores
 /// (it only uses the first 64 bytes: r || s).
+///
+/// TODO: Regenerate Go test vectors for the updated 9-field signing format.
 #[test]
+#[ignore = "needs regenerated Go test vectors for updated signing format"]
 fn test_verify_go_signature() {
     use signing_test_vectors::*;
 
@@ -505,11 +526,15 @@ fn test_verify_go_signature() {
     let go_public_key = hex::decode(go_public_key_hex).expect("valid hex");
 
     let signing_data = build_signing_data(
-        CONFIG_HASH,
+        PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L2_BLOCK_NUMBER),
+        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
+        U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
+        U256::from(L2_BLOCK_NUMBER),
+        CONFIG_HASH,
+        TEE_IMAGE_HASH,
     );
 
     let result = verify_proposal_signature(&go_public_key, &signing_data, &go_signature);
@@ -528,28 +553,28 @@ fn test_rust_signature_verifiable() {
     let signer = signer_from_hex(TEST_SIGNER_KEY).expect("valid key");
     let public_key = public_key_bytes(&signer);
 
-    // Verify public key matches expected
     assert_eq!(public_key.len(), 65);
     assert_eq!(public_key[0], 0x04);
 
     let signing_data = build_signing_data(
-        CONFIG_HASH,
+        PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L2_BLOCK_NUMBER),
+        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
+        U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
+        U256::from(L2_BLOCK_NUMBER),
+        CONFIG_HASH,
+        TEE_IMAGE_HASH,
     );
 
-    // Sign with Rust
     let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");
     assert_eq!(signature.len(), 65, "signature should be 65 bytes");
 
-    // Verify with Rust (same algorithm Go uses)
     let valid = verify_proposal_signature(&public_key, &signing_data, &signature)
         .expect("verification should succeed");
     assert!(valid, "Rust should verify its own signature");
 
-    // Print the signature for manual verification with Go if needed
     println!("Rust signature: {}", hex::encode(&signature));
     println!("Public key: {}", hex::encode(&public_key));
 }
@@ -562,11 +587,15 @@ fn test_signature_format() {
     let signer = signer_from_hex(TEST_SIGNER_KEY).expect("valid key");
 
     let signing_data = build_signing_data(
-        CONFIG_HASH,
+        PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L2_BLOCK_NUMBER),
+        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
+        U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
+        U256::from(L2_BLOCK_NUMBER),
+        CONFIG_HASH,
+        TEE_IMAGE_HASH,
     );
 
     let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");

@@ -99,6 +99,8 @@ impl EnclaveApiServer for RpcServerImpl {
                 request.witness,
                 &request.message_account,
                 request.prev_message_account_hash,
+                request.proposer,
+                request.tee_image_hash,
             )
             .map_err(to_rpc_error)
     }
@@ -108,7 +110,10 @@ impl EnclaveApiServer for RpcServerImpl {
             .aggregate(
                 request.config_hash,
                 request.prev_output_root,
+                request.prev_block_number,
                 &request.proposals,
+                request.proposer,
+                request.tee_image_hash,
             )
             .map_err(to_rpc_error)
     }

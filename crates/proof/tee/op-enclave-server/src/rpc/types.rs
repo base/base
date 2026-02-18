@@ -3,7 +3,7 @@
 //! These types match the Go JSON-RPC request format, using camelCase
 //! field names to match go-ethereum's JSON-RPC conventions.
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 
 use op_enclave_core::Proposal;
@@ -20,6 +20,15 @@ pub struct AggregateRequest {
     /// The output root before the first proposal.
     pub prev_output_root: B256,
 
+    /// The L2 block number before the first proposal in the batch.
+    pub prev_block_number: u64,
+
     /// The proposals to aggregate.
     pub proposals: Vec<Proposal>,
+
+    /// The proposer address included in the signed journal.
+    pub proposer: Address,
+
+    /// The keccak256 hash of the TEE image PCR0.
+    pub tee_image_hash: B256,
 }

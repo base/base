@@ -34,7 +34,11 @@ pub struct Proposal {
     #[serde(rename = "L1OriginHash")]
     pub l1_origin_hash: B256,
 
-    /// The L2 block number.
+    /// The L1 origin block number (needed for journal/proof construction).
+    #[serde(with = "u256_hex", rename = "L1OriginNumber")]
+    pub l1_origin_number: U256,
+
+    /// The L2 block number (ending block of this proposal's range).
     #[serde(with = "u256_hex", rename = "L2BlockNumber")]
     pub l2_block_number: U256,
 
@@ -53,10 +57,12 @@ impl Proposal {
     ///
     /// # Panics
     /// Panics if `signature` is not exactly 65 bytes.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         output_root: B256,
         signature: Bytes,
         l1_origin_hash: B256,
+        l1_origin_number: U256,
         l2_block_number: U256,
         prev_output_root: B256,
         config_hash: B256,
@@ -72,6 +78,7 @@ impl Proposal {
             output_root,
             signature,
             l1_origin_hash,
+            l1_origin_number,
             l2_block_number,
             prev_output_root,
             config_hash,
@@ -91,6 +98,7 @@ mod tests {
             l1_origin_hash: b256!(
                 "0000000000000000000000000000000000000000000000000000000000000002"
             ),
+            l1_origin_number: U256::from(100),
             l2_block_number: U256::from(12345),
             prev_output_root: b256!(
                 "0000000000000000000000000000000000000000000000000000000000000003"
@@ -144,6 +152,7 @@ mod tests {
             "OutputRoot": "0x0000000000000000000000000000000000000000000000000000000000000001",
             "Signature": "0xababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
             "L1OriginHash": "0x0000000000000000000000000000000000000000000000000000000000000002",
+            "L1OriginNumber": "0x64",
             "L2BlockNumber": "0x3039",
             "PrevOutputRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
             "ConfigHash": "0x0000000000000000000000000000000000000000000000000000000000000004"
@@ -192,6 +201,7 @@ mod tests {
             b256!("0000000000000000000000000000000000000000000000000000000000000001"),
             Bytes::from(vec![0xab; 64]), // 64 bytes instead of 65
             b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+            U256::from(100),
             U256::from(12345),
             b256!("0000000000000000000000000000000000000000000000000000000000000003"),
             b256!("0000000000000000000000000000000000000000000000000000000000000004"),
