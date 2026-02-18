@@ -330,7 +330,16 @@ impl L2Client for L2ClientImpl {
                     (BlockNumberOrTag::Number(block_number),),
                 )
                 .await
-                .map_err(|e| RpcError::WitnessNotFound(format!("Block {block_number}: {e}")))
+                .map_err(|e| {
+                    // Truncate the error to avoid logging multi-MB witness JSON in error messages.
+                    let msg = e.to_string();
+                    let truncated = if msg.len() > 500 {
+                        format!("{}... (truncated)", &msg[..500])
+                    } else {
+                        msg
+                    };
+                    RpcError::WitnessNotFound(format!("Block {block_number}: {truncated}"))
+                })
         })
         .retry(backoff)
         .when(|e| e.is_retryable())

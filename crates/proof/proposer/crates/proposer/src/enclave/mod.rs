@@ -26,7 +26,10 @@ pub trait EnclaveClientTrait: Send + Sync {
         &self,
         config_hash: B256,
         prev_output_root: B256,
+        prev_block_number: u64,
         proposals: Vec<Proposal>,
+        proposer: Address,
+        tee_image_hash: B256,
     ) -> Result<Proposal, ClientError>;
 }
 
@@ -43,10 +46,20 @@ impl EnclaveClientTrait for EnclaveClient {
         &self,
         config_hash: B256,
         prev_output_root: B256,
+        prev_block_number: u64,
         proposals: Vec<Proposal>,
+        proposer: Address,
+        tee_image_hash: B256,
     ) -> Result<Proposal, ClientError> {
-        self.aggregate(config_hash, prev_output_root, proposals)
-            .await
+        self.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            proposals,
+            proposer,
+            tee_image_hash,
+        )
+        .await
     }
 }
 

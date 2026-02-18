@@ -10,8 +10,9 @@ use op_enclave_core::types::config::{
 use op_enclave_core::{AccountResult, executor::ExecutionWitness};
 
 use crate::ProposerError;
+use crate::contracts::anchor_state_registry::{AnchorRoot, AnchorStateRegistryClient};
+use crate::contracts::dispute_game_factory::{DisputeGameFactoryClient, GameAtIndex};
 use crate::contracts::output_proposer::OutputProposer;
-use crate::contracts::{OnchainVerifierClient, OutputProposal};
 use crate::enclave::EnclaveClientTrait;
 use crate::prover::{Prover, ProverProposal};
 use crate::rpc::{
@@ -102,16 +103,38 @@ impl RollupClient for MockRollupClient {
     }
 }
 
-/// Mock onchain verifier that returns a configurable `OutputProposal`.
+/// Mock anchor state registry with configurable anchor root.
 #[allow(dead_code)]
-pub(crate) struct MockOnchainVerifier {
-    pub output_proposal: OutputProposal,
+pub(crate) struct MockAnchorStateRegistry {
+    pub anchor_root: AnchorRoot,
 }
 
 #[async_trait]
-impl OnchainVerifierClient for MockOnchainVerifier {
-    async fn latest_output_proposal(&self) -> Result<OutputProposal, ProposerError> {
-        Ok(self.output_proposal.clone())
+impl AnchorStateRegistryClient for MockAnchorStateRegistry {
+    async fn get_anchor_root(&self) -> Result<AnchorRoot, ProposerError> {
+        Ok(self.anchor_root.clone())
+    }
+}
+
+/// Mock dispute game factory with configurable game count.
+#[allow(dead_code)]
+pub(crate) struct MockDisputeGameFactory {
+    pub game_count: u64,
+}
+
+#[async_trait]
+impl DisputeGameFactoryClient for MockDisputeGameFactory {
+    async fn game_count(&self) -> Result<u64, ProposerError> {
+        Ok(self.game_count)
+    }
+    async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ProposerError> {
+        unimplemented!()
+    }
+    async fn init_bonds(&self, _: u32) -> Result<U256, ProposerError> {
+        Ok(U256::ZERO)
+    }
+    async fn game_impls(&self, _: u32) -> Result<Address, ProposerError> {
+        Ok(Address::ZERO)
     }
 }
 
@@ -154,6 +177,8 @@ pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, M
             block_not_found: false,
         }),
         enclave,
+        Address::ZERO,
+        B256::ZERO,
     )
 }
 
@@ -196,11 +221,10 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
     }
 }
 
-pub(crate) fn test_output_proposal(block_number: u64) -> OutputProposal {
-    OutputProposal {
-        outputRoot: B256::ZERO,
-        timestamp: U256::from(1_000_000u64).try_into().unwrap(),
-        l2BlockNumber: U256::from(block_number).try_into().unwrap(),
+pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
+    AnchorRoot {
+        root: B256::ZERO,
+        l2_block_number: block_number,
     }
 }
 
@@ -209,7 +233,11 @@ pub(crate) struct MockOutputProposer;
 
 #[async_trait]
 impl OutputProposer for MockOutputProposer {
-    async fn propose_output(&self, _proposal: &ProverProposal) -> Result<(), ProposerError> {
+    async fn propose_output(
+        &self,
+        _proposal: &ProverProposal,
+        _parent_index: u32,
+    ) -> Result<(), ProposerError> {
         Ok(())
     }
 }

@@ -2,7 +2,7 @@
 
 use std::{net::IpAddr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_cli_utils::{CliStyles, LogFormat};
 use clap::{ArgAction, Parser};
 use url::Url;
@@ -74,21 +74,33 @@ pub struct ProposerArgs {
     )]
     pub l2_reth: bool,
 
-    /// Minimum number of blocks between proposals.
+    /// Address of the `AnchorStateRegistry` contract on L1.
     #[arg(
-        long = "min-proposal-interval",
-        env = "BASE_PROPOSER_MIN_PROPOSAL_INTERVAL",
-        default_value = "512"
-    )]
-    pub min_proposal_interval: u64,
-
-    /// Address of the on-chain verifier contract.
-    #[arg(
-        long = "onchain-verifier-addr",
-        env = "BASE_PROPOSER_ONCHAIN_VERIFIER_ADDR",
+        long = "anchor-state-registry-addr",
+        env = "BASE_PROPOSER_ANCHOR_STATE_REGISTRY_ADDR",
         value_parser = parse_address
     )]
-    pub onchain_verifier_addr: Address,
+    pub anchor_state_registry_addr: Address,
+
+    /// Address of the `DisputeGameFactory` contract on L1.
+    #[arg(
+        long = "dispute-game-factory-addr",
+        env = "BASE_PROPOSER_DISPUTE_GAME_FACTORY_ADDR",
+        value_parser = parse_address
+    )]
+    pub dispute_game_factory_addr: Address,
+
+    /// Game type ID for `AggregateVerifier` dispute games.
+    #[arg(long = "game-type", env = "BASE_PROPOSER_GAME_TYPE")]
+    pub game_type: u32,
+
+    /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
+    #[arg(
+        long = "tee-image-hash",
+        env = "BASE_PROPOSER_TEE_IMAGE_HASH",
+        value_parser = parse_b256
+    )]
+    pub tee_image_hash: B256,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
@@ -290,6 +302,11 @@ fn parse_address(s: &str) -> Result<Address, alloy_primitives::hex::FromHexError
     s.parse()
 }
 
+/// Parse a 32-byte hash from hex string (0x-prefixed).
+fn parse_b256(s: &str) -> Result<B256, alloy_primitives::hex::FromHexError> {
+    s.parse()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,8 +356,14 @@ mod tests {
             "http://localhost:8545",
             "--l2-eth-rpc",
             "http://localhost:9545",
-            "--onchain-verifier-addr",
+            "--anchor-state-registry-addr",
             "0x1234567890123456789012345678901234567890",
+            "--dispute-game-factory-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
+            "--tee-image-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
         ];
@@ -349,12 +372,12 @@ mod tests {
         // Check defaults
         assert!(!cli.proposer.allow_non_finalized);
         assert!(!cli.proposer.l2_reth);
-        assert_eq!(cli.proposer.min_proposal_interval, 512);
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
         assert!(!cli.proposer.skip_tls_verify);
         assert!(!cli.proposer.wait_node_sync);
+        assert_eq!(cli.proposer.game_type, 1);
 
         assert_eq!(cli.logging.level, 3);
         assert_eq!(cli.logging.stdout_format, LogFormat::Full);
@@ -399,8 +422,14 @@ mod tests {
             "http://localhost:8545",
             "--l2-eth-rpc",
             "http://localhost:9545",
-            "--onchain-verifier-addr",
+            "--anchor-state-registry-addr",
             "0x1234567890123456789012345678901234567890",
+            "--dispute-game-factory-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
+            "--tee-image-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
         ];
         assert!(Cli::try_parse_from(args).is_err());
     }

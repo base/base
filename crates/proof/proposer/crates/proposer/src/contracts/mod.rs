@@ -1,7 +1,11 @@
 //! Contract bindings for the proposer.
 
-pub mod onchain_verifier;
+pub mod aggregate_verifier;
+pub mod anchor_state_registry;
+pub mod dispute_game_factory;
 pub mod output_proposer;
 
-pub use onchain_verifier::*;
+pub use aggregate_verifier::*;
+pub use anchor_state_registry::*;
+pub use dispute_game_factory::*;
 pub use output_proposer::*;
