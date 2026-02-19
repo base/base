@@ -88,6 +88,7 @@ pub fn build_test_genesis() -> Genesis {
         config,
         alloc,
         gas_limit: GENESIS_GAS_LIMIT,
+        base_fee_per_gas: Some(1_000_000_000),
         difficulty: U256::ZERO,
         nonce: 0,
         timestamp: 1,

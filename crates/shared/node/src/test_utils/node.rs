@@ -18,7 +18,7 @@ use reth_node_core::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::Runtime;
 
 use crate::{
     BaseNodeExtension, NodeHooks, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
@@ -62,7 +62,7 @@ impl LocalNode {
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<OpChainSpec>,
     ) -> Result<Self> {
-        let exec = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let exec = Runtime::test();
 
         let network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
