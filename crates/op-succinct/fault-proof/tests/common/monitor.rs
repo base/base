@@ -131,7 +131,7 @@ pub async fn wait_and_track_games<P: Provider>(
                         OPSuccinctFaultDisputeGame::new(game_info.proxy_, factory.provider());
 
                     // Get game details
-                    let l2_block_number = game.l2SequenceNumber().call().await?;
+                    let l2_block_number = game.l2BlockNumber().call().await?;
                     let parent_index = game.claimData().call().await?.parentIndex;
 
                     let tracked = TrackedGame {

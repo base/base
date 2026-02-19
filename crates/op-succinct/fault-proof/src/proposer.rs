@@ -1387,7 +1387,7 @@ where
 
         let contract = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
 
-        let l2_block = contract.l2SequenceNumber().call().await?;
+        let l2_block = contract.l2BlockNumber().call().await?;
         let output_root = self.l2_provider.compute_output_root_at_block(l2_block).await?;
         let claim = contract.rootClaim().call().await?;
         let was_respected = contract.wasRespectedGameTypeWhenCreated().call().await?;
@@ -2039,7 +2039,7 @@ where
         // Get the game block number to include in logs
         let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
         let starting_l2_block_number = game.startingBlockNumber().call().await?;
-        let l2_block_number = game.l2SequenceNumber().call().await?;
+        let l2_block_number = game.l2BlockNumber().call().await?;
         let start_block = starting_l2_block_number.to::<u64>();
         let end_block = l2_block_number.to::<u64>();
 
