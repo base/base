@@ -441,18 +441,15 @@ mod tests {
             "Discovery table should have at least 5 ENRs"
         );
 
-        // It should have the same number of entries as the testnet table.
-        let testnet = BootNodes::testnet();
-
         // Filter out testnet ENRs that are not valid.
+        let testnet = BootNodes::testnet();
         let testnet: Vec<CombinedPublicKey> = testnet
             .iter()
             .filter_map(|node| {
-                if let BootNode::Enr(enr) = node {
-                    // Check that the ENR is valid for the testnet.
-                    if EnrValidation::validate(enr, OP_SEPOLIA_CHAIN_ID).is_invalid() {
-                        return None;
-                    }
+                if let BootNode::Enr(enr) = node
+                    && EnrValidation::validate(enr, OP_SEPOLIA_CHAIN_ID).is_invalid()
+                {
+                    return None;
                 }
                 let node_contact =
                     NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
@@ -464,12 +461,12 @@ mod tests {
         // There should be 8 valid ENRs for the testnet.
         assert_eq!(testnet.len(), 8);
 
-        // Those 8 ENRs should be in the discovery table.
+        // Those ENRs should be in the testnet bootnodes.
         let disc_enrs = discovery.disc.table_entries_enr();
-        for public_key in testnet {
+        for enr in disc_enrs {
             assert!(
-                disc_enrs.iter().any(|enr| enr.public_key() == public_key),
-                "Discovery table does not contain testnet ENR: {public_key:?}"
+                testnet.iter().any(|pub_key| pub_key == &enr.public_key()),
+                "Discovery table does not contain testnet ENR: {enr:?}"
             );
         }
     }

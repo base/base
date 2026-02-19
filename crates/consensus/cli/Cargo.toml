@@ -25,7 +25,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "tracing-log"] }
 tracing-appender.workspace = true
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
-metrics-process.workspace = true
+metrics-process = { workspace = true, features = ["metrics-rs"] }
 thiserror.workspace = true
 
 # `secrets` feature
