@@ -26,7 +26,6 @@ alloy-rpc-types-eth = { workspace = true, optional = true }
 
 # misc
 thiserror.workspace = true
-derive_more = { workspace = true, features = ["display"] }
 
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
@@ -46,7 +45,7 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = [ "std" ]
-std = [ "alloy-consensus/std", "alloy-eips/std", "derive_more/std" ]
+std = [ "alloy-consensus/std", "alloy-eips/std" ]
 alloy-compat = [ "dep:alloy-network", "dep:alloy-rpc-types-eth", "serde" ]
 k256 = [ "alloy-consensus/k256", "alloy-primitives/k256" ]
 kzg = [ "alloy-consensus/kzg", "alloy-eips/kzg", "std" ]
