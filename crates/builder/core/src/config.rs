@@ -51,6 +51,9 @@ pub struct BuilderConfig {
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 }
@@ -70,6 +73,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("flashblock_execution_time_budget_us", &self.flashblock_execution_time_budget_us)
             .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
             .field("execution_metering_mode", &self.execution_metering_mode)
+            .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_provider", &self.metering_provider)
             .finish()
     }
@@ -90,6 +94,7 @@ impl Default for BuilderConfig {
             flashblock_execution_time_budget_us: None,
             block_state_root_time_budget_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
+            max_uncompressed_block_size: None,
             metering_provider: Arc::new(NoopMeteringProvider),
         }
     }
@@ -126,6 +131,16 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_flashblocks(mut self, flashblocks: FlashblocksConfig) -> Self {
         self.flashblocks = flashblocks;
+        self
+    }
+
+    /// Sets the maximum uncompressed block size.
+    #[must_use]
+    pub const fn with_max_uncompressed_block_size(
+        mut self,
+        max_uncompressed_block_size: Option<u64>,
+    ) -> Self {
+        self.max_uncompressed_block_size = max_uncompressed_block_size;
         self
     }
 }
