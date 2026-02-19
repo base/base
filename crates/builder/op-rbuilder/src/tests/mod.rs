@@ -30,6 +30,9 @@ mod revert;
 mod smoke;
 
 #[cfg(test)]
+mod uncompressed_block_size;
+
+#[cfg(test)]
 mod txpool;
 
 #[cfg(test)]

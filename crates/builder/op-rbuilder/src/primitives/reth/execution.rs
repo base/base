@@ -10,6 +10,8 @@ pub enum TxnExecutionResult {
     TransactionDALimitExceeded,
     #[display("BlockDALimitExceeded: total_da_used={_0} tx_da_size={_1} block_da_limit={_2}")]
     BlockDALimitExceeded(u64, u64, u64),
+    #[display("BlockUncompressedSizeExceeded: total_uncompressed={_0} tx_uncompressed_size={_1} block_limit={_2}")]
+    BlockUncompressedSizeExceeded(u64, u64, u64),
     #[display("TransactionGasLimitExceeded: total_gas_used={_0} tx_gas_limit={_1}")]
     TransactionGasLimitExceeded(u64, u64, u64),
     SequencerTransaction,
@@ -34,6 +36,8 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub receipts: Vec<OpReceipt>,
     /// All gas used so far
     pub cumulative_gas_used: u64,
+    /// Cumulative uncompressed (EIP-2718 encoded) bytes used in the block
+    pub cumulative_uncompressed_bytes: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
@@ -52,6 +56,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             executed_senders: Vec::with_capacity(capacity),
             receipts: Vec::with_capacity(capacity),
             cumulative_gas_used: 0,
+            cumulative_uncompressed_bytes: 0,
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
@@ -75,7 +80,20 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         tx_gas_limit: u64,
         da_footprint_gas_scalar: Option<u16>,
         block_da_footprint_limit: Option<u64>,
+        tx_uncompressed_size: u64,
+        block_uncompressed_size_limit: Option<u64>,
     ) -> Result<(), TxnExecutionResult> {
+        if let Some(limit) = block_uncompressed_size_limit {
+            let total = self.cumulative_uncompressed_bytes.saturating_add(tx_uncompressed_size);
+            if total > limit {
+                return Err(TxnExecutionResult::BlockUncompressedSizeExceeded(
+                    self.cumulative_uncompressed_bytes,
+                    tx_uncompressed_size,
+                    limit,
+                ));
+            }
+        }
+
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
             return Err(TxnExecutionResult::TransactionDALimitExceeded);
         }

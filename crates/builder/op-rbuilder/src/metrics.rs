@@ -189,6 +189,10 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundle_insert_duration: Histogram,
     /// Duration of executing all backrun bundles for a target transaction
     pub backrun_bundle_execution_duration: Histogram,
+    /// Transactions rejected by block uncompressed size limit
+    pub block_uncompressed_size_exceeded_total: Counter,
+    /// Cumulative uncompressed block size at end of block
+    pub block_uncompressed_size: Histogram,
 }
 
 impl OpRBuilderMetrics {

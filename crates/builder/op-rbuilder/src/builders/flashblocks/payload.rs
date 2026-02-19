@@ -278,6 +278,7 @@ where
             metrics: Default::default(),
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
+            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             tx_data_store: self.config.tx_data_store.clone(),
         })
@@ -685,6 +686,7 @@ where
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
             target_da_footprint_for_batch,
+            self.config.max_uncompressed_block_size,
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
@@ -843,6 +845,9 @@ where
         ctx.metrics
             .payload_num_tx_gauge
             .set(info.executed_transactions.len() as f64);
+        ctx.metrics
+            .block_uncompressed_size
+            .record(info.cumulative_uncompressed_bytes as f64);
 
         debug!(
             target: "payload_builder",

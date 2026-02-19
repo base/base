@@ -76,6 +76,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub extra_ctx: ExtraCtx,
     /// Max gas that can be used by a transaction.
     pub max_gas_per_txn: Option<u64>,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    pub max_uncompressed_block_size: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
     /// Unified transaction data store (backrun bundles + resource metering)
@@ -381,6 +383,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn execute_best_transactions<E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
@@ -389,6 +392,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
         block_da_footprint_limit: Option<u64>,
+        block_uncompressed_size_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -423,6 +427,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
+            let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
             // exclude reverting transaction if:
             // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
@@ -480,6 +485,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 tx.gas_limit(),
                 info.da_footprint_scalar,
                 block_da_footprint_limit,
+                tx_uncompressed_size,
+                block_uncompressed_size_limit,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
@@ -581,6 +588,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
+            // record uncompressed size
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
@@ -648,6 +657,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         .iter()
                         .map(|tx| tx.estimated_da_size())
                         .sum();
+                    let total_backrun_uncompressed_size: u64 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.encoded_length() as u64)
+                        .sum();
 
                     if let Err(result) = info.is_tx_over_limits(
                         total_backrun_da_size,
@@ -657,6 +671,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         total_backrun_gas,
                         info.da_footprint_scalar,
                         block_da_footprint_limit,
+                        total_backrun_uncompressed_size,
+                        block_uncompressed_size_limit,
                     ) {
                         self.metrics
                             .backrun_bundles_rejected_over_limits_total
@@ -716,6 +732,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                         info.cumulative_gas_used += backrun_gas_used;
                         info.cumulative_da_bytes_used += backrun_tx.estimated_da_size();
+                        info.cumulative_uncompressed_bytes += backrun_tx.encoded_length() as u64;
 
                         let ctx = ReceiptBuilderCtx {
                             tx: consensus_tx.inner(),

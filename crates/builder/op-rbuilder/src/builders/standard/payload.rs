@@ -250,6 +250,7 @@ where
             metrics: self.metrics.clone(),
             extra_ctx: Default::default(),
             max_gas_per_txn: self.config.max_gas_per_txn,
+            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             tx_data_store: self.config.tx_data_store.clone(),
         };
@@ -415,6 +416,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                     block_gas_limit,
                     block_da_limit,
                     block_da_footprint,
+                    ctx.max_uncompressed_block_size,
                 )?
                 .is_some()
             {
