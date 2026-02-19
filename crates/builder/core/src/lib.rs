@@ -29,7 +29,8 @@ mod flashblocks;
 pub use flashblocks::{
     BestFlashblocksTxs, BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments,
     FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx, FlashblocksServiceBuilder,
-    OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload, WaitForValue,
+    OpPayloadBuilder, OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload,
+    WaitForValue,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

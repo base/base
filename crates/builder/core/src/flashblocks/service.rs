@@ -16,11 +16,9 @@ use reth_optimism_node::{
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 
-use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
 use crate::{
-    BuilderConfig,
-    metrics::BuilderMetrics,
-    traits::{NodeBounds, PoolBounds},
+    BlockPayloadJobGenerator, BuilderConfig, BuilderMetrics, NodeBounds, OpPayloadBuilder,
+    PayloadHandler, PoolBounds,
 };
 
 /// Builder for the flashblocks payload service.
