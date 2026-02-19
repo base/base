@@ -9,15 +9,6 @@ use rstest::rstest;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use std::sync::Arc;
-
-use alloy_primitives::FixedBytes;
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
-use kona_genesis::RollupConfig;
-use rstest::rstest;
-use thiserror::Error;
-use tokio::sync::mpsc;
-
 use crate::{
     BuildTask, BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineState, EngineTaskExt,
