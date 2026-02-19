@@ -2299,6 +2299,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-revm",
  "revm",
+ "rstest",
  "thiserror 2.0.18",
 ]
 

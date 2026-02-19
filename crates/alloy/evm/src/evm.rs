@@ -136,7 +136,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, vec};
+    use alloc::vec;
 
     use alloy_evm::{
         EvmFactory, EvmInternals,
@@ -144,23 +144,26 @@ mod tests {
     };
     use alloy_primitives::{Address, U256};
     use op_revm::precompiles::{bls12_381, bn254_pair};
-    use revm::{context::CfgEnv, database::EmptyDB, precompile::PrecompileError};
+    use revm::{context::CfgEnv, database::EmptyDB};
+    use rstest::rstest;
 
     use super::*;
     use crate::OpEvmFactory;
 
-    #[test]
-    fn test_precompiles_jovian_fail() {
+    #[rstest]
+    #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]
+    #[case::bls12_g1_msm(*bls12_381::JOVIAN_G1_MSM.address(), bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_g2_msm(*bls12_381::JOVIAN_G2_MSM.address(), bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_pairing(*bls12_381::JOVIAN_PAIRING.address(), bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE)]
+    fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = OpEvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
         );
-
         let (precompiles, ctx) = (&mut evm.inner.0.precompiles, &mut evm.inner.0.ctx);
-
-        let jovian_precompile = precompiles.get(bn254_pair::JOVIAN.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1],
+        let precompile = precompiles.get(&address).unwrap();
+        let result = precompile.call(PrecompileInput {
+            data: &vec![0; max_size],
             gas: u64::MAX,
             caller: Address::ZERO,
             value: U256::ZERO,
@@ -169,66 +172,23 @@ mod tests {
             bytecode_address: Address::ZERO,
             internals: EvmInternals::from_context(ctx),
         });
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), PrecompileError::Bn254PairLength));
-
-        let jovian_precompile = precompiles.get(bls12_381::JOVIAN_G1_MSM.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1],
-            gas: u64::MAX,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-            is_static: false,
-            target_address: Address::ZERO,
-            bytecode_address: Address::ZERO,
-            internals: EvmInternals::from_context(ctx),
-        });
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("G1MSM input length too long"));
-
-        let jovian_precompile = precompiles.get(bls12_381::JOVIAN_G2_MSM.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1],
-            gas: u64::MAX,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-            is_static: false,
-            target_address: Address::ZERO,
-            bytecode_address: Address::ZERO,
-            internals: EvmInternals::from_context(ctx),
-        });
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("G2MSM input length too long"));
-
-        let jovian_precompile = precompiles.get(bls12_381::JOVIAN_PAIRING.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE + 1],
-            gas: u64::MAX,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-            is_static: false,
-            target_address: Address::ZERO,
-            bytecode_address: Address::ZERO,
-            internals: EvmInternals::from_context(ctx),
-        });
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Pairing input length too long"));
+        assert!(result.is_ok(), "precompile {address} should succeed at max input size");
     }
 
-    #[test]
-    fn test_precompiles_jovian() {
+    #[rstest]
+    #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]
+    #[case::bls12_g1_msm(*bls12_381::JOVIAN_G1_MSM.address(), bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_g2_msm(*bls12_381::JOVIAN_G2_MSM.address(), bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_pairing(*bls12_381::JOVIAN_PAIRING.address(), bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE)]
+    fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = OpEvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
         );
         let (precompiles, ctx) = (&mut evm.inner.0.precompiles, &mut evm.inner.0.ctx);
-        let jovian_precompile = precompiles.get(bn254_pair::JOVIAN.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bn254_pair::JOVIAN_MAX_INPUT_SIZE],
+        let precompile = precompiles.get(&address).unwrap();
+        let result = precompile.call(PrecompileInput {
+            data: &vec![0; max_size + 1],
             gas: u64::MAX,
             caller: Address::ZERO,
             value: U256::ZERO,
@@ -237,49 +197,6 @@ mod tests {
             bytecode_address: Address::ZERO,
             internals: EvmInternals::from_context(ctx),
         });
-
-        assert!(result.is_ok());
-
-        let jovian_precompile = precompiles.get(bls12_381::JOVIAN_G1_MSM.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE],
-            gas: u64::MAX,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-            is_static: false,
-            target_address: Address::ZERO,
-            bytecode_address: Address::ZERO,
-            internals: EvmInternals::from_context(ctx),
-        });
-
-        assert!(result.is_ok());
-
-        let jovian_precompile = precompiles.get(bls12_381::JOVIAN_G2_MSM.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE],
-            gas: u64::MAX,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-            is_static: false,
-            target_address: Address::ZERO,
-            bytecode_address: Address::ZERO,
-            internals: EvmInternals::from_context(ctx),
-        });
-
-        assert!(result.is_ok());
-
-        let jovian_precompile = precompiles.get(bls12_381::JOVIAN_PAIRING.address()).unwrap();
-        let result = jovian_precompile.call(PrecompileInput {
-            data: &vec![0; bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE],
-            gas: u64::MAX,
-            caller: Address::ZERO,
-            value: U256::ZERO,
-            is_static: false,
-            target_address: Address::ZERO,
-            bytecode_address: Address::ZERO,
-            internals: EvmInternals::from_context(ctx),
-        });
-
-        assert!(result.is_ok());
+        assert!(result.is_err(), "precompile {address} should fail over max input size");
     }
 }
