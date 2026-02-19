@@ -2325,6 +2325,7 @@ dependencies = [
  "alloy-signer",
  "base-alloy-consensus",
  "base-alloy-rpc-types",
+ "rstest",
 ]
 
 [[package]]
