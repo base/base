@@ -187,9 +187,11 @@ pub struct OpTransactionFields {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl From<OpTransactionFields> for OtherFields {
-    fn from(value: OpTransactionFields) -> Self {
-        serde_json::to_value(value).unwrap().try_into().unwrap()
+impl TryFrom<OpTransactionFields> for OtherFields {
+    type Error = serde_json::Error;
+
+    fn try_from(value: OpTransactionFields) -> Result<Self, Self::Error> {
+        serde_json::to_value(value)?.try_into()
     }
 }
 
