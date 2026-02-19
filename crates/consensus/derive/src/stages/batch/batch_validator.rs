@@ -221,10 +221,10 @@ where
         // This is in the case where we auto generate all batches in an epoch & advance the epoch
         // but don't advance the L2 Safe Head's epoch
         let epoch = self.l1_blocks[0];
-        if parent.l1_origin != epoch.id() && parent.l1_origin.number != epoch.number - 1 {
+        if parent.l1_origin != epoch.id() && parent.l1_origin.number + 1 != epoch.number {
             return Err(PipelineErrorKind::Reset(ResetError::L1OriginMismatch(
                 parent.l1_origin.number,
-                epoch.number - 1,
+                epoch.number.saturating_sub(1),
             )));
         }
 
