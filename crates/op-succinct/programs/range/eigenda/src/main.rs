@@ -40,9 +40,7 @@ fn main() {
             &witness_data.eigenda_data.clone().expect("eigenda witness data is not present"),
         )
         .expect("cannot deserialize eigenda witness");
-        let boot_info = BootInfo::load(oracle.as_ref())
-            .await
-            .expect("Failed to load boot info");
+        let boot_info = BootInfo::load(oracle.as_ref()).await.expect("Failed to load boot info");
 
         let preloaded_preimage_provider = eigenda_witness_to_preloaded_provider(
             oracle.clone(),
