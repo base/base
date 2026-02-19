@@ -196,3 +196,7 @@ devnet-flashblocks:
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
+
+# Run basectl with specified config (mainnet, sepolia, devnet, or path)
+basectl config="mainnet":
+    cargo run -p basectl --release -- -c {{config}}
