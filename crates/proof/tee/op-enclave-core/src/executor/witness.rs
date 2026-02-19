@@ -17,7 +17,7 @@ use crate::error::ExecutorError;
 /// This is the JSON representation received from the client, where codes and state
 /// are hex-encoded string maps.
 ///
-/// Uses `#[serde(alias)]` to accept both PascalCase (Go JSON encoding) and
+/// Uses `#[serde(alias)]` to accept both `PascalCase` (Go JSON encoding) and
 /// camelCase/lowercase (geth `debug_executionWitness` RPC response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionWitness {
