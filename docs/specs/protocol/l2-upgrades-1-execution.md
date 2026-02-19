@@ -422,7 +422,6 @@ The bundle is a JSON file with the following structure:
       "to": "0x1234...",
       "data": "0xabcd...",
       "gasLimit": "1000000",
-      "value": "0",
       "from": "0x0000000000000000000000000000000000000000"
     }
   ]
@@ -436,10 +435,12 @@ The bundle is a JSON file with the following structure:
 - `transactions[].to`: Target address (contract being called)
 - `transactions[].data`: Transaction calldata as hex string
 - `transactions[].gasLimit`: Gas limit for this transaction
-- `transactions[].value`: (Optional) ETH value to send, defaults to "0" if omitted
 - `transactions[].from`: (Optional) Sender address. Defaults to the [Depositor Account](./l2-upgrades-2-contracts.md#depositor-account).
   Must be set to `address(0)` for the L2ProxyAdmin upgrade transaction to utilize the zero-address upgrade path in the
   Proxy.sol implementation
+
+A `value` field MUST NOT be included in transaction objects. All NUT transactions are calls with zero ETH value, which
+is enforced by the execution layer rather than specified per-transaction.
 
 ### Bundle Generation Process
 
