@@ -1,12 +1,13 @@
 //! Client for polling Derivation Delegate sync status.
 
+use std::time::Duration;
+
 use jsonrpsee::{
     core::ClientError,
     http_client::{HttpClient, HttpClientBuilder},
 };
 use kona_protocol::SyncStatus;
 use kona_rpc::RollupNodeApiClient;
-use std::time::Duration;
 use thiserror::Error;
 use url::Url;
 

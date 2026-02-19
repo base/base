@@ -1,9 +1,7 @@
 //! Contains the builder for the [`RollupNode`].
 
-use crate::{
-    EngineConfig, InteropMode, NetworkConfig, RollupNode, SequencerConfig,
-    actors::DerivationDelegateClient, service::node::L1Config,
-};
+use std::sync::Arc;
+
 use alloy_primitives::Bytes;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
@@ -12,14 +10,17 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use http_body_util::Full;
-use op_alloy_network::Optimism;
-use std::sync::Arc;
-use tower::ServiceBuilder;
-use url::Url;
-
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_providers_alloy::OnlineBeaconClient;
 use kona_rpc::RpcBuilder;
+use op_alloy_network::Optimism;
+use tower::ServiceBuilder;
+use url::Url;
+
+use crate::{
+    EngineConfig, InteropMode, NetworkConfig, RollupNode, SequencerConfig,
+    actors::DerivationDelegateClient, service::node::L1Config,
+};
 
 /// Configuration for Derivation Delegate mode.
 #[derive(Debug, Clone)]

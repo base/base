@@ -1,14 +1,11 @@
 [package]
 name = "kona-providers-alloy"
-version = "0.3.3"
+version.workspace = true
 description = "Alloy Backed Providers"
 
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
@@ -43,8 +40,8 @@ lru.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 tower.workspace = true
+url.workspace = true
 http-body-util.workspace = true
 
 c-kzg.workspace = true

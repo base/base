@@ -1,4 +1,12 @@
-//! This module contains the [ChannelProvider] stage.
+//! This module contains the [`ChannelProvider`] stage.
+
+use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
+use alloy_primitives::Bytes;
+use async_trait::async_trait;
+use kona_genesis::RollupConfig;
+use kona_protocol::BlockInfo;
 
 use super::{ChannelAssembler, ChannelBank, ChannelReaderProvider, NextFrameProvider};
 use crate::{
@@ -6,12 +14,6 @@ use crate::{
     traits::{OriginAdvancer, OriginProvider, SignalReceiver},
     types::{PipelineResult, Signal},
 };
-use alloc::{boxed::Box, sync::Arc};
-use alloy_primitives::Bytes;
-use async_trait::async_trait;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::BlockInfo;
 
 /// The [`ChannelProvider`] stage is a mux between the [`ChannelBank`] and [`ChannelAssembler`]
 /// stages.
@@ -155,13 +157,15 @@ where
 
 #[cfg(test)]
 mod test {
+    use alloc::{sync::Arc, vec};
+
+    use kona_genesis::{HardForkConfig, RollupConfig};
+    use kona_protocol::BlockInfo;
+
     use crate::{
         ChannelProvider, ChannelReaderProvider, OriginProvider, PipelineError, ResetSignal,
         SignalReceiver, test_utils::TestNextFrameProvider,
     };
-    use alloc::{sync::Arc, vec};
-    use kona_genesis::{HardForkConfig, RollupConfig};
-    use kona_protocol::BlockInfo;
 
     #[test]
     fn test_channel_provider_assembler_active() {

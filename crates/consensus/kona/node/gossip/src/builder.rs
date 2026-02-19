@@ -1,5 +1,7 @@
 //! A builder for the [`GossipDriver`].
 
+use std::time::Duration;
+
 use alloy_primitives::Address;
 use kona_genesis::RollupConfig;
 use kona_peers::{PeerMonitoring, PeerScoreLevel};
@@ -7,7 +9,6 @@ use libp2p::{
     Multiaddr, StreamProtocol, SwarmBuilder, gossipsub::Config, identity::Keypair,
     noise::Config as NoiseConfig, tcp::Config as TcpConfig, yamux::Config as YamuxConfig,
 };
-use std::time::Duration;
 use tokio::sync::watch::{self};
 
 use crate::{Behaviour, BlockHandler, GaterConfig, GossipDriver, GossipDriverBuilderError};

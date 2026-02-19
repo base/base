@@ -1,7 +1,8 @@
 //! Raw Span Batch Prefix
 
-use crate::{SpanBatchError, SpanDecodingError};
 use alloy_primitives::{FixedBytes, bytes};
+
+use crate::{SpanBatchError, SpanDecodingError};
 
 /// Span Batch Prefix
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -75,9 +76,11 @@ impl SpanBatchPrefix {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloc::vec::Vec;
+
     use alloy_primitives::address;
+
+    use super::*;
 
     #[test]
     fn test_span_batch_prefix_encoding_roundtrip() {

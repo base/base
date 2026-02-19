@@ -35,13 +35,12 @@ mod dev;
 pub use dev::DevEngineRpc;
 
 mod jsonrpsee;
+#[cfg(feature = "client")]
+pub use jsonrpsee::RollupNodeApiClient;
 pub use jsonrpsee::{
     AdminApiServer, DevEngineApiServer, HealthzApiServer, MinerApiExtServer, OpAdminApiServer,
     OpP2PApiServer, RollupBoostHealthzApiServer, RollupNodeApiServer, WsServer,
 };
-
-#[cfg(feature = "client")]
-pub use jsonrpsee::RollupNodeApiClient;
 
 mod rollup;
 pub use rollup::RollupRpc;

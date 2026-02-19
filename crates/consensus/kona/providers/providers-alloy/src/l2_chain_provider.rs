@@ -1,7 +1,7 @@
 //! Providers that use alloy provider types on the backend.
 
-#[cfg(feature = "metrics")]
-use crate::Metrics;
+use std::{num::NonZeroUsize, sync::Arc};
+
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -20,10 +20,12 @@ use kona_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use lru::LruCache;
 use op_alloy_consensus::OpBlock;
 use op_alloy_network::Optimism;
-use std::{num::NonZeroUsize, sync::Arc};
 use tower::ServiceBuilder;
 
-/// The [AlloyL2ChainProvider] is a concrete implementation of the [L2ChainProvider] trait,
+#[cfg(feature = "metrics")]
+use crate::Metrics;
+
+/// The [`AlloyL2ChainProvider`] is a concrete implementation of the [`L2ChainProvider`] trait,
 /// providing data over Ethereum JSON-RPC using an alloy provider as the backend.
 #[derive(Debug, Clone)]
 pub struct AlloyL2ChainProvider {
@@ -38,7 +40,7 @@ pub struct AlloyL2ChainProvider {
 }
 
 impl AlloyL2ChainProvider {
-    /// Creates a new [AlloyL2ChainProvider] with the given alloy provider and [RollupConfig].
+    /// Creates a new [`AlloyL2ChainProvider`] with the given alloy provider and [`RollupConfig`].
     ///
     /// ## Panics
     /// - Panics if `cache_size` is zero.
@@ -50,7 +52,7 @@ impl AlloyL2ChainProvider {
         Self::new_with_trust(inner, rollup_config, cache_size, true)
     }
 
-    /// Creates a new [AlloyL2ChainProvider] with the given alloy provider, [RollupConfig], and
+    /// Creates a new [`AlloyL2ChainProvider`] with the given alloy provider, [`RollupConfig`], and
     /// trust setting.
     ///
     /// ## Panics
@@ -79,7 +81,7 @@ impl AlloyL2ChainProvider {
         self.inner.get_block_number().await
     }
 
-    /// Verifies that a block's hash matches the expected hash when trust_rpc is false.
+    /// Verifies that a block's hash matches the expected hash when `trust_rpc` is false.
     fn verify_block_hash(
         &self,
         block_hash: B256,
@@ -98,7 +100,7 @@ impl AlloyL2ChainProvider {
         Ok(())
     }
 
-    /// Returns the [L2BlockInfo] for the given [BlockId]. [None] is returned if the block
+    /// Returns the [`L2BlockInfo`] for the given [`BlockId`]. [None] is returned if the block
     /// does not exist.
     pub async fn block_info_by_id(
         &mut self,
@@ -156,9 +158,9 @@ impl AlloyL2ChainProvider {
         result
     }
 
-    /// Creates a new [AlloyL2ChainProvider] from the provided [reqwest::Url].
+    /// Creates a new [`AlloyL2ChainProvider`] from the provided [`url::Url`].
     pub fn new_http(
-        url: reqwest::Url,
+        url: url::Url,
         rollup_config: Arc<RollupConfig>,
         cache_size: usize,
         jwt: JwtSecret,
@@ -177,7 +179,7 @@ impl AlloyL2ChainProvider {
     }
 }
 
-/// An error for the [AlloyL2ChainProvider].
+/// An error for the [`AlloyL2ChainProvider`].
 #[derive(Debug, thiserror::Error)]
 pub enum AlloyL2ChainProviderError {
     /// Transport error
@@ -186,10 +188,10 @@ pub enum AlloyL2ChainProviderError {
     /// Failed to find a block.
     #[error("Failed to fetch block {0}")]
     BlockNotFound(u64),
-    /// Failed to construct [L2BlockInfo] from the block and genesis.
+    /// Failed to construct [`L2BlockInfo`] from the block and genesis.
     #[error("Failed to construct L2BlockInfo from block {0} and genesis")]
     L2BlockInfoConstruction(u64),
-    /// Failed to convert the block into a [SystemConfig].
+    /// Failed to convert the block into a [`SystemConfig`].
     #[error("Failed to convert block {0} into SystemConfig")]
     SystemConfigConversion(u64),
 }

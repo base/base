@@ -65,10 +65,12 @@ impl TryFrom<&SystemConfigLog> for DaFootprintGasScalarUpdate {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex};
+
     use super::*;
     use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
-    use alloc::vec;
-    use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex};
 
     #[test]
     fn test_da_footprint_update_try_from() {

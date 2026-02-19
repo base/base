@@ -1,9 +1,10 @@
-use super::SequencerActor;
-use crate::{Conductor, OriginSelector, SequencerEngineClient, UnsafePayloadGossipClient};
 use alloy_primitives::B256;
 use kona_derive::AttributesBuilder;
 use kona_rpc::SequencerAdminAPIError;
 use tokio::sync::oneshot;
+
+use super::SequencerActor;
+use crate::{Conductor, OriginSelector, SequencerEngineClient, UnsafePayloadGossipClient};
 
 /// The query types to the sequencer actor for the admin api.
 #[derive(Debug)]

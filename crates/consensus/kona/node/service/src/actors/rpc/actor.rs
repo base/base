@@ -1,6 +1,7 @@
 //! RPC Server Actor
 
-use crate::{NodeActor, RpcActorError, actors::CancellableContext};
+use std::time::Duration;
+
 use async_trait::async_trait;
 use derive_more::Constructor;
 use jsonrpsee::{
@@ -14,9 +15,10 @@ use kona_rpc::{
     RollupBoostAdminClient, RollupBoostHealthzApiServer, RollupNodeApiServer, RollupRpc,
     RpcBuilder, SequencerAdminAPIClient, WsRPC, WsServer,
 };
-use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+
+use crate::{NodeActor, RpcActorError, actors::CancellableContext};
 
 /// An actor that handles the RPC server for the rollup node.
 #[derive(Constructor, Debug)]

@@ -1,12 +1,11 @@
 //! The Optimism RPC API using `jsonrpsee`
 
-use crate::{
-    OutputResponse, SafeHeadResponse,
-    health::{HealthzResponse, RollupBoostHealthzResponse},
-};
+use core::net::IpAddr;
+
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use core::net::IpAddr;
+#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
+use getrandom as _; // required for compiling wasm32-unknown-unknown
 use ipnet::IpNet;
 use jsonrpsee::{
     core::{RpcResult, SubscriptionResult},
@@ -15,14 +14,15 @@ use jsonrpsee::{
 use kona_genesis::RollupConfig;
 use kona_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use kona_protocol::SyncStatus;
+// Re-export apis defined in upstream `op-alloy-rpc-jsonrpsee`
+pub use op_alloy_rpc_jsonrpsee::traits::{MinerApiExtServer, OpAdminApiServer};
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use rollup_boost::{GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse};
 
-#[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
-use getrandom as _; // required for compiling wasm32-unknown-unknown
-
-// Re-export apis defined in upstream `op-alloy-rpc-jsonrpsee`
-pub use op_alloy_rpc_jsonrpsee::traits::{MinerApiExtServer, OpAdminApiServer};
+use crate::{
+    OutputResponse, SafeHeadResponse,
+    health::{HealthzResponse, RollupBoostHealthzResponse},
+};
 
 /// Optimism specified rpc interface.
 ///

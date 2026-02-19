@@ -1,14 +1,16 @@
 //! Contains the [`PollingTraversal`] stage of the derivation pipeline.
 
-use crate::{
-    ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,
-    PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
-};
 use alloc::{boxed::Box, sync::Arc};
+
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use kona_genesis::{RollupConfig, SystemConfig};
 use kona_protocol::BlockInfo;
+
+use crate::{
+    ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,
+    PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
+};
 
 /// The [`PollingTraversal`] stage of the derivation pipeline.
 ///
@@ -155,8 +157,8 @@ impl<F: ChainProvider> OriginProvider for PollingTraversal<F> {
 impl<F: ChainProvider + Send> SignalReceiver for PollingTraversal<F> {
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         match signal {
-            Signal::Reset(ResetSignal { l1_origin, system_config, .. }) |
-            Signal::Activation(ActivationSignal { l1_origin, system_config, .. }) => {
+            Signal::Reset(ResetSignal { l1_origin, system_config, .. })
+            | Signal::Activation(ActivationSignal { l1_origin, system_config, .. }) => {
                 self.update_origin(l1_origin);
                 self.system_config = system_config.expect("System config must be provided.");
             }
@@ -174,10 +176,12 @@ impl<F: ChainProvider + Send> SignalReceiver for PollingTraversal<F> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use alloc::vec;
+
+    use alloy_primitives::{address, b256};
+
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TraversalTestHelper};
-    use alloc::vec;
-    use alloy_primitives::{address, b256};
 
     #[test]
     fn test_l1_traversal_batcher_address() {

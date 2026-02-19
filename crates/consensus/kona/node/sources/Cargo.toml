@@ -1,13 +1,12 @@
 [package]
 name = "kona-sources"
-version = "0.1.2"
+version.workspace = true
 description = "Data source types and utilities for the kona-node"
 
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
-authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
@@ -35,7 +34,6 @@ thiserror.workspace = true
 derive_more.workspace = true
 
 # HTTP client and TLS for remote signer
-reqwest = { workspace = true, features = ["json", "rustls-tls", "stream"] }
 url.workspace = true
 serde.workspace = true
 serde_json.workspace = true

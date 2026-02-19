@@ -1,9 +1,7 @@
 //! A task to insert an unsafe payload into the execution engine.
 
-use crate::{
-    EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,
-    state::EngineSyncStateUpdate,
-};
+use std::{sync::Arc, time::Instant};
+
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
@@ -15,7 +13,11 @@ use op_alloy_consensus::OpBlock;
 use op_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadSidecar,
 };
-use std::{sync::Arc, time::Instant};
+
+use crate::{
+    EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,
+    state::EngineSyncStateUpdate,
+};
 
 /// The task to insert a payload into the execution engine.
 #[derive(Debug, Clone)]

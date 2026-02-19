@@ -1,6 +1,7 @@
 //! Module containing the [`RawSpanBatch`] struct.
 
 use alloc::{vec, vec::Vec};
+
 use alloy_primitives::bytes;
 
 use crate::{
@@ -57,9 +58,9 @@ impl RawSpanBatch {
                 .payload
                 .origin_bits
                 .get_bit(i as usize)
-                .ok_or(SpanBatchError::Decoding(SpanDecodingError::L1OriginCheck))? ==
-                1 &&
-                i > 0
+                .ok_or(SpanBatchError::Decoding(SpanDecodingError::L1OriginCheck))?
+                == 1
+                && i > 0
             {
                 l1_origin_number -= 1;
             }
@@ -95,8 +96,9 @@ impl RawSpanBatch {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloy_primitives::FixedBytes;
+
+    use super::*;
 
     #[test]
     fn test_try_from_span_batch_empty_batches_errors() {

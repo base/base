@@ -1,13 +1,15 @@
 //! Mock types for the frame queue stage.
 
+use alloc::{boxed::Box, vec::Vec};
+
+use alloy_primitives::Bytes;
+use async_trait::async_trait;
+use kona_protocol::BlockInfo;
+
 use crate::{
     FrameQueueProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
     SignalReceiver,
 };
-use alloc::{boxed::Box, vec::Vec};
-use alloy_primitives::Bytes;
-use async_trait::async_trait;
-use kona_protocol::BlockInfo;
 
 /// A mock [`FrameQueueProvider`] for testing the frame queue stage.
 ///

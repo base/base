@@ -2,15 +2,17 @@
 //!
 //! [ChannelBank]: crate::stages::ChannelBank
 
+use alloc::{boxed::Box, vec::Vec};
+
+use async_trait::async_trait;
+use kona_protocol::{BlockInfo, Frame};
+
 use crate::{
     errors::PipelineError,
     stages::NextFrameProvider,
     traits::{OriginAdvancer, OriginProvider, SignalReceiver},
     types::{PipelineResult, Signal},
 };
-use alloc::{boxed::Box, vec::Vec};
-use async_trait::async_trait;
-use kona_protocol::{BlockInfo, Frame};
 
 /// A mock [`NextFrameProvider`] for testing the [`ChannelBank`] stage.
 ///

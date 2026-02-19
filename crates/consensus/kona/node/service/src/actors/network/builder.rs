@@ -1,5 +1,7 @@
 //! Network Builder Module.
 
+use std::time::Duration;
+
 use alloy_primitives::Address;
 use discv5::Config as Discv5Config;
 use kona_disc::{Discv5Builder, LocalNode};
@@ -8,7 +10,6 @@ use kona_gossip::{GaterConfig, GossipDriverBuilder};
 use kona_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use kona_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
-use std::time::Duration;
 
 use crate::{
     NetworkBuilderError,
@@ -175,11 +176,13 @@ impl NetworkBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
     use alloy_chains::Chain;
     use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
     use libp2p::gossipsub::IdentTopic;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use super::*;
 
     #[derive(Debug)]
     struct NetworkBuilderParams {

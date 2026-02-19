@@ -1,12 +1,14 @@
 //! Block Handler
 
-use crate::HandlerEncodeError;
+use std::collections::{BTreeMap, HashSet};
+
 use alloy_primitives::{Address, B256};
 use kona_genesis::RollupConfig;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use op_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
-use std::collections::{BTreeMap, HashSet};
 use tokio::sync::watch::Receiver;
+
+use crate::HandlerEncodeError;
 
 /// This trait defines the functionality required to process incoming messages
 /// and determine their acceptance within the network.
@@ -138,13 +140,12 @@ impl BlockHandler {
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
+    use alloy_primitives::{B256, Signature};
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
     use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
 
-    use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
-
     use super::*;
-    use alloy_primitives::{B256, Signature};
+    use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
 
     #[test]
     fn test_valid_decode() {

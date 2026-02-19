@@ -26,8 +26,9 @@
 //! - Data length mismatches
 //! - Unsupported versions
 
-use crate::ChannelId;
 use alloc::vec::Vec;
+
+use crate::ChannelId;
 
 /// Version identifier for the current derivation pipeline format.
 ///
@@ -110,11 +111,11 @@ pub enum FrameParseError {
 /// ```
 ///
 /// ## Field Specifications
-/// - **channel_id** (16 bytes): Unique identifier linking this frame to its parent channel
-/// - **frame_number** (2 bytes, uint16): Sequence number for proper reassembly ordering
-/// - **frame_data_length** (4 bytes, uint32): Length of the frame_data field in bytes
-/// - **frame_data** (variable): The actual payload data for this frame segment
-/// - **is_last** (1 byte, bool): Flag indicating if this is the final frame in the sequence
+/// - **`channel_id`** (16 bytes): Unique identifier linking this frame to its parent channel
+/// - **`frame_number`** (2 bytes, uint16): Sequence number for proper reassembly ordering
+/// - **`frame_data_length`** (4 bytes, uint32): Length of the `frame_data` field in bytes
+/// - **`frame_data`** (variable): The actual payload data for this frame segment
+/// - **`is_last`** (1 byte, bool): Flag indicating if this is the final frame in the sequence
 ///
 /// ## Total Overhead
 /// Each frame has a fixed overhead of 23 bytes (16 + 2 + 4 + 1) plus the variable data payload.
@@ -265,8 +266,9 @@ impl Frame {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     fn test_encode_frame_roundtrip() {

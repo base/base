@@ -1,8 +1,9 @@
 //! Contains an online derivation pipeline.
 
-use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
-use async_trait::async_trait;
 use core::fmt::Debug;
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use kona_derive::{
     DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage, L2ChainProvider,
     OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
@@ -11,7 +12,8 @@ use kona_derive::{
 };
 use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
-use std::sync::Arc;
+
+use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
 
 /// An online polled derivation pipeline.
 type OnlinePolledDerivationPipeline = DerivationPipeline<
@@ -171,7 +173,7 @@ impl SignalReceiver for OnlinePipeline {
 }
 
 impl OriginProvider for OnlinePipeline {
-    /// Returns the optional L1 [BlockInfo] origin.
+    /// Returns the optional L1 [`BlockInfo`] origin.
     fn origin(&self) -> Option<BlockInfo> {
         match self {
             Self::Polled(pipeline) => pipeline.origin(),
@@ -193,7 +195,7 @@ impl Iterator for OnlinePipeline {
 
 #[async_trait]
 impl Pipeline for OnlinePipeline {
-    /// Peeks at the next [OpAttributesWithParent] from the pipeline.
+    /// Peeks at the next [`OpAttributesWithParent`] from the pipeline.
     fn peek(&self) -> Option<&OpAttributesWithParent> {
         match self {
             Self::Polled(pipeline) => pipeline.peek(),
@@ -217,7 +219,7 @@ impl Pipeline for OnlinePipeline {
         }
     }
 
-    /// Returns the [SystemConfig] by L2 number.
+    /// Returns the [`SystemConfig`] by L2 number.
     async fn system_config_by_number(
         &mut self,
         number: u64,

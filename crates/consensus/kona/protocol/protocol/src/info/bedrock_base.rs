@@ -36,7 +36,7 @@ pub trait L1BlockInfoBedrockBaseFields {
     /// The current sequence number
     fn sequence_number(&self) -> u64;
 
-    /// The address of the batch new_from_l1_base_feesubmitter
+    /// The address of the batch `new_from_l1_base_feesubmitter`
     fn batcher_address(&self) -> Address;
 }
 

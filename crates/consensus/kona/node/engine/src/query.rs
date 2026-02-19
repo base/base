@@ -34,7 +34,7 @@ pub enum EngineQueries {
     OutputAtBlock {
         /// The block number or tag to retrieve the output for.
         block: BlockNumberOrTag,
-        /// Response channel for (block_info, output_root, engine_state).
+        /// Response channel for (`block_info`, `output_root`, `engine_state`).
         sender: Sender<(L2BlockInfo, OutputRoot, EngineState)>,
     },
     /// Subscribe to engine state updates via a watch channel receiver.

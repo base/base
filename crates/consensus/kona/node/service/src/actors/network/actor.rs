@@ -221,11 +221,10 @@ impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
                         return Err(NetworkActorError::ChannelClosed);
                     };
 
-                    if let Some(payload) = handler.gossip.handle_event(event) {
-                        if unsafe_block_tx.send(payload.into()).is_err() {
+                    if let Some(payload) = handler.gossip.handle_event(event)
+                        && unsafe_block_tx.send(payload.into()).is_err() {
                             warn!(target: "node::p2p", "Failed to send unsafe block to network handler");
                         }
-                    }
                 },
                 enr = handler.enr_receiver.recv() => {
                     let Some(enr) = enr else {
@@ -253,7 +252,6 @@ impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV3};
     use alloy_signer::SignerSync;
@@ -261,6 +259,8 @@ mod tests {
     use arbitrary::Arbitrary;
     use op_alloy_rpc_types_engine::OpExecutionPayload;
     use rand::Rng;
+
+    use super::*;
 
     #[test]
     fn test_payload_signature_roundtrip_v1() {

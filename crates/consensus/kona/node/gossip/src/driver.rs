@@ -1,5 +1,11 @@
 //! Consensus-layer gossipsub driver for Optimism.
 
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use alloy_primitives::{Address, hex};
 use derive_more::Debug;
 use discv5::Enr;
@@ -14,11 +20,6 @@ use libp2p::{
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
 use op_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use tokio::sync::Mutex;
 
 use crate::{
@@ -193,14 +194,13 @@ where
             Ok(id) => loop {
                 if let SwarmEvent::NewListenAddr { address, listener_id } =
                     self.swarm.select_next_some().await
+                    && id == listener_id
                 {
-                    if id == listener_id {
-                        info!(target: "gossip", "Swarm now listening on: {address}");
+                    info!(target: "gossip", "Swarm now listening on: {address}");
 
-                        self.addr = address.clone();
+                    self.addr = address.clone();
 
-                        return Ok(address);
-                    }
+                    return Ok(address);
                 }
             },
             Err(err) => {

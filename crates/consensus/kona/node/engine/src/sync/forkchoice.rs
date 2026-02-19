@@ -1,15 +1,17 @@
 //! Contains the forkchoice state for the L2.
 
-use crate::{EngineClient, SyncStartError};
+use std::fmt::Display;
+
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_provider::Network;
 use alloy_transport::TransportResult;
 use kona_genesis::RollupConfig;
 use kona_protocol::L2BlockInfo;
 use op_alloy_network::Optimism;
-use std::fmt::Display;
 
-/// An unsafe, safe, and finalized [L2BlockInfo] returned by the [crate::find_starting_forkchoice]
+use crate::{EngineClient, SyncStartError};
+
+/// An unsafe, safe, and finalized [`L2BlockInfo`] returned by the [`crate::find_starting_forkchoice`]
 /// function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct L2ForkchoiceState {

@@ -1,4 +1,5 @@
-use crate::NodeMode;
+use std::{sync::Arc, time::Duration};
+
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use kona_engine::{
@@ -6,8 +7,9 @@ use kona_engine::{
 };
 use kona_genesis::RollupConfig;
 use op_alloy_network::Optimism;
-use std::{sync::Arc, time::Duration};
 use url::Url;
+
+use crate::NodeMode;
 
 /// Configuration for the Engine Actor.
 #[derive(Debug, Clone)]

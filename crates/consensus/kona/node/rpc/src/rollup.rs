@@ -2,6 +2,8 @@
 //!
 //! Implemented in the op-node in <https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-service/sources/rollupclient.go#L16>
 
+use std::fmt::Debug;
+
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
 use jsonrpsee::{
@@ -11,14 +13,13 @@ use jsonrpsee::{
 use kona_engine::EngineState;
 use kona_genesis::RollupConfig;
 use kona_protocol::SyncStatus;
-use std::fmt::Debug;
 
 use crate::{
     EngineRpcClient, L1State, L1WatcherQueries, OutputResponse, RollupNodeApiServer,
     SafeHeadResponse, l1_watcher::L1WatcherQuerySender,
 };
 
-/// RollupRpc
+/// `RollupRpc`
 ///
 /// This is a server implementation of [`crate::RollupNodeApiServer`].
 #[derive(Debug)]

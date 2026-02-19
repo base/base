@@ -1,6 +1,7 @@
 //! Contains the chain config type.
 
 use alloc::string::String;
+
 use alloy_chains::Chain;
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
@@ -86,7 +87,7 @@ pub struct ChainConfig {
     /// The maximum sequencer drift in seconds.
     #[cfg_attr(feature = "serde", serde(rename = "max_sequencer_drift"))]
     pub max_sequencer_drift: u64,
-    /// Gas paying token metadata. Not consumed by downstream OPStack components.
+    /// Gas paying token metadata. Not consumed by downstream `OPStack` components.
     #[cfg_attr(feature = "serde", serde(rename = "GasPayingToken", alias = "gas_paying_token"))]
     pub gas_paying_token: Option<Address>,
     /// Hardfork Config. These values may override the superchain-wide defaults.

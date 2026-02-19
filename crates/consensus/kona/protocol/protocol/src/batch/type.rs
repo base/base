@@ -57,8 +57,9 @@ impl Decodable for BatchType {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloc::vec::Vec;
+
+    use super::*;
 
     #[test]
     fn test_batch_type_rlp_roundtrip() {

@@ -1,15 +1,17 @@
 //! This module contains the `ChannelBank` struct.
 
+use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
+use core::fmt::Debug;
+
+use alloy_primitives::{Bytes, hex, map::HashMap};
+use async_trait::async_trait;
+use kona_genesis::RollupConfig;
+use kona_protocol::{BlockInfo, Channel, ChannelId, Frame};
+
 use crate::{
     ChannelReaderProvider, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError,
     PipelineErrorKind, PipelineResult, Signal, SignalReceiver,
 };
-use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
-use alloy_primitives::{Bytes, hex, map::HashMap};
-use async_trait::async_trait;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::{BlockInfo, Channel, ChannelId, Frame};
 
 /// The maximum size of a channel bank.
 pub(crate) const MAX_CHANNEL_BANK_SIZE: usize = 100_000_000;
@@ -92,8 +94,8 @@ where
         };
 
         // Check if the channel is not timed out. If it has, ignore the frame.
-        if current_channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp) <
-            origin.number
+        if current_channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp)
+            < origin.number
         {
             warn!(
                 target: "channel_bank",
@@ -163,8 +165,8 @@ where
             self.channels.get(&channel_id).ok_or(PipelineError::ChannelProviderEmpty.crit())?;
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
 
-        let timed_out = channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp) <
-            origin.number;
+        let timed_out = channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp)
+            < origin.number;
         if timed_out || !channel.is_ready() {
             return Err(PipelineError::Eof.temp());
         }
@@ -239,15 +241,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use kona_genesis::HardForkConfig;
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
+
     use super::*;
     use crate::{
         test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage},
         types::ResetSignal,
     };
-    use alloc::{vec, vec::Vec};
-    use kona_genesis::HardForkConfig;
-    use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     #[test]
     fn test_try_read_channel_at_index_missing_channel() {

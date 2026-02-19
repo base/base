@@ -53,10 +53,12 @@ impl TryFrom<&SystemConfigLog> for BatcherUpdate {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
+    use alloy_primitives::{B256, Bytes, Log, LogData, address, hex};
+
     use super::*;
     use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
-    use alloc::vec;
-    use alloy_primitives::{B256, Bytes, Log, LogData, address, hex};
 
     #[test]
     fn test_batcher_update_try_from() {

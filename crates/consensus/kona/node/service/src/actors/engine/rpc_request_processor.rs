@@ -1,13 +1,15 @@
-use crate::{EngineError, EngineRpcRequest};
+use std::sync::Arc;
+
 use derive_more::Constructor;
 use kona_engine::{EngineClient, EngineState, RollupBoostServer};
 use kona_genesis::RollupConfig;
 use kona_rpc::RollupBoostAdminQuery;
-use std::sync::Arc;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
 };
+
+use crate::{EngineError, EngineRpcRequest};
 
 /// Requires that the implementor handles [`EngineRpcRequest`]s via the provided channel.
 /// Note: this exists to facilitate unit testing rather than consolidate multiple implementations

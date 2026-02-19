@@ -1,18 +1,20 @@
 //! Isthmus L1 Block Info transaction types.
 
-use crate::info::{
-    bedrock_base::ambassador_impl_L1BlockInfoBedrockBaseFields,
-    ecotone_base::ambassador_impl_L1BlockInfoEcotoneBaseFields,
-};
 use alloc::vec::Vec;
+
 use alloy_primitives::{Address, B256, Bytes};
 use ambassador::{Delegate, delegatable_trait};
 
 use crate::{
     DecodeError,
     info::{
-        bedrock_base::L1BlockInfoBedrockBaseFields,
-        ecotone_base::{L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields},
+        bedrock_base::{
+            L1BlockInfoBedrockBaseFields, ambassador_impl_L1BlockInfoBedrockBaseFields,
+        },
+        ecotone_base::{
+            L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
+            ambassador_impl_L1BlockInfoEcotoneBaseFields,
+        },
     },
 };
 
@@ -23,17 +25,17 @@ use crate::{
 /// | Bytes   | Field                    |
 /// +---------+--------------------------+
 /// | 4       | Function signature       |
-/// | 4       | BaseFeeScalar            |
-/// | 4       | BlobBaseFeeScalar        |
-/// | 8       | SequenceNumber           |
+/// | 4       | `BaseFeeScalar`            |
+/// | 4       | `BlobBaseFeeScalar`        |
+/// | 8       | `SequenceNumber`           |
 /// | 8       | Timestamp                |
-/// | 8       | L1BlockNumber            |
-/// | 32      | BaseFee                  |
-/// | 32      | BlobBaseFee              |
-/// | 32      | BlockHash                |
-/// | 32      | BatcherHash              |
-/// | 4       | OperatorFeeScalar        |
-/// | 8       | OperatorFeeConstant      |
+/// | 8       | `L1BlockNumber`            |
+/// | 32      | `BaseFee`                  |
+/// | 32      | `BlobBaseFee`              |
+/// | 32      | `BlockHash`                |
+/// | 32      | `BatcherHash`              |
+/// | 4       | `OperatorFeeScalar`        |
+/// | 8       | `OperatorFeeConstant`      |
 /// +---------+--------------------------+
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
 #[allow(clippy::duplicated_attributes)]
@@ -84,7 +86,7 @@ impl L1BlockInfoIsthmus {
     /// The length of an L1 info transaction in Isthmus.
     pub const L1_INFO_TX_LEN: usize = 4 + 32 * 5 + 4 + 8;
 
-    /// The 4 byte selector of "setL1BlockValuesIsthmus()"
+    /// The 4 byte selector of "`setL1BlockValuesIsthmus()`"
     pub const L1_INFO_TX_SELECTOR: [u8; 4] = [0x09, 0x89, 0x99, 0xbe];
 
     /// Encodes the [`L1BlockInfoIsthmus`] object into Ethereum transaction calldata.
@@ -229,8 +231,9 @@ impl L1BlockInfoIsthmus {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     fn test_decode_calldata_isthmus_invalid_length() {

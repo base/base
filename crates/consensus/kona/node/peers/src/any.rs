@@ -1,11 +1,11 @@
 //! Contains the `AnyNode` enum, which can represent a peer in any form.
 
-use crate::{NodeRecord, PeerId};
 use derive_more::From;
 use discv5::{Enr, enr::EnrPublicKey};
 use libp2p::swarm::dial_opts::DialOpts;
 
 use super::utils::peer_id_to_secp256k1_pubkey;
+use crate::{NodeRecord, PeerId};
 
 /// A peer that can come in [`Enr`] or [`NodeRecord`] form.
 #[derive(Debug, Clone, From, Eq, PartialEq, Hash)]
@@ -68,9 +68,11 @@ impl TryInto<DialOpts> for AnyNode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use alloy_primitives::b512;
     use std::str::FromStr;
+
+    use alloy_primitives::b512;
+
+    use super::*;
 
     #[test]
     fn test_into_dial_opts() {

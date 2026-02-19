@@ -1,8 +1,9 @@
 //! Traits for working with protocol types.
 
 use alloc::boxed::Box;
-use async_trait::async_trait;
 use core::fmt::Display;
+
+use async_trait::async_trait;
 use op_alloy_consensus::OpBlock;
 
 use crate::L2BlockInfo;

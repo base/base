@@ -54,7 +54,7 @@ impl Behaviour {
             .map_err(|_| BehaviourError::GossipsubCreationFailed)?;
 
         let identify = libp2p::identify::Behaviour::new(
-            libp2p::identify::Config::new("".to_string(), public_key)
+            libp2p::identify::Config::new(String::new(), public_key)
                 .with_agent_version("kona".to_string()),
         );
 
@@ -90,12 +90,13 @@ impl Behaviour {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{config, handler::BlockHandler};
     use alloy_chains::Chain;
     use alloy_primitives::Address;
     use kona_genesis::RollupConfig;
     use libp2p::gossipsub::{IdentTopic, TopicHash};
+
+    use super::*;
+    use crate::{config, handler::BlockHandler};
 
     fn op_mainnet_topics() -> Vec<TopicHash> {
         vec![

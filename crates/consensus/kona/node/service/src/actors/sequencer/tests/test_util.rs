@@ -1,14 +1,16 @@
+use std::sync::Arc;
+
+use kona_derive::test_utils::TestAttributesBuilder;
+use kona_genesis::RollupConfig;
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     SequencerActor,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient, MockUnsafePayloadGossipClient,
     },
 };
-use kona_derive::test_utils::TestAttributesBuilder;
-use kona_genesis::RollupConfig;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 
 // Returns a test SequencerActor with mocks that can be used or overridden.
 pub(crate) fn test_actor() -> SequencerActor<

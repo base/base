@@ -1,9 +1,11 @@
 //! Contains the `BlobData` struct.
 
-use crate::BlobDecodingError;
 use alloc::{boxed::Box, vec};
+
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
+
+use crate::BlobDecodingError;
 
 /// The blob encoding version
 pub(crate) const BLOB_ENCODING_VERSION: u8 = 0;

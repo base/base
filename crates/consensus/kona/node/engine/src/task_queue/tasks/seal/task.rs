@@ -1,18 +1,20 @@
 //! A task for importing a block that has already been started.
-use super::SealTaskError;
-use crate::{
-    EngineClient, EngineGetPayloadVersion, EngineState, EngineTaskExt, InsertTask,
-    InsertTaskError::{self},
-    task_queue::build_and_seal,
-};
+use std::{sync::Arc, time::Instant};
+
 use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_genesis::RollupConfig;
 use kona_protocol::{L2BlockInfo, OpAttributesWithParent};
 use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
-use std::{sync::Arc, time::Instant};
 use tokio::sync::mpsc;
+
+use super::SealTaskError;
+use crate::{
+    EngineClient, EngineGetPayloadVersion, EngineState, EngineTaskExt, InsertTask,
+    InsertTaskError::{self},
+    task_queue::build_and_seal,
+};
 
 /// Task for block sealing and canonicalization.
 ///
@@ -118,9 +120,9 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
     /// Inserts a payload into the engine with Holocene fallback support.
     ///
     /// This function handles:
-    /// 1. Executing the InsertTask to import the payload
+    /// 1. Executing the `InsertTask` to import the payload
     /// 2. Handling deposits-only payload failures
-    /// 3. Holocene fallback via build_and_seal if needed
+    /// 3. Holocene fallback via `build_and_seal` if needed
     ///
     /// Returns Ok(()) if the payload is successfully inserted, or an error if insertion fails.
     async fn insert_payload(
@@ -169,7 +171,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                         Err(SealTaskError::HoloceneInvalidFlush)
                     }
                     Err(_) => Err(SealTaskError::DepositOnlyPayloadReattemptFailed),
-                }
+                };
             }
             Err(e) => {
                 error!(target: "engine", "Payload import failed: {e}");
@@ -239,7 +241,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         if let Some(tx) = &self.result_tx {
             tx.send(res).await.map_err(|e| SealTaskError::MpscSend(Box::new(e)))?;
         } else if let Err(x) = res {
-            return Err(x)
+            return Err(x);
         }
 
         Ok(())
@@ -263,8 +265,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SealTask<EngineClient_> {
         let unsafe_block_info = state.sync_state.unsafe_head().block_info;
         let parent_block_info = self.attributes.parent.block_info;
 
-        let res = if unsafe_block_info.hash != parent_block_info.hash ||
-            unsafe_block_info.number != parent_block_info.number
+        let res = if unsafe_block_info.hash != parent_block_info.hash
+            || unsafe_block_info.number != parent_block_info.number
         {
             info!(
                 target: "engine",

@@ -1,11 +1,13 @@
 //! Contains helper methods for testing the traversal stages in the pipeline.
 
-use crate::{PollingTraversal, test_utils::TestChainProvider};
 use alloc::{sync::Arc, vec};
+
 use alloy_consensus::Receipt;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, hex};
 use kona_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, RollupConfig};
 use kona_protocol::BlockInfo;
+
+use crate::{PollingTraversal, test_utils::TestChainProvider};
 
 /// [`TraversalTestHelper`] encapsulates useful testing methods for traversal stages.
 #[derive(Debug, Clone)]

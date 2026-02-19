@@ -1,8 +1,10 @@
-use crate::{EngineActorRequest, EngineClientError, EngineClientResult};
+use std::fmt::Debug;
+
 use async_trait::async_trait;
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use std::fmt::Debug;
 use tokio::sync::mpsc;
+
+use crate::{EngineActorRequest, EngineClientError, EngineClientResult};
 
 /// Client used to interact with the Engine.
 #[cfg_attr(test, mockall::automock)]
@@ -16,7 +18,7 @@ pub trait NetworkEngineClient: Debug + Send + Sync {
 /// Client to use to send unsafe blocks to the Engine's inbound channel.
 #[derive(Debug)]
 pub struct QueuedNetworkEngineClient {
-    /// A channel to use to send the EngineActor requests.
+    /// A channel to use to send the `EngineActor` requests.
     pub engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
 }
 

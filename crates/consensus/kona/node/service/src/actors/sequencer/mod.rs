@@ -25,14 +25,11 @@ mod conductor;
 pub use conductor::{Conductor, ConductorClient, ConductorError};
 
 mod engine_client;
-pub use engine_client::{QueuedSequencerEngineClient, SequencerEngineClient};
-
 #[cfg(test)]
 pub use conductor::MockConductor;
-
 #[cfg(test)]
 pub use engine_client::MockSequencerEngineClient;
-
+pub use engine_client::{QueuedSequencerEngineClient, SequencerEngineClient};
 #[cfg(test)]
 pub use origin_selector::MockOriginSelector;
 

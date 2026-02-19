@@ -5,7 +5,7 @@ use kona_gossip::P2pRpcRequest;
 /// A type alias for the sender of a [`P2pRpcRequest`].
 type P2pReqSender = tokio::sync::mpsc::Sender<P2pRpcRequest>;
 
-/// P2pRpc
+/// `P2pRpc`
 ///
 /// This is a server implementation of [`crate::OpP2PApiServer`].
 #[derive(Debug)]

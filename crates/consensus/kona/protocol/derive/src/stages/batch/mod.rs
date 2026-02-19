@@ -1,9 +1,9 @@
 //! Contains stages pertaining to the processing of [Batch]es.
 //!
-//! Sitting after the [ChannelReader] stage, the [`BatchStream`] and [`BatchProvider`] stages are
+//! Sitting after the [`ChannelReader`] stage, the [`BatchStream`] and [`BatchProvider`] stages are
 //! responsible for validating and ordering the [Batch]es. The [`BatchStream`] stage is
-//! responsible for streaming [SingleBatch]es from [SpanBatch]es, while the [`BatchProvider`]
-//! stage is responsible for ordering and validating the [Batch]es for the [AttributesQueue]
+//! responsible for streaming [`SingleBatch`]es from [`SpanBatch`]es, while the [`BatchProvider`]
+//! stage is responsible for ordering and validating the [Batch]es for the [`AttributesQueue`]
 //! stage.
 //!
 //! [Batch]: kona_protocol::Batch
@@ -12,10 +12,12 @@
 //! [ChannelReader]: crate::stages::channel::ChannelReader
 //! [AttributesQueue]: crate::stages::attributes_queue::AttributesQueue
 
-use crate::types::PipelineResult;
 use alloc::boxed::Box;
+
 use async_trait::async_trait;
 use kona_protocol::{Batch, BlockInfo, L2BlockInfo};
+
+use crate::types::PipelineResult;
 
 mod batch_stream;
 pub use batch_stream::{BatchStream, BatchStreamProvider};
@@ -52,7 +54,7 @@ pub trait NextBatchProvider {
     /// [`SingleBatch`]: kona_protocol::SingleBatch
     fn span_buffer_size(&self) -> usize;
 
-    /// Allows the stage to flush the buffer in the [crate::stages::BatchStream]
+    /// Allows the stage to flush the buffer in the [`crate::stages::BatchStream`]
     /// if an invalid single batch is found. Pre-holocene hardfork, this will be a no-op.
     fn flush(&mut self);
 }

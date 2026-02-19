@@ -1,10 +1,12 @@
 //! Module for working with span batch bits.
 
-use crate::SpanBatchError;
 use alloc::{vec, vec::Vec};
+use core::cmp::Ordering;
+
 use alloy_primitives::bytes;
 use alloy_rlp::Buf;
-use core::cmp::Ordering;
+
+use crate::SpanBatchError;
 
 /// Type for span batch bits.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -153,8 +155,9 @@ impl SpanBatchBits {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use proptest::{collection::vec, prelude::any, proptest};
+
+    use super::*;
 
     proptest! {
         #[test]

@@ -1,9 +1,9 @@
 //! The types used in the p2p RPC API.
 
 use core::net::IpAddr;
-use derive_more::Display;
 
 use alloy_primitives::{ChainId, map::HashMap};
+use derive_more::Display;
 
 /// The peer info.
 ///
@@ -53,10 +53,10 @@ pub struct PeerInfo {
     pub peer_scores: PeerScores,
 }
 
-/// GossipSub topic-specific scoring metrics.
+/// `GossipSub` topic-specific scoring metrics.
 ///
 /// Tracks peer performance within specific gossip topics, used by the
-/// GossipSub protocol to maintain mesh quality and route messages efficiently.
+/// `GossipSub` protocol to maintain mesh quality and route messages efficiently.
 /// These scores influence peer selection for the gossip mesh topology.
 ///
 /// Reference: <https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L13>
@@ -88,9 +88,9 @@ pub struct TopicScores {
     pub invalid_message_deliveries: f64,
 }
 
-/// Comprehensive GossipSub scoring metrics for peer quality assessment.
+/// Comprehensive `GossipSub` scoring metrics for peer quality assessment.
 ///
-/// Aggregates various scoring factors used by the GossipSub protocol to
+/// Aggregates various scoring factors used by the `GossipSub` protocol to
 /// evaluate peer quality and determine mesh topology. Higher scores indicate
 /// more reliable and well-behaved peers.
 ///
@@ -224,6 +224,7 @@ pub struct PeerStats {
     Debug,
     Display,
     PartialEq,
+    Eq,
     Copy,
     Default,
     // We need to use `serde_repr` to serialize the enum as an integer to match the `op-node` API.

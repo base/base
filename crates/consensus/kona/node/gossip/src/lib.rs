@@ -7,7 +7,7 @@
 //! ## Key Components
 //!
 //! - [`GossipDriver`]: Main driver managing the libp2p swarm and event handling
-//! - [`Behaviour`]: Custom libp2p behavior combining GossipSub, Ping, and Identify
+//! - [`Behaviour`]: Custom libp2p behavior combining `GossipSub`, Ping, and Identify
 //! - [`BlockHandler`]: Validates and processes incoming block payloads
 //! - [`ConnectionGater`]: Sophisticated connection management and rate limiting
 //! - [`P2pRpcRequest`]: RPC interface for network administration
@@ -71,6 +71,5 @@ pub use driver::GossipDriver;
 
 mod block_validity;
 pub use block_validity::BlockInvalidError;
-
 #[cfg(test)]
 pub(crate) use block_validity::tests::*;

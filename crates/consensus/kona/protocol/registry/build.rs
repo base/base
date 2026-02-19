@@ -76,7 +76,7 @@ fn main() {
     superchains.superchains.sort_by(|a, b| a.name.cmp(&b.name));
 
     // For each superchain, sort the list of chains by chain id.
-    for superchain in superchains.superchains.iter_mut() {
+    for superchain in &mut superchains.superchains {
         superchain.chains.sort_by(|a, b| a.chain_id.cmp(&b.chain_id));
     }
 
@@ -140,36 +140,34 @@ fn merge_chain_list(custom_path: &Path, target_path: &Path) {
     let mut chains_by_id: BTreeMap<u64, Chain> = BTreeMap::new();
     let mut identifiers: BTreeMap<String, Chain> = BTreeMap::new();
 
-    for chain in merged_chain_list.chains.iter() {
+    for chain in &merged_chain_list.chains {
         let ident_key = chain.identifier.to_ascii_lowercase();
         identifiers.insert(ident_key, chain.clone());
         chains_by_id.insert(chain.chain_id, chain.clone());
     }
     // preserve ordering of chains in etc/chainList.json
-    for chain in custom_chain_list.chains.iter() {
+    for chain in &custom_chain_list.chains {
         let ident_key = chain.identifier.to_ascii_lowercase();
         if let Some(existing_chain) = identifiers.get(&ident_key) {
             if existing_chain == chain {
                 continue;
-            } else {
-                panic!(
-                    "Chain identifier `{}` in {} already exists in the registry with a different config",
-                    chain.identifier,
-                    custom_path.display()
-                );
             }
+            panic!(
+                "Chain identifier `{}` in {} already exists in the registry with a different config",
+                chain.identifier,
+                custom_path.display()
+            );
         }
         if let Some(existing_chain) = chains_by_id.get(&chain.chain_id) {
             if existing_chain == chain {
                 continue;
-            } else {
-                panic!(
-                    "Chain id {} in {} already exists in the registry with a different config for identifier `{}`",
-                    chain.chain_id,
-                    custom_path.display(),
-                    existing_chain.identifier
-                );
             }
+            panic!(
+                "Chain id {} in {} already exists in the registry with a different config for identifier `{}`",
+                chain.chain_id,
+                custom_path.display(),
+                existing_chain.identifier
+            );
         }
         identifiers.insert(ident_key, chain.clone());
         chains_by_id.insert(chain.chain_id, chain.clone());
@@ -219,7 +217,7 @@ fn merge_superchain_configs(custom_path: &Path, target_path: &Path) {
 
     let mut merged: Vec<Superchain> = superchains.into_values().collect();
     merged.sort_by(|a, b| a.name.cmp(&b.name));
-    for superchain in merged.iter_mut() {
+    for superchain in &mut merged {
         superchain.chains.sort_by(|a, b| a.chain_id.cmp(&b.chain_id));
     }
 
@@ -238,12 +236,11 @@ fn merge_superchain_entry(base: Superchain, custom: Superchain) -> Superchain {
         if let Some(existing_config) = chain_map.get(&chain.chain_id) {
             if existing_config == &chain {
                 continue;
-            } else {
-                panic!(
-                    "conflict merging superchain `{}`: chain id {} has differing configs",
-                    merged.name, chain.chain_id
-                );
             }
+            panic!(
+                "conflict merging superchain `{}`: chain id {} has differing configs",
+                merged.name, chain.chain_id
+            );
         }
         chain_map.insert(chain.chain_id, chain.clone());
         merged.chains.push(chain.clone());

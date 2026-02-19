@@ -2,7 +2,6 @@
 
 use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 
-use crate::{GossipDriver, GossipScores};
 use alloy_primitives::map::{HashMap, HashSet};
 use discv5::{
     enr::{NodeId, k256::ecdsa},
@@ -18,7 +17,7 @@ use super::{
     PeerDump, PeerStats,
     types::{Connectedness, Direction, PeerInfo, PeerScores},
 };
-use crate::ConnectionGate;
+use crate::{ConnectionGate, GossipDriver, GossipScores};
 
 /// A p2p RPC Request.
 #[derive(Debug)]
@@ -236,14 +235,14 @@ impl P2pRpcRequest {
         };
 
         let peer_ids: Vec<PeerId> = if connected {
-            gossip.swarm.connected_peers().cloned().collect()
+            gossip.swarm.connected_peers().copied().collect()
         } else {
-            gossip.peerstore.keys().cloned().collect()
+            gossip.peerstore.keys().copied().collect()
         };
 
         // Get the set of actually connected peers from the swarm for accurate connectedness
         // reporting.
-        let actually_connected: HashSet<PeerId> = gossip.swarm.connected_peers().cloned().collect();
+        let actually_connected: HashSet<PeerId> = gossip.swarm.connected_peers().copied().collect();
 
         // Get connection gate information.
         let banned_subnets = gossip.connection_gate.list_blocked_subnets();
@@ -602,7 +601,7 @@ impl P2pRpcRequest {
                 Ok::<u32, TryFromIntError>(
                     topics
                         .get(topic)
-                        .cloned()
+                        .copied()
                         .map(|v| v.try_into())
                         .transpose()?
                         .unwrap_or_default(),

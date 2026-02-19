@@ -1,7 +1,8 @@
 //! The [`L2Finalizer`] for the derivation actor.
 
-use kona_protocol::{BlockInfo, OpAttributesWithParent};
 use std::collections::BTreeMap;
+
+use kona_protocol::{BlockInfo, OpAttributesWithParent};
 
 /// An internal type alias for L1 block numbers.
 type L1BlockNumber = u64;

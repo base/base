@@ -5,6 +5,7 @@
 //! [specs]: https://specs.optimism.io/protocol/jovian/derivation.html#network-upgrade-automation-transactions
 
 use alloc::{string::String, vec::Vec};
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex, keccak256};
 use kona_protocol::Predeploys;
@@ -74,7 +75,7 @@ impl Jovian {
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/jovian-l1-block-deployment.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/jovian-l1-block-deployment.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
@@ -82,7 +83,7 @@ impl Jovian {
     /// Returns the gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> Bytes {
         hex::decode(
-            include_str!("./bytecode/jovian-gas-price-oracle-deployment.hex").replace("\n", ""),
+            include_str!("./bytecode/jovian-gas-price-oracle-deployment.hex").replace('\n', ""),
         )
         .expect("Expected hex byte string")
         .into()
@@ -166,10 +167,10 @@ impl Hardfork for Jovian {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::check_deployment_code;
+    use alloy_primitives::b256;
 
     use super::*;
-    use alloy_primitives::b256;
+    use crate::test_utils::check_deployment_code;
 
     #[test]
     fn test_l1_block_source_hash() {

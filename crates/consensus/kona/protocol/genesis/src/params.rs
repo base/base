@@ -2,9 +2,7 @@
 
 use alloy_eips::eip1559::BaseFeeParams;
 
-use crate::{
-    BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID, OP_MAINNET_CHAIN_ID, OP_SEPOLIA_CHAIN_ID,
-};
+use crate::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID, OP_SEPOLIA_CHAIN_ID};
 
 /// Base fee max change denominator for Optimism Mainnet as defined in the Optimism
 /// [transaction costs](https://docs.optimism.io/app-developers/transactions/fees) doc.
@@ -93,9 +91,7 @@ pub const OP_MAINNET_BASE_FEE_PARAMS_CANYON: BaseFeeParams = BaseFeeParams {
 /// Returns the [`BaseFeeParams`] for the given chain id.
 pub const fn base_fee_params(chain_id: u64) -> BaseFeeParams {
     match chain_id {
-        OP_MAINNET_CHAIN_ID => OP_MAINNET_BASE_FEE_PARAMS,
         OP_SEPOLIA_CHAIN_ID => OP_SEPOLIA_BASE_FEE_PARAMS,
-        BASE_MAINNET_CHAIN_ID => OP_MAINNET_BASE_FEE_PARAMS,
         BASE_SEPOLIA_CHAIN_ID => BASE_SEPOLIA_BASE_FEE_PARAMS,
         _ => OP_MAINNET_BASE_FEE_PARAMS,
     }
@@ -104,9 +100,7 @@ pub const fn base_fee_params(chain_id: u64) -> BaseFeeParams {
 /// Returns the [`BaseFeeParams`] for the given chain id, for canyon hardfork.
 pub const fn base_fee_params_canyon(chain_id: u64) -> BaseFeeParams {
     match chain_id {
-        OP_MAINNET_CHAIN_ID => OP_MAINNET_BASE_FEE_PARAMS_CANYON,
         OP_SEPOLIA_CHAIN_ID => OP_SEPOLIA_BASE_FEE_PARAMS_CANYON,
-        BASE_MAINNET_CHAIN_ID => OP_MAINNET_BASE_FEE_PARAMS_CANYON,
         BASE_SEPOLIA_CHAIN_ID => BASE_SEPOLIA_BASE_FEE_PARAMS_CANYON,
         _ => OP_MAINNET_BASE_FEE_PARAMS_CANYON,
     }
@@ -115,7 +109,6 @@ pub const fn base_fee_params_canyon(chain_id: u64) -> BaseFeeParams {
 /// Returns the [`BaseFeeConfig`] for the given chain id.
 pub const fn base_fee_config(chain_id: u64) -> BaseFeeConfig {
     match chain_id {
-        OP_MAINNET_CHAIN_ID => OP_MAINNET_BASE_FEE_CONFIG,
         OP_SEPOLIA_CHAIN_ID => OP_SEPOLIA_BASE_FEE_CONFIG,
         BASE_MAINNET_CHAIN_ID => BASE_MAINNET_BASE_FEE_CONFIG,
         BASE_SEPOLIA_CHAIN_ID => BASE_SEPOLIA_BASE_FEE_CONFIG,
@@ -186,7 +179,7 @@ impl BaseFeeConfig {
         }
     }
 
-    /// Returns the [BaseFeeParams] before Canyon hardfork.
+    /// Returns the [`BaseFeeParams`] before Canyon hardfork.
     pub const fn pre_canyon_params(&self) -> BaseFeeParams {
         BaseFeeParams {
             max_change_denominator: self.eip1559_denominator as u128,
@@ -194,7 +187,7 @@ impl BaseFeeConfig {
         }
     }
 
-    /// Returns the [BaseFeeParams] since Canyon hardfork.
+    /// Returns the [`BaseFeeParams`] since Canyon hardfork.
     pub const fn post_canyon_params(&self) -> BaseFeeParams {
         BaseFeeParams {
             max_change_denominator: self.eip1559_denominator_canyon as u128,

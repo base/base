@@ -1,14 +1,16 @@
 //! A task for finalizing an L2 block.
 
-use crate::{
-    EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, SynchronizeTask,
-    state::EngineSyncStateUpdate,
-};
+use std::{sync::Arc, time::Instant};
+
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_genesis::RollupConfig;
 use kona_protocol::L2BlockInfo;
-use std::{sync::Arc, time::Instant};
+
+use crate::{
+    EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, SynchronizeTask,
+    state::EngineSyncStateUpdate,
+};
 
 /// The [`FinalizeTask`] fetches the [`L2BlockInfo`] at `block_number`, updates the [`EngineState`],
 /// and dispatches a forkchoice update to finalize the block.

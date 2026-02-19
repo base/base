@@ -1,8 +1,9 @@
+use kona_derive::PipelineErrorKind;
+use kona_engine::BuildTaskError;
+
 use crate::{
     L1OriginSelectorError, UnsafePayloadGossipClientError, actors::engine::EngineClientError,
 };
-use kona_derive::PipelineErrorKind;
-use kona_engine::BuildTaskError;
 
 /// An error produced by the [`crate::SequencerActor`].
 #[derive(Debug, thiserror::Error)]

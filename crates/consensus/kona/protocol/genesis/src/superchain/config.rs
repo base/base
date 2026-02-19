@@ -1,8 +1,10 @@
 //! Contains the `SuperchainConfig` type.
 
-use crate::{HardForkConfig, SuperchainL1Info};
 use alloc::string::String;
+
 use alloy_primitives::Address;
+
+use crate::{HardForkConfig, SuperchainL1Info};
 
 /// A superchain configuration file format
 #[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
@@ -28,9 +30,10 @@ pub struct SuperchainConfig {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
+    use alloc::string::ToString;
+
     use super::*;
     use crate::{HardForkConfig, SuperchainL1Info};
-    use alloc::string::ToString;
 
     #[test]
     fn test_superchain_deserialize() {

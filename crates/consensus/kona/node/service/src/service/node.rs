@@ -1,15 +1,6 @@
 //! Contains the [`RollupNode`] implementation.
-use crate::{
-    ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
-    DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest, EngineConfig,
-    EngineProcessor, EngineRpcProcessor, InteropMode, L1OriginSelector, L1WatcherActor,
-    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeMode, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RollupBoostAdminApiClient, RollupBoostHealthRpcClient, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig,
-    actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
-};
+use std::{ops::Not as _, sync::Arc, time::Duration};
+
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use kona_derive::StatefulAttributesBuilder;
@@ -22,9 +13,20 @@ use kona_providers_alloy::{
 };
 use kona_rpc::RpcBuilder;
 use op_alloy_network::Optimism;
-use std::{ops::Not as _, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+
+use crate::{
+    ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
+    DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest, EngineConfig,
+    EngineProcessor, EngineRpcProcessor, InteropMode, L1OriginSelector, L1WatcherActor,
+    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeMode, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    RollupBoostAdminApiClient, RollupBoostHealthRpcClient, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig,
+    actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
+};
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
@@ -43,7 +45,7 @@ pub struct L1Config {
     pub engine_provider: RootProvider,
 }
 
-/// The standard implementation of the [RollupNode] service, using the governance approved OP Stack
+/// The standard implementation of the [`RollupNode`] service, using the governance approved OP Stack
 /// configuration of components.
 #[derive(Debug)]
 pub struct RollupNode {
@@ -72,10 +74,10 @@ pub struct RollupNode {
 /// A RollupNode-level derivation actor wrapper.
 ///
 /// This type selects the concrete derivation actor implementation
-/// based on RollupNode configuration.
+/// based on `RollupNode` configuration.
 ///
 /// It is not intended to be generic or reusable outside the
-/// RollupNode wiring logic.
+/// `RollupNode` wiring logic.
 enum ConfiguredDerivationActor {
     Delegate(Box<DelegateDerivationActor<QueuedDerivationEngineClient>>),
     Normal(Box<DerivationActor<QueuedDerivationEngineClient, OnlinePipeline>>),

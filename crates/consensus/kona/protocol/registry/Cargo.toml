@@ -1,11 +1,10 @@
 [package]
 name = "kona-registry"
-version = "0.4.5"
+version.workspace = true
 description = "A registry of superchain configs"
 
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -37,7 +36,7 @@ lazy_static = { workspace = true, features = ["spin_no_std"] }
 tabled = { workspace = true, features = ["derive"], optional = true }
 
 [build-dependencies]
-toml = { workspace = true, features = ["parse", "serde"] }
+toml = { workspace = true, features = ["parse"] }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 kona-genesis = { workspace = true, features = ["serde"] }

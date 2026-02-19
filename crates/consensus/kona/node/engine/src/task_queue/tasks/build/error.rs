@@ -1,10 +1,11 @@
-//! Contains error types for the [crate::SynchronizeTask].
+//! Contains error types for the [`crate::SynchronizeTask`].
 
-use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
 use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use alloy_transport::{RpcError, TransportErrorKind};
 use thiserror::Error;
 use tokio::sync::mpsc;
+
+use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
 
 /// An error that occurs during payload building within the engine.
 ///
@@ -42,7 +43,7 @@ pub enum EngineBuildError {
     EngineSyncing,
 }
 
-/// An error that occurs when running the [crate::BuildTask].
+/// An error that occurs when running the [`crate::BuildTask`].
 #[derive(Debug, Error)]
 pub enum BuildTaskError {
     /// An error occurred when building the payload attributes in the engine.

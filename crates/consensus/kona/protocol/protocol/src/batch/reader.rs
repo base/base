@@ -1,11 +1,13 @@
 //! Contains the [`BatchReader`] which is used to iteratively consume batches from raw data.
 
-use crate::{Batch, BrotliDecompressionError, decompress_brotli};
 use alloc::vec::Vec;
+
 use alloy_primitives::Bytes;
 use alloy_rlp::Decodable;
 use kona_genesis::RollupConfig;
 use miniz_oxide::inflate::decompress_to_vec_zlib;
+
+use crate::{Batch, BrotliDecompressionError, decompress_brotli};
 
 /// Error type for decompression failures.
 #[derive(Debug, thiserror::Error)]
@@ -28,7 +30,7 @@ pub enum DecompressionError {
 }
 
 /// Batch Reader provides a function that iteratively consumes batches from the reader.
-/// The L1Inclusion block is also provided at creation time.
+/// The `L1Inclusion` block is also provided at creation time.
 /// Warning: the batch reader can read every batch-type.
 /// The caller of the batch-reader should filter the results.
 #[derive(Debug)]
@@ -79,8 +81,8 @@ impl BatchReader {
             }
 
             let compression_type = data[0];
-            if (compression_type & 0x0F) == Self::ZLIB_DEFLATE_COMPRESSION_METHOD ||
-                (compression_type & 0x0F) == Self::ZLIB_RESERVED_COMPRESSION_METHOD
+            if (compression_type & 0x0F) == Self::ZLIB_DEFLATE_COMPRESSION_METHOD
+                || (compression_type & 0x0F) == Self::ZLIB_RESERVED_COMPRESSION_METHOD
             {
                 self.decompressed =
                     decompress_to_vec_zlib(&data).map_err(|_| DecompressionError::ZlibError)?;
@@ -127,10 +129,11 @@ impl BatchReader {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use kona_genesis::{
         HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
     };
+
+    use super::*;
 
     fn new_compressed_batch_data() -> Bytes {
         let file_contents =

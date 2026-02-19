@@ -28,7 +28,7 @@ pub enum BatchDropReason {
     // === Timestamp/origin relationship drops ===
     /// Batch timestamp is before the L1 origin timestamp.
     TimestampBeforeL1Origin,
-    /// Sequencer drift overflow (checked_add failed).
+    /// Sequencer drift overflow (`checked_add` failed).
     SequencerDriftOverflow,
     /// Batch exceeded sequencer time drift with non-empty transactions.
     SequencerDriftExceeded,
@@ -62,7 +62,7 @@ pub enum BatchDropReason {
     OverlappedTxCountMismatch,
     /// Overlapped block's transaction does not match.
     OverlappedTxMismatch,
-    /// Failed to extract L2BlockInfo from execution payload.
+    /// Failed to extract `L2BlockInfo` from execution payload.
     L2BlockInfoExtractionFailed,
     /// Overlapped block's L1 origin number does not match.
     OverlappedL1OriginMismatch,
@@ -180,8 +180,9 @@ impl BatchValidity {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::format;
+
+    use super::*;
 
     #[test]
     fn test_batch_validity() {

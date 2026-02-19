@@ -1,12 +1,11 @@
 //! Rollup-boost abstraction used by the engine client.
 
-use alloy_json_rpc::{ErrorPayload, RpcError};
-use alloy_transport::TransportErrorKind;
-use rollup_boost::ExecutionMode;
 use std::fmt::Debug;
 
-use rollup_boost::BlockSelectionPolicy;
+use alloy_json_rpc::{ErrorPayload, RpcError};
+use alloy_transport::TransportErrorKind;
 pub use rollup_boost::RollupBoostServer;
+use rollup_boost::{BlockSelectionPolicy, ExecutionMode};
 use url::Url;
 
 /// Configuration for the rollup-boost server.

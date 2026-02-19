@@ -1,18 +1,20 @@
 //! The [`Engine`] is a task queue that receives and executes [`EngineTask`]s.
 
+use std::{collections::BinaryHeap, sync::Arc};
+
+use alloy_rpc_types_eth::Transaction;
+use kona_genesis::{RollupConfig, SystemConfig};
+use kona_protocol::{BlockInfo, L2BlockInfo, OpBlockConversionError, to_system_config};
+use op_alloy_consensus::OpTxEnvelope;
+use thiserror::Error;
+use tokio::sync::watch::Sender;
+
 use super::EngineTaskExt;
 use crate::{
     EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, Metrics, SyncStartError, SynchronizeTask, SynchronizeTaskError,
     find_starting_forkchoice, task_queue::EngineTaskErrors,
 };
-use alloy_rpc_types_eth::Transaction;
-use kona_genesis::{RollupConfig, SystemConfig};
-use kona_protocol::{BlockInfo, L2BlockInfo, OpBlockConversionError, to_system_config};
-use op_alloy_consensus::OpTxEnvelope;
-use std::{collections::BinaryHeap, sync::Arc};
-use thiserror::Error;
-use tokio::sync::watch::Sender;
 
 /// The [`Engine`] task queue.
 ///
@@ -100,9 +102,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         .await
         {
             match err.severity() {
-                EngineTaskErrorSeverity::Temporary |
-                EngineTaskErrorSeverity::Flush |
-                EngineTaskErrorSeverity::Reset => {
+                EngineTaskErrorSeverity::Temporary
+                | EngineTaskErrorSeverity::Flush
+                | EngineTaskErrorSeverity::Reset => {
                     warn!(target: "engine", ?err, "Forkchoice update failed during reset. Trying again...");
                     start = find_starting_forkchoice(&config, client.as_ref()).await?;
                 }
@@ -176,7 +178,7 @@ pub enum EngineResetError {
     /// An error occurred while traversing the L1 for the sync starting point.
     #[error(transparent)]
     SyncStart(#[from] SyncStartError),
-    /// An error occurred while constructing the SystemConfig for the new safe head.
+    /// An error occurred while constructing the `SystemConfig` for the new safe head.
     #[error(transparent)]
     SystemConfigConversion(#[from] OpBlockConversionError),
 }

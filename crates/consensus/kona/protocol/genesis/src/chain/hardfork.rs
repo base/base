@@ -14,37 +14,37 @@ pub struct HardForkConfig {
     /// `regolith_time` sets the activation time of the Regolith network-upgrade:
     /// a pre-mainnet Bedrock change that addresses findings of the Sherlock contest related to
     /// deposit attributes. "Regolith" is the loose deposited rock that sits on top of Bedrock.
-    /// Active if regolith_time != None && L2 block timestamp >= Some(regolith_time), inactive
+    /// Active if `regolith_time` != None && L2 block timestamp >= `Some(regolith_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub regolith_time: Option<u64>,
     /// `canyon_time` sets the activation time of the Canyon network upgrade.
-    /// Active if `canyon_time` != None && L2 block timestamp >= Some(canyon_time), inactive
+    /// Active if `canyon_time` != None && L2 block timestamp >= `Some(canyon_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub canyon_time: Option<u64>,
     /// `delta_time` sets the activation time of the Delta network upgrade.
-    /// Active if `delta_time` != None && L2 block timestamp >= Some(delta_time), inactive
+    /// Active if `delta_time` != None && L2 block timestamp >= `Some(delta_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub delta_time: Option<u64>,
     /// `ecotone_time` sets the activation time of the Ecotone network upgrade.
-    /// Active if `ecotone_time` != None && L2 block timestamp >= Some(ecotone_time), inactive
+    /// Active if `ecotone_time` != None && L2 block timestamp >= `Some(ecotone_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub ecotone_time: Option<u64>,
     /// `fjord_time` sets the activation time of the Fjord network upgrade.
-    /// Active if `fjord_time` != None && L2 block timestamp >= Some(fjord_time), inactive
+    /// Active if `fjord_time` != None && L2 block timestamp >= `Some(fjord_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub fjord_time: Option<u64>,
     /// `granite_time` sets the activation time for the Granite network upgrade.
-    /// Active if `granite_time` != None && L2 block timestamp >= Some(granite_time), inactive
+    /// Active if `granite_time` != None && L2 block timestamp >= `Some(granite_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub granite_time: Option<u64>,
     /// `holocene_time` sets the activation time for the Holocene network upgrade.
-    /// Active if `holocene_time` != None && L2 block timestamp >= Some(holocene_time), inactive
+    /// Active if `holocene_time` != None && L2 block timestamp >= `Some(holocene_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub holocene_time: Option<u64>,
@@ -54,21 +54,21 @@ pub struct HardForkConfig {
     /// <=v1.11.1 sequencing the network.
     ///
     /// Active if `pectra_blob_schedule_time` != None && L2 block timestamp >=
-    /// Some(pectra_blob_schedule_time), inactive otherwise.
+    /// `Some(pectra_blob_schedule_time)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub pectra_blob_schedule_time: Option<u64>,
     /// `isthmus_time` sets the activation time for the Isthmus network upgrade.
-    /// Active if `isthmus_time` != None && L2 block timestamp >= Some(isthmus_time), inactive
+    /// Active if `isthmus_time` != None && L2 block timestamp >= `Some(isthmus_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub isthmus_time: Option<u64>,
     /// `jovian_time` sets the activation time for the Jovian network upgrade.
-    /// Active if `jovian_time` != None && L2 block timestamp >= Some(jovian_time), inactive
+    /// Active if `jovian_time` != None && L2 block timestamp >= `Some(jovian_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub jovian_time: Option<u64>,
     /// `interop_time` sets the activation time for the Interop network upgrade.
-    /// Active if `interop_time` != None && L2 block timestamp >= Some(interop_time), inactive
+    /// Active if `interop_time` != None && L2 block timestamp >= `Some(interop_time)`, inactive
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub interop_time: Option<u64>,

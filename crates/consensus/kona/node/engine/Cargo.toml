@@ -1,9 +1,8 @@
 [package]
 name = "kona-engine"
 description = "An implementation of the OP Stack engine client"
-version = "0.1.2"
+version.workspace = true
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true

@@ -1,14 +1,16 @@
 //! Contains the [`IndexedTraversal`] stage of the derivation pipeline.
 
-use crate::{
-    ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,
-    PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
-};
 use alloc::{boxed::Box, sync::Arc};
+
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use kona_genesis::{RollupConfig, SystemConfig};
 use kona_protocol::BlockInfo;
+
+use crate::{
+    ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,
+    PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
+};
 
 /// The [`IndexedTraversal`] stage of the derivation pipeline.
 ///
@@ -138,8 +140,8 @@ impl<F: ChainProvider> OriginProvider for IndexedTraversal<F> {
 impl<F: ChainProvider + Send> SignalReceiver for IndexedTraversal<F> {
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         match signal {
-            Signal::Reset(ResetSignal { l1_origin, system_config, .. }) |
-            Signal::Activation(ActivationSignal { l1_origin, system_config, .. }) => {
+            Signal::Reset(ResetSignal { l1_origin, system_config, .. })
+            | Signal::Activation(ActivationSignal { l1_origin, system_config, .. }) => {
                 self.update_origin(l1_origin);
                 self.system_config = system_config.expect("System config must be provided.");
             }
@@ -153,12 +155,14 @@ impl<F: ChainProvider + Send> SignalReceiver for IndexedTraversal<F> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};
     use alloc::vec;
+
     use alloy_consensus::Receipt;
     use alloy_primitives::{B256, Bytes, Log, LogData, address, b256, hex};
     use kona_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+
+    use super::*;
+    use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};
 
     const L1_SYS_CONFIG_ADDR: Address = address!("1337000000000000000000000000000000000000");
 

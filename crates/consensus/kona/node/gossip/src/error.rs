@@ -1,10 +1,12 @@
 //! Error types for the gossip networking module.
 
-use crate::BehaviourError;
+use std::net::IpAddr;
+
 use derive_more::From;
 use libp2p::{Multiaddr, PeerId};
-use std::net::IpAddr;
 use thiserror::Error;
+
+use crate::BehaviourError;
 
 /// Error encountered when publishing a payload to the gossip network.
 ///
@@ -12,7 +14,7 @@ use thiserror::Error;
 /// network-level publishing errors and payload encoding issues.
 #[derive(Debug, Error)]
 pub enum PublishError {
-    /// Failed to publish the payload via GossipSub protocol.
+    /// Failed to publish the payload via `GossipSub` protocol.
     ///
     /// This can occur due to network connectivity issues, mesh topology
     /// problems, or protocol-level errors in the libp2p stack.
@@ -42,7 +44,7 @@ pub enum HandlerEncodeError {
 
     /// Attempted to publish to an unknown or unsubscribed topic.
     ///
-    /// This error occurs when trying to publish to a GossipSub topic that
+    /// This error occurs when trying to publish to a `GossipSub` topic that
     /// is not recognized or that the node is not subscribed to.
     #[error("Unknown topic: {0}")]
     UnknownTopic(libp2p::gossipsub::TopicHash),
@@ -71,16 +73,16 @@ pub enum GossipDriverBuilderError {
 /// An error type representing reasons why a peer cannot be dialed.
 #[derive(Debug, Clone, Error)]
 pub enum DialError {
-    /// Failed to extract PeerId from Multiaddr.
+    /// Failed to extract `PeerId` from Multiaddr.
     #[error("Failed to extract PeerId from Multiaddr: {addr}")]
     InvalidMultiaddr {
-        /// The multiaddress that failed to be parsed or does not contain a valid PeerId component
+        /// The multiaddress that failed to be parsed or does not contain a valid `PeerId` component
         addr: Multiaddr,
     },
     /// Already dialing this peer.
     #[error("Already dialing peer: {peer_id}")]
     AlreadyDialing {
-        /// The PeerId of the peer that is already being dialed
+        /// The `PeerId` of the peer that is already being dialed
         peer_id: PeerId,
     },
     /// Dial threshold reached for this peer.
@@ -92,7 +94,7 @@ pub enum DialError {
     /// Peer is blocked.
     #[error("Peer is blocked: {peer_id}")]
     PeerBlocked {
-        /// The PeerId of the peer that is on the blocklist
+        /// The `PeerId` of the peer that is on the blocklist
         peer_id: PeerId,
     },
     /// Failed to extract IP address from Multiaddr.

@@ -1,7 +1,7 @@
 //! Utilities for the rollup node service, internal to the crate.
 
-/// Spawns a set of parallel actors in a [JoinSet], and cancels all actors if any of them fail. The
-/// type of the error in the [NodeActor]s is erased to avoid having to specify a common error type
+/// Spawns a set of parallel actors in a [`JoinSet`], and cancels all actors if any of them fail. The
+/// type of the error in the [`NodeActor`]s is erased to avoid having to specify a common error type
 /// between actors.
 ///
 /// Actors are passed in as optional arguments, in case a given actor is not needed.

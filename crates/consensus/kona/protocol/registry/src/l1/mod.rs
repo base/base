@@ -1,13 +1,14 @@
 //! L1 genesis configurations.
-use crate::alloc::string::ToString;
 use alloc::{collections::BTreeMap, string::String};
-use alloy_eips::eip7840::BlobParams;
-use alloy_genesis::EthashConfig;
 use core::{fmt::Display, ops::Deref};
-use kona_genesis::L1ChainConfig;
 
 use alloy_chains::NamedChain;
+use alloy_eips::eip7840::BlobParams;
+use alloy_genesis::EthashConfig;
 use alloy_primitives::{Address, U256, address, map::HashMap};
+use kona_genesis::L1ChainConfig;
+
+use crate::alloc::string::ToString;
 
 /// L1 chain configuration.
 /// Simple wrapper around the [`L1ChainConfig`] type from the `alloy-genesis` crate.

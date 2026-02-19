@@ -1,13 +1,12 @@
 [package]
 name = "kona-rpc"
-version = "0.3.2"
+version.workspace = true
 description = "Optimism RPC Types and API"
 
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
-authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 

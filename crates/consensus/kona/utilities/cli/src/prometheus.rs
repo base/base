@@ -1,12 +1,13 @@
 //! Utilities for spinning up a prometheus metrics server.
 
-use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
-use metrics_process::Collector;
 use std::{
     net::{IpAddr, SocketAddr},
     thread::{self, sleep},
     time::Duration,
 };
+
+use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
+use metrics_process::Collector;
 use tracing::info;
 
 /// Start a Prometheus metrics server on the given port.

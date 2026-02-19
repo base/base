@@ -1,3 +1,7 @@
+use kona_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
+use kona_protocol::{BlockInfo, L2BlockInfo};
+use rstest::rstest;
+
 #[cfg(test)]
 use crate::{
     SequencerActorError,
@@ -5,9 +9,6 @@ use crate::{
         MockOriginSelector, MockSequencerEngineClient, sequencer::tests::test_util::test_actor,
     },
 };
-use kona_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
-use kona_protocol::{BlockInfo, L2BlockInfo};
-use rstest::rstest;
 
 #[rstest]
 #[case::temp(PipelineErrorKind::Temporary(BuilderError::Custom("".into()).into()), false)]

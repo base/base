@@ -1,9 +1,9 @@
 //! Admin RPC Module
 
-use crate::{AdminApiServer, RollupBoostAdminClient, SequencerAdminAPIClient};
+use core::fmt::Debug;
+
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use core::fmt::Debug;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
@@ -13,6 +13,8 @@ use rollup_boost::{
     ExecutionMode, GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse,
 };
 use tokio::sync::oneshot;
+
+use crate::{AdminApiServer, RollupBoostAdminClient, SequencerAdminAPIClient};
 
 /// The query types to the network actor for the admin api.
 #[derive(Debug)]

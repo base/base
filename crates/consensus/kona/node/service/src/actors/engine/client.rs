@@ -1,10 +1,12 @@
-use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResult};
+use std::fmt::Debug;
+
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_derive::Signal;
 use kona_protocol::L2BlockInfo;
-use std::fmt::Debug;
 use tokio::sync::mpsc;
+
+use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResult};
 
 /// Client to use to interact with the [`crate::DerivationActor`].
 #[cfg_attr(test, mockall::automock)]
@@ -14,7 +16,7 @@ pub trait EngineDerivationClient: Debug + Send + Sync {
     /// Note: Does not wait for the derivation client to process this message.
     async fn notify_sync_completed(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()>;
 
-    /// Sends the new engine safe_head to the [`crate::DerivationActor`].
+    /// Sends the new engine `safe_head` to the [`crate::DerivationActor`].
     /// Note: Does not wait for the derivation client to process this message.
     async fn send_new_engine_safe_head(&self, safe_head: L2BlockInfo)
     -> DerivationClientResult<()>;

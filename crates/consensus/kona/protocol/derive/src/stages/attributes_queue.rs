@@ -1,5 +1,13 @@
 //! Contains the logic for the `AttributesQueue` stage.
 
+use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
+use async_trait::async_trait;
+use kona_genesis::RollupConfig;
+use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
+use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
 use crate::{
     errors::{PipelineError, ResetError},
     traits::{
@@ -8,12 +16,6 @@ use crate::{
     },
     types::{PipelineResult, Signal},
 };
-use alloc::{boxed::Box, sync::Arc};
-use async_trait::async_trait;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
 /// [`AttributesQueue`] accepts batches from the [`BatchQueue`] stage
 /// and transforms them into [`OpPayloadAttributes`].
@@ -206,15 +208,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::{sync::Arc, vec, vec::Vec};
+
+    use alloy_primitives::{Address, B256, Bytes, b256};
+    use alloy_rpc_types_engine::PayloadAttributes;
+
     use super::*;
     use crate::{
         errors::{BuilderError, PipelineErrorKind},
         test_utils::{TestAttributesBuilder, TestAttributesProvider, new_test_attributes_provider},
         types::ResetSignal,
     };
-    use alloc::{sync::Arc, vec, vec::Vec};
-    use alloy_primitives::{Address, B256, Bytes, b256};
-    use alloy_rpc_types_engine::PayloadAttributes;
 
     fn default_optimism_payload_attributes() -> OpPayloadAttributes {
         OpPayloadAttributes {

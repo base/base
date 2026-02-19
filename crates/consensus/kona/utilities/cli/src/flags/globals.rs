@@ -57,9 +57,10 @@ impl GlobalArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::Parser;
     use rstest::rstest;
+
+    use super::*;
 
     #[rstest]
     #[case::numeric_optimism("10", 10)]

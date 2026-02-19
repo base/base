@@ -2,17 +2,19 @@
 //!
 //! [`Engine`]: crate::Engine
 
+use std::cmp::Ordering;
+
+use async_trait::async_trait;
+use derive_more::Display;
+use thiserror::Error;
+use tokio::task::yield_now;
+
 use super::{BuildTask, ConsolidateTask, FinalizeTask, InsertTask};
 use crate::{
     BuildTaskError, ConsolidateTaskError, EngineClient, EngineState, FinalizeTaskError,
     InsertTaskError,
     task_queue::{SealTask, SealTaskError},
 };
-use async_trait::async_trait;
-use derive_more::Display;
-use std::cmp::Ordering;
-use thiserror::Error;
-use tokio::task::yield_now;
 
 /// The severity of an engine task error.
 ///
@@ -137,11 +139,11 @@ impl<EngineClient_: EngineClient> PartialEq for EngineTask<EngineClient_> {
     fn eq(&self, other: &Self) -> bool {
         matches!(
             (self, other),
-            (Self::Insert(_), Self::Insert(_)) |
-                (Self::Build(_), Self::Build(_)) |
-                (Self::Seal(_), Self::Seal(_)) |
-                (Self::Consolidate(_), Self::Consolidate(_)) |
-                (Self::Finalize(_), Self::Finalize(_))
+            (Self::Insert(_), Self::Insert(_))
+                | (Self::Build(_), Self::Build(_))
+                | (Self::Seal(_), Self::Seal(_))
+                | (Self::Consolidate(_), Self::Consolidate(_))
+                | (Self::Finalize(_), Self::Finalize(_))
         )
     }
 }

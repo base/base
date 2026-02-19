@@ -1,16 +1,18 @@
 //! Contains an online implementation of the `BeaconClient` trait.
 
-#[cfg(feature = "metrics")]
-use crate::Metrics;
-use crate::blobs::BoxedBlobWithIndex;
+use std::{boxed::Box, collections::HashMap, format, string::String, vec::Vec};
+
 use alloy_eips::eip4844::{IndexedBlobHash, env_settings::EnvKzgSettings, kzg_to_versioned_hash};
 use alloy_primitives::{B256, FixedBytes};
 use alloy_rpc_types_beacon::sidecar::GetBlobsResponse;
+use alloy_transport_http::reqwest::{self, Client};
 use async_trait::async_trait;
 use c_kzg::Blob;
-use reqwest::Client;
-use std::{boxed::Box, collections::HashMap, format, string::String, vec::Vec};
 use thiserror::Error;
+
+#[cfg(feature = "metrics")]
+use crate::Metrics;
+use crate::blobs::BoxedBlobWithIndex;
 
 /// The config spec engine api method.
 const SPEC_METHOD: &str = "eth/v1/config/spec";
@@ -67,10 +69,10 @@ impl APIGenesisResponse {
     }
 }
 
-/// The [BeaconClient] is a thin wrapper around the Beacon API.
+/// The [`BeaconClient`] is a thin wrapper around the Beacon API.
 #[async_trait]
 pub trait BeaconClient {
-    /// The error type for [BeaconClient] implementations.
+    /// The error type for [`BeaconClient`] implementations.
     type Error: core::fmt::Display;
 
     /// Returns the slot interval in seconds.
@@ -114,7 +116,7 @@ pub enum BeaconClientError {
     KZG(#[from] c_kzg::Error),
 }
 
-/// An online implementation of the [BeaconClient] trait.
+/// An online implementation of the [`BeaconClient`] trait.
 #[derive(Debug, Clone)]
 pub struct OnlineBeaconClient {
     /// The base URL of the beacon API.
@@ -127,10 +129,10 @@ pub struct OnlineBeaconClient {
 }
 
 impl OnlineBeaconClient {
-    /// Creates a new [OnlineBeaconClient] from the provided base URL string.
+    /// Creates a new [`OnlineBeaconClient`] from the provided base URL string.
     pub fn new_http(mut base: String) -> Self {
         // If base ends with a slash, remove it
-        if base.ends_with("/") {
+        if base.ends_with('/') {
             base.remove(base.len() - 1);
         }
         Self {
@@ -251,11 +253,12 @@ impl BeaconClient for OnlineBeaconClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::Blob;
     use alloy_primitives::{FixedBytes, hex::FromHex};
     use httpmock::prelude::*;
     use serde_json::json;
+
+    use super::*;
 
     const TEST_BLOB_DATA: Blob = FixedBytes::repeat_byte(1);
     const TEST_BLOB_HASH_HEX: &str =

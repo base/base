@@ -1,18 +1,20 @@
 //! This module contains the `ChannelReader` struct.
 
-use crate::{
-    BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
-    SignalReceiver,
-};
 use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use core::fmt::Debug;
 use kona_genesis::{
     MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
 };
 use kona_protocol::{Batch, BatchReader, BlockInfo};
 use tracing::{debug, warn};
+
+use crate::{
+    BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
+    SignalReceiver,
+};
 
 /// The [`ChannelReader`] provider trait.
 #[async_trait]
@@ -98,7 +100,7 @@ impl<P> BatchStreamProvider for ChannelReader<P>
 where
     P: ChannelReaderProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
 {
-    /// This method is called by the BatchStream if an invalid span batch is found.
+    /// This method is called by the `BatchStream` if an invalid span batch is found.
     /// In the case of an invalid span batch, the associated channel must be flushed.
     ///
     /// See: <https://specs.optimism.io/protocol/holocene/derivation.html#span-batches>
@@ -196,12 +198,14 @@ where
 
 #[cfg(test)]
 mod test {
+    use alloc::vec;
+
+    use kona_genesis::HardForkConfig;
+
     use super::*;
     use crate::{
         errors::PipelineErrorKind, test_utils::TestChannelReaderProvider, types::ResetSignal,
     };
-    use alloc::vec;
-    use kona_genesis::HardForkConfig;
 
     fn new_compressed_batch_data() -> Bytes {
         let file_contents =

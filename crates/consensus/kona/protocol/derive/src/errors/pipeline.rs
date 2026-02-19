@@ -1,13 +1,15 @@
 //! This module contains derivation errors thrown within the pipeline.
 
-use crate::BuilderError;
 use alloc::string::String;
+
 use alloy_primitives::B256;
 use kona_genesis::SystemConfigUpdateError;
 use kona_protocol::{DepositError, SpanBatchError};
 use thiserror::Error;
 
-/// [crate::ensure] is a short-hand for bubbling up errors in the case of a condition not being met.
+use crate::BuilderError;
+
+/// [`crate::ensure`] is a short-hand for bubbling up errors in the case of a condition not being met.
 #[macro_export]
 macro_rules! ensure {
     ($cond:expr, $err:expr) => {
@@ -273,7 +275,7 @@ pub enum PipelineError {
 }
 
 impl PipelineError {
-    /// Wraps this [`PipelineError`] as a [PipelineErrorKind::Critical].
+    /// Wraps this [`PipelineError`] as a [`PipelineErrorKind::Critical`].
     ///
     /// Critical errors indicate fundamental issues that cannot be resolved through
     /// retries or pipeline resets. They require external intervention to resolve.
@@ -292,7 +294,7 @@ impl PipelineError {
         PipelineErrorKind::Critical(self)
     }
 
-    /// Wraps this [`PipelineError`] as a [PipelineErrorKind::Temporary].
+    /// Wraps this [`PipelineError`] as a [`PipelineErrorKind::Temporary`].
     ///
     /// Temporary errors indicate transient conditions that may resolve with
     /// additional data, time, or retries. The pipeline can attempt to recover
@@ -331,7 +333,7 @@ pub enum ResetError {
     L1OriginMismatch(u64, u64),
     /// The stage detected a block reorg.
     /// The first argument is the expected block hash.
-    /// The second argument is the parent_hash of the next l1 origin block.
+    /// The second argument is the `parent_hash` of the next l1 origin block.
     #[error("L1 reorg detected: expected {0}, got {1}")]
     ReorgDetected(B256, B256),
     /// Attributes builder error variant, with [`BuilderError`].
@@ -346,7 +348,7 @@ pub enum ResetError {
 }
 
 impl ResetError {
-    /// Wrap [`ResetError`] as a [PipelineErrorKind::Reset].
+    /// Wrap [`ResetError`] as a [`PipelineErrorKind::Reset`].
     pub const fn reset(self) -> PipelineErrorKind {
         PipelineErrorKind::Reset(self)
     }
@@ -371,8 +373,9 @@ pub enum PipelineEncodingError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::error::Error;
+
+    use super::*;
 
     #[test]
     fn test_pipeline_error_kind_source() {

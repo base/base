@@ -1,9 +1,10 @@
 //! This module contains the legacy transaction data type for a span batch.
 
-use crate::{SpanBatchError, SpanDecodingError};
 use alloy_consensus::{SignableTransaction, Signed, TxLegacy};
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
+
+use crate::{SpanBatchError, SpanDecodingError};
 
 /// The transaction data for a legacy transaction within a span batch.
 #[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
@@ -47,10 +48,12 @@ impl SpanBatchLegacyTransactionData {
 
 #[cfg(test)]
 mod test {
+    use alloc::vec::Vec;
+
+    use alloy_rlp::{Decodable, Encodable as _};
+
     use super::*;
     use crate::SpanBatchTransactionData;
-    use alloc::vec::Vec;
-    use alloy_rlp::{Decodable, Encodable as _};
 
     #[test]
     fn encode_legacy_tx_data_roundtrip() {

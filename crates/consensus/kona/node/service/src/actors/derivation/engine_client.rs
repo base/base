@@ -1,9 +1,11 @@
-use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};
+use std::fmt::Debug;
+
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_engine::ConsolidateInput;
-use std::fmt::Debug;
 use tokio::sync::mpsc;
+
+use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};
 
 /// Client to use to interact with the engine.
 #[cfg_attr(test, mockall::automock(type SafeL2Signal = OpAttributesWithParent;))]
@@ -29,7 +31,7 @@ pub trait DerivationEngineClient: Debug + Send + Sync {
 /// Client to use to send messages to the Engine Actor's inbound channel.
 #[derive(Constructor, Debug)]
 pub struct QueuedDerivationEngineClient {
-    /// A channel to use to send the [`EngineActorRequest`]s to the EngineActor.
+    /// A channel to use to send the [`EngineActorRequest`]s to the `EngineActor`.
     pub engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
 }
 

@@ -1,12 +1,13 @@
 //! The RPC server for the sequencer actor.
 //! Mostly handles queries from the admin rpc.
 
-use crate::SequencerAdminQuery;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_rpc::{SequencerAdminAPIClient, SequencerAdminAPIError};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::SequencerAdminQuery;
 
 /// Queued implementation of [`SequencerAdminAPIClient`] that handles requests by sending them to
 /// a handler via the contained sender.
