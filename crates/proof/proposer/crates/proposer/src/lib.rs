@@ -20,6 +20,7 @@ pub mod contracts;
 pub mod driver;
 pub mod enclave;
 pub mod error;
+pub mod health;
 pub mod metrics;
 pub mod prover;
 pub mod rpc;
@@ -34,4 +35,5 @@ pub use contracts::{
     OnchainVerifierClient, OnchainVerifierContractClient, OutputProposal, OutputProposer,
     create_output_proposer,
 };
+pub use driver::{DriverHandle, ProposerDriverControl};
 pub use error::*;

@@ -2,13 +2,24 @@
 //!
 //! The driver coordinates between RPC clients, the enclave, and contract
 //! interactions to generate and submit output proposals.
+//!
+//! # Lifecycle control
+//!
+//! The [`Driver`] itself runs a single polling loop via [`Driver::run`].
+//! [`DriverHandle`] wraps a `Driver` and exposes start/stop/is-running
+//! semantics through the [`ProposerDriverControl`] trait, which is consumed
+//! by the admin JSON-RPC server.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use alloy_primitives::B256;
+use async_trait::async_trait;
 use eyre::Result;
+use tokio::sync::Mutex as TokioMutex;
+use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -114,6 +125,14 @@ where
             cancel,
             pending: VecDeque::new(),
         }
+    }
+
+    /// Replaces the cancellation token.
+    ///
+    /// Used by [`DriverHandle`] to create fresh sessions when the driver is
+    /// restarted via the admin RPC.
+    pub(crate) fn set_cancel(&mut self, cancel: CancellationToken) {
+        self.cancel = cancel;
     }
 
     /// Starts the driver loop.
@@ -428,6 +447,155 @@ where
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// ProposerDriverControl trait and DriverHandle
+// ---------------------------------------------------------------------------
+
+/// Trait for controlling the proposer driver at runtime.
+///
+/// This is the type-erased interface consumed by the admin JSON-RPC server.
+/// [`DriverHandle`] is the concrete implementation.
+#[async_trait]
+pub trait ProposerDriverControl: Send + Sync {
+    /// Start the proposer driver loop.
+    async fn start_proposer(&self) -> Result<(), String>;
+    /// Stop the proposer driver loop.
+    async fn stop_proposer(&self) -> Result<(), String>;
+    /// Returns whether the proposer driver is currently running.
+    fn is_running(&self) -> bool;
+}
+
+/// Manages the lifecycle of a [`Driver`], allowing it to be started and
+/// stopped at runtime (e.g. via the admin RPC).
+///
+/// Internally the driver is placed behind a [`TokioMutex`] so it can be moved
+/// into a spawned task for the duration of a session. When the session ends
+/// (either via [`stop_proposer`](ProposerDriverControl::stop_proposer) or
+/// global cancellation) the mutex is released and the driver can be restarted.
+pub struct DriverHandle<L1, L2, E, R, V>
+where
+    L1: L1Client + 'static,
+    L2: L2Client + 'static,
+    E: EnclaveClientTrait + 'static,
+    R: RollupClient + 'static,
+    V: OnchainVerifierClient + 'static,
+{
+    #[allow(clippy::type_complexity)]
+    driver: Arc<TokioMutex<Driver<L1, L2, E, R, V>>>,
+    /// Cancel token for the *current* driver session (child of global).
+    session_cancel: TokioMutex<CancellationToken>,
+    /// Top-level cancel token (SIGTERM / SIGINT).
+    global_cancel: CancellationToken,
+    /// Join handle for the currently running driver task.
+    task: TokioMutex<Option<JoinHandle<Result<()>>>>,
+    /// Shared flag indicating whether the driver loop is active.
+    running: Arc<AtomicBool>,
+}
+
+impl<L1, L2, E, R, V> std::fmt::Debug for DriverHandle<L1, L2, E, R, V>
+where
+    L1: L1Client + 'static,
+    L2: L2Client + 'static,
+    E: EnclaveClientTrait + 'static,
+    R: RollupClient + 'static,
+    V: OnchainVerifierClient + 'static,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriverHandle")
+            .field("running", &self.running.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
+}
+
+impl<L1, L2, E, R, V> DriverHandle<L1, L2, E, R, V>
+where
+    L1: L1Client + 'static,
+    L2: L2Client + 'static,
+    E: EnclaveClientTrait + 'static,
+    R: RollupClient + 'static,
+    V: OnchainVerifierClient + 'static,
+{
+    /// Wraps a [`Driver`] in a lifecycle-managed handle.
+    ///
+    /// The driver is **not** started automatically — call
+    /// [`start_proposer`](ProposerDriverControl::start_proposer) to begin the
+    /// polling loop.
+    pub fn new(driver: Driver<L1, L2, E, R, V>, global_cancel: CancellationToken) -> Self {
+        let session_cancel = global_cancel.child_token();
+        Self {
+            driver: Arc::new(TokioMutex::new(driver)),
+            session_cancel: TokioMutex::new(session_cancel),
+            global_cancel,
+            task: TokioMutex::new(None),
+            running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+#[async_trait]
+impl<L1, L2, E, R, V> ProposerDriverControl for DriverHandle<L1, L2, E, R, V>
+where
+    L1: L1Client + 'static,
+    L2: L2Client + 'static,
+    E: EnclaveClientTrait + 'static,
+    R: RollupClient + 'static,
+    V: OnchainVerifierClient + 'static,
+{
+    async fn start_proposer(&self) -> Result<(), String> {
+        if self.running.load(Ordering::SeqCst) {
+            return Err("proposer is already running".into());
+        }
+
+        // Create a fresh session token (child of global, so SIGTERM still propagates).
+        let cancel = self.global_cancel.child_token();
+        {
+            let mut driver = self.driver.lock().await;
+            driver.set_cancel(cancel.clone());
+        }
+        *self.session_cancel.lock().await = cancel;
+
+        let driver = Arc::clone(&self.driver);
+        let running = Arc::clone(&self.running);
+        running.store(true, Ordering::SeqCst);
+
+        let handle = tokio::spawn(async move {
+            let mut guard = driver.lock().await;
+            let result = guard.run().await;
+            running.store(false, Ordering::SeqCst);
+            result
+        });
+
+        *self.task.lock().await = Some(handle);
+        info!("Proposer driver started");
+        Ok(())
+    }
+
+    async fn stop_proposer(&self) -> Result<(), String> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err("proposer is not running".into());
+        }
+
+        // Cancel the current session (does not cancel the global token).
+        self.session_cancel.lock().await.cancel();
+
+        // Await the spawned task so the driver mutex is released cleanly.
+        if let Some(task) = self.task.lock().await.take() {
+            let _ = task.await;
+        }
+
+        info!("Proposer driver stopped");
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -846,5 +1014,119 @@ mod tests {
         assert_eq!(proposal.to.number, 103);
         // Pending should have 1 aggregated item
         assert_eq!(driver.pending.len(), 1);
+    }
+
+    // ---- DriverHandle tests ----
+
+    /// Helper that builds a `DriverHandle` using mock components.
+    fn test_driver_handle(
+        global_cancel: CancellationToken,
+    ) -> DriverHandle<MockL1, MockL2, MockEnclave, MockRollupClient, MockOnchainVerifier> {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let output = test_output_proposal(100);
+        let driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                poll_interval: Duration::from_secs(3600), // long interval; won't tick in tests
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            output,
+            Arc::new(MockOutputProposer),
+            global_cancel.child_token(), // placeholder; replaced by DriverHandle on start
+        );
+        DriverHandle::new(driver, global_cancel)
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_start_stop() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        assert!(!handle.is_running());
+
+        // Start
+        let result = handle.start_proposer().await;
+        assert!(result.is_ok());
+        assert!(handle.is_running());
+
+        // Stop
+        let result = handle.stop_proposer().await;
+        assert!(result.is_ok());
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_double_start_errors() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        // Second start should fail
+        let result = handle.start_proposer().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already running"));
+
+        handle.stop_proposer().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_stop_when_not_running() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        let result = handle.stop_proposer().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not running"));
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_restart() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        // Start, stop, start again
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        handle.stop_proposer().await.unwrap();
+        assert!(!handle.is_running());
+
+        // Should be able to restart
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        handle.stop_proposer().await.unwrap();
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_global_cancel_stops_driver() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel.clone());
+
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        // Global cancel (simulating SIGTERM) should stop the driver
+        cancel.cancel();
+
+        // Give the spawned task a moment to observe the cancellation
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(!handle.is_running(), "driver should stop on global cancel");
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_debug() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        let debug = format!("{handle:?}");
+        assert!(debug.contains("DriverHandle"));
+        assert!(debug.contains("running"));
     }
 }
