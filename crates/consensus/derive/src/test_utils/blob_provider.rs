@@ -9,8 +9,6 @@ use base_protocol::BlockInfo;
 
 use crate::{BlobProvider, errors::BlobProviderError};
 
-use crate::{BlobProvider, errors::BlobProviderError};
-
 /// A mock blob provider for testing.
 #[derive(Debug, Clone, Default)]
 pub struct TestBlobProvider {

@@ -9,8 +9,6 @@ use kona_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, RollupCon
 
 use crate::{PollingTraversal, test_utils::TestChainProvider};
 
-use crate::{PollingTraversal, test_utils::TestChainProvider};
-
 /// [`TraversalTestHelper`] encapsulates useful testing methods for traversal stages.
 #[derive(Debug, Clone)]
 pub struct TraversalTestHelper;
