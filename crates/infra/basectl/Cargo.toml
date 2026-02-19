@@ -26,7 +26,7 @@ alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true }
 op-alloy-network = { workspace = true }
 alloy-primitives = { workspace = true }
-tokio-tungstenite = { workspace = true,features = ["native-tls"] }
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 op-alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 url = { workspace = true, features = ["serde"] }
