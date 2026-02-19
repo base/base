@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(bundle.senders().len(), 1);
         assert_eq!(bundle.senders()[0], alice.address());
 
-        // Bundle hashes are keccack256(...txnHashes)
+        // Bundle hashes are keccak256(...txnHashes)
         let expected_bundle_hash_single = {
             let mut hasher = Keccak256::default();
             hasher.update(keccak256(&tx1_bytes));
