@@ -209,6 +209,7 @@ where
             max_state_root_time_per_tx_us: self.config.max_state_root_time_per_tx_us,
             flashblock_execution_time_budget_us: self.config.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
+            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             execution_metering_mode: self.config.execution_metering_mode,
             metering_provider: Arc::clone(&self.config.metering_provider),
         })
@@ -709,6 +710,9 @@ where
                 .block_predicted_state_root_time_us
                 .record(info.cumulative_state_root_time_us as f64);
         }
+
+        // Record cumulative uncompressed block size
+        ctx.metrics.block_uncompressed_size.record(info.cumulative_uncompressed_bytes as f64);
 
         debug!(
             target: "payload_builder",

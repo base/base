@@ -43,6 +43,8 @@ pub struct ResourceLimits {
     /// Unlike execution time, state root time is cumulative across the entire block because
     /// state root is calculated once at the end of the block, not per-flashblock.
     pub block_state_root_time_limit_us: Option<u128>,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
+    pub block_uncompressed_size_limit: Option<u64>,
 }
 
 /// Resource usage for a single transaction.
@@ -59,6 +61,8 @@ pub struct TxResources {
     pub execution_time_us: Option<u128>,
     /// Predicted state root calculation time in microseconds (from metering data, if available).
     pub state_root_time_us: Option<u128>,
+    /// Raw EIP-2718 encoded transaction size in bytes.
+    pub uncompressed_size: u64,
 }
 
 /// Execution metering limits that depend on metering service predictions.
@@ -123,6 +127,19 @@ pub enum TxnExecutionError {
         tx_gas_limit: u64,
         /// Block gas limit.
         block_gas_limit: u64,
+    },
+
+    /// Block uncompressed size limit exceeded.
+    #[error(
+        "block uncompressed size exceeded: total_uncompressed={total_uncompressed} tx_uncompressed_size={tx_uncompressed_size} block_limit={block_limit}"
+    )]
+    BlockUncompressedSizeExceeded {
+        /// Total uncompressed bytes before this transaction.
+        total_uncompressed: u64,
+        /// Uncompressed size of this transaction.
+        tx_uncompressed_size: u64,
+        /// Block uncompressed size limit.
+        block_limit: u64,
     },
 
     // Execution metering limits (optionally enforced, depend on metering service predictions)
@@ -191,6 +208,8 @@ pub struct ExecutionInfo {
     /// Cumulative state root calculation time in microseconds across the block
     /// (see [`ResourceLimits::block_state_root_time_limit_us`]).
     pub cumulative_state_root_time_us: u128,
+    /// Cumulative uncompressed (EIP-2718 encoded) bytes used in the block
+    pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Extra execution information for the Flashblocks builder
@@ -210,6 +229,7 @@ impl ExecutionInfo {
             cumulative_da_bytes_used: 0,
             flashblock_execution_time_us: 0,
             cumulative_state_root_time_us: 0,
+            cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
@@ -277,6 +297,18 @@ impl ExecutionInfo {
                 tx_gas_limit: tx.gas_limit,
                 block_gas_limit: limits.block_gas_limit,
             });
+        }
+
+        // Check block uncompressed size limit
+        if let Some(limit) = limits.block_uncompressed_size_limit {
+            let total = self.cumulative_uncompressed_bytes.saturating_add(tx.uncompressed_size);
+            if total > limit {
+                return Err(TxnExecutionError::BlockUncompressedSizeExceeded {
+                    total_uncompressed: self.cumulative_uncompressed_bytes,
+                    tx_uncompressed_size: tx.uncompressed_size,
+                    block_limit: limit,
+                });
+            }
         }
 
         // Check execution time limits (if metering data is available)
@@ -668,6 +700,7 @@ mod tests {
             gas_limit: 21_000,
             execution_time_us: Some(2_000_000),
             state_root_time_us: Some(1_000_000),
+            uncompressed_size: 0,
         };
 
         let result = info.is_tx_over_limits(&tx, &limits);
@@ -694,6 +727,7 @@ mod tests {
             gas_limit: 100_000,
             execution_time_us: Some(100_000),
             state_root_time_us: Some(50_000),
+            uncompressed_size: 0,
         };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
@@ -745,9 +779,54 @@ mod tests {
         assert_eq!(info.cumulative_da_bytes_used, 0);
         assert_eq!(info.flashblock_execution_time_us, 0);
         assert_eq!(info.cumulative_state_root_time_us, 0);
+        assert_eq!(info.cumulative_uncompressed_bytes, 0);
         assert_eq!(info.total_fees, U256::ZERO);
         assert!(info.executed_transactions.is_empty());
         assert!(info.executed_senders.is_empty());
         assert!(info.receipts.is_empty());
+    }
+
+    #[test]
+    fn test_block_uncompressed_size_exceeded() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_uncompressed_bytes = 90_000;
+
+        let limits =
+            ResourceLimits { block_uncompressed_size_limit: Some(100_000), ..default_limits() };
+        let tx = TxResources { gas_limit: 21_000, uncompressed_size: 20_000, ..Default::default() };
+
+        let result = info.is_tx_over_limits(&tx, &limits);
+        assert!(matches!(
+            result,
+            Err(TxnExecutionError::BlockUncompressedSizeExceeded {
+                total_uncompressed: 90_000,
+                tx_uncompressed_size: 20_000,
+                block_limit: 100_000,
+            })
+        ));
+    }
+
+    #[test]
+    fn test_block_uncompressed_size_within_limits() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_uncompressed_bytes = 50_000;
+
+        let limits =
+            ResourceLimits { block_uncompressed_size_limit: Some(100_000), ..default_limits() };
+        let tx = TxResources { gas_limit: 21_000, uncompressed_size: 40_000, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_block_uncompressed_size_none_means_no_limit() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_uncompressed_bytes = u64::MAX - 1;
+
+        let limits = ResourceLimits { block_uncompressed_size_limit: None, ..default_limits() };
+        let tx =
+            TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
     }
 }

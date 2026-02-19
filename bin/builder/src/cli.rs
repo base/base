@@ -118,6 +118,10 @@ pub struct Args {
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes
+    #[arg(long = "builder.max-uncompressed-block-size")]
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -154,6 +158,7 @@ impl Default for Args {
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
+            max_uncompressed_block_size: None,
             tx_data_store_buffer_size: 10000,
             sampling_ratio: 100,
             flashblocks: FlashblocksArgs::default(),
@@ -179,6 +184,7 @@ impl TryFrom<Args> for BuilderConfig {
             flashblock_execution_time_budget_us: args.flashblock_execution_time_budget_us,
             block_state_root_time_budget_us: args.block_state_root_time_budget_us,
             execution_metering_mode: args.execution_metering_mode,
+            max_uncompressed_block_size: args.max_uncompressed_block_size,
             metering_provider: Arc::new(metering_store),
             flashblocks,
         })
