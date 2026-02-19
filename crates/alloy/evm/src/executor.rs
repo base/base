@@ -1,63 +1,31 @@
-//! Block executor for Optimism.
-
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::{
-    Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
+    Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
-        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook,
-        StateChangePostBlockSource, StateChangeSource, StateDB, SystemCaller, TxResult,
+        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
+        ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
+        SystemCaller, TxResult,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
-use alloy_primitives::{Address, B256, Bytes};
-use base_alloy_hardforks::{OpChainHardforks, OpHardforks};
-use canyon::ensure_create2_deployer;
+use alloy_primitives::Address;
+use base_alloy_hardforks::OpHardforks;
 use op_alloy_consensus::OpDepositReceipt;
 use op_revm::{
-    L1BlockInfo, OpTransaction, constants::L1_BLOCK_CONTRACT, estimate_tx_compressed_size,
+    L1BlockInfo, constants::L1_BLOCK_CONTRACT, estimate_tx_compressed_size,
     transaction::deposit::DEPOSIT_TRANSACTION_TYPE,
 };
-pub use receipt_builder::OpAlloyReceiptBuilder;
-use receipt_builder::OpReceiptBuilder;
 use revm::{
-    Database as _, DatabaseCommit, Inspector,
+    Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
-    database::{DatabaseCommitExt, State},
+    database::DatabaseCommitExt,
 };
 
-use crate::OpEvmFactory;
-
-mod canyon;
-pub mod receipt_builder;
-
-/// Trait for OP transaction environments. Allows to recover the transaction encoded bytes if
-/// they're available.
-pub trait OpTxEnv {
-    /// Returns the encoded bytes of the transaction.
-    fn encoded_bytes(&self) -> Option<&Bytes>;
-}
-
-impl<T: revm::context::Transaction> OpTxEnv for OpTransaction<T> {
-    fn encoded_bytes(&self) -> Option<&Bytes> {
-        self.enveloped_tx.as_ref()
-    }
-}
-
-/// Context for OP block execution.
-#[derive(Debug, Default, Clone)]
-pub struct OpBlockExecutionCtx {
-    /// Parent block hash.
-    pub parent_hash: B256,
-    /// Parent beacon block root.
-    pub parent_beacon_block_root: Option<B256>,
-    /// The block's extra data.
-    pub extra_data: Bytes,
-}
+use crate::{OpBlockExecutionCtx, OpBlockExecutionError, OpReceiptBuilder, OpTxEnv, canyon};
 
 /// The result of executing an OP transaction.
 #[derive(Debug)]
@@ -127,29 +95,6 @@ where
     }
 }
 
-/// Custom errors that can occur during OP block execution.
-#[derive(Debug, thiserror::Error)]
-pub enum OpBlockExecutionError {
-    /// Failed to load cache account.
-    #[error("failed to load cache account")]
-    LoadCacheAccount,
-
-    /// Failed to get Jovian da footprint gas scalar from database.
-    #[error("failed to get da footprint gas scalar from database: {_0}")]
-    GetJovianDaFootprintScalar(Box<dyn core::error::Error + Send + Sync + 'static>),
-
-    /// Transaction DA footprint exceeds available block DA footprint.
-    #[error(
-        "transaction DA footprint exceeds available block DA footprint. transaction_da_footprint: {transaction_da_footprint}, available_block_da_footprint: {available_block_da_footprint}"
-    )]
-    TransactionDaFootprintAboveGasLimit {
-        /// The DA footprint of the transaction to execute.
-        transaction_da_footprint: u64,
-        /// The available block DA footprint.
-        available_block_da_footprint: u64,
-    },
-}
-
 impl<E, R, Spec> OpBlockExecutor<E, R, Spec>
 where
     E: Evm<
@@ -213,7 +158,7 @@ where
         // blocks will always have at least a single transaction in them (the L1 info transaction),
         // so we can safely assume that this will always be triggered upon the transition and that
         // the above check for empty blocks will never be hit on OP chains.
-        ensure_create2_deployer(
+        canyon::ensure_create2_deployer(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
             self.evm.db_mut(),
@@ -404,85 +349,16 @@ where
     }
 }
 
-/// Ethereum block executor factory.
-#[derive(Debug, Clone, Default, Copy)]
-pub struct OpBlockExecutorFactory<
-    R = OpAlloyReceiptBuilder,
-    Spec = OpChainHardforks,
-    EvmFactory = OpEvmFactory,
-> {
-    /// Receipt builder.
-    receipt_builder: R,
-    /// Chain specification.
-    spec: Spec,
-    /// EVM factory.
-    evm_factory: EvmFactory,
-}
-
-impl<R, Spec, EvmFactory> OpBlockExecutorFactory<R, Spec, EvmFactory> {
-    /// Creates a new [`OpBlockExecutorFactory`] with the given spec, [`EvmFactory`], and
-    /// [`OpReceiptBuilder`].
-    pub const fn new(receipt_builder: R, spec: Spec, evm_factory: EvmFactory) -> Self {
-        Self { receipt_builder, spec, evm_factory }
-    }
-
-    /// Exposes the receipt builder.
-    pub const fn receipt_builder(&self) -> &R {
-        &self.receipt_builder
-    }
-
-    /// Exposes the chain specification.
-    pub const fn spec(&self) -> &Spec {
-        &self.spec
-    }
-
-    /// Exposes the EVM factory.
-    pub const fn evm_factory(&self) -> &EvmFactory {
-        &self.evm_factory
-    }
-}
-
-impl<R, Spec, EvmF> BlockExecutorFactory for OpBlockExecutorFactory<R, Spec, EvmF>
-where
-    R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: OpHardforks,
-    EvmF: EvmFactory<
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
-    >,
-    Self: 'static,
-{
-    type EvmFactory = EvmF;
-    type ExecutionCtx<'a> = OpBlockExecutionCtx;
-    type Transaction = R::Transaction;
-    type Receipt = R::Receipt;
-
-    fn evm_factory(&self) -> &Self::EvmFactory {
-        &self.evm_factory
-    }
-
-    fn create_executor<'a, DB, I>(
-        &'a self,
-        evm: EvmF::Evm<&'a mut State<DB>, I>,
-        ctx: Self::ExecutionCtx<'a>,
-    ) -> impl BlockExecutorFor<'a, Self, DB, I>
-    where
-        DB: Database + 'a,
-        I: Inspector<EvmF::Context<&'a mut State<DB>>> + 'a,
-    {
-        OpBlockExecutor::new(evm, ctx, &self.spec, &self.receipt_builder)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::{string::ToString, vec};
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
-    use alloy_evm::{EvmEnv, ToTxEnv};
+    use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
-    use base_alloy_hardforks::OpHardfork;
+    use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
     use op_alloy_consensus::OpTxEnvelope;
     use op_revm::{
         DefaultOp, L1BlockInfo, OpBuilder, OpSpecId,
@@ -501,7 +377,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::OpEvm;
+    use crate::{OpAlloyReceiptBuilder, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
 
     #[test]
     fn test_with_encoded() {
@@ -510,8 +386,9 @@ mod tests {
             OpChainHardforks::op_mainnet(),
             OpEvmFactory::default(),
         );
-        let mut db = State::builder().with_database(CacheDB::<EmptyDB>::default()).build();
-        let evm = executor_factory.evm_factory.create_evm(&mut db, EvmEnv::default());
+        let mut db =
+            revm::database::State::builder().with_database(CacheDB::<EmptyDB>::default()).build();
+        let evm = executor_factory.evm_factory().create_evm(&mut db, EvmEnv::default());
         let mut executor = executor_factory.create_executor(evm, OpBlockExecutionCtx::default());
         let tx = Recovered::new_unchecked(
             OpTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::new(
@@ -528,7 +405,7 @@ mod tests {
         let _ = executor.execute_transaction(&tx_with_encoded);
     }
 
-    fn prepare_jovian_db(da_footprint_gas_scalar: u16) -> State<InMemoryDB> {
+    fn prepare_jovian_db(da_footprint_gas_scalar: u16) -> revm::database::State<InMemoryDB> {
         const L1_BASE_FEE: U256 = uint!(1_U256);
         const L1_BLOB_BASE_FEE: U256 = uint!(2_U256);
         const L1_BASE_FEE_SCALAR: u64 = 3;
@@ -549,7 +426,7 @@ mod tests {
         operator_fee_and_da_footprint[18] = da_footprint_gas_scalar_bytes[0];
         let operator_fee_and_da_footprint_u256 = U256::from_be_bytes(operator_fee_and_da_footprint);
 
-        let mut db = State::builder().with_database(InMemoryDB::default()).build();
+        let mut db = revm::database::State::builder().with_database(InMemoryDB::default()).build();
 
         db.insert_account_with_storage(
             L1_BLOCK_CONTRACT,
@@ -571,13 +448,13 @@ mod tests {
     }
 
     fn build_executor<'a>(
-        db: &'a mut State<InMemoryDB>,
+        db: &'a mut revm::database::State<InMemoryDB>,
         receipt_builder: &'a OpAlloyReceiptBuilder,
         op_chain_hardforks: &'a OpChainHardforks,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> OpBlockExecutor<
-        OpEvm<&'a mut State<InMemoryDB>, NoOpInspector>,
+        OpEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
         &'a OpAlloyReceiptBuilder,
         &'a OpChainHardforks,
     > {
