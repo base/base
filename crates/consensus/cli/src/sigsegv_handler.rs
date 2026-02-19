@@ -143,6 +143,7 @@ pub fn install() {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn min_sigstack_size() -> usize {
     const AT_MINSIGSTKSZ: core::ffi::c_ulong = 51;
+    // SAFETY: `getauxval` is safe to call with any key; it returns 0 if the key is not found.
     let dynamic_sigstksz = unsafe { libc::getauxval(AT_MINSIGSTKSZ) };
     // If getauxval couldn't find the entry, it returns 0,
     // so take the higher of the "constant" and auxval.

@@ -118,7 +118,7 @@ println!("OP Mainnet Chain Config: {:?}", op_chain_config);
 [op-superchain]: https://docs.optimism.io/stack/explainer
 [osr]: https://github.com/ethereum-optimism/superchain-registry
 
-[s]: ./crates/registry
+[s]: ./etc
 [sc]: https://crates.io/crates/kona-registry
 [g]: https://crates.io/crates/kona-genesis
 
