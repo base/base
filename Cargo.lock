@@ -2298,7 +2298,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-revm 15.0.0",
  "revm 34.0.0",
- "thiserror 2.0.17",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
