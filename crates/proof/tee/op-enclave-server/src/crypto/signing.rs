@@ -16,7 +16,7 @@ pub const SIGNATURE_LENGTH: usize = 65;
 
 /// Length of the signing data: address(20) + 8 x bytes32(32) = 276 bytes.
 ///
-/// Matches the AggregateVerifier contract's journal computation:
+/// Matches the `AggregateVerifier` contract's journal computation:
 /// `keccak256(abi.encodePacked(prover, l1OriginHash, l1OriginNumber,
 ///   prevOutputRoot, startingL2Block, outputRoot, endingL2Block, configHash, imageHash))`
 pub const SIGNING_DATA_LENGTH: usize = 276;
