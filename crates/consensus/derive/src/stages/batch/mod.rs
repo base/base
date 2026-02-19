@@ -19,6 +19,8 @@ use base_protocol::{Batch, BlockInfo, L2BlockInfo};
 
 use crate::types::PipelineResult;
 
+use crate::types::PipelineResult;
+
 mod batch_stream;
 pub use batch_stream::{BatchStream, BatchStreamProvider};
 

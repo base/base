@@ -15,6 +15,11 @@ use crate::{
     PipelineError, PipelineResult,
 };
 
+use crate::{
+    BlobData, BlobProvider, BlobProviderError, ChainProvider, DataAvailabilityProvider,
+    PipelineError, PipelineResult,
+};
+
 /// A data iterator that reads from a blob.
 #[derive(Debug, Clone)]
 pub struct BlobSource<F, B>

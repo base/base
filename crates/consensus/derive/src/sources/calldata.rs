@@ -9,6 +9,8 @@ use base_protocol::BlockInfo;
 
 use crate::{ChainProvider, DataAvailabilityProvider, PipelineError, PipelineResult};
 
+use crate::{ChainProvider, DataAvailabilityProvider, PipelineError, PipelineResult};
+
 /// A data iterator that reads from calldata.
 #[derive(Debug, Clone)]
 pub struct CalldataSource<CP>

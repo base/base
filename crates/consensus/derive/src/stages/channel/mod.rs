@@ -18,6 +18,8 @@ use base_protocol::Frame;
 
 use crate::types::PipelineResult;
 
+use crate::types::PipelineResult;
+
 pub(crate) mod channel_provider;
 pub use channel_provider::ChannelProvider;
 
