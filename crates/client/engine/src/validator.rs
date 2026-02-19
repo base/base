@@ -25,6 +25,7 @@ use reth_primitives_traits::{NodePrimitives, SealedBlock};
 use reth_provider::{
     BlockNumReader, BlockReader, ChangeSetReader, DatabaseProviderFactory, HashedPostStateProvider,
     PruneCheckpointReader, StageCheckpointReader, StateProviderFactory, StateReader,
+    StorageChangeSetReader, StorageSettingsCache,
 };
 use tracing::instrument;
 
@@ -94,6 +95,7 @@ where
             tree_config,
             invalid_block_hook,
             changeset_cache,
+            ctx.node.task_executor().clone(),
         ))
     }
 }
@@ -121,6 +123,8 @@ where
                           + StageCheckpointReader
                           + PruneCheckpointReader
                           + ChangeSetReader
+                          + StorageChangeSetReader
+                          + StorageSettingsCache
                           + BlockNumReader,
         > + BlockReader<Header = N::BlockHeader>
         + ChangeSetReader
@@ -142,6 +146,7 @@ where
         config: TreeConfig,
         invalid_block_hook: Box<dyn InvalidBlockHook<N>>,
         changeset_cache: ChangesetCache,
+        runtime: reth_tasks::Runtime,
     ) -> Self {
         Self {
             inner: BasicEngineValidator::new(
@@ -152,6 +157,7 @@ where
                 config,
                 invalid_block_hook,
                 changeset_cache,
+                runtime,
             ),
         }
     }
@@ -192,6 +198,8 @@ where
                           + StageCheckpointReader
                           + PruneCheckpointReader
                           + ChangeSetReader
+                          + StorageChangeSetReader
+                          + StorageSettingsCache
                           + BlockNumReader,
         > + BlockReader<Header = N::BlockHeader>
         + StateProviderFactory

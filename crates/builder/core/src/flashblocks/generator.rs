@@ -330,7 +330,7 @@ where
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
-        self.executor.spawn_blocking(Box::pin(async move {
+        self.executor.spawn_blocking_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
                 config: payload_config,

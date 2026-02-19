@@ -74,9 +74,9 @@ impl FlashblocksServiceBuilder {
             PayloadHandler::new(built_payload_rx, payload_service.payload_events_handle());
 
         ctx.task_executor()
-            .spawn_critical("custom payload builder service", Box::pin(payload_service));
+            .spawn_critical_task("custom payload builder service", Box::pin(payload_service));
         ctx.task_executor()
-            .spawn_critical("flashblocks payload handler", Box::pin(payload_handler.run()));
+            .spawn_critical_task("flashblocks payload handler", Box::pin(payload_handler.run()));
 
         tracing::info!("Flashblocks payload builder service started");
         Ok(payload_builder_handle)

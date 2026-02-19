@@ -29,7 +29,7 @@ use reth_node_core::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{args::RollupArgs, node::OpPoolBuilder};
 use reth_optimism_txpool::OpPooledTransaction;
-use reth_tasks::TaskManager;
+use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use url::Url;
 
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
@@ -66,7 +66,7 @@ pub struct InProcessBuilder {
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
-    _task_manager: TaskManager,
+    _runtime: Runtime,
 }
 
 impl Drop for InProcessBuilder {
@@ -103,8 +103,7 @@ impl InProcessBuilder {
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
-        let tasks = TaskManager::current();
-        let exec = tasks.executor();
+        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
 
         let chain_spec = parse_genesis(&config.genesis_json)?;
 
@@ -148,7 +147,7 @@ impl InProcessBuilder {
 
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(exec.clone())
+            .with_launch_context(runtime.clone())
             .with_types::<BaseNode>()
             .with_components(
                 base_node
@@ -186,7 +185,7 @@ impl InProcessBuilder {
             data_dir: data_path,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
-            _task_manager: tasks,
+            _runtime: runtime,
         })
     }
 

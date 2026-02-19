@@ -90,7 +90,7 @@ pub fn build_test_genesis() -> Genesis {
         gas_limit: GENESIS_GAS_LIMIT,
         difficulty: U256::ZERO,
         nonce: 0,
-        timestamp: 0,
+        timestamp: 1,
         extra_data: Bytes::from_static(&[0x00]),
         mix_hash: B256::ZERO,
         coinbase: Address::ZERO,
