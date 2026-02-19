@@ -499,7 +499,7 @@ impl OpNetworkPayloadEnvelope {
         let mut sig = self.signature.as_bytes();
         sig[64] = self.signature.v() as u8;
         data.extend_from_slice(&sig[..]);
-        data.extend_from_slice(self.parent_beacon_block_root.as_ref().unwrap().as_slice());
+        data.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
         let block_data = execution_payload_v3.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
@@ -551,7 +551,7 @@ impl OpNetworkPayloadEnvelope {
         let mut sig = self.signature.as_bytes();
         sig[64] = self.signature.v() as u8;
         data.extend_from_slice(&sig[..]);
-        data.extend_from_slice(self.parent_beacon_block_root.as_ref().unwrap().as_slice());
+        data.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
         let block_data = execution_payload_v4.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
