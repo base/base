@@ -761,7 +761,7 @@ where
             );
         }
 
-        // We use this system time to determine remining time to build a block
+        // We use this system time to determine remaining time to build a block
         // Things to consider:
         // FCU(a) - FCU with attributes
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
