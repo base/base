@@ -3,8 +3,8 @@
 //! The driver coordinates between RPC clients, the enclave, and contract
 //! interactions to generate and submit output proposals as dispute games.
 //!
-//! TODO: Add unit tests for the driver (step, generate_outputs, next_output,
-//! propose_output, retry-on-failure, and graceful shutdown).
+//! TODO: Add unit tests for the driver (`step`, `generate_outputs`, `next_output`,
+//! `propose_output`, retry-on-failure, and graceful shutdown).
 //!
 //! # Lifecycle control
 //!
@@ -175,7 +175,7 @@ where
     }
 
     /// Sets the parent game state directly (typically from recovery in `main.rs`).
-    pub fn set_parent_game_state(
+    pub const fn set_parent_game_state(
         &mut self,
         game_index: u32,
         output_root: B256,
@@ -276,11 +276,10 @@ where
         }
 
         // Determine what block to generate next.
-        let next_number = if let Some(back) = self.pending.back() {
-            back.to.number
-        } else {
-            starting_block_number
-        };
+        let next_number = self
+            .pending
+            .back()
+            .map_or(starting_block_number, |back| back.to.number);
 
         // Generate proofs up to the target block for this interval.
         let target_block = starting_block_number + self.config.block_interval;
@@ -291,7 +290,7 @@ where
                 break;
             }
 
-            let number = next_number + 1 + i as u64;
+            let number = next_number + 1 + i;
 
             // Stop once we've reached the target block for this interval.
             if number > target_block {

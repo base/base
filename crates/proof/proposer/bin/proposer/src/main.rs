@@ -5,7 +5,7 @@
 //! 1. Parse and validate configuration
 //! 2. Initialise logging and metrics
 //! 3. Create RPC clients (L1, L2, rollup, enclave)
-//! 4. Read on-chain config (BLOCK_INTERVAL, initBond)
+//! 4. Read on-chain config (`BLOCK_INTERVAL`, `initBond`)
 //! 5. Create prover, output proposer, and driver
 //! 6. Recover parent game state from on-chain data
 //! 7. Start health / admin HTTP server

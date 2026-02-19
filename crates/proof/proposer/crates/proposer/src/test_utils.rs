@@ -182,6 +182,7 @@ pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, M
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
     L1BlockRef {
         hash: B256::ZERO,
@@ -191,6 +192,7 @@ pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     L2BlockRef {
         hash,
@@ -205,6 +207,7 @@ pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
     let l1 = test_l1_block_ref(100);
     let l2 = test_l2_block_ref(safe_number, safe_hash);
@@ -221,6 +224,7 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot {
         root: B256::ZERO,
@@ -229,6 +233,7 @@ pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).
+#[allow(dead_code)]
 pub(crate) struct MockOutputProposer;
 
 #[async_trait]

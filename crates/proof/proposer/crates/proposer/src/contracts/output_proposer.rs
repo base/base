@@ -152,7 +152,7 @@ where
     Ok(())
 }
 
-/// Returns true if the error is retryable (not a revert, not GameAlreadyExists).
+/// Returns true if the error is retryable (not a revert, not `GameAlreadyExists`).
 fn is_retryable(e: &ProposerError) -> bool {
     if let ProposerError::Contract(msg) = e {
         if msg.contains("reverted") || msg.contains("GameAlreadyExists") {
