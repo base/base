@@ -1,15 +1,16 @@
 //! Contains the [`BootNode`] type which is used to represent a boot node in the network.
 
-use crate::{NodeRecord, enr_to_multiaddr};
+use std::{net::IpAddr, str::FromStr};
+
 use derive_more::{Display, From};
 use discv5::{
     Enr,
     multiaddr::{Multiaddr, Protocol},
 };
 use serde::{Deserialize, Serialize};
-use std::{net::IpAddr, str::FromStr};
 
 use super::utils::{PeerIdConversionError, local_id_to_p2p_id};
+use crate::{NodeRecord, enr_to_multiaddr};
 
 /// A boot node can be added either as a string in either 'enode' URL scheme or serialized from
 /// [`Enr`] type.
@@ -64,15 +65,15 @@ impl BootNode {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::Ipv4Addr, str::FromStr};
+
     use discv5::{
         enr::{CombinedPublicKey, k256},
         handler::NodeContact,
     };
 
-    use crate::utils::peer_id_to_secp256k1_pubkey;
-
     use super::*;
-    use std::{net::Ipv4Addr, str::FromStr};
+    use crate::utils::peer_id_to_secp256k1_pubkey;
 
     #[test]
     fn test_derive_bootnode_enode_multiaddr() {

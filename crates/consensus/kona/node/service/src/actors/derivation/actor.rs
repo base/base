@@ -1,10 +1,5 @@
-//! [NodeActor] implementation for the derivation sub-routine.
+//! [`NodeActor`] implementation for the derivation sub-routine.
 
-use crate::{
-    CancellableContext, DerivationActorRequest, DerivationEngineClient, DerivationState,
-    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, Metrics,
-    NodeActor, actors::derivation::L2Finalizer,
-};
 use async_trait::async_trait;
 use kona_derive::{
     ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal,
@@ -15,11 +10,17 @@ use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
-/// The [NodeActor] for the derivation sub-routine.
+use crate::{
+    CancellableContext, DerivationActorRequest, DerivationEngineClient, DerivationState,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, Metrics,
+    NodeActor, actors::derivation::L2Finalizer,
+};
+
+/// The [`NodeActor`] for the derivation sub-routine.
 ///
-/// This actor is responsible for receiving messages from [NodeActor]s and stepping the
+/// This actor is responsible for receiving messages from [`NodeActor`]s and stepping the
 /// derivation pipeline forward to produce new payload attributes. The actor then sends the payload
-/// to the [NodeActor] responsible for the execution sub-routine.
+/// to the [`NodeActor`] responsible for the execution sub-routine.
 #[derive(Debug)]
 pub struct DerivationActor<DerivationEngineClient_, PipelineSignalReceiver>
 where
@@ -58,7 +59,7 @@ where
     DerivationEngineClient_: DerivationEngineClient,
     PipelineSignalReceiver: Pipeline + SignalReceiver,
 {
-    /// Creates a new instance of the [DerivationActor].
+    /// Creates a new instance of the [`DerivationActor`].
     pub fn new(
         engine_client: DerivationEngineClient_,
         cancellation_token: CancellationToken,
@@ -320,7 +321,7 @@ where
     }
 }
 
-/// An error from the [DerivationActor].
+/// An error from the [`DerivationActor`].
 #[derive(Error, Debug)]
 pub enum DerivationError {
     /// An error originating from the derivation pipeline.

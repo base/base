@@ -1,11 +1,10 @@
 [package]
 name = "kona-protocol"
-version = "0.4.5"
+version.workspace = true
 description = "Optimism protocol-specific types"
 
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true

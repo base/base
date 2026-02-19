@@ -57,8 +57,8 @@ impl TryFrom<&SystemConfigLog> for GasConfigUpdate {
             return Err(GasConfigUpdateError::ScalarDecodingError);
         };
 
-        if sys_log.ecotone_active &&
-            RollupConfig::check_ecotone_l1_system_config_scalar(scalar.to_be_bytes()).is_err()
+        if sys_log.ecotone_active
+            && RollupConfig::check_ecotone_l1_system_config_scalar(scalar.to_be_bytes()).is_err()
         {
             // ignore invalid scalars, retain the old system-config scalar
             return Ok(Self::default());
@@ -73,10 +73,12 @@ impl TryFrom<&SystemConfigLog> for GasConfigUpdate {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex, uint};
+
     use super::*;
     use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
-    use alloc::vec;
-    use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex, uint};
 
     #[test]
     fn test_gas_config_update_try_from() {

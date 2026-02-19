@@ -1,11 +1,12 @@
 //! Module containing the core [`Batch`] enum.
 
-use crate::{
-    BatchDecodingError, BatchEncodingError, BatchType, RawSpanBatch, SingleBatch, SpanBatch,
-};
 use alloy_primitives::bytes;
 use alloy_rlp::{Buf, Decodable, Encodable};
 use kona_genesis::RollupConfig;
+
+use crate::{
+    BatchDecodingError, BatchEncodingError, BatchType, RawSpanBatch, SingleBatch, SpanBatch,
+};
 
 /// A Batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,11 +82,13 @@ impl Batch {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{SpanBatchElement, SpanBatchError, SpanBatchTransactions};
     use alloc::{vec, vec::Vec};
+
     use alloy_consensus::{Signed, TxEip2930, TxEnvelope};
     use alloy_primitives::{Bytes, Signature, TxKind, address, hex};
+
+    use super::*;
+    use crate::{SpanBatchElement, SpanBatchError, SpanBatchTransactions};
 
     #[test]
     fn test_single_batch_encode_decode() {

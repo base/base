@@ -1,7 +1,10 @@
-//! [tracing_subscriber] utilities.
+//! [`tracing_subscriber`] utilities.
 
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::{
-    Layer,
+    EnvFilter, Layer,
     fmt::{
         format::{FormatEvent, FormatFields, Writer},
         time::{FormatTime, SystemTime},
@@ -10,10 +13,6 @@ use tracing_subscriber::{
     registry::LookupSpan,
     util::{SubscriberInitExt, TryInitError},
 };
-
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use tracing_subscriber::EnvFilter;
 
 use crate::{LogConfig, LogRotation};
 

@@ -374,8 +374,8 @@ impl Discv5Driver {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::LocalNode;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
     use discv5::{
         ConfigBuilder,
         enr::{CombinedKey, CombinedPublicKey},
@@ -384,7 +384,8 @@ mod tests {
     use kona_genesis::{OP_MAINNET_CHAIN_ID, OP_SEPOLIA_CHAIN_ID};
     use tempfile::tempdir;
 
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use super::*;
+    use crate::LocalNode;
 
     #[tokio::test]
     async fn test_online_discv5_driver() {

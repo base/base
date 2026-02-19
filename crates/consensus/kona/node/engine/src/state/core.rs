@@ -1,9 +1,10 @@
 //! The internal state of the engine controller.
 
-use crate::Metrics;
 use alloy_rpc_types_engine::ForkchoiceState;
 use kona_protocol::L2BlockInfo;
 use serde::{Deserialize, Serialize};
+
+use crate::Metrics;
 
 /// The synchronization state of the execution layer across different safety levels.
 ///
@@ -26,7 +27,7 @@ use serde::{Deserialize, Serialize};
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).
     unsafe_head: L2BlockInfo,
-    /// Cross-verified unsafe head (equal to unsafe_head pre-interop).
+    /// Cross-verified unsafe head (equal to `unsafe_head` pre-interop).
     cross_unsafe_head: L2BlockInfo,
     /// Derived from L1 data as a completed span-batch, but not yet cross-verified.
     local_safe_head: L2BlockInfo,
@@ -175,11 +176,12 @@ impl EngineState {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::Metrics;
     use kona_protocol::BlockInfo;
     use metrics_exporter_prometheus::PrometheusBuilder;
     use rstest::rstest;
+
+    use super::*;
+    use crate::Metrics;
 
     impl EngineState {
         /// Set the unsafe head.

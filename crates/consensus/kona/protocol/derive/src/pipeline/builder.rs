@@ -1,15 +1,17 @@
 //! Contains the `PipelineBuilder` object that is used to build a `DerivationPipeline`.
 
+use alloc::sync::Arc;
+use core::fmt::Debug;
+
+use kona_genesis::RollupConfig;
+use kona_protocol::BlockInfo;
+
 use crate::{
     AttributesBuilder, AttributesQueue, BatchProvider, BatchStream, ChainProvider, ChannelProvider,
     ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue,
     IndexedAttributesQueueStage, IndexedTraversal, L1Retrieval, L2ChainProvider,
     PolledAttributesQueueStage, PollingTraversal,
 };
-use alloc::sync::Arc;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::BlockInfo;
 
 /// The `PipelineBuilder` constructs a [`DerivationPipeline`] using a builder pattern.
 #[derive(Debug)]

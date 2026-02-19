@@ -2,13 +2,15 @@
 //!
 //! [`BatchStream`]: crate::stages::BatchStream
 
+use alloc::{boxed::Box, vec::Vec};
+
+use async_trait::async_trait;
+use kona_protocol::{Batch, BlockInfo};
+
 use crate::{
     BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
     SignalReceiver,
 };
-use alloc::{boxed::Box, vec::Vec};
-use async_trait::async_trait;
-use kona_protocol::{Batch, BlockInfo};
 
 /// A mock provider for the [`BatchStream`] stage.
 ///

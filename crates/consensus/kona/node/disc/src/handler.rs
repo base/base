@@ -1,8 +1,9 @@
 //! Handler to the [`discv5::Discv5`] service spawned in a thread.
 
+use std::{collections::HashSet, string::String, sync::Arc, time::Duration};
+
 use discv5::{Enr, RequestError, enr::NodeId, kbucket::NodeStatus, metrics::Metrics};
 use libp2p::Multiaddr;
-use std::{collections::HashSet, string::String, sync::Arc, time::Duration};
 use tokio::sync::mpsc::Sender;
 
 /// Request message for communicating with the Discv5 discovery service.

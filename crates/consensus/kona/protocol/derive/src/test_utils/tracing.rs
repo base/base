@@ -2,6 +2,7 @@
 //! log levels.
 
 use alloc::{format, string::String, sync::Arc, vec::Vec};
+
 use spin::Mutex;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{Layer, layer::Context};

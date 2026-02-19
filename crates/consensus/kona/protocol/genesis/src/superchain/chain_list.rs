@@ -1,6 +1,7 @@
 //! List of OP Stack chains.
 
 use alloc::{string::String, vec::Vec};
+
 use alloy_chains::Chain as AlloyChain;
 
 /// List of Chains.
@@ -27,7 +28,7 @@ impl ChainList {
         self.chains.iter().find(|c| c.chain_id == chain_id)
     }
 
-    /// Fetch a [Chain] by the corresponding [AlloyChain]
+    /// Fetch a [Chain] by the corresponding [`AlloyChain`]
     pub fn get_chain_by_alloy_ident(&self, chain: &AlloyChain) -> Option<&Chain> {
         self.get_chain_by_id(chain.id())
     }

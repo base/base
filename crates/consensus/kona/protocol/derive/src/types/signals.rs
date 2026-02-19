@@ -56,7 +56,7 @@ pub struct ResetSignal {
 }
 
 impl ResetSignal {
-    /// Creates a new [Signal::Reset] from the [`ResetSignal`].
+    /// Creates a new [`Signal::Reset`] from the [`ResetSignal`].
     pub const fn signal(self) -> Signal {
         Signal::Reset(self)
     }
@@ -79,7 +79,7 @@ pub struct ActivationSignal {
 }
 
 impl ActivationSignal {
-    /// Creates a new [Signal::Activation] from the [`ActivationSignal`].
+    /// Creates a new [`Signal::Activation`] from the [`ActivationSignal`].
     pub const fn signal(self) -> Signal {
         Signal::Activation(self)
     }

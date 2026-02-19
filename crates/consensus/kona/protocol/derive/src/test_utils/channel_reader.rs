@@ -2,14 +2,16 @@
 //!
 //! [ChannelReader]: crate::stages::ChannelReader
 
+use alloc::{boxed::Box, vec::Vec};
+
+use alloy_primitives::Bytes;
+use async_trait::async_trait;
+use kona_protocol::BlockInfo;
+
 use crate::{
     ChannelReaderProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
     SignalReceiver,
 };
-use alloc::{boxed::Box, vec::Vec};
-use alloy_primitives::Bytes;
-use async_trait::async_trait;
-use kona_protocol::BlockInfo;
 
 /// A mock [`ChannelReaderProvider`] for testing the [`ChannelReader`] stage.
 ///

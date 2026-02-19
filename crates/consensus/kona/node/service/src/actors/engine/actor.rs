@@ -1,9 +1,5 @@
 //! The [`EngineActor`].
 
-use crate::{
-    EngineActorRequest, EngineError, EngineProcessingRequest, EngineRequestReceiver,
-    EngineRpcRequestReceiver, NodeActor, actors::CancellableContext,
-};
 use async_trait::async_trait;
 use derive_more::Constructor;
 use futures::FutureExt;
@@ -11,6 +7,11 @@ use tokio::sync::mpsc;
 use tokio_util::{
     future::FutureExt as _,
     sync::{CancellationToken, WaitForCancellationFuture},
+};
+
+use crate::{
+    EngineActorRequest, EngineError, EngineProcessingRequest, EngineRequestReceiver,
+    EngineRpcRequestReceiver, NodeActor, actors::CancellableContext,
 };
 
 /// The [`EngineActor`] is an intermediary that receives [`EngineActorRequest`] and delegates:

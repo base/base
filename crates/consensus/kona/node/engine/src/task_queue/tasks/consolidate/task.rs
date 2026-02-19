@@ -1,15 +1,17 @@
 //! A task to consolidate the engine state.
 
-use crate::{
-    ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, SynchronizeTask,
-    state::EngineSyncStateUpdate, task_queue::build_and_seal,
-};
+use std::{sync::Arc, time::Instant};
+
 use alloy_rpc_types_eth::Block;
 use async_trait::async_trait;
 use kona_genesis::RollupConfig;
 use kona_protocol::{L2BlockInfo, OpAttributesWithParent};
 use op_alloy_rpc_types::Transaction;
-use std::{sync::Arc, time::Instant};
+
+use crate::{
+    ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, SynchronizeTask,
+    state::EngineSyncStateUpdate, task_queue::build_and_seal,
+};
 
 /// Input for consolidation - either derived attributes or safe L2 block
 #[derive(Debug, Clone)]
@@ -95,7 +97,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         Ok(())
     }
 
-    /// This provides symmetric fallback behavior to with build_and_seal.
+    /// This provides symmetric fallback behavior to with `build_and_seal`.
     async fn reconcile_to_safe_head(
         &self,
         state: &mut EngineState,

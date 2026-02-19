@@ -1,11 +1,10 @@
 [package]
 name = "kona-hardforks"
-version = "0.4.5"
+version.workspace = true
 description = "Consensus hardfork types for the OP Stack"
 
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true

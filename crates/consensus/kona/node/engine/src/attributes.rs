@@ -57,7 +57,7 @@ impl AttributesMatch {
         block: &Block<Transaction>,
     ) -> Self {
         let attr_withdrawals = attributes.attributes().payload_attributes.withdrawals.as_ref();
-        let attr_withdrawals = attr_withdrawals.map(|w| Withdrawals::new(w.to_vec()));
+        let attr_withdrawals = attr_withdrawals.map(|w| Withdrawals::new(w.clone()));
         let block_withdrawals = block.withdrawals.as_ref();
 
         if config.is_canyon_active(block.header.timestamp) {
@@ -288,11 +288,7 @@ impl AttributesMatch {
 
         // Let's extract the list of attribute transactions
         let default_vec = vec![];
-        let attributes_txs = attributes
-            .attributes()
-            .transactions
-            .as_ref()
-            .map_or_else(|| &default_vec, |attrs| attrs);
+        let attributes_txs = attributes.attributes().transactions.as_ref().unwrap_or(&default_vec);
 
         // Check transactions
         if let mismatch @ Self::Mismatch(_) = Self::check_transactions(attributes_txs, block) {
@@ -311,8 +307,8 @@ impl AttributesMatch {
             return m;
         }
 
-        if attributes.attributes().payload_attributes.parent_beacon_block_root !=
-            block.header.inner.parent_beacon_block_root
+        if attributes.attributes().payload_attributes.parent_beacon_block_root
+            != block.header.inner.parent_beacon_block_root
         {
             return AttributesMismatch::ParentBeaconBlockRoot(
                 attributes.attributes().payload_attributes.parent_beacon_block_root,
@@ -321,8 +317,8 @@ impl AttributesMatch {
             .into();
         }
 
-        if attributes.attributes().payload_attributes.suggested_fee_recipient !=
-            block.header.inner.beneficiary
+        if attributes.attributes().payload_attributes.suggested_fee_recipient
+            != block.header.inner.beneficiary
         {
             return AttributesMismatch::FeeRecipient(
                 attributes.attributes().payload_attributes.suggested_fee_recipient,
@@ -400,8 +396,6 @@ impl From<AttributesMismatch> for AttributesMatch {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::AttributesMismatch::EIP1559Parameters;
     use alloy_consensus::EMPTY_ROOT_HASH;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use alloy_rpc_types_eth::BlockTransactions;
@@ -410,6 +404,9 @@ mod tests {
     use kona_registry::ROLLUP_CONFIGS;
     use op_alloy_consensus::encode_holocene_extra_data;
     use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
+    use super::*;
+    use crate::AttributesMismatch::EIP1559Parameters;
 
     fn default_attributes() -> OpAttributesWithParent {
         OpAttributesWithParent {

@@ -1,6 +1,7 @@
 //! Test utilities for the protocol crate.
 
 use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
+
 use alloy_primitives::hex;
 use async_trait::async_trait;
 use op_alloy_consensus::OpBlock;
@@ -72,7 +73,7 @@ impl BatchValidationProvider for TestBatchValidator {
         self.blocks
             .iter()
             .find(|b| b.block_info.number == number)
-            .cloned()
+            .copied()
             .ok_or_else(|| TestBatchValidatorError::BlockNotFound)
     }
 

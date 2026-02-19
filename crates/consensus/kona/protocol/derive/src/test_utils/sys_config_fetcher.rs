@@ -1,16 +1,18 @@
 //! Implements a mock [`L2ChainProvider`] and [`BatchValidationProvider`] for testing.
 
-use crate::{
-    errors::{PipelineError, PipelineErrorKind},
-    traits::L2ChainProvider,
-};
 use alloc::{boxed::Box, string::ToString, sync::Arc};
+
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use kona_genesis::{RollupConfig, SystemConfig};
 use kona_protocol::{BatchValidationProvider, L2BlockInfo};
 use op_alloy_consensus::OpBlock;
 use thiserror::Error;
+
+use crate::{
+    errors::{PipelineError, PipelineErrorKind},
+    traits::L2ChainProvider,
+};
 
 /// A mock implementation of the [`L2ChainProvider`] and [`BatchValidationProvider`] for testing.
 #[derive(Debug, Default)]

@@ -1,14 +1,11 @@
 [package]
 name = "kona-gossip"
-version = "0.1.2"
+version.workspace = true
 description = "Gossip protocol implementation for the OP Stack"
 
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 

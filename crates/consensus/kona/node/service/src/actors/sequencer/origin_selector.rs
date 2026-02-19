@@ -1,12 +1,13 @@
 //! The [`L1OriginSelector`].
 
+use std::{fmt::Debug, sync::Arc};
+
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use kona_genesis::RollupConfig;
 use kona_protocol::{BlockInfo, L2BlockInfo};
-use std::{fmt::Debug, sync::Arc};
 use tokio::sync::watch;
 
 /// Trait for selecting the next L1 origin block for sequencing.
@@ -63,10 +64,10 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
 
         // Start building on the next L1 origin block if the next L2 block's timestamp is
         // greater than or equal to the next L1 origin's timestamp.
-        if let Some(next) = self.next {
-            if unsafe_head.block_info.timestamp + self.cfg.block_time >= next.timestamp {
-                return Ok(next);
-            }
+        if let Some(next) = self.next
+            && unsafe_head.block_info.timestamp + self.cfg.block_time >= next.timestamp
+        {
+            return Ok(next);
         }
 
         let Some(current) = self.current else {
@@ -74,9 +75,9 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         };
 
         let max_seq_drift = self.cfg.max_sequencer_drift(current.timestamp);
-        let past_seq_drift = unsafe_head.block_info.timestamp + self.cfg.block_time -
-            current.timestamp >
-            max_seq_drift;
+        let past_seq_drift = unsafe_head.block_info.timestamp + self.cfg.block_time
+            - current.timestamp
+            > max_seq_drift;
 
         // If the sequencer drift has not been exceeded, return the current L1 origin.
         if !past_seq_drift {
@@ -247,9 +248,9 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
                 .map(Into::into));
         };
 
-        if number == 0 ||
-            self.confirmation_depth == 0 ||
-            number + self.confirmation_depth <= l1_head.number
+        if number == 0
+            || self.confirmation_depth == 0
+            || number + self.confirmation_depth <= l1_head.number
         {
             Ok(Provider::get_block_by_number(&self.inner, number.into()).await?.map(Into::into))
         } else {
@@ -260,10 +261,12 @@ impl L1OriginSelectorProvider for DelayedL1OriginSelectorProvider {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use std::collections::HashSet;
+
     use alloy_eips::NumHash;
     use rstest::rstest;
-    use std::collections::HashSet;
+
+    use super::*;
 
     /// A mock [`OriginSelectorProvider`] with a local set of [`BlockInfo`]s available.
     #[derive(Default, Debug, Clone)]

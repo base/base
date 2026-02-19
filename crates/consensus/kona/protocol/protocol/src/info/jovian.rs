@@ -1,5 +1,10 @@
 //! Jovian L1 Block Info transaction types.
 
+use alloc::vec::Vec;
+
+use alloy_primitives::{Address, B256, Bytes};
+use ambassador::{self, Delegate};
+
 use crate::{
     DecodeError, L1BlockInfoIsthmus,
     info::{
@@ -9,9 +14,6 @@ use crate::{
         isthmus::{L1BlockInfoIsthmusBaseFields, ambassador_impl_L1BlockInfoIsthmusBaseFields},
     },
 };
-use alloc::vec::Vec;
-use alloy_primitives::{Address, B256, Bytes};
-use ambassador::{self, Delegate};
 
 /// Represents the fields within an Jovian L1 block info transaction.
 ///
@@ -20,18 +22,18 @@ use ambassador::{self, Delegate};
 /// | Bytes   | Field                    |
 /// +---------+--------------------------+
 /// | 4       | Function signature       |
-/// | 4       | BaseFeeScalar            |
-/// | 4       | BlobBaseFeeScalar        |
-/// | 8       | SequenceNumber           |
+/// | 4       | `BaseFeeScalar`            |
+/// | 4       | `BlobBaseFeeScalar`        |
+/// | 8       | `SequenceNumber`           |
 /// | 8       | Timestamp                |
-/// | 8       | L1BlockNumber            |
-/// | 32      | BaseFee                  |
-/// | 32      | BlobBaseFee              |
-/// | 32      | BlockHash                |
-/// | 32      | BatcherHash              |
-/// | 4       | OperatorFeeScalar        |
-/// | 8       | OperatorFeeConstant      |
-/// | 2       | DAFootprintGasScalar     |
+/// | 8       | `L1BlockNumber`            |
+/// | 32      | `BaseFee`                  |
+/// | 32      | `BlobBaseFee`              |
+/// | 32      | `BlockHash`                |
+/// | 32      | `BatcherHash`              |
+/// | 4       | `OperatorFeeScalar`        |
+/// | 8       | `OperatorFeeConstant`      |
+/// | 2       | `DAFootprintGasScalar`     |
 /// +---------+--------------------------+
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -77,7 +79,7 @@ impl L1BlockInfoJovian {
     /// The length of an L1 info transaction in Jovian.
     pub const L1_INFO_TX_LEN: usize = 4 + 32 * 5 + 4 + 8 + 2;
 
-    /// The 4 byte selector of "setL1BlockValuesJovian()"
+    /// The 4 byte selector of "`setL1BlockValuesJovian()`"
     /// Those are the first 4 calldata bytes -> `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/l1-attributes.md#overview>`
     pub const L1_INFO_TX_SELECTOR: [u8; 4] = [0x3d, 0xb6, 0xbe, 0x2b];
 
@@ -179,9 +181,11 @@ impl L1BlockInfoJovian {
 #[cfg(test)]
 mod tests {
 
-    use super::*;
     use alloc::vec;
+
     use alloy_primitives::keccak256;
+
+    use super::*;
 
     #[test]
     fn test_decode_calldata_jovian_invalid_length() {

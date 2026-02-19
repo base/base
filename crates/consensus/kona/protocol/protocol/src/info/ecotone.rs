@@ -1,5 +1,10 @@
 //! Contains ecotone-specific L1 block info types.
 
+use alloc::vec::Vec;
+
+use alloy_primitives::{Address, B256, Bytes, U256};
+use ambassador::Delegate;
+
 use crate::{
     DecodeError,
     info::{
@@ -10,9 +15,6 @@ use crate::{
         ecotone_base::{L1BlockInfoEcotoneBase, ambassador_impl_L1BlockInfoEcotoneBaseFields},
     },
 };
-use alloc::vec::Vec;
-use alloy_primitives::{Address, B256, Bytes, U256};
-use ambassador::Delegate;
 
 /// Represents the fields within an Ecotone L1 block info transaction.
 ///
@@ -21,15 +23,15 @@ use ambassador::Delegate;
 /// | Bytes   | Field                    |
 /// +---------+--------------------------+
 /// | 4       | Function signature       |
-/// | 4       | BaseFeeScalar            |
-/// | 4       | BlobBaseFeeScalar        |
-/// | 8       | SequenceNumber           |
+/// | 4       | `BaseFeeScalar`            |
+/// | 4       | `BlobBaseFeeScalar`        |
+/// | 8       | `SequenceNumber`           |
 /// | 8       | Timestamp                |
-/// | 8       | L1BlockNumber            |
-/// | 32      | BaseFee                  |
-/// | 32      | BlobBaseFee              |
-/// | 32      | BlockHash                |
-/// | 32      | BatcherHash              |
+/// | 8       | `L1BlockNumber`            |
+/// | 32      | `BaseFee`                  |
+/// | 32      | `BlobBaseFee`              |
+/// | 32      | `BlockHash`                |
+/// | 32      | `BatcherHash`              |
 /// +---------+--------------------------+
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
 #[allow(clippy::duplicated_attributes)]
@@ -89,7 +91,7 @@ impl L1BlockInfoEcotone {
     /// The length of an L1 info transaction in Ecotone.
     pub const L1_INFO_TX_LEN: usize = 4 + 32 * 5;
 
-    /// The 4 byte selector of "setL1BlockValuesEcotone()"
+    /// The 4 byte selector of "`setL1BlockValuesEcotone()`"
     pub const L1_INFO_TX_SELECTOR: [u8; 4] = [0x44, 0x0a, 0x5e, 0x20];
 
     /// Encodes the [`L1BlockInfoEcotone`] object into Ethereum transaction calldata.
@@ -221,8 +223,9 @@ impl L1BlockInfoEcotone {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     fn test_decode_calldata_ecotone_invalid_length() {

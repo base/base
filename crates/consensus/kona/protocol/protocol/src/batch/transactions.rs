@@ -1,15 +1,17 @@
 //! This module contains the [`SpanBatchTransactions`] type and logic for encoding and decoding
 //! transactions in a span batch.
 
-use crate::{
-    MAX_SPAN_BATCH_ELEMENTS, SpanBatchBits, SpanBatchError, SpanBatchTransactionData,
-    SpanDecodingError, read_tx_data,
-};
 use alloc::vec::Vec;
+
 use alloy_consensus::{Transaction, TxEnvelope, TxType};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, U256, bytes};
 use alloy_rlp::{Buf, Decodable, Encodable};
+
+use crate::{
+    MAX_SPAN_BATCH_ELEMENTS, SpanBatchBits, SpanBatchError, SpanBatchTransactionData,
+    SpanDecodingError, read_tx_data,
+};
 
 /// This struct contains the decoded information for transactions in a span batch.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -251,7 +253,9 @@ impl SpanBatchTransactions {
                 .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;
             let to = if bit == 0 {
                 if self.tx_tos.len() <= to_idx {
-                    return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+                    return Err(SpanBatchError::Decoding(
+                        SpanDecodingError::InvalidTransactionData,
+                    ));
                 }
                 to_idx += 1;
                 Some(self.tx_tos[to_idx - 1])
@@ -311,14 +315,16 @@ impl SpanBatchTransactions {
                     (sig, tx.to(), tx.nonce(), tx.gas_limit(), tx.chain_id())
                 }
                 _ => {
-                    return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+                    return Err(SpanBatchError::Decoding(
+                        SpanDecodingError::InvalidTransactionData,
+                    ));
                 }
             };
 
-            if tx_enveloped.is_replay_protected() &&
-                tx_chain_id
-                    .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))? !=
-                    chain_id
+            if tx_enveloped.is_replay_protected()
+                && tx_chain_id
+                    .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?
+                    != chain_id
             {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
             }
@@ -347,10 +353,12 @@ impl SpanBatchTransactions {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702};
     use alloy_primitives::{Signature, TxKind, address};
+
+    use super::*;
 
     #[test]
     fn test_span_batch_transactions_add_empty_txs() {

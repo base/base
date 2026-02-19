@@ -1,14 +1,16 @@
 //! A task for the `engine_forkchoiceUpdated` method, with no attributes.
 
-use crate::{
-    EngineClient, EngineState, EngineTaskExt, SynchronizeTaskError, state::EngineSyncStateUpdate,
-};
+use std::sync::Arc;
+
 use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum};
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_genesis::RollupConfig;
-use std::sync::Arc;
 use tokio::time::Instant;
+
+use crate::{
+    EngineClient, EngineState, EngineTaskExt, SynchronizeTaskError, state::EngineSyncStateUpdate,
+};
 
 /// Internal task for execution layer forkchoice synchronization.
 ///
@@ -102,8 +104,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         }
 
         // Check if the head is behind the finalized head.
-        if new_sync_state.unsafe_head().block_info.number <
-            new_sync_state.finalized_head().block_info.number
+        if new_sync_state.unsafe_head().block_info.number
+            < new_sync_state.finalized_head().block_info.number
         {
             return Err(SynchronizeTaskError::FinalizedAheadOfUnsafe(
                 new_sync_state.unsafe_head().block_info.number,

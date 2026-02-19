@@ -1,4 +1,4 @@
-//! Module containing the [AttributesBuilder] trait implementations.
+//! Module containing the [`AttributesBuilder`] trait implementations.
 //!
 //! [AttributesBuilder]: crate::traits::AttributesBuilder
 

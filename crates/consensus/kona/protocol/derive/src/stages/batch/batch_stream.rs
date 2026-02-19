@@ -1,16 +1,18 @@
 //! This module contains the `BatchStream` stage.
 
-use crate::{
-    L2ChainProvider, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError,
-    PipelineResult, Signal, SignalReceiver,
-};
 use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
-use async_trait::async_trait;
 use core::fmt::Debug;
+
+use async_trait::async_trait;
 use kona_genesis::RollupConfig;
 use kona_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
+};
+
+use crate::{
+    L2ChainProvider, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError,
+    PipelineResult, Signal, SignalReceiver,
 };
 
 /// Provides [`Batch`]es for the [`BatchStream`] stage.
@@ -244,12 +246,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::{
-        test_utils::{CollectingLayer, TestBatchStreamProvider, TestL2ChainProvider, TraceStorage},
-        types::ResetSignal,
-    };
     use alloc::vec;
+
     use alloy_consensus::{BlockBody, Header};
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
@@ -257,6 +255,12 @@ mod test {
     use kona_protocol::{SingleBatch, SpanBatchElement};
     use op_alloy_consensus::OpBlock;
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+    use super::*;
+    use crate::{
+        test_utils::{CollectingLayer, TestBatchStreamProvider, TestL2ChainProvider, TraceStorage},
+        types::ResetSignal,
+    };
 
     #[tokio::test]
     async fn test_batch_stream_flush() {

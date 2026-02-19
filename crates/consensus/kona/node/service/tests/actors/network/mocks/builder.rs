@@ -1,12 +1,10 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use alloy_chains::Chain;
-use alloy_signer::k256;
-use discv5::{ConfigBuilder, Enr, ListenConfig};
-
-use crate::actors::network::TestNetwork;
 use alloy_primitives::Address;
+use alloy_signer::k256;
 use async_trait::async_trait;
+use discv5::{ConfigBuilder, Enr, ListenConfig};
 use kona_disc::LocalNode;
 use kona_genesis::RollupConfig;
 use kona_node_service::{
@@ -20,6 +18,8 @@ use rand::RngCore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
+
+use crate::actors::network::TestNetwork;
 
 pub(crate) struct TestNetworkBuilder {
     chain_id: u64,

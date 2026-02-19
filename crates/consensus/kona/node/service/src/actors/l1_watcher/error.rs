@@ -1,9 +1,10 @@
 use std::sync::mpsc::SendError;
 
-use crate::DerivationClientError;
 use alloy_eips::BlockId;
 use alloy_transport::TransportError;
 use thiserror::Error;
+
+use crate::DerivationClientError;
 
 /// The error type for the `L1WatcherActor`.
 #[derive(Error, Debug)]

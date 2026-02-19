@@ -1,13 +1,15 @@
-//! Contains the [L1Retrieval] stage of the derivation pipeline.
+//! Contains the [`L1Retrieval`] stage of the derivation pipeline.
+
+use alloc::boxed::Box;
+
+use alloy_primitives::Address;
+use async_trait::async_trait;
+use kona_protocol::BlockInfo;
 
 use crate::{
     ActivationSignal, DataAvailabilityProvider, FrameQueueProvider, OriginAdvancer, OriginProvider,
     PipelineError, PipelineErrorKind, PipelineResult, ResetSignal, Signal, SignalReceiver,
 };
-use alloc::boxed::Box;
-use alloy_primitives::Address;
-use async_trait::async_trait;
-use kona_protocol::BlockInfo;
 
 /// Provides L1 blocks for the [`L1Retrieval`] stage.
 /// This is the previous stage in the pipeline.
@@ -16,13 +18,13 @@ pub trait L1RetrievalProvider {
     /// Returns the next L1 [`BlockInfo`] in the [`PollingTraversal`] stage, if the stage is not
     /// complete. This function can only be called once while the stage is in progress, and will
     /// return [`None`] on subsequent calls unless the stage is reset or complete. If the stage
-    /// is complete and the [`BlockInfo`] has been consumed, an [PipelineError::Eof] error is
+    /// is complete and the [`BlockInfo`] has been consumed, an [`PipelineError::Eof`] error is
     /// returned.
     ///
     /// [`PollingTraversal`]: crate::PollingTraversal
     async fn next_l1_block(&mut self) -> PipelineResult<Option<BlockInfo>>;
 
-    /// Returns the batcher [`Address`] from the [kona_genesis::SystemConfig].
+    /// Returns the batcher [`Address`] from the [`kona_genesis::SystemConfig`].
     fn batcher_addr(&self) -> Address;
 }
 
@@ -123,8 +125,8 @@ where
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         self.prev.signal(signal).await?;
         match signal {
-            Signal::Reset(ResetSignal { l1_origin, .. }) |
-            Signal::Activation(ActivationSignal { l1_origin, .. }) => {
+            Signal::Reset(ResetSignal { l1_origin, .. })
+            | Signal::Activation(ActivationSignal { l1_origin, .. }) => {
                 self.next = Some(l1_origin);
             }
             _ => {}
@@ -135,10 +137,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
+    use alloy_primitives::Bytes;
+
     use super::*;
     use crate::test_utils::{TestDAP, TraversalTestHelper};
-    use alloc::vec;
-    use alloy_primitives::Bytes;
 
     #[tokio::test]
     async fn test_l1_retrieval_flush_channel() {

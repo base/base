@@ -1,4 +1,4 @@
-//! [NodeActor] trait.
+//! [`NodeActor`] trait.
 
 use async_trait::async_trait;
 use tokio_util::sync::WaitForCancellationFuture;
@@ -9,7 +9,7 @@ pub trait CancellableContext: Send {
     fn cancelled(&self) -> WaitForCancellationFuture<'_>;
 }
 
-/// The [NodeActor] is an actor-like service for the node.
+/// The [`NodeActor`] is an actor-like service for the node.
 ///
 /// Actors may:
 /// - Handle incoming messages.

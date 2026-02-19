@@ -17,9 +17,10 @@ pub struct Superchains {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
+    use alloc::{string::ToString, vec};
+
     use super::*;
     use crate::{HardForkConfig, SuperchainConfig, SuperchainL1Info};
-    use alloc::{string::ToString, vec};
 
     #[test]
     fn test_deny_unknown_fields_superchains() {

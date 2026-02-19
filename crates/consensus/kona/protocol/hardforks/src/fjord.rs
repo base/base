@@ -1,6 +1,7 @@
 //! Module containing a [`TxDeposit`] builder for the Fjord network upgrade transactions.
 
 use alloc::{string::String, vec::Vec};
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use kona_protocol::Predeploys;
@@ -50,7 +51,7 @@ impl Fjord {
             .source_hash()
     }
 
-    /// [UpgradeDepositSource] for setting the Fjord Gas Price Oracle.
+    /// [`UpgradeDepositSource`] for setting the Fjord Gas Price Oracle.
     pub fn enable_fjord_source() -> B256 {
         UpgradeDepositSource { intent: String::from("Fjord: Gas Price Oracle Set Fjord") }
             .source_hash()
@@ -58,7 +59,7 @@ impl Fjord {
 
     /// Returns the fjord gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> alloy_primitives::Bytes {
-        hex::decode(include_str!("./bytecode/gpo_fjord.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/gpo_fjord.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
@@ -120,10 +121,10 @@ impl Hardfork for Fjord {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::check_deployment_code;
+    use alloc::vec;
 
     use super::*;
-    use alloc::vec;
+    use crate::test_utils::check_deployment_code;
 
     #[test]
     fn test_deploy_fjord_gas_price_oracle_source() {

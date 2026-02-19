@@ -1,8 +1,9 @@
 //! Defines the interface for the core derivation pipeline.
 
 use alloc::boxed::Box;
-use async_trait::async_trait;
 use core::iter::Iterator;
+
+use async_trait::async_trait;
 use kona_genesis::{RollupConfig, SystemConfig};
 use kona_protocol::{L2BlockInfo, OpAttributesWithParent};
 

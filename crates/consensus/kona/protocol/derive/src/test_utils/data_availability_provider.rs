@@ -1,11 +1,13 @@
 //! An implementation of the [DataAvailabilityProvider] trait for tests.
 
-use crate::{errors::PipelineError, traits::DataAvailabilityProvider, types::PipelineResult};
 use alloc::{boxed::Box, vec::Vec};
+use core::fmt::Debug;
+
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
-use core::fmt::Debug;
 use kona_protocol::BlockInfo;
+
+use crate::{errors::PipelineError, traits::DataAvailabilityProvider, types::PipelineResult};
 
 /// Mock data availability provider
 #[derive(Debug, Default)]

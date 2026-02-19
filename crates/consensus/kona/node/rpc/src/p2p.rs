@@ -5,6 +5,8 @@
 //!
 //! [op-node]: https://github.com/ethereum-optimism/optimism/blob/7a6788836984996747193b91901a824c39032bd8/op-node/p2p/rpc_api.go#L45
 
+use std::{net::IpAddr, str::FromStr, time::Duration};
+
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use ipnet::IpNet;
@@ -13,7 +15,6 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObject},
 };
 use kona_gossip::{P2pRpcRequest, PeerCount, PeerDump, PeerInfo, PeerStats};
-use std::{net::IpAddr, str::FromStr, time::Duration};
 
 use crate::{OpP2PApiServer, net::P2pRpc};
 

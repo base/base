@@ -1,13 +1,15 @@
 //! This module contains the [`SingleBatch`] type.
 
-use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
 use alloc::vec::Vec;
+
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use kona_genesis::RollupConfig;
 use op_alloy_consensus::OpTxType;
 use tracing::warn;
+
+use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
 
 /// Represents a single batch: a single encoded L2 block
 #[derive(Debug, Default, RlpDecodable, RlpEncodable, Clone, PartialEq, Eq)]
@@ -146,15 +148,17 @@ impl SingleBatch {
                 let next_origin = l1_blocks[1];
                 // Check if the next L1 Origin could have been adopted
                 if self.timestamp >= next_origin.timestamp {
-                    return BatchValidity::Drop(BatchDropReason::SequencerDriftNotAdoptedNextOrigin);
+                    return BatchValidity::Drop(
+                        BatchDropReason::SequencerDriftNotAdoptedNextOrigin,
+                    );
                 }
             }
         }
 
         // If this is the first block in the jovian or interop hardfork, and the batch contains any
         // transactions, it must be dropped.
-        if (cfg.is_first_jovian_block(self.timestamp) || cfg.is_first_interop_block(self.timestamp)) &&
-            !self.transactions.is_empty()
+        if (cfg.is_first_jovian_block(self.timestamp) || cfg.is_first_interop_block(self.timestamp))
+            && !self.transactions.is_empty()
         {
             warn!(
                 target: "single_batch",
@@ -164,7 +168,7 @@ impl SingleBatch {
         }
 
         // We can do this check earlier, but it's intensive so we do it last for the sad-path.
-        for tx in self.transactions.iter() {
+        for tx in &self.transactions {
             if tx.is_empty() {
                 return BatchValidity::Drop(BatchDropReason::EmptyTransaction);
             }
@@ -172,8 +176,8 @@ impl SingleBatch {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
             // If isthmus is not active yet and the transaction is a 7702, drop the batch.
-            if !cfg.is_isthmus_active(self.timestamp) &&
-                tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
+            if !cfg.is_isthmus_active(self.timestamp)
+                && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }
@@ -185,10 +189,8 @@ impl SingleBatch {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::{CollectingLayer, TraceStorage};
-
-    use super::*;
     use alloc::vec;
+
     use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Address, Sealed, Signature, TxKind, U256};
@@ -196,6 +198,9 @@ mod tests {
     use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
+
+    use super::*;
+    use crate::test_utils::{CollectingLayer, TraceStorage};
 
     #[test]
     fn test_empty_l1_blocks() {

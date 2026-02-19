@@ -1,14 +1,16 @@
-use crate::{
-    EngineClientError, EngineClientResult,
-    actors::engine::{BuildRequest, EngineActorRequest, ResetRequest, SealRequest},
-};
+use std::fmt::Debug;
+
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use derive_more::Constructor;
 use kona_protocol::{L2BlockInfo, OpAttributesWithParent};
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use std::fmt::Debug;
 use tokio::sync::{mpsc, watch};
+
+use crate::{
+    EngineClientError, EngineClientResult,
+    actors::engine::{BuildRequest, EngineActorRequest, ResetRequest, SealRequest},
+};
 
 /// Trait to be used by the Sequencer to interact with the engine, abstracting communication
 /// mechanism.
@@ -45,7 +47,7 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 /// channel-based communication.
 #[derive(Constructor, Debug)]
 pub struct QueuedSequencerEngineClient {
-    /// A channel to use to send the EngineActor requests.
+    /// A channel to use to send the `EngineActor` requests.
     pub engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     /// A channel to receive the latest unsafe head [`L2BlockInfo`].
     pub unsafe_head_rx: watch::Receiver<L2BlockInfo>,

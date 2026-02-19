@@ -1,8 +1,7 @@
 //! Contains an online implementation of the `BlobProvider` trait.
 
-use crate::BeaconClient;
-#[cfg(feature = "metrics")]
-use crate::Metrics;
+use std::{boxed::Box, string::ToString, vec::Vec};
+
 use alloy_eips::eip4844::{
     Blob, BlobTransactionSidecarItem, IndexedBlobHash, env_settings::EnvKzgSettings,
 };
@@ -10,7 +9,10 @@ use alloy_primitives::FixedBytes;
 use async_trait::async_trait;
 use kona_derive::{BlobProvider, BlobProviderError};
 use kona_protocol::BlockInfo;
-use std::{boxed::Box, string::ToString, vec::Vec};
+
+use crate::BeaconClient;
+#[cfg(feature = "metrics")]
+use crate::Metrics;
 
 /// A boxed blob with index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +23,7 @@ pub struct BoxedBlobWithIndex {
     pub blob: Box<Blob>,
 }
 
-/// An online implementation of the [BlobProvider] trait.
+/// An online implementation of the [`BlobProvider`] trait.
 #[derive(Debug, Clone)]
 pub struct OnlineBlobProvider<B: BeaconClient> {
     /// The Beacon API client.
@@ -33,10 +35,10 @@ pub struct OnlineBlobProvider<B: BeaconClient> {
 }
 
 impl<B: BeaconClient> OnlineBlobProvider<B> {
-    /// Creates a new instance of the [OnlineBlobProvider].
+    /// Creates a new instance of the [`OnlineBlobProvider`].
     ///
     /// The `genesis_time` and `slot_interval` arguments are _optional_ and the
-    /// [OnlineBlobProvider] will attempt to load them dynamically at runtime if they are not
+    /// [`OnlineBlobProvider`] will attempt to load them dynamically at runtime if they are not
     /// provided.
     ///
     /// ## Panics
@@ -93,7 +95,7 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
 
     /// Converts a vector of boxed blobs with index to a vector of blob transaction sidecar items.
     ///
-    /// Note: for performance reasons, we need to transmute the blobs to the c_kzg::Blob type to
+    /// Note: for performance reasons, we need to transmute the blobs to the `c_kzg::Blob` type to
     /// avoid the overhead of moving the blobs around or reallocating the memory.
     fn sidecar_from_blobs(
         blobs: Vec<BoxedBlobWithIndex>,
@@ -164,7 +166,7 @@ where
 
     /// Fetches blobs that were confirmed in the specified L1 block with the given indexed
     /// hashes. The blobs are validated for their index and hashes using the specified
-    /// [IndexedBlobHash].
+    /// [`IndexedBlobHash`].
     async fn get_and_validate_blobs(
         &mut self,
         block_ref: &BlockInfo,

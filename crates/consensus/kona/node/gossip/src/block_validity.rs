@@ -339,7 +339,6 @@ impl BlockHandler {
 #[cfg(test)]
 pub(crate) mod tests {
 
-    use super::*;
     use alloy_chains::Chain;
     use alloy_consensus::{Block, EMPTY_OMMER_ROOT_HASH};
     use alloy_eips::{eip2718::Encodable2718, eip4895::Withdrawal};
@@ -350,6 +349,8 @@ pub(crate) mod tests {
     use kona_genesis::RollupConfig;
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
+
+    use super::*;
 
     fn valid_block() -> Block<OpTxEnvelope> {
         // Simulate some random data

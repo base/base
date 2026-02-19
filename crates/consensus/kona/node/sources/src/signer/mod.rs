@@ -5,11 +5,12 @@
 //! 1. A local block signer that is used to sign blocks with a locally available private key.
 //! 2. A remote block signer that is used to sign blocks with a remote private key.
 
+use std::fmt::Debug;
+
 use alloy_primitives::{Address, ChainId};
 use alloy_signer::{Signature, SignerSync};
 use derive_more::From;
 use op_alloy_rpc_types_engine::PayloadHash;
-use std::fmt::Debug;
 
 mod remote;
 pub use remote::{

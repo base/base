@@ -1,6 +1,7 @@
 //! Module containing a [`TxDeposit`] builder for the Ecotone network upgrade transactions.
 
 use alloc::{string::String, vec::Vec};
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use kona_protocol::Predeploys;
@@ -89,21 +90,21 @@ impl Ecotone {
 
     /// Returns the EIP-4788 creation data.
     pub fn eip4788_creation_data() -> Bytes {
-        hex::decode(include_str!("./bytecode/eip4788_ecotone.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/eip4788_ecotone.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/l1_block_ecotone.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/l1_block_ecotone.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn ecotone_gas_price_oracle_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/gpo_ecotone.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/gpo_ecotone.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
@@ -201,10 +202,10 @@ impl Hardfork for Ecotone {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::check_deployment_code;
+    use alloc::vec;
 
     use super::*;
-    use alloc::vec;
+    use crate::test_utils::check_deployment_code;
 
     #[test]
     fn test_deploy_l1_block_source() {

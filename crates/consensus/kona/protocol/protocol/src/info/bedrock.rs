@@ -1,14 +1,16 @@
 //! Contains bedrock-specific L1 block info types.
 
-use ambassador::Delegate;
-
-use crate::info::bedrock_base::ambassador_impl_L1BlockInfoBedrockBaseFields;
 use alloc::vec::Vec;
+
 use alloy_primitives::{Address, B256, Bytes, U256};
+use ambassador::Delegate;
 
 use crate::{
     DecodeError,
-    info::{L1BlockInfoBedrockBaseFields, bedrock_base::L1BlockInfoBedrockBase},
+    info::{
+        L1BlockInfoBedrockBaseFields,
+        bedrock_base::{L1BlockInfoBedrockBase, ambassador_impl_L1BlockInfoBedrockBaseFields},
+    },
 };
 /// Represents the fields within a Bedrock L1 block info transaction.
 ///
@@ -200,8 +202,9 @@ impl L1BlockInfoBedrock {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     fn test_decode_calldata_bedrock_invalid_length() {

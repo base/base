@@ -1,10 +1,7 @@
 //! Test Utilities for chain provider traits
 
-use crate::{
-    errors::{PipelineError, PipelineErrorKind},
-    traits::{ChainProvider, L2ChainProvider},
-};
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
@@ -12,6 +9,11 @@ use kona_genesis::{RollupConfig, SystemConfig};
 use kona_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use op_alloy_consensus::OpBlock;
 use thiserror::Error;
+
+use crate::{
+    errors::{PipelineError, PipelineErrorKind},
+    traits::{ChainProvider, L2ChainProvider},
+};
 
 /// A mock chain provider for testing.
 #[derive(Debug, Clone, Default)]

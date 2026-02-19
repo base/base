@@ -1,15 +1,17 @@
-//! This module contains the [FrameQueue] stage of the derivation pipeline.
+//! This module contains the [`FrameQueue`] stage of the derivation pipeline.
+
+use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
+use core::fmt::Debug;
+
+use alloy_primitives::Bytes;
+use async_trait::async_trait;
+use kona_genesis::RollupConfig;
+use kona_protocol::{BlockInfo, Frame};
 
 use crate::{
     NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
     SignalReceiver,
 };
-use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
-use alloy_primitives::Bytes;
-use async_trait::async_trait;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::{BlockInfo, Frame};
 
 /// Provides data frames for the [`FrameQueue`] stage.
 #[async_trait]
@@ -199,10 +201,12 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use alloc::vec;
+
+    use kona_genesis::HardForkConfig;
+
     use super::*;
     use crate::{test_utils::TestFrameQueueProvider, types::ResetSignal};
-    use alloc::vec;
-    use kona_genesis::HardForkConfig;
 
     #[tokio::test]
     async fn test_frame_queue_reset() {

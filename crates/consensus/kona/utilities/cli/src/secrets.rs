@@ -2,12 +2,13 @@
 //!
 //! This module is adapted from <https://github.com/paradigmxyz/reth/blob/aef442740c51fc00884d34931ebc3b547e41b9f4/crates/cli/util/src/load_secret_key.rs#L20>
 
-use alloy_primitives::B256;
-use libp2p::identity::{Keypair, secp256k1::SecretKey};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
+
+use alloy_primitives::B256;
+use libp2p::identity::{Keypair, secp256k1::SecretKey};
 use thiserror::Error;
 
 /// A loader type for loading secret keys.
@@ -122,9 +123,11 @@ pub enum KeypairError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use alloy_primitives::b256;
     use std::path::PathBuf;
+
+    use alloy_primitives::b256;
+
+    use super::*;
 
     #[test]
     fn test_parse() {

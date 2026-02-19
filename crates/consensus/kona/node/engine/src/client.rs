@@ -1,6 +1,13 @@
 //! An Engine API Client.
 
-use crate::{Metrics, RollupBoostServerArgs, RollupBoostServerError};
+use std::{
+    future::Future,
+    net::{AddrParseError, IpAddr, SocketAddr},
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
@@ -38,16 +45,11 @@ use rollup_boost::{
     RpcClientError,
 };
 use rollup_boost_types::payload::PayloadSource;
-use std::{
-    future::Future,
-    net::{AddrParseError, IpAddr, SocketAddr},
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;
+
+use crate::{Metrics, RollupBoostServerArgs, RollupBoostServerError};
 
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
@@ -64,7 +66,7 @@ pub enum EngineClientError {
 pub type HyperAuthClient<B = Full<Bytes>> = HyperClient<B, AuthService<Client<HttpConnector, B>>>;
 
 /// Engine API client used to communicate with L1/L2 ELs and optional rollup-boost.
-/// EngineClient trait that is very coupled to its only implementation.
+/// `EngineClient` trait that is very coupled to its only implementation.
 /// The main reason this exists is for mocking/unit testing.
 #[async_trait]
 pub trait EngineClient: OpEngineApi<Optimism, Http<HyperAuthClient>> + Send + Sync {
@@ -94,7 +96,7 @@ pub trait EngineClient: OpEngineApi<Optimism, Http<HyperAuthClient>> + Send + Sy
         numtag: BlockNumberOrTag,
     ) -> Result<Option<Block<Transaction>>, EngineClientError>;
 
-    /// Fetches the [L2BlockInfo] by [BlockNumberOrTag].
+    /// Fetches the [`L2BlockInfo`] by [`BlockNumberOrTag`].
     async fn l2_block_info_by_label(
         &self,
         numtag: BlockNumberOrTag,

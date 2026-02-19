@@ -1,4 +1,5 @@
-use crate::{EngineActorRequest, EngineRpcRequest};
+use std::fmt::Debug;
+
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
 use derive_more::Constructor;
@@ -10,15 +11,16 @@ use kona_engine::{EngineQueries, EngineState};
 use kona_genesis::RollupConfig;
 use kona_protocol::{L2BlockInfo, OutputRoot};
 use kona_rpc::EngineRpcClient;
-use std::fmt::Debug;
 use tokio::sync::{mpsc, oneshot, watch};
+
+use crate::{EngineActorRequest, EngineRpcRequest};
 
 /// Queue-based implementation of the [`EngineRpcClient`] trait. This handles all channel-based
 /// operations, providing a nice facade for callers. This also exposes only a subset of the
 /// supported [`EngineActorRequest`] operations to limit the power of callers to RPC-type requests.
 #[derive(Clone, Constructor, Debug)]
 pub struct QueuedEngineRpcClient {
-    /// A channel to use to send the EngineActor requests.
+    /// A channel to use to send the `EngineActor` requests.
     pub engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
 }
 

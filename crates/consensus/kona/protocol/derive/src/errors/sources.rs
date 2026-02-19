@@ -1,8 +1,10 @@
 //! Error types for sources.
 
-use crate::{PipelineError, PipelineErrorKind};
 use alloc::string::{String, ToString};
+
 use thiserror::Error;
+
+use crate::{PipelineError, PipelineErrorKind};
 
 /// Blob Decoding Error
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -53,8 +55,9 @@ impl From<BlobProviderError> for PipelineErrorKind {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::error::Error;
+
+    use super::*;
 
     #[test]
     fn test_blob_decoding_error_source() {

@@ -1,5 +1,20 @@
 //! The [`SequencerActor`].
 
+use std::{
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+use alloy_rpc_types_engine::PayloadId;
+use async_trait::async_trait;
+use kona_derive::{AttributesBuilder, PipelineErrorKind};
+use kona_engine::{InsertTaskError, SealTaskError, SynchronizeTaskError};
+use kona_genesis::RollupConfig;
+use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use tokio::{select, sync::mpsc};
+use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+
 use crate::{
     CancellableContext, NodeActor, SequencerAdminQuery, UnsafePayloadGossipClient,
     actors::{
@@ -17,19 +32,6 @@ use crate::{
         },
     },
 };
-use alloy_rpc_types_engine::PayloadId;
-use async_trait::async_trait;
-use kona_derive::{AttributesBuilder, PipelineErrorKind};
-use kona_engine::{InsertTaskError, SealTaskError, SynchronizeTaskError};
-use kona_genesis::RollupConfig;
-use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
-use tokio::{select, sync::mpsc};
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 /// The handle to a block that has been started but not sealed.
 #[derive(Debug)]
@@ -235,8 +237,8 @@ where
             }
         };
 
-        if unsafe_head.l1_origin.hash != l1_origin.parent_hash &&
-            unsafe_head.l1_origin.hash != l1_origin.hash
+        if unsafe_head.l1_origin.hash != l1_origin.parent_hash
+            && unsafe_head.l1_origin.hash != l1_origin.hash
         {
             warn!(
                 target: "sequencer",
@@ -251,7 +253,7 @@ where
         Ok(Some(l1_origin))
     }
 
-    /// Builds the OpAttributesWithParent for the next block to build. If None is returned, it
+    /// Builds the `OpAttributesWithParent` for the next block to build. If None is returned, it
     /// indicates that no attributes could be built at this time but future attempts may be made.
     async fn build_attributes(
         &mut self,
@@ -302,8 +304,8 @@ where
 
         // If the next L2 block is beyond the sequencer drift threshold, we must produce an empty
         // block.
-        if attributes.payload_attributes.timestamp >
-            l1_origin.timestamp + self.rollup_config.max_sequencer_drift(l1_origin.timestamp)
+        if attributes.payload_attributes.timestamp
+            > l1_origin.timestamp + self.rollup_config.max_sequencer_drift(l1_origin.timestamp)
         {
             return false;
         }
@@ -439,9 +441,8 @@ where
                                 error!(target: "sequencer", err=?err, "Critical seal task error occurred");
                                 self.cancellation_token.cancel();
                                 return Err(SequencerActorError::EngineError(EngineClientError::SealError(err)));
-                            } else {
-                                next_payload_to_seal = None;
                             }
+                            next_payload_to_seal = None;
                         },
                         Err(other_err) => {
                             error!(target: "sequencer", err = ?other_err, "Unexpected error building or sealing payload");

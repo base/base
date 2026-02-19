@@ -4,7 +4,6 @@
 //!
 //! Adapted from <https://github.com/paradigmxyz/reth/blob/0e087ae1c35502f0b8d128c64e4c57269af20c0e/crates/net/peers/src/node_record.rs>.
 
-use crate::PeerId;
 use core::{
     fmt,
     fmt::Write,
@@ -13,6 +12,8 @@ use core::{
     str::FromStr,
 };
 use std::net::ToSocketAddrs;
+
+use crate::PeerId;
 
 /// Represents an ENR in discovery.
 ///
@@ -38,11 +39,11 @@ impl NodeRecord {
     /// See also [`std::net::Ipv6Addr::to_ipv4_mapped`]
     pub fn convert_ipv4_mapped(&mut self) -> bool {
         // convert IPv4 mapped IPv6 address
-        if let IpAddr::V6(v6) = self.address {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                self.address = v4.into();
-                return true;
-            }
+        if let IpAddr::V6(v6) = self.address
+            && let Some(v4) = v6.to_ipv4_mapped()
+        {
+            self.address = v4.into();
+            return true;
         }
         false
     }

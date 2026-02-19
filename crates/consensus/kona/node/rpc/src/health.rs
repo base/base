@@ -7,7 +7,7 @@ use crate::jsonrpsee::HealthzApiServer;
 
 /// Key for the rollup boost health status.
 /// +----------------+-------------------------------+--------------------------------------+-------------------------------+
-/// | Execution Mode | Healthy                       | PartialContent                       | Service Unavailable           |
+/// | Execution Mode | Healthy                       | `PartialContent`                       | Service Unavailable           |
 /// +----------------+-------------------------------+--------------------------------------+-------------------------------+
 /// | Enabled        | - Request-path: L2 succeeds   | - Request-path: builder fails/stale  | - Request-path: L2 fails      |
 /// |                |   (get/new payload) → 200     |   while L2 succeeds → 206            |   (error from L2) → 503       |
@@ -15,7 +15,7 @@ use crate::jsonrpsee::HealthzApiServer;
 /// |                |   latest-unsafe is fresh →    |   latest-unsafe is stale → 206       |                               |
 /// |                |   200                         |                                      |                               |
 /// +----------------+-------------------------------+--------------------------------------+-------------------------------+
-/// | DryRun         | - Request-path: L2 succeeds   | - Never set in DryRun                | - Request-path: L2 fails      |
+/// | `DryRun`         | - Request-path: L2 succeeds   | - Never set in `DryRun`                | - Request-path: L2 fails      |
 /// |                |   (always returns L2) → 200   |   (degrade only in Enabled)          |   (error from L2) → 503       |
 /// |                | - Background: builder stale   |                                      | - Background: never sets 503  |
 /// |                |   ignored (remains 200)       |                                      |                               |

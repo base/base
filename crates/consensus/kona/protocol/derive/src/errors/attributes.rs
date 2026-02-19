@@ -1,6 +1,7 @@
 //! Error types for kona's attributes builder.
 
 use alloc::string::String;
+
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use thiserror::Error;

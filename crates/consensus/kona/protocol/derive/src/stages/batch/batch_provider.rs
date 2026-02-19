@@ -1,15 +1,17 @@
 //! This module contains the [`BatchProvider`] stage.
 
+use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
+use async_trait::async_trait;
+use kona_genesis::RollupConfig;
+use kona_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
+
 use super::NextBatchProvider;
 use crate::{
     AttributesProvider, BatchQueue, BatchValidator, L2ChainProvider, OriginAdvancer,
     OriginProvider, PipelineError, PipelineResult, Signal, SignalReceiver,
 };
-use alloc::{boxed::Box, sync::Arc};
-use async_trait::async_trait;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 
 /// The [`BatchProvider`] stage is a mux between the [`BatchQueue`] and [`BatchValidator`] stages.
 ///
@@ -173,15 +175,17 @@ where
 
 #[cfg(test)]
 mod test {
+    use alloc::{sync::Arc, vec};
+
+    use kona_genesis::{HardForkConfig, RollupConfig};
+    use kona_protocol::BlockInfo;
+
     use super::BatchProvider;
     use crate::{
         test_utils::{TestL2ChainProvider, TestNextBatchProvider},
         traits::{OriginProvider, SignalReceiver},
         types::ResetSignal,
     };
-    use alloc::{sync::Arc, vec};
-    use kona_genesis::{HardForkConfig, RollupConfig};
-    use kona_protocol::BlockInfo;
 
     #[test]
     fn test_batch_provider_validator_active() {

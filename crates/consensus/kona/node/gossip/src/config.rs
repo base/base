@@ -1,10 +1,11 @@
 //! Gossipsub Config
 
+use std::time::Duration;
+
 use lazy_static::lazy_static;
 use libp2p::gossipsub::{Config, ConfigBuilder, Message, MessageId};
 use openssl::sha::sha256;
 use snap::raw::Decoder;
-use std::time::Duration;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // GossipSub Constants
@@ -63,8 +64,8 @@ lazy_static! {
 /// Builds the default gossipsub configuration.
 ///
 /// Notable defaults:
-/// - flood_publish: false (call `.flood_publish(true)` on the [ConfigBuilder] to enable)
-/// - backoff_slack: 1
+/// - `flood_publish`: false (call `.flood_publish(true)` on the [`ConfigBuilder`] to enable)
+/// - `backoff_slack`: 1
 /// - heart beat interval: 1 second
 /// - peer exchange is disabled
 /// - maximum byte size for gossip messages: 2048 bytes
@@ -72,7 +73,7 @@ lazy_static! {
 /// # Returns
 ///
 /// A [`ConfigBuilder`] with the default gossipsub configuration already set.
-/// Call `.build()` on the returned builder to get the final [libp2p::gossipsub::Config].
+/// Call `.build()` on the returned builder to get the final [`libp2p::gossipsub::Config`].
 pub fn default_config_builder() -> ConfigBuilder {
     let mut builder = ConfigBuilder::default();
     builder
@@ -100,7 +101,7 @@ pub fn default_config() -> Config {
     default_config_builder().build().expect("default gossipsub config must be valid")
 }
 
-/// Computes the [MessageId] of a `gossipsub` message.
+/// Computes the [`MessageId`] of a `gossipsub` message.
 fn compute_message_id(msg: &Message) -> MessageId {
     let mut decoder = Decoder::new();
     let id = decoder.decompress_vec(&msg.data).map_or_else(

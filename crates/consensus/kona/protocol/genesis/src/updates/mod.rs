@@ -1,4 +1,4 @@
-//! Contains all updates to the [crate::SystemConfig] type.
+//! Contains all updates to the [`crate::SystemConfig`] type.
 
 mod common;
 

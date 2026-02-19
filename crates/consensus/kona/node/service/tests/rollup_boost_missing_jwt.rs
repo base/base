@@ -3,12 +3,13 @@
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use http::Uri;
     use rollup_boost::{
         ExecutionMode, FlashblocksWebsocketConfig, FlashblocksWsArgs, Probes, RollupBoostLibArgs,
         RollupBoostServer,
     };
-    use std::sync::Arc;
 
     #[test]
     fn repro_missing_client_jwt_secret() {

@@ -1,7 +1,8 @@
-use crate::{EngineState, EngineSyncStateUpdate};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, b256};
 use kona_protocol::{BlockInfo, L2BlockInfo};
+
+use crate::{EngineState, EngineSyncStateUpdate};
 
 /// Builder for creating test EngineState instances with sensible defaults
 #[derive(Debug)]

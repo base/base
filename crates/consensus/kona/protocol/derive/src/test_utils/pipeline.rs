@@ -1,11 +1,8 @@
 //! Test Utilities for the [`DerivationPipeline`]
 //! as well as its stages and providers.
 
-use crate::{
-    BatchProvider, PipelineResult,
-    test_utils::{TestChainProvider, TestL2ChainProvider},
-};
 use alloc::{boxed::Box, sync::Arc};
+
 use kona_genesis::RollupConfig;
 use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
@@ -15,6 +12,10 @@ use crate::{
     L1Retrieval, NextAttributes, OriginAdvancer, OriginProvider, PipelineBuilder, PipelineError,
     PollingTraversal, Signal, SignalReceiver,
     test_utils::{TestAttributesBuilder, TestDAP},
+};
+use crate::{
+    BatchProvider, PipelineResult,
+    test_utils::{TestChainProvider, TestL2ChainProvider},
 };
 
 /// A fully custom [`NextAttributes`].

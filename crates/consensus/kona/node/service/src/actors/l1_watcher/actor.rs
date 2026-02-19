@@ -1,10 +1,8 @@
 //! [`NodeActor`] implementation for an L1 chain watcher that polls for L1 block updates over HTTP
 //! RPC.
 
-use crate::{
-    NodeActor,
-    actors::{CancellableContext, l1_watcher::error::L1WatcherActorError},
-};
+use std::sync::Arc;
+
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
@@ -13,7 +11,6 @@ use futures::{Stream, StreamExt};
 use kona_genesis::{RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate};
 use kona_protocol::BlockInfo;
 use kona_rpc::{L1State, L1WatcherQueries};
-use std::sync::Arc;
 use tokio::{
     select,
     sync::{
@@ -24,6 +21,10 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use super::L1WatcherDerivationClient;
+use crate::{
+    NodeActor,
+    actors::{CancellableContext, l1_watcher::error::L1WatcherActorError},
+};
 
 /// An L1 chain watcher that checks for L1 block updates over RPC.
 #[derive(Debug)]

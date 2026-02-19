@@ -1,11 +1,13 @@
 //! This module contains the eip7702 transaction data type for a span batch.
 
-use crate::SpanBatchError;
 use alloc::vec::Vec;
+
 use alloy_consensus::{SignableTransaction, Signed, TxEip7702};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
+
+use crate::SpanBatchError;
 
 /// The transaction data for an EIP-7702 transaction within a span batch.
 #[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
@@ -64,11 +66,13 @@ impl SpanBatchEip7702TransactionData {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::SpanBatchTransactionData;
     use alloc::{vec, vec::Vec};
+
     use alloy_rlp::{Decodable, Encodable};
     use alloy_rpc_types_eth::Authorization;
+
+    use super::*;
+    use crate::SpanBatchTransactionData;
 
     #[test]
     fn test_eip7702_to_signed_tx() {

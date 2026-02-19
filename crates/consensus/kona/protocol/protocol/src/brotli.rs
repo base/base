@@ -1,9 +1,10 @@
 //! Contains brotli decompression utilities.
 
 use alloc::{vec, vec::Vec};
+use core::ops;
+
 use alloc_no_stdlib::*;
 use brotli::*;
-use core::ops;
 
 use crate::MAX_SPAN_BATCH_ELEMENTS;
 
@@ -40,33 +41,27 @@ pub fn decompress_brotli(
     let mut written = 0;
 
     // Decompress the data stream until success or failure
-    loop {
-        match brotli::BrotliDecompressStream(
-            &mut available_in,
-            &mut input_offset,
-            data,
-            &mut available_out,
-            &mut output_offset,
-            &mut output,
-            &mut written,
-            &mut brotli_state,
-        ) {
-            brotli::BrotliResult::ResultSuccess => break,
-            brotli::BrotliResult::NeedsMoreOutput => {
-                // Resize the output buffer to double the size, following standard
-                // practice for buffer resizing in streams.
-                let old_len = output.len();
-                let new_len = old_len * 2;
+    while let brotli::BrotliResult::NeedsMoreOutput = brotli::BrotliDecompressStream(
+        &mut available_in,
+        &mut input_offset,
+        data,
+        &mut available_out,
+        &mut output_offset,
+        &mut output,
+        &mut written,
+        &mut brotli_state,
+    ) {
+        // Resize the output buffer to double the size, following standard
+        // practice for buffer resizing in streams.
+        let old_len = output.len();
+        let new_len = old_len * 2;
 
-                if new_len > max_rlp_bytes_per_channel {
-                    return Err(BrotliDecompressionError::BatchTooLarge);
-                }
-
-                output.resize(new_len, 0);
-                available_out += old_len;
-            }
-            _ => break,
+        if new_len > max_rlp_bytes_per_channel {
+            return Err(BrotliDecompressionError::BatchTooLarge);
         }
+
+        output.resize(new_len, 0);
+        available_out += old_len;
     }
 
     // Truncate the output buffer to the written bytes
@@ -77,9 +72,10 @@ pub fn decompress_brotli(
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloy_primitives::hex;
     use kona_genesis::MAX_RLP_BYTES_PER_CHANNEL_FJORD;
+
+    use super::*;
 
     #[test]
     fn test_decompress_brotli() {

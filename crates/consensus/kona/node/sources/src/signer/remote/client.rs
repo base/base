@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use alloy_primitives::Address;
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport_http::Http;
-use reqwest::header::HeaderMap;
-use std::sync::Arc;
+use alloy_transport_http::{
+    Http,
+    reqwest::{self, header::HeaderMap},
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use url::Url;

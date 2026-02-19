@@ -3,7 +3,7 @@
 use alloy_primitives::B256;
 use derive_more::From;
 
-/// An error for processing the [crate::SystemConfig] update log.
+/// An error for processing the [`crate::SystemConfig`] update log.
 #[derive(Debug, From, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SystemConfigUpdateError {
@@ -57,7 +57,7 @@ pub enum LogProcessingError {
     InvalidSystemConfigUpdateType(u64),
 }
 
-/// An error for updating the batcher address on the [crate::SystemConfig].
+/// An error for updating the batcher address on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BatcherUpdateError {
@@ -81,7 +81,7 @@ pub enum BatcherUpdateError {
     BatcherAddressDecodingError,
 }
 
-/// An error for updating the unsafe block signer address on the [crate::SystemConfig].
+/// An error for updating the unsafe block signer address on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum UnsafeBlockSignerUpdateError {
@@ -105,7 +105,7 @@ pub enum UnsafeBlockSignerUpdateError {
     UnsafeBlockSignerAddressDecodingError,
 }
 
-/// An error for updating the gas config on the [crate::SystemConfig].
+/// An error for updating the gas config on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GasConfigUpdateError {
@@ -132,7 +132,7 @@ pub enum GasConfigUpdateError {
     ScalarDecodingError,
 }
 
-/// An error for updating the min base fee on the [crate::SystemConfig].
+/// An error for updating the min base fee on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MinBaseFeeUpdateError {
@@ -156,7 +156,7 @@ pub enum MinBaseFeeUpdateError {
     MinBaseFeeDecodingError,
 }
 
-/// An error for updating the da footprint gas scalar on the [crate::SystemConfig].
+/// An error for updating the da footprint gas scalar on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DaFootprintGasScalarUpdateError {
@@ -181,7 +181,7 @@ pub enum DaFootprintGasScalarUpdateError {
     DaFootprintGasScalarDecodingError,
 }
 
-/// An error for updating the gas limit on the [crate::SystemConfig].
+/// An error for updating the gas limit on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GasLimitUpdateError {
@@ -205,7 +205,7 @@ pub enum GasLimitUpdateError {
     GasLimitDecodingError,
 }
 
-/// An error for updating the EIP-1559 parameters on the [crate::SystemConfig].
+/// An error for updating the EIP-1559 parameters on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EIP1559UpdateError {
@@ -229,7 +229,7 @@ pub enum EIP1559UpdateError {
     EIP1559DecodingError,
 }
 
-/// An error for updating the operator fee parameters on the [crate::SystemConfig].
+/// An error for updating the operator fee parameters on the [`crate::SystemConfig`].
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OperatorFeeUpdateError {

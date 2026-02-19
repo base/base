@@ -1,20 +1,20 @@
-//! Common validation utilities for SystemConfig updates.
+//! Common validation utilities for `SystemConfig` updates.
 //!
-//! This module provides shared validation logic for decoding SystemConfigLog data
+//! This module provides shared validation logic for decoding `SystemConfigLog` data
 //! that is used across multiple update types.
 
 use alloy_sol_types::{SolType, sol};
 
-/// The expected data length for a standard SystemConfigLog update.
+/// The expected data length for a standard `SystemConfigLog` update.
 pub(crate) const STANDARD_UPDATE_DATA_LEN: usize = 96;
 
-/// The expected pointer value for a standard SystemConfigLog update.
+/// The expected pointer value for a standard `SystemConfigLog` update.
 pub(crate) const EXPECTED_POINTER: u64 = 32;
 
-/// The expected data length value for a standard SystemConfigLog update.
+/// The expected data length value for a standard `SystemConfigLog` update.
 pub(crate) const EXPECTED_DATA_LENGTH: u64 = 32;
 
-/// Validated SystemConfig update data.
+/// Validated `SystemConfig` update data.
 ///
 /// After validation, this struct provides access to the validated pointer, length,
 /// and the payload data starting at byte offset 64.
@@ -31,7 +31,7 @@ impl<'a> ValidatedUpdateData<'a> {
     }
 }
 
-/// Common validation errors for SystemConfig updates.
+/// Common validation errors for `SystemConfig` updates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ValidationError {
     /// Invalid data length. Contains (expected, actual).
@@ -46,7 +46,7 @@ pub(crate) enum ValidationError {
     InvalidDataLength(u64),
 }
 
-/// Validates the common structure of a SystemConfig update log data.
+/// Validates the common structure of a `SystemConfig` update log data.
 ///
 /// This function performs the following validations:
 /// 1. Checks that the data length is exactly 96 bytes

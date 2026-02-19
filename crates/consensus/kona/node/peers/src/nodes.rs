@@ -1,10 +1,10 @@
 //! Bootnodes for consensus network discovery.
 
-use crate::BootNode;
 use derive_more::Deref;
+use kona_registry::CHAINS;
 use lazy_static::lazy_static;
 
-use kona_registry::CHAINS;
+use crate::BootNode;
 
 /// Bootnodes for OP Stack chains.
 #[derive(Debug, Clone, Deref, PartialEq, Eq, Default, derive_more::From)]
@@ -110,9 +110,9 @@ pub static OP_RAW_TESTNET_BOOTNODES: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use discv5::{Enr, enr::EnrPublicKey};
     use std::str::FromStr;
 
+    use discv5::{Enr, enr::EnrPublicKey};
     use kona_genesis::{BASE_MAINNET_CHAIN_ID, OP_MAINNET_CHAIN_ID, OP_SEPOLIA_CHAIN_ID};
 
     use super::*;

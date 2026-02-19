@@ -1,11 +1,12 @@
 //! Optimism Payload attributes that reference the parent L2 block.
 
-use crate::{BlockInfo, L2BlockInfo};
 use op_alloy_consensus::OpTxType;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
+use crate::{BlockInfo, L2BlockInfo};
+
 /// Optimism Payload Attributes with parent block reference and the L1 origin block.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpAttributesWithParent {
     /// The payload attributes.
@@ -75,7 +76,7 @@ impl OpAttributesWithParent {
         attributes
             .transactions
             .iter_mut()
-            .for_each(|txs| txs.retain(|tx| tx.first().cloned() == Some(OpTxType::Deposit as u8)));
+            .for_each(|txs| txs.retain(|tx| tx.first().copied() == Some(OpTxType::Deposit as u8)));
 
         Self {
             attributes,
@@ -93,8 +94,9 @@ impl OpAttributesWithParent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     fn test_op_attributes_with_parent() {

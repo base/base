@@ -38,8 +38,9 @@ impl<'a> arbitrary::Arbitrary<'a> for ChainGenesis {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
-    use super::*;
     use alloy_primitives::{address, b256, uint};
+
+    use super::*;
 
     const fn ref_genesis() -> ChainGenesis {
         ChainGenesis {

@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 /// The result of an Engine client call.
 pub type EngineClientResult<T> = Result<T, EngineClientError>;
 
-/// Error making requests to the BlockEngine.
+/// Error making requests to the `BlockEngine`.
 #[derive(Debug, Error)]
 pub enum EngineClientError {
     /// Error making a request to the engine. The request never made it there.

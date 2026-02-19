@@ -16,7 +16,7 @@ pub enum Event {
     #[allow(dead_code)]
     Ping(ping::Event),
 
-    /// GossipSub mesh networking event.
+    /// `GossipSub` mesh networking event.
     ///
     /// Includes message reception, peer subscription changes, and mesh
     /// topology updates. This is the primary event type for consensus
@@ -38,21 +38,21 @@ pub enum Event {
 }
 
 impl From<ping::Event> for Event {
-    /// Converts [ping::Event] to [Event]
+    /// Converts [`ping::Event`] to [Event]
     fn from(value: ping::Event) -> Self {
         Self::Ping(value)
     }
 }
 
 impl From<gossipsub::Event> for Event {
-    /// Converts [gossipsub::Event] to [Event]
+    /// Converts [`gossipsub::Event`] to [Event]
     fn from(value: gossipsub::Event) -> Self {
         Self::Gossipsub(Box::new(value))
     }
 }
 
 impl From<identify::Event> for Event {
-    /// Converts [identify::Event] to [Event]
+    /// Converts [`identify::Event`] to [Event]
     fn from(value: identify::Event) -> Self {
         Self::Identify(Box::new(value))
     }

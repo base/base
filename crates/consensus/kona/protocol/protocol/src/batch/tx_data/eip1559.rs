@@ -1,10 +1,11 @@
 //! This module contains the eip1559 transaction data type for a span batch.
 
-use crate::{SpanBatchError, SpanDecodingError};
 use alloy_consensus::{SignableTransaction, Signed, TxEip1559};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
+
+use crate::{SpanBatchError, SpanDecodingError};
 
 /// The transaction data for an EIP-1559 transaction within a span batch.
 #[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
@@ -57,10 +58,12 @@ impl SpanBatchEip1559TransactionData {
 
 #[cfg(test)]
 mod test {
+    use alloc::vec::Vec;
+
+    use alloy_rlp::{Decodable, Encodable};
+
     use super::*;
     use crate::SpanBatchTransactionData;
-    use alloc::vec::Vec;
-    use alloy_rlp::{Decodable, Encodable};
 
     #[test]
     fn encode_eip1559_tx_data_roundtrip() {

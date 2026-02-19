@@ -1,14 +1,16 @@
 //! An implementation of the [`ConnectionGate`] trait.
 
-use crate::{Connectedness, ConnectionGate, DialError};
-use ipnet::IpNet;
-use libp2p::{Multiaddr, PeerId};
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, ToSocketAddrs},
     time::Duration,
 };
+
+use ipnet::IpNet;
+use libp2p::{Multiaddr, PeerId};
 use tokio::time::Instant;
+
+use crate::{Connectedness, ConnectionGate, DialError};
 
 /// Dial information tracking for peer connection management.
 ///
@@ -149,7 +151,7 @@ impl ConnectionGater {
     /// - `Some(Err(()))` if DNS resolution failed
     /// - `Some(Ok(ip))` if DNS resolution succeeded
     ///
-    /// Respects the DNS protocol type: `dns4` only returns IPv4, `dns6` only returns IPv6.
+    /// Respects the DNS protocol type: `dns4` only returns `IPv4`, `dns6` only returns `IPv6`.
     pub fn try_resolve_dns(addr: &Multiaddr) -> Option<Result<IpAddr, ()>> {
         // Track which DNS protocol type was used
         let (hostname, ipv4_only, ipv6_only) =
@@ -277,7 +279,7 @@ impl ConnectionGate for ConnectionGater {
     }
 
     fn connectedness(&self, peer_id: &PeerId) -> Connectedness {
-        self.connectedness.get(peer_id).cloned().unwrap_or(Connectedness::NotConnected)
+        self.connectedness.get(peer_id).copied().unwrap_or(Connectedness::NotConnected)
     }
 
     fn list_protected_peers(&self) -> Vec<PeerId> {
@@ -354,7 +356,7 @@ impl ConnectionGate for ConnectionGater {
     }
 
     fn list_blocked_addrs(&self) -> Vec<IpAddr> {
-        self.blocked_addrs.iter().cloned().collect()
+        self.blocked_addrs.iter().copied().collect()
     }
 
     fn block_subnet(&mut self, subnet: IpNet) {
@@ -407,8 +409,9 @@ fn test_check_ip_in_blocked_subnets_ipv4() {
 
 #[test]
 fn test_dial_error_handling() {
-    use crate::{ConnectionGate, DialError};
     use std::str::FromStr;
+
+    use crate::{ConnectionGate, DialError};
 
     let mut gater = ConnectionGater::new(GaterConfig::default());
 
@@ -483,8 +486,9 @@ fn test_dns_multiaddr_detection() {
 
 #[test]
 fn test_dns_multiaddr_can_dial() {
-    use crate::ConnectionGate;
     use std::str::FromStr;
+
+    use crate::ConnectionGate;
 
     let mut gater = ConnectionGater::new(GaterConfig::default());
 
@@ -510,8 +514,9 @@ fn test_dns_multiaddr_can_dial() {
 
 #[test]
 fn test_dns_multiaddr_blocked_by_resolved_ip() {
-    use crate::{ConnectionGate, DialError};
     use std::{net::IpAddr, str::FromStr};
+
+    use crate::{ConnectionGate, DialError};
 
     let mut gater = ConnectionGater::new(GaterConfig::default());
 
@@ -534,8 +539,9 @@ fn test_dns_multiaddr_blocked_by_resolved_ip() {
 
 #[test]
 fn test_dns_multiaddr_blocked_by_subnet() {
-    use crate::{ConnectionGate, DialError};
     use std::str::FromStr;
+
+    use crate::{ConnectionGate, DialError};
 
     let mut gater = ConnectionGater::new(GaterConfig::default());
 

@@ -8,7 +8,7 @@ impl Metrics {
     /// Identifier for discv5 events.
     pub const DISCOVERY_EVENT: &str = "kona_node_discovery_events";
 
-    /// Counter for the number of FIND_NODE requests.
+    /// Counter for the number of `FIND_NODE` requests.
     pub const FIND_NODE_REQUEST: &str = "kona_node_find_node_requests";
 
     /// Timer for the time taken to store ENRs in the bootstore.

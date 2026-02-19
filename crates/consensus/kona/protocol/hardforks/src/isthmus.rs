@@ -5,6 +5,7 @@
 //! [specs]: https://specs.optimism.io/protocol/isthmus/derivation.html#network-upgrade-automation-transactions
 
 use alloc::{string::String, vec::Vec};
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use kona_protocol::Predeploys;
@@ -119,28 +120,28 @@ impl Isthmus {
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/l1_block_isthmus.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/l1_block_isthmus.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/gpo_isthmus.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/gpo_isthmus.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn operator_fee_vault_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/ofv_isthmus.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/ofv_isthmus.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
 
     /// Returns the EIP-2935 creation data.
     pub fn eip2935_creation_data() -> Bytes {
-        hex::decode(include_str!("./bytecode/eip2935_isthmus.hex").replace("\n", ""))
+        hex::decode(include_str!("./bytecode/eip2935_isthmus.hex").replace('\n', ""))
             .expect("Expected hex byte string")
             .into()
     }
@@ -246,11 +247,12 @@ impl Hardfork for Isthmus {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::check_deployment_code;
+    use alloc::vec;
+
+    use alloy_primitives::b256;
 
     use super::*;
-    use alloc::vec;
-    use alloy_primitives::b256;
+    use crate::test_utils::check_deployment_code;
 
     #[test]
     fn test_l1_block_source_hash() {

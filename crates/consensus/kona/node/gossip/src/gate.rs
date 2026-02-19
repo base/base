@@ -1,9 +1,11 @@
 //! Connection Gate for the libp2p Gossip Swarm.
 
-use crate::{Connectedness, DialError};
+use std::net::IpAddr;
+
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
-use std::net::IpAddr;
+
+use crate::{Connectedness, DialError};
 
 /// Connection Gate
 ///

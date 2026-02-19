@@ -1,13 +1,15 @@
 //! Chain providers for the derivation pipeline.
 
-use crate::PipelineErrorKind;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use core::fmt::Display;
+
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use core::fmt::Display;
 use kona_genesis::{RollupConfig, SystemConfig};
 use kona_protocol::{BatchValidationProvider, BlockInfo};
+
+use crate::PipelineErrorKind;
 
 /// Describes the functionality of a data source that can provide information from the blockchain.
 #[async_trait]

@@ -1,10 +1,10 @@
 //! Contains the full superchain data.
 
-use crate::L1Config;
-
-use super::ChainList;
 use alloy_primitives::map::HashMap;
 use kona_genesis::{ChainConfig, L1ChainConfig, RollupConfig, Superchains};
+
+use super::ChainList;
+use crate::L1Config;
 
 /// The registry containing all the superchain configurations.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -62,8 +62,8 @@ impl Registry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::string::{String, ToString};
+
     use alloy_op_hardforks::{
         BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP,
         BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
@@ -72,6 +72,8 @@ mod tests {
     };
     use alloy_primitives::address;
     use kona_genesis::{AddressList, OP_MAINNET_BASE_FEE_CONFIG, Roles, SuperchainLevel};
+
+    use super::*;
 
     #[test]
     fn test_read_chain_configs() {

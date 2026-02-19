@@ -1,14 +1,16 @@
 //! A mock implementation of the [`NextBatchProvider`] stage for testing.
 
+use alloc::{boxed::Box, vec::Vec};
+
+use async_trait::async_trait;
+use kona_protocol::{Batch, BlockInfo, L2BlockInfo};
+
 use crate::{
     errors::PipelineError,
     stages::NextBatchProvider,
     traits::{OriginAdvancer, OriginProvider, SignalReceiver},
     types::{PipelineResult, Signal},
 };
-use alloc::{boxed::Box, vec::Vec};
-use async_trait::async_trait;
-use kona_protocol::{Batch, BlockInfo, L2BlockInfo};
 
 /// A mock provider for the [`NextBatchProvider`] stage.
 #[derive(Debug, Default)]

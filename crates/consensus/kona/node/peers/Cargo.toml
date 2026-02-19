@@ -1,14 +1,11 @@
 [package]
 name = "kona-peers"
-version = "0.1.2"
+version.workspace = true
 description = "Network peers library for the OP Stack"
 
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
-keywords.workspace = true
-categories.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 

@@ -1,11 +1,12 @@
 //! Contains the [`SystemConfig`] type.
 
+use alloy_consensus::{Eip658Value, Receipt};
+use alloy_primitives::{Address, B64, Log, U256};
+
 use crate::{
     CONFIG_UPDATE_TOPIC, RollupConfig, SystemConfigLog, SystemConfigUpdateError,
     SystemConfigUpdateKind,
 };
-use alloy_consensus::{Eip658Value, Receipt};
-use alloy_primitives::{Address, B64, Log, U256};
 
 /// System configuration.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
@@ -38,11 +39,11 @@ pub struct SystemConfig {
     /// The operator fee constant (isthmus hardfork)
     pub operator_fee_constant: Option<u64>,
     /// Min base fee (jovian hardfork)
-    /// Note: according to the [spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/system-config.md#initialization), as long as the MinBaseFee is not
+    /// Note: according to the [spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/system-config.md#initialization), as long as the `MinBaseFee` is not
     /// explicitly set, the default value (`0`) will be systematically applied.
     pub min_base_fee: Option<u64>,
     /// DA footprint gas scalar (Jovian hardfork)
-    /// Note: according to the [spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/system-config.md#initialization), as long as the DAFootprintGasScalar is not
+    /// Note: according to the [spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/system-config.md#initialization), as long as the `DAFootprintGasScalar` is not
     /// explicitly set, the default value (`400`) will be systematically applied.
     pub da_footprint_gas_scalar: Option<u16>,
 }
@@ -133,9 +134,9 @@ impl SystemConfig {
 
             receipt.logs.iter().try_for_each(|log| {
                 let topics = log.topics();
-                if log.address == l1_system_config_address &&
-                    !topics.is_empty() &&
-                    topics[0] == CONFIG_UPDATE_TOPIC
+                if log.address == l1_system_config_address
+                    && !topics.is_empty()
+                    && topics[0] == CONFIG_UPDATE_TOPIC
                 {
                     // Safety: Error is bubbled up by the trailing `?`
                     self.process_config_update_log(log, ecotone_active)?;
@@ -147,7 +148,7 @@ impl SystemConfig {
         Ok(updated)
     }
 
-    /// Returns the eip1559 parameters from a [SystemConfig] encoded as a [B64].
+    /// Returns the eip1559 parameters from a [`SystemConfig`] encoded as a [B64].
     pub fn eip_1559_params(
         &self,
         rollup_config: &RollupConfig,
@@ -173,7 +174,7 @@ impl SystemConfig {
     }
 
     /// Decodes an EVM log entry emitted by the system config contract and applies it as a
-    /// [SystemConfig] change.
+    /// [`SystemConfig`] change.
     ///
     /// Parse log data for:
     ///
@@ -218,10 +219,12 @@ where
 
 #[cfg(test)]
 mod test {
+    use alloc::vec;
+
+    use alloy_primitives::{B256, LogData, address, b256, hex};
+
     use super::*;
     use crate::{CONFIG_UPDATE_EVENT_VERSION_0, HardForkConfig};
-    use alloc::vec;
-    use alloy_primitives::{B256, LogData, address, b256, hex};
 
     #[test]
     #[cfg(feature = "serde")]

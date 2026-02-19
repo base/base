@@ -1,17 +1,19 @@
 //! This module contains the `BatchQueue` stage implementation.
 
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use core::fmt::Debug;
+
+use async_trait::async_trait;
+use kona_genesis::RollupConfig;
+use kona_protocol::{
+    Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch,
+};
+
 use super::NextBatchProvider;
 use crate::{
     errors::{PipelineEncodingError, PipelineError, PipelineErrorKind, ResetError},
     traits::{AttributesProvider, L2ChainProvider, OriginAdvancer, OriginProvider, SignalReceiver},
     types::{PipelineResult, ResetSignal, Signal},
-};
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use async_trait::async_trait;
-use core::fmt::Debug;
-use kona_genesis::RollupConfig;
-use kona_protocol::{
-    Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch,
 };
 
 /// [`BatchQueue`] is responsible for ordering unordered batches
@@ -91,7 +93,7 @@ where
     /// Derives the next batch to apply on top of the current L2 safe head.
     /// Follows the validity rules imposed on consecutive batches.
     /// Based on currently available buffered batch and L1 origin information.
-    /// A [PipelineError::Eof] is returned if no batch can be derived yet.
+    /// A [`PipelineError::Eof`] is returned if no batch can be derived yet.
     pub async fn derive_next_batch(
         &mut self,
         empty: bool,
@@ -245,8 +247,8 @@ where
         let validity =
             data.check_batch(&self.cfg, &self.l1_blocks, parent, &mut self.fetcher).await;
         // Post-Holocene, future batches are dropped due to prevent gaps.
-        let drop = validity.is_drop() ||
-            (self.cfg.is_holocene_active(origin.timestamp) && validity.is_future());
+        let drop = validity.is_drop()
+            || (self.cfg.is_holocene_active(origin.timestamp) && validity.is_future());
         if drop {
             self.prev.flush();
             return Ok(());
@@ -462,11 +464,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_utils::{
-        CollectingLayer, TestL2ChainProvider, TestNextBatchProvider, TraceStorage,
-    };
     use alloc::vec;
+
     use alloy_consensus::Header;
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
@@ -476,6 +475,11 @@ mod tests {
     use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
+
+    use super::*;
+    use crate::test_utils::{
+        CollectingLayer, TestL2ChainProvider, TestNextBatchProvider, TraceStorage,
+    };
 
     fn new_batch_reader() -> BatchReader {
         let file_contents =

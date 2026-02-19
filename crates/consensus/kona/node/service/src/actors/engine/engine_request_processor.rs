@@ -1,6 +1,5 @@
-use crate::{
-    BuildRequest, EngineClientError, EngineDerivationClient, EngineError, ResetRequest, SealRequest,
-};
+use std::sync::Arc;
+
 use kona_derive::{ResetSignal, Signal};
 use kona_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineTask,
@@ -9,10 +8,13 @@ use kona_engine::{
 use kona_genesis::RollupConfig;
 use kona_protocol::L2BlockInfo;
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use std::sync::Arc;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
+};
+
+use crate::{
+    BuildRequest, EngineClientError, EngineDerivationClient, EngineError, ResetRequest, SealRequest,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.

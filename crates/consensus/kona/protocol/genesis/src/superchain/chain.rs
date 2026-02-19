@@ -1,7 +1,8 @@
 //! Contains the `Superchain` type.
 
-use crate::{ChainConfig, SuperchainConfig};
 use alloc::{string::String, vec::Vec};
+
+use crate::{ChainConfig, SuperchainConfig};
 
 /// A superchain configuration.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -19,9 +20,10 @@ pub struct Superchain {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
+    use alloc::{string::ToString, vec};
+
     use super::*;
     use crate::{HardForkConfig, SuperchainConfig, SuperchainL1Info};
-    use alloc::{string::ToString, vec};
 
     #[test]
     fn test_deny_unknown_fields_superchain() {

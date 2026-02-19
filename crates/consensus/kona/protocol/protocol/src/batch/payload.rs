@@ -1,9 +1,11 @@
 //! Raw Span Batch Payload
 
+use alloc::vec::Vec;
+
+use alloy_primitives::bytes;
+
 use super::MAX_SPAN_BATCH_ELEMENTS;
 use crate::{SpanBatchBits, SpanBatchError, SpanBatchTransactions, SpanDecodingError};
-use alloc::vec::Vec;
-use alloy_primitives::bytes;
 
 /// Span Batch Payload
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -15,7 +17,7 @@ pub struct SpanBatchPayload {
     pub origin_bits: SpanBatchBits,
     /// List of transaction counts for each L2 block
     pub block_tx_counts: Vec<u64>,
-    /// Transactions encoded in SpanBatch specs
+    /// Transactions encoded in `SpanBatch` specs
     pub txs: SpanBatchTransactions,
 }
 
@@ -136,8 +138,9 @@ impl SpanBatchPayload {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::vec;
+
+    use super::*;
 
     #[test]
     fn test_decode_origin_bits() {

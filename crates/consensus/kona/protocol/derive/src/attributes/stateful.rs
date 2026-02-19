@@ -1,10 +1,7 @@
 //! The [`AttributesBuilder`] and it's default implementation.
 
-use crate::{
-    AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
-    PipelineError, PipelineErrorKind, PipelineResult,
-};
 use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
+
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes};
@@ -17,6 +14,11 @@ use kona_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
+use crate::{
+    AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
+    PipelineError, PipelineErrorKind, PipelineResult,
+};
 
 /// A stateful implementation of the [`AttributesBuilder`].
 #[derive(Debug, Default)]
@@ -139,28 +141,28 @@ where
         }
 
         let mut upgrade_transactions: Vec<Bytes> = vec![];
-        if self.rollup_cfg.is_ecotone_active(next_l2_time) &&
-            !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
+        if self.rollup_cfg.is_ecotone_active(next_l2_time)
+            && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions = Hardforks::ECOTONE.txs().collect();
         }
-        if self.rollup_cfg.is_fjord_active(next_l2_time) &&
-            !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
+        if self.rollup_cfg.is_fjord_active(next_l2_time)
+            && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.append(&mut Hardforks::FJORD.txs().collect());
         }
-        if self.rollup_cfg.is_isthmus_active(next_l2_time) &&
-            !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
+        if self.rollup_cfg.is_isthmus_active(next_l2_time)
+            && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.append(&mut Hardforks::ISTHMUS.txs().collect());
         }
-        if self.rollup_cfg.is_jovian_active(next_l2_time) &&
-            !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
+        if self.rollup_cfg.is_jovian_active(next_l2_time)
+            && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.append(&mut Hardforks::JOVIAN.txs().collect());
         }
-        if self.rollup_cfg.is_interop_active(next_l2_time) &&
-            !self.rollup_cfg.is_interop_active(l2_parent.block_info.timestamp)
+        if self.rollup_cfg.is_interop_active(next_l2_time)
+            && !self.rollup_cfg.is_interop_active(l2_parent.block_info.timestamp)
         {
             upgrade_transactions.append(&mut Hardforks::INTEROP.txs().collect());
         }
@@ -236,11 +238,11 @@ async fn derive_deposits(
 ) -> Result<Vec<Bytes>, PipelineEncodingError> {
     let mut global_index = 0;
     let mut res = Vec::new();
-    for r in receipts.iter() {
+    for r in receipts {
         if Eip658Value::Eip658(false) == r.status {
             continue;
         }
-        for l in r.logs.iter() {
+        for l in &r.logs {
             let curr_index = global_index;
             global_index += 1;
             if l.data.topics().first().is_none_or(|i| *i != DEPOSIT_EVENT_ABI_HASH) {
@@ -258,17 +260,19 @@ async fn derive_deposits(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        errors::ResetError,
-        test_utils::{TestChainProvider, TestSystemConfigL2Fetcher},
-    };
     use alloc::vec;
+
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use kona_genesis::{HardForkConfig, SystemConfig};
     use kona_protocol::{BlockInfo, DepositError};
     use kona_registry::L1Config;
+
+    use super::*;
+    use crate::{
+        errors::ResetError,
+        test_utils::{TestChainProvider, TestSystemConfigL2Fetcher},
+    };
 
     fn generate_valid_log() -> Log {
         let deposit_contract = address!("1111111111111111111111111111111111111111");

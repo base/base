@@ -1,5 +1,12 @@
 //! Testing utilities for the attributes queue stage.
 
+use alloc::{boxed::Box, vec::Vec};
+
+use alloy_eips::BlockNumHash;
+use async_trait::async_trait;
+use kona_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
+use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
 use crate::{
     errors::{PipelineError, PipelineErrorKind},
     traits::{
@@ -7,11 +14,6 @@ use crate::{
     },
     types::{PipelineResult, Signal},
 };
-use alloc::{boxed::Box, vec::Vec};
-use alloy_eips::BlockNumHash;
-use async_trait::async_trait;
-use kona_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
 /// A mock implementation of the [`AttributesBuilder`] for testing.
 #[derive(Debug, Default)]

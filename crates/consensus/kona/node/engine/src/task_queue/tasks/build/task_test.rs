@@ -1,5 +1,14 @@
 //! Tests for BuildTask::execute
 
+use std::sync::Arc;
+
+use alloy_primitives::FixedBytes;
+use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
+use kona_genesis::RollupConfig;
+use rstest::rstest;
+use thiserror::Error;
+use tokio::sync::mpsc;
+
 use crate::{
     BuildTask, BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineState, EngineTaskExt,
@@ -8,13 +17,6 @@ use crate::{
         test_engine_client_builder,
     },
 };
-use alloy_primitives::FixedBytes;
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
-use kona_genesis::RollupConfig;
-use rstest::rstest;
-use std::sync::Arc;
-use thiserror::Error;
-use tokio::sync::mpsc;
 
 fn fcu_for_payload(payload_id: Option<PayloadId>, status: PayloadStatusEnum) -> ForkchoiceUpdated {
     ForkchoiceUpdated {

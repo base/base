@@ -1,8 +1,9 @@
 //! Error types for protocol conversions.
 
-use crate::DecodeError;
 use alloy_primitives::B256;
 use op_alloy_consensus::EIP1559ParamError;
+
+use crate::DecodeError;
 
 /// An error encountered during OP [`Block`](alloy_consensus::Block) conversion.
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]

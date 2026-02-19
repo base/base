@@ -1,4 +1,4 @@
-//! Contains all hardforks represented in the [crate::Hardfork] type.
+//! Contains all hardforks represented in the [`crate::Hardfork`] type.
 
 use crate::{Ecotone, Fjord, Interop, Isthmus, Jovian};
 
@@ -60,9 +60,10 @@ impl Hardforks {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
     use crate::Hardfork;
-    use alloc::vec::Vec;
 
     #[test]
     fn test_hardforks() {

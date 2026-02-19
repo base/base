@@ -1,6 +1,7 @@
 //! Mock implementations for testing engine client functionality.
 
-use crate::{EngineClient, HyperAuthClient};
+use std::{collections::HashMap, sync::Arc};
+
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, StorageKey};
@@ -23,10 +24,9 @@ use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion,
 };
-use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-use crate::EngineClientError;
+use crate::{EngineClient, EngineClientError, HyperAuthClient};
 
 /// Builder for creating test MockEngineClient instances with sensible defaults
 pub fn test_engine_client_builder() -> MockEngineClientBuilder {
@@ -686,8 +686,9 @@ fn block_id_to_key(block_id: &BlockId) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_rpc_types_engine::PayloadStatusEnum;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_mock_engine_client_creation() {

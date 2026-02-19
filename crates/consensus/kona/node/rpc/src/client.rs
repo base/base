@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use async_trait::async_trait;
@@ -6,11 +8,10 @@ use kona_engine::EngineState;
 use kona_genesis::RollupConfig;
 use kona_protocol::{L2BlockInfo, OutputRoot};
 use rollup_boost::{GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse};
-use std::fmt::Debug;
 use thiserror::Error;
 use tokio::sync::watch;
 
-/// Client trait wrapping RPC implementation for the EngineActor.
+/// Client trait wrapping RPC implementation for the `EngineActor`.
 #[async_trait]
 pub trait EngineRpcClient: Debug + Send + Sync + Clone {
     /// Request the current [`RollupConfig`].
