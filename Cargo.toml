@@ -12,12 +12,7 @@ resolver = "2"
 members = [
     "bin/*",
     "crates/client/*",
-    "crates/consensus/protocol",
-    "crates/consensus/rpc",
-    "crates/consensus/kona/protocol/*",
-    "crates/consensus/kona/node/*",
-    "crates/consensus/kona/providers/*",
-    "crates/consensus/kona/utilities/*",
+    "crates/consensus/*",
     "crates/shared/*",
     "crates/builder/*",
     "crates/infra/*",
@@ -164,21 +159,19 @@ websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Kona
-kona-cli = { path = "crates/consensus/kona/utilities/cli", default-features = false }
-kona-rpc = { path = "crates/consensus/kona/node/rpc", default-features = false }
-kona-disc = { path = "crates/consensus/kona/node/disc", default-features = false }
-kona-peers = { path = "crates/consensus/kona/node/peers", default-features = false }
-kona-derive = { path = "crates/consensus/kona/protocol/derive", default-features = false }
-kona-engine = { path = "crates/consensus/kona/node/engine", default-features = false }
-kona-macros = { path = "crates/consensus/kona/utilities/macros", default-features = false }
-kona-gossip = { path = "crates/consensus/kona/node/gossip", default-features = false }
-kona-sources = { path = "crates/consensus/kona/node/sources", default-features = false }
-kona-genesis = { path = "crates/consensus/kona/protocol/genesis", default-features = false }
-kona-registry = { path = "crates/consensus/kona/protocol/registry", default-features = false }
-kona-protocol = { path = "crates/consensus/kona/protocol/protocol", default-features = false }
-kona-hardforks = { path = "crates/consensus/kona/protocol/hardforks", default-features = false }
-kona-node-service = { path = "crates/consensus/kona/node/service", default-features = false }
-kona-providers-alloy = { path = "crates/consensus/kona/providers/providers-alloy", default-features = false }
+kona-cli = { path = "crates/consensus/cli", default-features = false }
+kona-disc = { path = "crates/consensus/disc", default-features = false }
+kona-peers = { path = "crates/consensus/peers", default-features = false }
+kona-derive = { path = "crates/consensus/derive", default-features = false }
+kona-engine = { path = "crates/consensus/engine", default-features = false }
+kona-macros = { path = "crates/consensus/macros", default-features = false }
+kona-gossip = { path = "crates/consensus/gossip", default-features = false }
+kona-sources = { path = "crates/consensus/sources", default-features = false }
+kona-genesis = { path = "crates/consensus/genesis", default-features = false }
+kona-registry = { path = "crates/consensus/registry", default-features = false }
+kona-hardforks = { path = "crates/consensus/hardforks", default-features = false }
+kona-node-service = { path = "crates/consensus/service", default-features = false }
+kona-providers-alloy = { path = "crates/consensus/providers-alloy", default-features = false }
 
 # reth
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }

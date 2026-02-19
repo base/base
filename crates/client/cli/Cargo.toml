@@ -16,7 +16,7 @@ workspace = true
 base-jwt = { workspace = true, features = ["engine-validation"] }
 
 # kona
-kona-rpc.workspace = true
+base-consensus-rpc.workspace = true
 kona-disc.workspace = true
 kona-peers.workspace = true
 kona-derive.workspace = true

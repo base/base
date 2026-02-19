@@ -35,7 +35,6 @@ serde_json = { workspace = true, features = ["std"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
 clap = { workspace = true, features = ["std", "derive", "env"] }
 op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }

@@ -11,18 +11,56 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# Workspace
+kona-gossip.workspace = true
+kona-engine.workspace = true
+kona-macros.workspace = true
+kona-genesis = { workspace = true, features = ["serde", "std"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
+
+# OP Alloy
+op-alloy-rpc-jsonrpsee.workspace = true
+op-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+
+# Alloy
+alloy-eips = { workspace = true, features = ["serde", "std"] }
+alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"] }
+
+# Misc
+ipnet.workspace = true
+backon.workspace = true
+libp2p.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+rollup-boost.workspace = true
+tokio = { workspace = true, features = ["time"] }
+serde = { workspace = true, features = ["std"] }
+
+# RPC
+jsonrpsee = { workspace = true, features = ["macros", "server"] }
+getrandom = { workspace = true, features = ["wasm_js"] }
+
+# Optional
+metrics = { workspace = true, optional = true }
+alloy-rpc-client = { workspace = true, features = ["reqwest"], optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
 [features]
-default = [ "std" ]
-std = [ "base-protocol/std" ]
+default = []
+reqwest = [ "client", "dep:alloy-rpc-client" ]
 client = [
 	"jsonrpsee/async-client",
 	"jsonrpsee/client",
 	"jsonrpsee/http-client",
+	"op-alloy-rpc-jsonrpsee/client",
 ]
-
-[dependencies]
-# workspace
-base-protocol = { workspace = true, features = ["serde"] }
-
-# rpc
-jsonrpsee = { workspace = true, features = ["macros", "server"] }
+metrics = [
+	"dep:metrics",
+	"kona-engine/metrics",
+	"kona-gossip/metrics",
+	"libp2p/metrics",
+]
