@@ -154,7 +154,7 @@ where
             let fb_index = state_flashblock_index.unwrap();
             let trie_input = self
                 .pending_trie_cache
-                .ensure_cached(header.hash(), fb_index, &temp_state, &*state_provider)
+                .ensure_cached(header.number, fb_index, &temp_state, &*state_provider)
                 .map_err(|e| {
                     error!(error = %e, "Failed to cache pending trie input");
                     jsonrpsee::types::ErrorObjectOwned::owned(
