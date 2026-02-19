@@ -499,7 +499,9 @@ impl OpNetworkPayloadEnvelope {
         let mut sig = self.signature.as_bytes();
         sig[64] = self.signature.v() as u8;
         data.extend_from_slice(&sig[..]);
-        data.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
+        let parent_beacon_block_root =
+            self.parent_beacon_block_root.ok_or(PayloadEnvelopeEncodeError::MissingData)?;
+        data.extend_from_slice(parent_beacon_block_root.as_slice());
         let block_data = execution_payload_v3.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
@@ -551,7 +553,9 @@ impl OpNetworkPayloadEnvelope {
         let mut sig = self.signature.as_bytes();
         sig[64] = self.signature.v() as u8;
         data.extend_from_slice(&sig[..]);
-        data.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
+        let parent_beacon_block_root =
+            self.parent_beacon_block_root.ok_or(PayloadEnvelopeEncodeError::MissingData)?;
+        data.extend_from_slice(parent_beacon_block_root.as_slice());
         let block_data = execution_payload_v4.as_ssz_bytes();
         data.extend_from_slice(block_data.as_slice());
 
@@ -565,6 +569,9 @@ pub enum PayloadEnvelopeEncodeError {
     /// Wrong versions of the payload.
     #[error("Wrong version of the payload")]
     WrongVersion,
+    /// Missing required data (e.g. parent beacon block root for V3+ payloads).
+    #[error("Missing required data")]
+    MissingData,
     /// An error occurred during snap encoding.
     #[error(transparent)]
     #[cfg(feature = "std")]
@@ -703,6 +710,26 @@ mod tests {
         assert_eq!(1708427627, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v2().unwrap();
         assert_eq!(data, encoded);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_encode_v3_missing_parent_beacon_block_root() {
+        use alloy_primitives::hex;
+        let data = hex::decode("0xf104f0434442b9eb38b259f5b23826e6b623e829d2fb878dac70187a1aecf42a3f9bedfd29793d1fcb5822324be0d3e12340a95855553a65d64b83e5579dffb31470df5d010000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000cc588d465219504100201067601007cfece77b89685f60e3663b6e0faf2de0734674eb91339700c4858c773a8ff921e014401043e0100").unwrap();
+        let mut envelope = OpNetworkPayloadEnvelope::decode_v3(&data).unwrap();
+        envelope.parent_beacon_block_root = None;
+        assert_eq!(envelope.encode_v3(), Err(PayloadEnvelopeEncodeError::MissingData));
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_encode_v4_missing_parent_beacon_block_root() {
+        use alloy_primitives::hex;
+        let data = hex::decode("0x9105f043cee25401b6853202950d1d8a082f31a80c4fef5782c049a731f5d104b1b9b9aa7618605b420438ae98b44c8aaaebd482854473c2ae57c079286bb634bece5210000000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000c5766d26721950430020106f6010001440104b60100049876").unwrap();
+        let mut envelope = OpNetworkPayloadEnvelope::decode_v4(&data).unwrap();
+        envelope.parent_beacon_block_root = None;
+        assert_eq!(envelope.encode_v4(), Err(PayloadEnvelopeEncodeError::MissingData));
     }
 
     #[test]
