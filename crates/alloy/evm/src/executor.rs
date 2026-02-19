@@ -61,7 +61,7 @@ pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     pub receipts: Vec<R::Receipt>,
     /// Total gas used by executed transactions.
     pub gas_used: u64,
-    /// Da footprint.
+    /// DA footprint.
     ///
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
@@ -177,7 +177,7 @@ where
 
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
-        let block_available_gas = self.evm.block().gas_limit() - self.gas_used;
+        let block_available_gas = self.evm.block().gas_limit().saturating_sub(self.gas_used);
         if tx.tx().gas_limit() > block_available_gas && (self.is_regolith || !is_deposit) {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
                 transaction_gas_limit: tx.tx().gas_limit(),
@@ -191,7 +191,8 @@ where
             .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
             && !is_deposit
         {
-            let da_footprint_available = self.evm.block().gas_limit() - self.da_footprint_used;
+            let da_footprint_available =
+                self.evm.block().gas_limit().saturating_sub(self.da_footprint_used);
 
             let tx_da_footprint = self.jovian_da_footprint_estimation(&tx_env, &tx)?;
 
@@ -249,11 +250,10 @@ where
         // append gas used
         self.gas_used += gas_used;
 
-        // Update DA footprint if Jovian is active
+        // Update DA footprint if Jovian is active.
         if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
             && !is_deposit
         {
-            // Add to DA footprint used
             self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
         }
 
@@ -383,7 +383,7 @@ mod tests {
     fn test_with_encoded() {
         let executor_factory = OpBlockExecutorFactory::new(
             OpAlloyReceiptBuilder::default(),
-            OpChainHardforks::op_mainnet(),
+            OpChainHardforks::base_mainnet(),
             OpEvmFactory::default(),
         );
         let mut db =
@@ -490,7 +490,7 @@ mod tests {
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
         let op_chain_hardforks = OpChainHardforks::new(
-            OpHardfork::op_mainnet()
+            OpHardfork::base_mainnet()
                 .into_iter()
                 .chain(vec![(OpHardfork::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
@@ -535,7 +535,7 @@ mod tests {
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
         let op_chain_hardforks = OpChainHardforks::new(
-            OpHardfork::op_mainnet()
+            OpHardfork::base_mainnet()
                 .into_iter()
                 .chain(vec![(OpHardfork::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
@@ -592,7 +592,7 @@ mod tests {
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
         let op_chain_hardforks = OpChainHardforks::new(
-            OpHardfork::op_mainnet()
+            OpHardfork::base_mainnet()
                 .into_iter()
                 .chain(vec![(OpHardfork::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
