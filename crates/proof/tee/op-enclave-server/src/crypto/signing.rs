@@ -255,6 +255,34 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_wrong_data_fails() {
+        let mut rng = OsRng;
+        let signer = generate_signer(&mut rng).expect("failed to generate signer");
+
+        let data1 = test_signing_data();
+
+        // Build different signing data (change the proposer address)
+        let data2 = build_signing_data(
+            address!("0000000000000000000000000000000000000001"),
+            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+            U256::from(100),
+            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
+            U256::from(999),
+            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
+            U256::from(1000),
+            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+            b256!("5555555555555555555555555555555555555555555555555555555555555555"),
+        );
+
+        let signature = sign_proposal_data_sync(&signer, &data1).expect("signing failed");
+
+        let public_key = crate::crypto::public_key_bytes(&signer);
+        let valid = verify_proposal_signature(&public_key, &data2, &signature)
+            .expect("verification failed");
+        assert!(!valid);
+    }
+
+    #[test]
     fn test_invalid_signature_length() {
         let public_key = vec![0x04; 65];
         let data = [0u8; SIGNING_DATA_LENGTH];

@@ -21,7 +21,7 @@ use crate::nsm::{NsmRng, NsmSession};
 
 use op_enclave_core::executor::{ExecutionWitness, execute_stateless as core_execute_stateless};
 use op_enclave_core::types::account::AccountResult;
-use op_enclave_core::{Proposal, output_root_v0};
+use op_enclave_core::{Proposal, ProposalParams, output_root_v0};
 
 /// Environment variable for setting the signer key in local mode.
 const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
@@ -300,15 +300,15 @@ impl Server {
         let signer = self.signer_key.read();
         let signature = sign_proposal_data_sync(&signer, &signing_data)?;
 
-        Ok(Proposal::new(
+        Ok(Proposal::new(ProposalParams {
             output_root,
             signature,
             l1_origin_hash,
             l1_origin_number,
-            ending_l2_block,
+            l2_block_number: ending_l2_block,
             prev_output_root,
             config_hash,
-        ))
+        }))
     }
 
     /// Create a server for testing without RSA key generation.
@@ -441,15 +441,15 @@ impl Server {
         let signer = self.signer_key.read();
         let signature = sign_proposal_data_sync(&signer, &signing_data)?;
 
-        Ok(Proposal::new(
-            final_output_root,
+        Ok(Proposal::new(ProposalParams {
+            output_root: final_output_root,
             signature,
             l1_origin_hash,
             l1_origin_number,
             l2_block_number,
             prev_output_root,
             config_hash,
-        ))
+        }))
     }
 }
 
@@ -572,7 +572,7 @@ mod tests {
         let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");
         drop(signer);
 
-        let proposal = Proposal::new(
+        let proposal = Proposal::new(ProposalParams {
             output_root,
             signature,
             l1_origin_hash,
@@ -580,7 +580,7 @@ mod tests {
             l2_block_number,
             prev_output_root,
             config_hash,
-        );
+        });
 
         let result = server.aggregate(
             config_hash,
@@ -629,15 +629,15 @@ mod tests {
             sign_proposal_data_sync(&signer, &signing_data_1).expect("signing failed");
         drop(signer);
 
-        let proposal_1 = Proposal::new(
-            output_root_1,
-            signature_1,
-            l1_origin_hash_1,
+        let proposal_1 = Proposal::new(ProposalParams {
+            output_root: output_root_1,
+            signature: signature_1,
+            l1_origin_hash: l1_origin_hash_1,
             l1_origin_number,
-            U256::from(100),
+            l2_block_number: U256::from(100),
             prev_output_root,
             config_hash,
-        );
+        });
 
         // Create second proposal (block 101, chained from first)
         let signing_data_2 = build_signing_data(
@@ -657,15 +657,15 @@ mod tests {
             sign_proposal_data_sync(&signer, &signing_data_2).expect("signing failed");
         drop(signer);
 
-        let proposal_2 = Proposal::new(
-            output_root_2,
-            signature_2,
-            l1_origin_hash_2,
+        let proposal_2 = Proposal::new(ProposalParams {
+            output_root: output_root_2,
+            signature: signature_2,
+            l1_origin_hash: l1_origin_hash_2,
             l1_origin_number,
-            U256::from(101),
-            output_root_1,
+            l2_block_number: U256::from(101),
+            prev_output_root: output_root_1,
             config_hash,
-        );
+        });
 
         let result = server.aggregate(
             config_hash,
@@ -719,28 +719,28 @@ mod tests {
             sign_proposal_data_sync(&signer, &signing_data_1).expect("signing failed");
         drop(signer);
 
-        let proposal_1 = Proposal::new(
-            output_root_1,
-            signature_1,
-            l1_origin_hash_1,
+        let proposal_1 = Proposal::new(ProposalParams {
+            output_root: output_root_1,
+            signature: signature_1,
+            l1_origin_hash: l1_origin_hash_1,
             l1_origin_number,
-            U256::from(100),
+            l2_block_number: U256::from(100),
             prev_output_root,
             config_hash,
-        );
+        });
 
         // Create a second proposal with an invalid signature (random bytes)
         let invalid_signature = Bytes::from(vec![0xab; 65]);
 
-        let proposal_2 = Proposal::new(
-            output_root_2,
-            invalid_signature,
-            l1_origin_hash_2,
+        let proposal_2 = Proposal::new(ProposalParams {
+            output_root: output_root_2,
+            signature: invalid_signature,
+            l1_origin_hash: l1_origin_hash_2,
             l1_origin_number,
-            U256::from(101),
-            output_root_1,
+            l2_block_number: U256::from(101),
+            prev_output_root: output_root_1,
             config_hash,
-        );
+        });
 
         let result = server.aggregate(
             config_hash,

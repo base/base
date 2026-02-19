@@ -52,36 +52,46 @@ pub struct Proposal {
 /// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
 pub const SIGNATURE_LENGTH: usize = 65;
 
+/// Parameters for constructing a [`Proposal`].
+#[derive(Debug)]
+pub struct ProposalParams {
+    /// The output root hash.
+    pub output_root: B256,
+    /// The ECDSA signature (65 bytes: r, s, v).
+    pub signature: Bytes,
+    /// The L1 origin block hash.
+    pub l1_origin_hash: B256,
+    /// The L1 origin block number.
+    pub l1_origin_number: U256,
+    /// The L2 block number (ending block of this proposal's range).
+    pub l2_block_number: U256,
+    /// The previous output root hash.
+    pub prev_output_root: B256,
+    /// The config hash.
+    pub config_hash: B256,
+}
+
 impl Proposal {
-    /// Creates a new Proposal.
+    /// Creates a new Proposal from the given parameters.
     ///
     /// # Panics
     /// Panics if `signature` is not exactly 65 bytes.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        output_root: B256,
-        signature: Bytes,
-        l1_origin_hash: B256,
-        l1_origin_number: U256,
-        l2_block_number: U256,
-        prev_output_root: B256,
-        config_hash: B256,
-    ) -> Self {
+    pub fn new(params: ProposalParams) -> Self {
         assert_eq!(
-            signature.len(),
+            params.signature.len(),
             SIGNATURE_LENGTH,
             "ECDSA signature must be exactly {} bytes, got {}",
             SIGNATURE_LENGTH,
-            signature.len()
+            params.signature.len()
         );
         Self {
-            output_root,
-            signature,
-            l1_origin_hash,
-            l1_origin_number,
-            l2_block_number,
-            prev_output_root,
-            config_hash,
+            output_root: params.output_root,
+            signature: params.signature,
+            l1_origin_hash: params.l1_origin_hash,
+            l1_origin_number: params.l1_origin_number,
+            l2_block_number: params.l2_block_number,
+            prev_output_root: params.prev_output_root,
+            config_hash: params.config_hash,
         }
     }
 }
@@ -197,14 +207,18 @@ mod tests {
     #[test]
     #[should_panic(expected = "ECDSA signature must be exactly 65 bytes")]
     fn test_proposal_new_rejects_invalid_signature_length() {
-        Proposal::new(
-            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
-            Bytes::from(vec![0xab; 64]), // 64 bytes instead of 65
-            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
-            U256::from(100),
-            U256::from(12345),
-            b256!("0000000000000000000000000000000000000000000000000000000000000003"),
-            b256!("0000000000000000000000000000000000000000000000000000000000000004"),
-        );
+        Proposal::new(ProposalParams {
+            output_root: b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            signature: Bytes::from(vec![0xab; 64]), // 64 bytes instead of 65
+            l1_origin_hash: b256!(
+                "0000000000000000000000000000000000000000000000000000000000000002"
+            ),
+            l1_origin_number: U256::from(100),
+            l2_block_number: U256::from(12345),
+            prev_output_root: b256!(
+                "0000000000000000000000000000000000000000000000000000000000000003"
+            ),
+            config_hash: b256!("0000000000000000000000000000000000000000000000000000000000000004"),
+        });
     }
 }

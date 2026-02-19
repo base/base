@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, keccak256};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::error::ExecutorError;
 
@@ -116,56 +116,32 @@ pub fn transform_witness(witness: ExecutionWitness) -> Result<TransformedWitness
     let state = transform_state_map(&witness.state)?;
 
     // Witness integrity check: verify each state entry's key matches keccak256(value).
-    // A mismatch here would mean the witness provider sent corrupt trie node data.
-    let mut integrity_mismatches = 0u64;
+    // A mismatch means the witness provider sent corrupt trie node data.
     for (hash, node_bytes) in &state {
         let computed = keccak256(node_bytes);
         if computed != *hash {
-            integrity_mismatches += 1;
-            warn!(
-                key = %hash,
-                computed_hash = %computed,
-                node_len = node_bytes.len(),
-                "Witness integrity: state node hash mismatch"
-            );
+            return Err(ExecutorError::WitnessTransformFailed(format!(
+                "state node hash mismatch: key={hash}, computed={computed}, len={}",
+                node_bytes.len()
+            )));
         }
     }
-    if integrity_mismatches > 0 {
-        warn!(
-            mismatches = integrity_mismatches,
-            total_entries = state.len(),
-            "Witness integrity check found hash mismatches"
-        );
-    } else {
-        debug!(
-            entries = state.len(),
-            "Witness state integrity check passed"
-        );
-    }
+    debug!(
+        entries = state.len(),
+        "Witness state integrity check passed"
+    );
 
-    // Code integrity check: verify each code entry's key matches keccak256(value)
-    let mut code_mismatches = 0u64;
+    // Code integrity check: verify each code entry's key matches keccak256(value).
     for (hash, bytecode) in &codes {
         let computed = keccak256(bytecode);
         if computed != *hash {
-            code_mismatches += 1;
-            warn!(
-                key = %hash,
-                computed_hash = %computed,
-                code_len = bytecode.len(),
-                "Witness integrity: code hash mismatch"
-            );
+            return Err(ExecutorError::WitnessTransformFailed(format!(
+                "code hash mismatch: key={hash}, computed={computed}, len={}",
+                bytecode.len()
+            )));
         }
     }
-    if code_mismatches > 0 {
-        warn!(
-            mismatches = code_mismatches,
-            total_entries = codes.len(),
-            "Witness code integrity check found hash mismatches"
-        );
-    } else {
-        debug!(entries = codes.len(), "Witness code integrity check passed");
-    }
+    debug!(entries = codes.len(), "Witness code integrity check passed");
 
     Ok(TransformedWitness {
         previous_header,
@@ -289,15 +265,16 @@ mod tests {
     fn test_transform_witness_success() {
         let header = test_header();
 
+        // Use correct keccak256 hashes so integrity checks pass.
         let mut codes = HashMap::new();
         codes.insert(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            "0x1c3374235d773b2189aed115aa13143020fcdbbe86e38f358cf3e4771b2f0244".to_string(),
             "0x6080604052".to_string(),
         );
 
         let mut state = HashMap::new();
         state.insert(
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347".to_string(),
             "0xc0".to_string(),
         );
 
@@ -315,8 +292,8 @@ mod tests {
         assert_eq!(transformed.codes.len(), 1);
         assert_eq!(transformed.state.len(), 1);
 
-        // Verify code lookup
-        let code_hash = b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        // Verify code lookup by keccak256(code_bytes)
+        let code_hash = b256!("1c3374235d773b2189aed115aa13143020fcdbbe86e38f358cf3e4771b2f0244");
         let code = transformed.bytecode_by_hash(&code_hash);
         assert!(code.is_some());
         assert_eq!(code.unwrap().as_ref(), &[0x60, 0x80, 0x60, 0x40, 0x52]);
