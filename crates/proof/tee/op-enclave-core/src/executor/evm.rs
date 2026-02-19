@@ -64,9 +64,13 @@ impl EvmFactory for EnclaveEvmFactory {
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        // Create a mutable copy of l1_block_info and set the l2_block to the current block number
-        let mut l1_block_info = self.l1_block_info.clone();
-        l1_block_info.l2_block = Some(input.block_env.number);
+        // Use the pre-populated L1BlockInfo but do NOT set l2_block. By leaving
+        // l2_block as None, op-revm's handler will call L1BlockInfo::try_fetch on
+        // the first non-deposit transaction, re-reading fee parameters from the
+        // L1Block contract storage that was just updated by the deposit tx. This
+        // ensures the correct L1 cost values (including any parameter changes in
+        // the current block's deposit) are used for fee calculation.
+        let l1_block_info = self.l1_block_info.clone();
 
         OpEvm::new(
             revm::Context::op()
@@ -89,8 +93,7 @@ impl EvmFactory for EnclaveEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        let mut l1_block_info = self.l1_block_info.clone();
-        l1_block_info.l2_block = Some(input.block_env.number);
+        let l1_block_info = self.l1_block_info.clone();
 
         OpEvm::new(
             revm::Context::op()

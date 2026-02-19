@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 
 use alloy_consensus::Header;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, keccak256};
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use crate::error::ExecutorError;
 
@@ -15,16 +16,21 @@ use crate::error::ExecutorError;
 ///
 /// This is the JSON representation received from the client, where codes and state
 /// are hex-encoded string maps.
+///
+/// Uses `#[serde(alias)]` to accept both `PascalCase` (Go JSON encoding) and
+/// camelCase/lowercase (geth `debug_executionWitness` RPC response).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
 pub struct ExecutionWitness {
     /// Block headers (previous block header is at index 0).
+    #[serde(alias = "Headers")]
     pub headers: Vec<Header>,
 
     /// Bytecode map: hex-encoded `code_hash` -> hex-encoded bytecode.
+    #[serde(alias = "Codes")]
     pub codes: HashMap<String, String>,
 
     /// State trie nodes: hex-encoded `node_hash` -> hex-encoded RLP node.
+    #[serde(alias = "State")]
     pub state: HashMap<String, String>,
 }
 
@@ -41,6 +47,9 @@ pub struct TransformedWitness {
 
     /// State trie nodes: `node_hash` -> RLP-encoded node.
     pub state: HashMap<B256, Bytes>,
+
+    /// All witness headers indexed by hash, for BLOCKHASH opcode support.
+    pub headers_by_hash: HashMap<B256, Header>,
 }
 
 impl TransformedWitness {
@@ -84,25 +93,61 @@ impl TransformedWitness {
 /// - Headers is empty
 /// - Any hex decoding fails
 pub fn transform_witness(witness: ExecutionWitness) -> Result<TransformedWitness, ExecutorError> {
-    // Extract previous header
+    // Extract previous header (headers[0])
     let previous_header = witness
         .headers
         .first()
         .ok_or_else(|| ExecutorError::WitnessTransformFailed("headers is empty".to_string()))?
         .clone();
 
+    // Build a hash-indexed map of ALL headers for BLOCKHASH opcode support.
+    // The EVM's BLOCKHASH opcode (and EIP-2935) needs to look up historical
+    // block headers by their hash during execution.
+    let mut headers_by_hash = HashMap::with_capacity(witness.headers.len());
+    for header in &witness.headers {
+        let hash = header.hash_slow();
+        headers_by_hash.insert(hash, header.clone());
+    }
+
     // Transform codes map
-    // Note: The Go implementation stores values in a set keyed by the decoded bytes.
-    // For our purposes, we need to decode the hex values and associate them with their hashes.
     let codes = transform_code_map(&witness.codes)?;
 
     // Transform state map
     let state = transform_state_map(&witness.state)?;
 
+    // Witness integrity check: verify each state entry's key matches keccak256(value).
+    // A mismatch means the witness provider sent corrupt trie node data.
+    for (hash, node_bytes) in &state {
+        let computed = keccak256(node_bytes);
+        if computed != *hash {
+            return Err(ExecutorError::WitnessTransformFailed(format!(
+                "state node hash mismatch: key={hash}, computed={computed}, len={}",
+                node_bytes.len()
+            )));
+        }
+    }
+    debug!(
+        entries = state.len(),
+        "Witness state integrity check passed"
+    );
+
+    // Code integrity check: verify each code entry's key matches keccak256(value).
+    for (hash, bytecode) in &codes {
+        let computed = keccak256(bytecode);
+        if computed != *hash {
+            return Err(ExecutorError::WitnessTransformFailed(format!(
+                "code hash mismatch: key={hash}, computed={computed}, len={}",
+                bytecode.len()
+            )));
+        }
+    }
+    debug!(entries = codes.len(), "Witness code integrity check passed");
+
     Ok(TransformedWitness {
         previous_header,
         codes,
         state,
+        headers_by_hash,
     })
 }
 
@@ -220,15 +265,16 @@ mod tests {
     fn test_transform_witness_success() {
         let header = test_header();
 
+        // Use correct keccak256 hashes so integrity checks pass.
         let mut codes = HashMap::new();
         codes.insert(
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            "0x1c3374235d773b2189aed115aa13143020fcdbbe86e38f358cf3e4771b2f0244".to_string(),
             "0x6080604052".to_string(),
         );
 
         let mut state = HashMap::new();
         state.insert(
-            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+            "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347".to_string(),
             "0xc0".to_string(),
         );
 
@@ -246,8 +292,8 @@ mod tests {
         assert_eq!(transformed.codes.len(), 1);
         assert_eq!(transformed.state.len(), 1);
 
-        // Verify code lookup
-        let code_hash = b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        // Verify code lookup by keccak256(code_bytes)
+        let code_hash = b256!("1c3374235d773b2189aed115aa13143020fcdbbe86e38f358cf3e4771b2f0244");
         let code = transformed.bytecode_by_hash(&code_hash);
         assert!(code.is_some());
         assert_eq!(code.unwrap().as_ref(), &[0x60, 0x80, 0x60, 0x40, 0x52]);

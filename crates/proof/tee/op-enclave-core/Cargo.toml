@@ -29,6 +29,7 @@ serde_json.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 # Optional dependencies for fixture generator binary
 tokio = { workspace = true, optional = true }

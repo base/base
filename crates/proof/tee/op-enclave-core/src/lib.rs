@@ -15,7 +15,7 @@ pub use types::config::{
     BlockId, Genesis, GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, RollupConfig,
 };
 pub use types::output::output_root_v0;
-pub use types::proposal::Proposal;
+pub use types::proposal::{Proposal, ProposalParams};
 pub use types::rpc::ExecuteStatelessRequest;
 
 // Re-export error types

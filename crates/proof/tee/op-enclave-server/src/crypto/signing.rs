@@ -3,7 +3,7 @@
 //! This module provides functions for signing proposal data and verifying
 //! proposal signatures, matching the Go implementation in `server.go`.
 
-use alloy_primitives::{B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
@@ -14,44 +14,63 @@ use crate::error::ProposalError;
 /// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
 pub const SIGNATURE_LENGTH: usize = 65;
 
-/// Length of the signing data (5 x 32 bytes = 160 bytes).
-pub const SIGNING_DATA_LENGTH: usize = 160;
+/// Length of the signing data: address(20) + 8 x bytes32(32) = 276 bytes.
+///
+/// Matches the `AggregateVerifier` contract's journal computation:
+/// `keccak256(abi.encodePacked(prover, l1OriginHash, l1OriginNumber,
+///   prevOutputRoot, startingL2Block, outputRoot, endingL2Block, configHash, imageHash))`
+pub const SIGNING_DATA_LENGTH: usize = 276;
 
 /// Build the signing data for a proposal.
 ///
-/// The signing data format matches Go's implementation in `server.go:282-285`:
+/// The format matches the `AggregateVerifier` contract's journal:
 /// ```text
-/// configHash || l1OriginHash || l2BlockNumber || prevOutputRoot || outputRoot
+/// prover(20) || l1OriginHash(32) || l1OriginNumber(32) || prevOutputRoot(32)
+///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32)
+///   || configHash(32) || imageHash(32)
 /// ```
-///
-/// Where `l2BlockNumber` is left-padded to 32 bytes (matching `common.BytesToHash`).
-///
-/// # Arguments
-///
-/// * `config_hash` - The configuration hash
-/// * `l1_origin_hash` - The L1 origin block hash
-/// * `l2_block_number` - The L2 block number
-/// * `prev_output_root` - The previous output root
-/// * `output_root` - The current output root
-///
-/// # Returns
-///
-/// A 160-byte array containing the concatenated data.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn build_signing_data(
-    config_hash: B256,
+    proposer: Address,
     l1_origin_hash: B256,
-    l2_block_number: U256,
+    l1_origin_number: U256,
     prev_output_root: B256,
+    starting_l2_block: U256,
     output_root: B256,
+    ending_l2_block: U256,
+    config_hash: B256,
+    tee_image_hash: B256,
 ) -> [u8; SIGNING_DATA_LENGTH] {
     let mut data = [0u8; SIGNING_DATA_LENGTH];
-    data[0..32].copy_from_slice(config_hash.as_slice());
-    data[32..64].copy_from_slice(l1_origin_hash.as_slice());
-    // L2 block number as big-endian 32 bytes (left-padded, matches common.BytesToHash)
-    data[64..96].copy_from_slice(&l2_block_number.to_be_bytes::<32>());
-    data[96..128].copy_from_slice(prev_output_root.as_slice());
-    data[128..160].copy_from_slice(output_root.as_slice());
+    let mut offset = 0;
+
+    data[offset..offset + 20].copy_from_slice(proposer.as_slice());
+    offset += 20;
+
+    data[offset..offset + 32].copy_from_slice(l1_origin_hash.as_slice());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(&l1_origin_number.to_be_bytes::<32>());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(prev_output_root.as_slice());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(&starting_l2_block.to_be_bytes::<32>());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(output_root.as_slice());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(&ending_l2_block.to_be_bytes::<32>());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(config_hash.as_slice());
+    offset += 32;
+
+    data[offset..offset + 32].copy_from_slice(tee_image_hash.as_slice());
+
     data
 }
 
@@ -132,41 +151,77 @@ pub fn verify_proposal_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::b256;
+    use alloy_primitives::{address, b256};
     use rand::rngs::OsRng;
 
     use crate::crypto::generate_signer;
 
+    fn test_signing_data() -> [u8; SIGNING_DATA_LENGTH] {
+        build_signing_data(
+            address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+            U256::from(100),
+            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
+            U256::from(999),
+            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
+            U256::from(1000),
+            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+            b256!("5555555555555555555555555555555555555555555555555555555555555555"),
+        )
+    }
+
     #[test]
     fn test_build_signing_data_length() {
-        let data = build_signing_data(B256::ZERO, B256::ZERO, U256::ZERO, B256::ZERO, B256::ZERO);
+        let data = test_signing_data();
         assert_eq!(data.len(), SIGNING_DATA_LENGTH);
+        assert_eq!(data.len(), 276);
     }
 
     #[test]
     fn test_build_signing_data_components() {
-        let config_hash = b256!("1111111111111111111111111111111111111111111111111111111111111111");
+        let proposer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let l1_origin_hash =
             b256!("2222222222222222222222222222222222222222222222222222222222222222");
-        let l2_block_number = U256::from(12345);
+        let l1_origin_number = U256::from(100);
         let prev_output_root =
             b256!("3333333333333333333333333333333333333333333333333333333333333333");
+        let starting_l2_block = U256::from(999);
         let output_root = b256!("4444444444444444444444444444444444444444444444444444444444444444");
+        let ending_l2_block = U256::from(1000);
+        let config_hash = b256!("1111111111111111111111111111111111111111111111111111111111111111");
+        let tee_image_hash =
+            b256!("5555555555555555555555555555555555555555555555555555555555555555");
 
         let data = build_signing_data(
-            config_hash,
+            proposer,
             l1_origin_hash,
-            l2_block_number,
+            l1_origin_number,
             prev_output_root,
+            starting_l2_block,
             output_root,
+            ending_l2_block,
+            config_hash,
+            tee_image_hash,
         );
 
-        // Verify each component
-        assert_eq!(&data[0..32], config_hash.as_slice());
-        assert_eq!(&data[32..64], l1_origin_hash.as_slice());
-        assert_eq!(&data[64..96], &l2_block_number.to_be_bytes::<32>());
-        assert_eq!(&data[96..128], prev_output_root.as_slice());
-        assert_eq!(&data[128..160], output_root.as_slice());
+        let mut off = 0;
+        assert_eq!(&data[off..off + 20], proposer.as_slice());
+        off += 20;
+        assert_eq!(&data[off..off + 32], l1_origin_hash.as_slice());
+        off += 32;
+        assert_eq!(&data[off..off + 32], &l1_origin_number.to_be_bytes::<32>());
+        off += 32;
+        assert_eq!(&data[off..off + 32], prev_output_root.as_slice());
+        off += 32;
+        assert_eq!(&data[off..off + 32], &starting_l2_block.to_be_bytes::<32>());
+        off += 32;
+        assert_eq!(&data[off..off + 32], output_root.as_slice());
+        off += 32;
+        assert_eq!(&data[off..off + 32], &ending_l2_block.to_be_bytes::<32>());
+        off += 32;
+        assert_eq!(&data[off..off + 32], config_hash.as_slice());
+        off += 32;
+        assert_eq!(&data[off..off + 32], tee_image_hash.as_slice());
     }
 
     #[test]
@@ -174,14 +229,7 @@ mod tests {
         let mut rng = OsRng;
         let signer = generate_signer(&mut rng).expect("failed to generate signer");
 
-        let data = build_signing_data(
-            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            U256::from(12345),
-            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
-            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-        );
-
+        let data = test_signing_data();
         let signature = sign_proposal_data_sync(&signer, &data).expect("signing failed");
         assert_eq!(signature.len(), SIGNATURE_LENGTH);
 
@@ -197,18 +245,9 @@ mod tests {
         let signer1 = generate_signer(&mut rng).expect("failed to generate signer");
         let signer2 = generate_signer(&mut rng).expect("failed to generate signer");
 
-        let data = build_signing_data(
-            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            U256::from(12345),
-            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
-            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-        );
-
-        // Sign with signer1
+        let data = test_signing_data();
         let signature = sign_proposal_data_sync(&signer1, &data).expect("signing failed");
 
-        // Verify with signer2's public key (should fail)
         let wrong_public_key = crate::crypto::public_key_bytes(&signer2);
         let valid = verify_proposal_signature(&wrong_public_key, &data, &signature)
             .expect("verification failed");
@@ -220,26 +259,23 @@ mod tests {
         let mut rng = OsRng;
         let signer = generate_signer(&mut rng).expect("failed to generate signer");
 
-        let data1 = build_signing_data(
-            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            U256::from(12345),
-            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
-            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-        );
+        let data1 = test_signing_data();
 
+        // Build different signing data (change the proposer address)
         let data2 = build_signing_data(
-            b256!("5555555555555555555555555555555555555555555555555555555555555555"),
+            address!("0000000000000000000000000000000000000001"),
             b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            U256::from(12345),
+            U256::from(100),
             b256!("3333333333333333333333333333333333333333333333333333333333333333"),
+            U256::from(999),
             b256!("4444444444444444444444444444444444444444444444444444444444444444"),
+            U256::from(1000),
+            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+            b256!("5555555555555555555555555555555555555555555555555555555555555555"),
         );
 
-        // Sign data1
         let signature = sign_proposal_data_sync(&signer, &data1).expect("signing failed");
 
-        // Verify against data2 (should fail)
         let public_key = crate::crypto::public_key_bytes(&signer);
         let valid = verify_proposal_signature(&public_key, &data2, &signature)
             .expect("verification failed");
@@ -248,9 +284,9 @@ mod tests {
 
     #[test]
     fn test_invalid_signature_length() {
-        let public_key = vec![0x04; 65]; // Dummy public key
-        let data = [0u8; 160];
-        let short_sig = vec![0u8; 64]; // Too short
+        let public_key = vec![0x04; 65];
+        let data = [0u8; SIGNING_DATA_LENGTH];
+        let short_sig = vec![0u8; 64];
 
         let result = verify_proposal_signature(&public_key, &data, &short_sig);
         assert!(matches!(
