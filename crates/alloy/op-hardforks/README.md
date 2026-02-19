@@ -1,3 +1,3 @@
-# alloy-op-hardforks
+# base-alloy-hardforks
 
-Named bindings for Optimism hardforks.
+Named bindings for hardforks.

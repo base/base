@@ -1,23 +1,23 @@
 //! Block executor for Optimism.
 
-use crate::OpEvmFactory;
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
-use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
+
+use alloy_consensus::{Eip658Value, Header, Transaction, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::{
-    Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
+    Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
         BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook,
-        StateChangePostBlockSource, StateChangeSource, StateDB, SystemCaller, TxResult,
+        StateChangePostBlockSource, StateChangeSource, StateDB, SystemCaller,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
-    eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
+    eth::receipt_builder::ReceiptBuilderCtx,
 };
-use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{B256, Bytes};
+use base_alloy_hardforks::{OpChainHardforks, OpHardforks};
 use canyon::ensure_create2_deployer;
-use op_alloy::consensus::OpDepositReceipt;
+use op_alloy_consensus::OpDepositReceipt;
 use op_revm::{
     L1BlockInfo, OpTransaction, constants::L1_BLOCK_CONTRACT, estimate_tx_compressed_size,
     transaction::deposit::DEPOSIT_TRANSACTION_TYPE,
@@ -29,6 +29,8 @@ use revm::{
     context::{Block, result::ResultAndState},
     database::{DatabaseCommitExt, State},
 };
+
+use crate::OpEvmFactory;
 
 mod canyon;
 pub mod receipt_builder;
@@ -55,25 +57,6 @@ pub struct OpBlockExecutionCtx {
     pub parent_beacon_block_root: Option<B256>,
     /// The block's extra data.
     pub extra_data: Bytes,
-}
-
-/// The result of executing an OP transaction.
-#[derive(Debug)]
-pub struct OpTxResult<H, T> {
-    /// The inner result of the transaction execution.
-    pub inner: EthTxResult<H, T>,
-    /// Whether the transaction is a deposit transaction.
-    pub is_deposit: bool,
-    /// The sender of the transaction.
-    pub sender: Address,
-}
-
-impl<H, T> TxResult for OpTxResult<H, T> {
-    type HaltReason = H;
-
-    fn result(&self) -> &ResultAndState<Self::HaltReason> {
-        &self.inner.result
-    }
 }
 
 /// Block executor for Optimism.
@@ -159,11 +142,11 @@ where
 {
     fn jovian_da_footprint_estimation(
         &mut self,
-        tx_env: &E::Tx,
-        tx: impl RecoveredTx<R::Transaction>,
+        tx: &impl ExecutableTx<Self>,
     ) -> Result<u64, BlockExecutionError> {
         // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
-        let encoded = tx_env
+        let encoded = tx
+            .to_tx_env()
             .encoded_bytes()
             .map_or_else(
                 || estimate_tx_compressed_size(tx.tx().encoded_2718().as_ref()),
@@ -195,7 +178,6 @@ where
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
     type Evm = E;
-    type Result = OpTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
@@ -224,8 +206,7 @@ where
     fn execute_transaction_without_commit(
         &mut self,
         tx: impl ExecutableTx<Self>,
-    ) -> Result<Self::Result, BlockExecutionError> {
-        let (tx_env, tx) = tx.into_parts();
+    ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
         let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
 
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
@@ -239,14 +220,12 @@ where
             .into());
         }
 
-        let da_footprint_used = if self
-            .spec
-            .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to()) &&
-            !is_deposit
+        if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
+            && !is_deposit
         {
             let da_footprint_available = self.evm.block().gas_limit() - self.da_footprint_used;
 
-            let tx_da_footprint = self.jovian_da_footprint_estimation(&tx_env, &tx)?;
+            let tx_da_footprint = self.jovian_da_footprint_estimation(&tx)?;
 
             if tx_da_footprint > da_footprint_available {
                 return Err(BlockExecutionError::Validation(BlockValidationError::Other(
@@ -256,42 +235,29 @@ where
                     }),
                 )));
             }
-
-            tx_da_footprint
-        } else {
-            0
-        };
+        }
 
         // Execute transaction and return the result
-        let result = self.evm.transact(tx_env).map_err(|err| {
+        self.evm.transact(&tx).map_err(|err| {
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
-        })?;
-
-        Ok(OpTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: da_footprint_used,
-                tx_type: tx.tx().tx_type(),
-            },
-            is_deposit,
-            sender: *tx.signer(),
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
-        let OpTxResult {
-            inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            is_deposit,
-            sender,
-        } = output;
+    fn commit_transaction(
+        &mut self,
+        output: ResultAndState<<Self::Evm as Evm>::HaltReason>,
+        tx: impl ExecutableTx<Self>,
+    ) -> Result<u64, BlockExecutionError> {
+        let ResultAndState { result, state } = output;
+        let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
 
         // Fetch the depositor account from the database for the deposit nonce.
         // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
         // were not introduced in Bedrock. In addition, regular transactions don't have deposit
         // nonces, so we don't need to touch the DB for those.
         let depositor = (self.is_regolith && is_deposit)
-            .then(|| self.evm.db_mut().basic(sender).map(|acc| acc.unwrap_or_default()))
+            .then(|| self.evm.db_mut().basic(*tx.signer()).map(|acc| acc.unwrap_or_default()))
             .transpose()
             .map_err(BlockExecutionError::other)?;
 
@@ -303,16 +269,17 @@ where
         self.gas_used += gas_used;
 
         // Update DA footprint if Jovian is active
-        if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to()) &&
-            !is_deposit
+        if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
+            && !is_deposit
         {
+            let tx_da_footprint = self.jovian_da_footprint_estimation(&tx)?;
             // Add to DA footprint used
-            self.da_footprint_used = self.da_footprint_used.saturating_add(blob_gas_used);
+            self.da_footprint_used = self.da_footprint_used.saturating_add(tx_da_footprint);
         }
 
         self.receipts.push(
             match self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx_type,
+                tx: tx.tx(),
                 result,
                 cumulative_gas_used: self.gas_used,
                 evm: &self.evm,
@@ -336,8 +303,8 @@ where
                         // when set. The state transition process ensures
                         // this is only set for post-Canyon deposit
                         // transactions.
-                        deposit_receipt_version: (is_deposit &&
-                            self.spec.is_canyon_active_at_timestamp(
+                        deposit_receipt_version: (is_deposit
+                            && self.spec.is_canyon_active_at_timestamp(
                                 self.evm.block().timestamp().saturating_to(),
                             ))
                         .then_some(1),
@@ -474,13 +441,14 @@ where
 #[cfg(test)]
 mod tests {
     use alloc::{string::ToString, vec};
+
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
-    use alloy_evm::{EvmEnv, ToTxEnv};
+    use alloy_evm::EvmEnv;
     use alloy_hardforks::ForkCondition;
-    use alloy_op_hardforks::OpHardfork;
     use alloy_primitives::{Address, Signature, U256, uint};
-    use op_alloy::consensus::OpTxEnvelope;
+    use base_alloy_hardforks::OpHardfork;
+    use op_alloy_consensus::OpTxEnvelope;
     use op_revm::{
         DefaultOp, L1BlockInfo, OpBuilder, OpSpecId,
         constants::{
@@ -497,9 +465,8 @@ mod tests {
         state::AccountInfo,
     };
 
-    use crate::OpEvm;
-
     use super::*;
+    use crate::OpEvm;
 
     #[test]
     fn test_with_encoded() {
@@ -551,7 +518,7 @@ mod tests {
 
         db.insert_account_with_storage(
             L1_BLOCK_CONTRACT,
-            Default::default(),
+            AccountInfo { ..Default::default() },
             HashMap::from_iter([
                 (L1_BASE_FEE_SLOT, L1_BASE_FEE),
                 (ECOTONE_L1_FEE_SCALARS_SLOT, L1_FEE_SCALARS),
@@ -635,11 +602,10 @@ mod tests {
             ))),
             Address::ZERO,
         );
-        let tx_env = tx.to_tx_env();
 
         assert!(executor.da_footprint_used == 0);
 
-        let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx_env, &tx).unwrap();
+        let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx).unwrap();
 
         // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let res = executor.execute_transaction(&tx);
@@ -680,11 +646,10 @@ mod tests {
             ))),
             Address::ZERO,
         );
-        let tx_env = tx.to_tx_env();
 
         assert!(executor.da_footprint_used == 0);
 
-        let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx_env, &tx).unwrap();
+        let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx).unwrap();
 
         // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let res = executor.execute_transaction(&tx);
@@ -737,11 +702,10 @@ mod tests {
             ))),
             Address::ZERO,
         );
-        let tx_env = tx.to_tx_env();
 
         assert!(executor.da_footprint_used == 0);
 
-        let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx_env, &tx).unwrap();
+        let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx).unwrap();
 
         // make sure we can use both `WithEncoded` and transaction itself as inputs.
         let gas_used_tx = executor.execute_transaction(&tx).expect("failed to execute transaction");

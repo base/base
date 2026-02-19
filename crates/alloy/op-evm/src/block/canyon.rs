@@ -1,6 +1,6 @@
 use alloy_evm::Database;
-use alloy_op_hardforks::OpHardforks;
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
+use base_alloy_hardforks::OpHardforks;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// The address of the create2 deployer
@@ -29,8 +29,8 @@ where
     // If the canyon hardfork is active at the current timestamp, and it was not active at the
     // previous block timestamp (heuristically, block time is not perfectly constant at 2s), and the
     // chain is an optimism chain, then we need to force-deploy the create2 deployer contract.
-    if chain_spec.is_canyon_active_at_timestamp(timestamp) &&
-        !chain_spec.is_canyon_active_at_timestamp(timestamp.saturating_sub(2))
+    if chain_spec.is_canyon_active_at_timestamp(timestamp)
+        && !chain_spec.is_canyon_active_at_timestamp(timestamp.saturating_sub(2))
     {
         // Load the create2 deployer account from the cache.
         let mut acc_info = db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default();

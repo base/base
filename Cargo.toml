@@ -288,10 +288,12 @@ alloy-evm = { version = "0.26.3", default-features = false }
 alloy-primitives = { version = "1.5.0", default-features = false }
 
 # base-alloy (local)
+base-alloy-evm = { path = "crates/alloy/op-evm" }
 base-alloy-network = { path = "crates/alloy/network" }
 base-alloy-provider = { path = "crates/alloy/provider" }
 base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
 base-alloy-consensus = { path = "crates/alloy/consensus" }
+base-alloy-hardforks = { path = "crates/alloy/op-hardforks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
 base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine" }
 

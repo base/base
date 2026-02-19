@@ -2283,6 +2283,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-alloy-evm"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "auto_impl",
+ "base-alloy-hardforks",
+ "op-alloy-consensus",
+ "op-revm 15.0.0",
+ "revm 34.0.0",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "base-alloy-hardforks"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "auto_impl",
+ "serde",
+]
+
+[[package]]
 name = "base-alloy-network"
 version = "0.0.0"
 dependencies = [

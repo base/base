@@ -1,19 +1,16 @@
 #![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/alloy.jpg",
-    html_favicon_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/favicon.ico"
-)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![no_std]
 
 extern crate alloc;
 use alloc::vec::Vec;
+use core::ops::Index;
+
 use alloy_chains::{Chain, NamedChain};
 use alloy_hardforks::{EthereumHardfork, hardfork};
 pub use alloy_hardforks::{EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
-use core::ops::Index;
 
 pub mod optimism;
 pub use optimism::{mainnet as op_mainnet, mainnet::*, sepolia as op_sepolia, sepolia::*};
@@ -374,8 +371,8 @@ impl Index<EthereumHardfork> for OpChainHardforks {
             // Dao Hardfork is not needed for OpChainHardforks
             Dao | Osaka | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
             Berlin if self.is_op_mainnet() => &ForkCondition::Block(OP_MAINNET_BERLIN_BLOCK),
-            Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople |
-            Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
+            Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
+            | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
             London | ArrowGlacier | GrayGlacier => &self[Bedrock],
             Paris if self.is_op_mainnet() => &ForkCondition::TTD {
                 activation_block_number: OP_MAINNET_BEDROCK_BLOCK,
@@ -397,8 +394,9 @@ impl Index<EthereumHardfork> for OpChainHardforks {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::str::FromStr;
+
+    use super::*;
 
     extern crate alloc;
 

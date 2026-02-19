@@ -1,22 +1,18 @@
 #![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/alloy.jpg",
-    html_favicon_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/favicon.ico"
-)]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
-pub use alloy_evm::op::{spec, spec_by_timestamp_after_bedrock};
-
-use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes};
 use core::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
+
+pub use alloy_evm::op::{spec, spec_by_timestamp_after_bedrock};
+use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
+use alloy_primitives::{Address, Bytes};
 use op_revm::{
     DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
     precompiles::OpPrecompiles,
@@ -210,6 +206,7 @@ impl EvmFactory for OpEvmFactory {
 #[cfg(test)]
 mod tests {
     use alloc::{string::ToString, vec};
+
     use alloy_evm::{
         EvmInternals,
         precompiles::{Precompile, PrecompileInput},
