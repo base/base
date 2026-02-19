@@ -22,11 +22,12 @@ async fn pending_pool_limit() -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(50, ONE_ETH).await?;
 
-    // Send 50 txs from different addrs
-    let acc_no_priority = accounts.first().unwrap();
-    let acc_with_priority = accounts.last().unwrap();
+    // send 50 txs from different addrs
+    let accs_no_priority = accounts.clone();
+    let accs_with_priority = accounts.into_iter().take(10).collect::<Vec<_>>();
 
-    for _ in 0..50 {
+    for i in 0..50 {
+        let acc_no_priority = accs_no_priority.get(i).unwrap();
         let _ = driver.create_transaction().with_signer(acc_no_priority).send().await?;
     }
 
@@ -39,7 +40,8 @@ async fn pending_pool_limit() -> eyre::Result<()> {
 
     // Send 10 txs that should be included in the block
     let mut txs = Vec::new();
-    for _ in 0..10 {
+    for i in 0..10 {
+        let acc_with_priority = accs_with_priority.get(i).unwrap();
         let tx = driver
             .create_transaction()
             .with_signer(acc_with_priority)

@@ -112,7 +112,7 @@ fn spawn_proofs_db_metrics(
     storage: Arc<MdbxProofsStorage>,
     metrics_report_interval: Duration,
 ) {
-    executor.spawn_critical("op-proofs-storage-metrics", async move {
+    executor.spawn_critical_task("op-proofs-storage-metrics", async move {
         info!(
             target: "reth::cli",
             ?metrics_report_interval,

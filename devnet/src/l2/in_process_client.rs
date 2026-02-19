@@ -24,7 +24,7 @@ use reth_node_core::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::TaskManager;
+use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use url::Url;
 
 /// Configuration for starting an in-process client node.
@@ -59,7 +59,7 @@ pub struct InProcessClient {
     engine_addr: SocketAddr,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
-    _task_manager: TaskManager,
+    _runtime: Runtime,
     _db_path: PathBuf,
 }
 
@@ -83,8 +83,7 @@ impl std::fmt::Debug for InProcessClient {
 impl InProcessClient {
     /// Starts an in-process client node with the provided configuration.
     pub async fn start(config: InProcessClientConfig) -> Result<Self> {
-        let tasks = TaskManager::current();
-        let exec = tasks.executor();
+        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
 
         // Parse genesis JSON to chain spec
         let genesis: alloy_genesis::Genesis = serde_json::from_slice(&config.genesis_json)
@@ -155,7 +154,7 @@ impl InProcessClient {
 
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(exec.clone())
+            .with_launch_context(runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(op_node.components())
             .with_add_ons(op_node.add_ons())
@@ -187,7 +186,7 @@ impl InProcessClient {
             engine_addr,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
-            _task_manager: tasks,
+            _runtime: runtime,
             _db_path: db_path,
         })
     }
@@ -217,12 +216,12 @@ impl InProcessClient {
     }
 
     /// Creates a test database with a 100 MB map size.
-    fn create_test_database() -> Result<(Arc<DatabaseEnv>, PathBuf)> {
+    fn create_test_database() -> Result<(DatabaseEnv, PathBuf)> {
         let path = tempdir_path();
         let args = DatabaseArguments::new(ClientVersion::default())
             .with_geometry_max_size(Some(100 * 1024 * 1024));
         let db = init_db(&path, args).expect("Failed to create test database");
-        Ok((Arc::new(db), path))
+        Ok((db, path))
     }
 
     /// Builds the extensions for the client node.
