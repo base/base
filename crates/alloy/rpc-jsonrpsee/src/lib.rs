@@ -6,4 +6,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub mod traits;
+mod traits;
+#[cfg(feature = "client")]
+pub use traits::{MinerApiExtClient, OpAdminApiClient};
+pub use traits::{MinerApiExtServer, OpAdminApiServer};
