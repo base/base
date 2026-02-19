@@ -815,6 +815,7 @@ where
                     flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
+                    current_uncompressed_da = info.cumulative_uncompressed_bytes,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
@@ -849,11 +850,16 @@ where
             .block_uncompressed_size
             .record(info.cumulative_uncompressed_bytes as f64);
 
-        debug!(
+        info!(
             target: "payload_builder",
             message = message,
             flashblocks_per_block = flashblocks_per_block,
             flashblock_index = ctx.flashblock_index(),
+            missing_flashblocks = flashblocks_per_block.saturating_sub(ctx.flashblock_index()),
+            num_tx = info.executed_transactions.len(),
+            cumulative_gas_used = info.cumulative_gas_used,
+            cumulative_da_bytes_used = info.cumulative_da_bytes_used,
+            cumulative_uncompressed_bytes = info.cumulative_uncompressed_bytes,
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
