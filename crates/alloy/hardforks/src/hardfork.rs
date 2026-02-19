@@ -4,10 +4,9 @@ use alloy_hardforks::{ForkCondition, hardfork};
 use crate::{
     BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP, BASE_MAINNET_FJORD_TIMESTAMP,
     BASE_MAINNET_GRANITE_TIMESTAMP, BASE_MAINNET_HOLOCENE_TIMESTAMP,
-    BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP,
-    BASE_SEPOLIA_CANYON_TIMESTAMP, BASE_SEPOLIA_ECOTONE_TIMESTAMP, BASE_SEPOLIA_FJORD_TIMESTAMP,
-    BASE_SEPOLIA_GRANITE_TIMESTAMP, BASE_SEPOLIA_HOLOCENE_TIMESTAMP,
-    BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
+    BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_CANYON_TIMESTAMP,
+    BASE_SEPOLIA_ECOTONE_TIMESTAMP, BASE_SEPOLIA_FJORD_TIMESTAMP, BASE_SEPOLIA_GRANITE_TIMESTAMP,
+    BASE_SEPOLIA_HOLOCENE_TIMESTAMP, BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
 };
 
 hardfork!(
@@ -75,9 +74,7 @@ impl OpHardfork {
 
     /// Base mainnet list of hardforks.
     pub const fn base_mainnet() -> [(Self, ForkCondition); 9] {
-        use crate::{
-            BASE_MAINNET_BEDROCK_BLOCK, BASE_MAINNET_REGOLITH_TIMESTAMP,
-        };
+        use crate::{BASE_MAINNET_BEDROCK_BLOCK, BASE_MAINNET_REGOLITH_TIMESTAMP};
 
         [
             (Self::Bedrock, ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK)),
@@ -94,9 +91,7 @@ impl OpHardfork {
 
     /// Base Sepolia list of hardforks.
     pub const fn base_sepolia() -> [(Self, ForkCondition); 9] {
-        use crate::{
-            BASE_SEPOLIA_BEDROCK_BLOCK, BASE_SEPOLIA_REGOLITH_TIMESTAMP,
-        };
+        use crate::{BASE_SEPOLIA_BEDROCK_BLOCK, BASE_SEPOLIA_REGOLITH_TIMESTAMP};
 
         [
             (Self::Bedrock, ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK)),
@@ -143,8 +138,8 @@ mod tests {
     #[test]
     fn check_op_hardfork_from_str() {
         let hardfork_str = [
-            "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE",
-            "isthMUS", "jOvIaN", "inTerOP",
+            "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
+            "jOvIaN", "inTerOP",
         ];
         let expected_hardforks = [
             OpHardfork::Bedrock,
