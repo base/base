@@ -95,7 +95,7 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
     }
 }
 
-/// Helper function to validate propeties of a bundle. A bundle is valid if it satisfies the following criteria:
+/// Helper function to validate properties of a bundle. A bundle is valid if it satisfies the following criteria:
 /// - The bundle's `max_timestamp` is not more than 1 hour in the future
 /// - The bundle's gas limit is not greater than the maximum allowed gas limit
 /// - The bundle can only contain 3 transactions at once
