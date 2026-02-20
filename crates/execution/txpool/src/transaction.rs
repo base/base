@@ -242,7 +242,7 @@ where
     }
 }
 
-/// Helper trait to provide payload builder with access to interop info and encoded bytes of
+/// Helper trait to provide payload builder with access to encoded bytes of
 /// transaction.
 pub trait OpPooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
