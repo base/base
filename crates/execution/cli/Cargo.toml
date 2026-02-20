@@ -37,13 +37,12 @@ reth-provider.workspace = true
 futures-util.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
-tokio = { workspace = true, features = ["sync", "macros", "time", "rt-multi-thread"] }
 tracing.workspace = true
 eyre.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
-op-alloy-consensus.workspace = true
+op-alloy-consensus = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -58,10 +57,7 @@ default = []
 otlp = [ "reth-node-core/otlp", "reth-tracing/otlp" ]
 otlp-logs = [ "reth-node-core/otlp-logs", "reth-tracing/otlp-logs" ]
 
-asm-keccak = [
-	"reth-node-core/asm-keccak",
-	"reth-optimism-node/asm-keccak",
-]
+asm-keccak = [ "reth-node-core/asm-keccak", "reth-optimism-node/asm-keccak" ]
 
 keccak-cache-global = [
 	"reth-node-core/keccak-cache-global",
@@ -75,10 +71,14 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
-dev = [ "dep:proptest", "reth-cli-commands/arbitrary" ]
+dev = [
+	"dep:op-alloy-consensus",
+	"dep:proptest",
+	"reth-cli-commands/arbitrary",
+]
 
 serde = [
-	"op-alloy-consensus/serde",
+	"op-alloy-consensus?/serde",
 	"reth-optimism-chainspec/serde",
 	"reth-optimism-primitives/serde",
 ]

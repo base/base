@@ -13140,7 +13140,6 @@ dependencies = [
  "reth-rpc-server-types",
  "reth-tracing",
  "tempfile",
- "tokio",
  "tracing",
 ]
 
@@ -13404,7 +13403,6 @@ dependencies = [
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "op-revm",
- "reqwest 0.13.2",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -13434,7 +13432,6 @@ dependencies = [
  "reth-transaction-pool",
  "revm",
  "serde",
- "serde_json",
  "strum",
  "thiserror 2.0.18",
  "tokio",
