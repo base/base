@@ -13,9 +13,10 @@ pub use engine::{
 
 mod bundles;
 pub use bundles::{
-    AcceptedBundle, Bundle, BundleExtensions, BundleHash, BundleTxs, CancelBundle,
-    MeterBundleResponse, ParsedBundle, TransactionResult,
+    AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
+    TransactionResult,
 };
+pub use base_bundles::{BundleExtensions, BundleTxs};
 
 mod flashblocks;
 pub use flashblocks::{

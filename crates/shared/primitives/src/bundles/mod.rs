@@ -1,7 +1,7 @@
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
-pub use base_bundles::{BundleExtensions, BundleTxs};
+use base_bundles::{BundleExtensions, BundleTxs};
 use op_alloy_consensus::OpTxEnvelope;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
