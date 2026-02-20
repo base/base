@@ -15,7 +15,7 @@ use reth_node_builder::{
     BuilderContext, FullNodeTypes, Node, NodeBuilder, NodeConfig, NodeTypes,
     components::ExecutorBuilder,
 };
-use reth_optimism_chainspec::{BASE_MAINNET, OP_SEPOLIA, OpChainSpec};
+use reth_optimism_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OpChainSpec};
 use reth_optimism_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethReceiptBuilder};
 use reth_optimism_node::{OpEvmConfig, OpExecutorBuilder, OpNode, args::RollupArgs};
 use reth_optimism_primitives::OpPrimitives;
@@ -157,7 +157,7 @@ fn test_setup_custom_precompiles() {
         }
     }
 
-    NodeBuilder::new(NodeConfig::new(OP_SEPOLIA.clone()))
+    NodeBuilder::new(NodeConfig::new(BASE_SEPOLIA.clone()))
         .with_database(create_test_rw_db())
         .with_types::<OpNode>()
         .with_components(

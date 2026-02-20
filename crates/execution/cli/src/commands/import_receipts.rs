@@ -277,7 +277,7 @@ pub struct ImportReceiptsResult {
 mod test {
     use alloy_primitives::hex;
     use reth_db_common::init::init_genesis;
-    use reth_optimism_chainspec::OP_MAINNET;
+    use reth_optimism_chainspec::BASE_MAINNET;
     use reth_optimism_node::OpNode;
     use reth_provider::test_utils::create_test_provider_factory_with_node_types;
     use reth_stages::test_utils::TestStageDB;
@@ -314,7 +314,7 @@ mod test {
         init_genesis(&db.factory).unwrap();
 
         let provider_factory =
-            create_test_provider_factory_with_node_types::<OpNode>(OP_MAINNET.clone());
+            create_test_provider_factory_with_node_types::<OpNode>(BASE_MAINNET.clone());
         let ImportReceiptsResult { total_decoded_receipts, total_filtered_out_dup_txns } =
             import_receipts_from_reader(&provider_factory, reader, |_, _| 0).await.unwrap();
 
