@@ -42,7 +42,7 @@ serde_repr = { workspace = true, optional = true }
 tabled = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
-toml = { workspace = true, features = ["parse"] }
+toml = { workspace = true, features = ["parse", "serde"] }
 rand = { workspace = true, features = ["thread_rng"] }
 serde_json.workspace = true
 arbitrary = { workspace = true, features = ["derive"] }

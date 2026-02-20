@@ -256,19 +256,11 @@ pub enum L1GenesisGetterErrors {
     ChainIDDoesNotExist(u64),
     /// The chain ID is unknown.
     UnknownChainID(u64),
-    /// Failed to parse the genesis.
-    ParseGenesisError(serde_json::Error),
 }
 
 impl Display for L1GenesisGetterErrors {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{self:?}")
-    }
-}
-
-impl From<serde_json::Error> for L1GenesisGetterErrors {
-    fn from(error: serde_json::Error) -> Self {
-        Self::ParseGenesisError(error)
     }
 }
 

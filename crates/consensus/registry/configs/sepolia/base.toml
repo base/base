@@ -1,0 +1,52 @@
+name = "Base Sepolia Testnet"
+public_rpc = "https://sepolia.base.org"
+sequencer_rpc = "https://sepolia-sequencer.base.org"
+explorer = "https://sepolia-explorer.base.org"
+superchain_level = 1
+governed_by_optimism = false
+superchain_time = 0
+data_availability_type = "eth-da"
+chain_id = 84532
+batch_inbox_addr = "0xfF00000000000000000000000000000000084532"
+block_time = 2
+seq_window_size = 3600
+max_sequencer_drift = 600
+
+[hardforks]
+  canyon_time = 1699981200 # Tue 14 Nov 2023 17:00:00 UTC
+  delta_time = 1703203200 # Fri 22 Dec 2023 00:00:00 UTC
+  ecotone_time = 1708534800 # Wed 21 Feb 2024 17:00:00 UTC
+  fjord_time = 1716998400 # Wed 29 May 2024 16:00:00 UTC
+  granite_time = 1723478400 # Mon 12 Aug 2024 16:00:00 UTC
+  holocene_time = 1732633200 # Tue 26 Nov 2024 15:00:00 UTC
+  pectra_blob_schedule_time = 1742486400 # Thu 20 Mar 2025 16:00:00 UTC
+  isthmus_time = 1744905600 # Thu 17 Apr 2025 16:00:00 UTC
+  jovian_time = 1763568001 # Wed 19 Nov 2025 16:00:01 UTC
+
+[optimism]
+  eip1559_elasticity = 10
+  eip1559_denominator = 50
+  eip1559_denominator_canyon = 250
+
+[genesis]
+  l2_time = 1695768288
+  [genesis.l1]
+    hash = "0xcac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"
+    number = 4370868
+  [genesis.l2]
+    hash = "0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4"
+    number = 0
+  [genesis.system_config]
+    batcherAddress = "0x6CDEbe940BC0F26850285cacA097C11c33103E47"
+    overhead = "0x0000000000000000000000000000000000000000000000000000000000000834"
+    scalar = "0x00000000000000000000000000000000000000000000000000000000000f4240"
+    gasLimit = 25000000
+
+[roles]
+  ProxyAdminOwner = "0x0fe884546476dDd290eC46318785046ef68a0BA9"
+
+[addresses]
+  L1StandardBridgeProxy = "0xfd0Bf71F60660E2f608ed56e1659C450eB113120"
+  OptimismPortalProxy = "0x49f53e41452C74589E85cA1677426Ba426459e85"
+  SystemConfigProxy = "0xf272670eb55e895584501d564AfEB048bEd26194"
+  DisputeGameFactoryProxy = "0xd6E6dBf4F7EA0ac412fD8b65ED297e64BB7a06E1"

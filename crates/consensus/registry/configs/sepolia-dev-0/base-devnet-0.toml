@@ -1,0 +1,52 @@
+name = "Base devnet 0"
+public_rpc = ""
+sequencer_rpc = ""
+explorer = ""
+superchain_level = 0
+governed_by_optimism = false
+superchain_time = 1706634000
+data_availability_type = "eth-da"
+chain_id = 11763072
+batch_inbox_addr = "0xfF00000000000000000000000000000011763072"
+block_time = 2
+seq_window_size = 3600
+max_sequencer_drift = 600
+
+[hardforks]
+  canyon_time = 1698436800 # Fri 27 Oct 2023 20:00:00 UTC
+  delta_time = 1706555000 # Mon 29 Jan 2024 19:03:20 UTC
+  ecotone_time = 1706634000 # Tue 30 Jan 2024 17:00:00 UTC
+  fjord_time = 1715961600 # Fri 17 May 2024 16:00:00 UTC
+  granite_time = 1723046400 # Wed 7 Aug 2024 16:00:00 UTC
+  holocene_time = 1731682800 # Fri 15 Nov 2024 15:00:00 UTC
+  pectra_blob_schedule_time = 1742486400 # Thu 20 Mar 2025 16:00:00 UTC
+  isthmus_time = 1744300800 # Thu 10 Apr 2025 16:00:00 UTC
+  jovian_time = 1762185600 # Mon 3 Nov 2025 16:00:00 UTC
+
+[optimism]
+  eip1559_elasticity = 6
+  eip1559_denominator = 50
+  eip1559_denominator_canyon = 250
+
+[genesis]
+  l2_time = 1695433056
+  [genesis.l1]
+    hash = "0x86252c512dc5bd7201d0532b31d50696ba84344a7cda545e04a98073a8e13d87"
+    number = 4344216
+  [genesis.l2]
+    hash = "0x1ab91449a7c65b8cd6c06f13e2e7ea2d10b6f9cbf5def79f362f2e7e501d2928"
+    number = 0
+  [genesis.system_config]
+    batcherAddress = "0x212dD524932bC43478688F91045F2682913ad8EE"
+    overhead = "0x0000000000000000000000000000000000000000000000000000000000000834"
+    scalar = "0x00000000000000000000000000000000000000000000000000000000000f4240"
+    gasLimit = 25000000
+
+[roles]
+  ProxyAdminOwner = "0x0fe884546476dDd290eC46318785046ef68a0BA9"
+
+[addresses]
+  L1StandardBridgeProxy = "0x5638e55db5Fcf7A58df525F1098E8569C8DbA80c"
+  OptimismPortalProxy = "0x579c82A835B884336B632eeBeCC78FA08D3291Ec"
+  SystemConfigProxy = "0x7F67DC4959cb3E532B10A99F41bDD906C46FdFdE"
+  DisputeGameFactoryProxy = "0xe545eDE9d1FaDaD12984c31467F56405884b9398"
