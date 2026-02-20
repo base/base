@@ -5,7 +5,7 @@ use audit_archiver_lib::{
     BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
 };
 use base_alloy_network::Base;
-use base_bundles::{AcceptedBundle, MeterBundleResponse};
+use base_bundles::MeterBundleResponse;
 use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
 use clap::Parser;
 use ingress_rpc_lib::{
@@ -77,12 +77,9 @@ async fn main() -> anyhow::Result<()> {
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
-    let (builder_backrun_tx, _) =
-        broadcast::channel::<AcceptedBundle>(config.max_buffered_backrun_bundles);
     config.builder_rpcs.iter().for_each(|builder_rpc| {
         let metering_rx = builder_tx.subscribe();
-        let backrun_rx = builder_backrun_tx.subscribe();
-        connect_ingress_to_builder(metering_rx, backrun_rx, builder_rpc.clone());
+        connect_ingress_to_builder(metering_rx, builder_rpc.clone());
     });
 
     let health_check_addr = config.health_check_addr;
@@ -92,8 +89,7 @@ async fn main() -> anyhow::Result<()> {
         address = %bound_health_addr
     );
 
-    let service =
-        IngressService::new(providers, queue, audit_tx, builder_tx, builder_backrun_tx, cfg);
+    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cfg);
     let bind_addr = format!("{}:{}", config.address, config.port);
 
     let server = Server::builder().build(&bind_addr).await?;

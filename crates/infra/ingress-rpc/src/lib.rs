@@ -26,7 +26,7 @@ use std::{
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_alloy_network::Base;
-use base_bundles::{AcceptedBundle, MeterBundleResponse};
+use base_bundles::MeterBundleResponse;
 use base_cli_utils::{LogFormat, LogLevel};
 use clap::Parser;
 use tokio::sync::broadcast;
@@ -139,10 +139,6 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_MAX_BUFFERED_METER_BUNDLE_RESPONSES", default_value = "100")]
     pub max_buffered_meter_bundle_responses: usize,
 
-    /// Maximum number of backrun bundles to buffer in memory
-    #[arg(long, env = "TIPS_INGRESS_MAX_BUFFERED_BACKRUN_BUNDLES", default_value = "100")]
-    pub max_buffered_backrun_bundles: usize,
-
     /// Address to bind the health check server to
     #[arg(long, env = "TIPS_INGRESS_HEALTH_CHECK_ADDR", default_value = "0.0.0.0:8081")]
     pub health_check_addr: SocketAddr,
@@ -150,18 +146,6 @@ pub struct Config {
     /// chain id
     #[arg(long, env = "TIPS_INGRESS_CHAIN_ID", default_value = "11")]
     pub chain_id: u64,
-
-    /// Enable backrun bundle submission to op-rbuilder
-    #[arg(long, env = "TIPS_INGRESS_BACKRUN_ENABLED", default_value = "false")]
-    pub backrun_enabled: bool,
-
-    /// Maximum number of transactions allowed in a backrun bundle (including target tx)
-    #[arg(long, env = "MAX_BACKRUN_TXS", default_value = "5")]
-    pub max_backrun_txs: usize,
-
-    /// Maximum total gas limit for all transactions in a backrun bundle
-    #[arg(long, env = "MAX_BACKRUN_GAS_LIMIT", default_value = "5000000")]
-    pub max_backrun_gas_limit: u64,
 
     /// URL of third-party RPC endpoint to forward raw transactions to (enables forwarding if set)
     #[arg(long, env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC")]
@@ -176,10 +160,9 @@ pub struct Config {
     pub send_to_builder: bool,
 }
 
-/// Spawns background tasks that forward metering and backrun data to the builder RPC.
+/// Spawns a background task that forwards metering data to the builder RPC.
 pub fn connect_ingress_to_builder(
     metering_rx: broadcast::Receiver<MeterBundleResponse>,
-    backrun_rx: broadcast::Receiver<AcceptedBundle>,
     builder_rpc: Url,
 ) {
     let builder: RootProvider<Base> = ProviderBuilder::new()
@@ -187,7 +170,6 @@ pub fn connect_ingress_to_builder(
         .network::<Base>()
         .connect_http(builder_rpc);
 
-    let metering_builder = builder.clone();
     tokio::spawn(async move {
         let mut event_rx = metering_rx;
         while let Ok(event) = event_rx.recv().await {
@@ -197,7 +179,7 @@ pub fn connect_ingress_to_builder(
             }
 
             let tx_hash = event.results[0].tx_hash;
-            if let Err(e) = metering_builder
+            if let Err(e) = builder
                 .client()
                 .request::<(TxHash, MeterBundleResponse), ()>(
                     "base_setMeteringInformation",
@@ -206,19 +188,6 @@ pub fn connect_ingress_to_builder(
                 .await
             {
                 error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
-            }
-        }
-    });
-
-    tokio::spawn(async move {
-        let mut event_rx = backrun_rx;
-        while let Ok(accepted_bundle) = event_rx.recv().await {
-            if let Err(e) = builder
-                .client()
-                .request::<(AcceptedBundle,), ()>("base_sendBackrunBundle", (accepted_bundle,))
-                .await
-            {
-                error!(error = ?e, "Failed to send backrun bundle to builder");
             }
         }
     });
