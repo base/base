@@ -57,6 +57,7 @@ rocksdb = { version = "0.22", features = ["snappy"], optional = true }
 
 [features]
 test-utils = [
+	"base-protocol/test-utils",
 	"dep:alloy-provider",
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types-engine",
@@ -69,5 +70,4 @@ test-utils = [
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
-	"base-protocol/test-utils",
 ]

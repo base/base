@@ -27,4 +27,4 @@ tracing = { workspace = true, optional = true }
 normal = ["buddy_system_allocator"]
 
 [features]
-tracing = ["dep:tracing"]
+tracing = [ "dep:tracing" ]
