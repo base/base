@@ -40,16 +40,15 @@ use reth_optimism_payload_builder::{
 };
 use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
 use reth_optimism_rpc::{
-    SequencerClient,
-    eth::{OpEthApiBuilder, ext::OpEthExtApi},
+    eth::OpEthApiBuilder,
     historical::{HistoricalRpc, HistoricalRpcClient},
     miner::{MinerApiExtServer, OpMinerExtApi},
     witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
 };
 use reth_optimism_storage::OpStorage;
 use reth_optimism_txpool::OpPooledTx;
-use reth_provider::{CanonStateSubscriptions, providers::ProviderFactoryBuilder};
-use reth_rpc_api::{DebugApiServer, L2EthApiExtServer, eth::RpcTypes};
+use reth_provider::providers::ProviderFactoryBuilder;
+use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
@@ -164,10 +163,7 @@ impl OpNode {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .executor(OpExecutorBuilder::default())
-            .pool(
-                OpPoolBuilder::default()
-                    .with_enable_tx_conditional(self.args.enable_tx_conditional),
-            )
+            .pool(OpPoolBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
@@ -184,7 +180,6 @@ impl OpNode {
             .with_sequencer_headers(self.args.sequencer_headers.clone())
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
-            .with_enable_tx_conditional(self.args.enable_tx_conditional)
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
             .with_historical_rpc(self.args.historical_rpc.clone())
     }
@@ -312,8 +307,6 @@ pub struct OpAddOns<
     ///
     /// This can be used to forward pre-bedrock rpc requests (op-mainnet).
     pub historical_rpc: Option<String>,
-    /// Enable transaction conditionals.
-    enable_tx_conditional: bool,
     min_suggested_priority_fee: u64,
 }
 
@@ -331,7 +324,6 @@ where
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
         historical_rpc: Option<String>,
-        enable_tx_conditional: bool,
         min_suggested_priority_fee: u64,
     ) -> Self {
         Self {
@@ -341,7 +333,6 @@ where
             sequencer_url,
             sequencer_headers,
             historical_rpc,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         }
     }
@@ -392,7 +383,6 @@ where
             sequencer_url,
             sequencer_headers,
             historical_rpc,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             ..
         } = self;
@@ -403,7 +393,6 @@ where
             sequencer_url,
             sequencer_headers,
             historical_rpc,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -419,7 +408,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             historical_rpc,
             ..
@@ -431,7 +419,6 @@ where
             sequencer_url,
             sequencer_headers,
             historical_rpc,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -450,7 +437,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             historical_rpc,
             ..
@@ -462,7 +448,6 @@ where
             sequencer_url,
             sequencer_headers,
             historical_rpc,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -519,16 +504,7 @@ where
         self,
         ctx: reth_node_api::AddOnsContext<'_, N>,
     ) -> eyre::Result<Self::Handle> {
-        let Self {
-            rpc_add_ons,
-            da_config,
-            gas_limit_config,
-            sequencer_url,
-            sequencer_headers,
-            enable_tx_conditional,
-            historical_rpc,
-            ..
-        } = self;
+        let Self { rpc_add_ons, da_config, gas_limit_config, historical_rpc, .. } = self;
 
         let maybe_pre_bedrock_historical_rpc = historical_rpc
             .and_then(|historical_rpc| {
@@ -565,18 +541,6 @@ where
         );
         let miner_ext = OpMinerExtApi::new(da_config, gas_limit_config);
 
-        let sequencer_client = if let Some(url) = sequencer_url {
-            Some(SequencerClient::new_with_headers(url, sequencer_headers).await?)
-        } else {
-            None
-        };
-
-        let tx_conditional_ext: OpEthExtApi<N::Pool, N::Provider> = OpEthExtApi::new(
-            sequencer_client,
-            ctx.node.pool().clone(),
-            ctx.node.provider().clone(),
-        );
-
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
                 let reth_node_builder::rpc::RpcModuleContainer { modules, auth_module, registry } =
@@ -601,14 +565,6 @@ where
                 if modules.module_config().contains_any(&RethRpcModule::Debug) {
                     debug!(target: "reth::cli", "Installing debug rpc endpoint");
                     auth_module.merge_auth_methods(registry.debug_api().into_rpc())?;
-                }
-
-                if enable_tx_conditional {
-                    // extend the eth namespace if configured in the regular http server
-                    modules.merge_if_module_configured(
-                        RethRpcModule::Eth,
-                        tx_conditional_ext.into_rpc(),
-                    )?;
                 }
 
                 Ok(())
@@ -681,8 +637,6 @@ pub struct OpAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     da_config: Option<OpDAConfig>,
     /// Gas limit configuration for the OP builder.
     gas_limit_config: Option<OpGasLimitConfig>,
-    /// Enable transaction conditionals.
-    enable_tx_conditional: bool,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -701,7 +655,6 @@ impl<NetworkT> Default for OpAddOnsBuilder<NetworkT> {
             historical_rpc: None,
             da_config: None,
             gas_limit_config: None,
-            enable_tx_conditional: false,
             min_suggested_priority_fee: 1_000_000,
             _nt: PhantomData,
             rpc_middleware: Identity::new(),
@@ -735,12 +688,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configure if transaction conditional should be enabled.
-    pub const fn with_enable_tx_conditional(mut self, enable_tx_conditional: bool) -> Self {
-        self.enable_tx_conditional = enable_tx_conditional;
-        self
-    }
-
     /// Configure the minimum priority fee (tip)
     pub const fn with_min_suggested_priority_fee(mut self, min: u64) -> Self {
         self.min_suggested_priority_fee = min;
@@ -769,7 +716,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             historical_rpc,
             da_config,
             gas_limit_config,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             tokio_runtime,
             _nt,
@@ -781,7 +727,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             historical_rpc,
             da_config,
             gas_limit_config,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             _nt,
             rpc_middleware,
@@ -807,7 +752,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_headers,
             da_config,
             gas_limit_config,
-            enable_tx_conditional,
             min_suggested_priority_fee,
             historical_rpc,
             rpc_middleware,
@@ -832,7 +776,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             sequencer_url,
             sequencer_headers,
             historical_rpc,
-            enable_tx_conditional,
             min_suggested_priority_fee,
         )
     }
@@ -865,19 +808,13 @@ where
 pub struct OpPoolBuilder<T = crate::txpool::OpPooledTransaction> {
     /// Enforced overrides that are applied to the pool config.
     pub pool_config_overrides: PoolBuilderConfigOverrides,
-    /// Enable transaction conditionals.
-    pub enable_tx_conditional: bool,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
 
 impl<T> Default for OpPoolBuilder<T> {
     fn default() -> Self {
-        Self {
-            pool_config_overrides: Default::default(),
-            enable_tx_conditional: false,
-            _pd: Default::default(),
-        }
+        Self { pool_config_overrides: Default::default(), _pd: Default::default() }
     }
 }
 
@@ -885,19 +822,12 @@ impl<T> Clone for OpPoolBuilder<T> {
     fn clone(&self) -> Self {
         Self {
             pool_config_overrides: self.pool_config_overrides.clone(),
-            enable_tx_conditional: self.enable_tx_conditional,
             _pd: core::marker::PhantomData,
         }
     }
 }
 
 impl<T> OpPoolBuilder<T> {
-    /// Sets the `enable_tx_conditional` flag on the pool builder.
-    pub const fn with_enable_tx_conditional(mut self, enable_tx_conditional: bool) -> Self {
-        self.enable_tx_conditional = enable_tx_conditional;
-        self
-    }
-
     /// Sets the [`PoolBuilderConfigOverrides`] on the pool builder.
     pub fn with_pool_config_overrides(
         mut self,
@@ -953,19 +883,6 @@ where
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
-
-        if self.enable_tx_conditional {
-            // spawn the Op txpool maintenance task
-            let chain_events = ctx.provider().canonical_state_stream();
-            ctx.task_executor().spawn_critical_task(
-                "Op txpool conditional maintenance task",
-                reth_optimism_txpool::maintain::maintain_transaction_pool_conditional_future(
-                    transaction_pool.clone(),
-                    chain_events,
-                ),
-            );
-            debug!(target: "reth::cli", "Spawned Op conditional txpool maintenance task");
-        }
 
         Ok(transaction_pool)
     }

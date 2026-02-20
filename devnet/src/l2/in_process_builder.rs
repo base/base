@@ -357,5 +357,5 @@ fn create_test_db(
 }
 
 fn pool_component(_rollup_args: &RollupArgs) -> OpPoolBuilder<OpPooledTransaction> {
-    OpPoolBuilder::<OpPooledTransaction>::default().with_enable_tx_conditional(false)
+    OpPoolBuilder::<OpPooledTransaction>::default()
 }
