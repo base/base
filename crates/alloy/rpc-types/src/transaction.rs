@@ -4,7 +4,7 @@ use alloy_consensus::{Transaction as TransactionTrait, Typed2718, transaction::R
 use alloy_eips::{Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 use alloy_serde::OtherFields;
-use base_alloy_consensus::{OpTransaction, OpTxEnvelope, transaction::OpTransactionInfo};
+use base_alloy_consensus::{OpTransaction, OpTransactionInfo, OpTxEnvelope};
 use serde::{Deserialize, Serialize};
 
 mod request;

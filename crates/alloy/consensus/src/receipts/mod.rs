@@ -5,11 +5,20 @@ use alloy_consensus::TxReceipt;
 mod envelope;
 pub use envelope::OpReceiptEnvelope;
 
-pub(crate) mod deposit;
+mod deposit;
 pub use deposit::{OpDepositReceipt, OpDepositReceiptWithBloom};
 
-pub(crate) mod receipt;
+mod receipt;
 pub use receipt::OpReceipt;
+
+/// Bincode-compatible serde implementations for receipt types.
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub mod serde_bincode_compat {
+    pub use super::{
+        deposit::serde_bincode_compat::OpDepositReceipt,
+        receipt::serde_bincode_compat::OpReceipt,
+    };
+}
 
 /// Receipt is the result of a transaction execution.
 pub trait OpTxReceipt: TxReceipt {
