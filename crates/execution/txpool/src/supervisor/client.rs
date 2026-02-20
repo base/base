@@ -77,19 +77,16 @@ impl SupervisorClient {
     /// Extracts commitment from access list entries, pointing to 0x420..022 and validates them
     /// against supervisor.
     ///
-    /// If commitment present pre-interop tx rejected.
-    ///
     /// Returns:
     /// None - if tx is not cross chain,
     /// Some(Ok(()) - if tx is valid cross chain,
-    /// Some(Err(e)) - if tx is not valid or interop is not active
+    /// Some(Err(e)) - if tx is not valid
     pub async fn is_valid_cross_tx(
         &self,
         access_list: Option<&AccessList>,
         hash: &TxHash,
         timestamp: u64,
         timeout: Option<u64>,
-        is_interop_active: bool,
     ) -> Option<Result<(), InvalidCrossTx>> {
         // We don't need to check for deposit transaction in here, because they won't come from
         // txpool
@@ -99,12 +96,6 @@ impl SupervisorClient {
             .collect::<Vec<_>>();
         if inbox_entries.is_empty() {
             return None;
-        }
-
-        // Interop check
-        if !is_interop_active {
-            // No cross chain tx allowed before interop
-            return Some(Err(InvalidCrossTx::CrossChainTxPreInterop));
         }
 
         if let Err(err) = self
@@ -152,7 +143,6 @@ impl SupervisorClient {
                         tx_item.hash(),
                         current_timestamp,
                         Some(revalidation_window),
-                        true,
                     )
                     .await;
 

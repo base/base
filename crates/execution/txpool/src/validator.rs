@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
@@ -54,8 +54,6 @@ pub struct OpTransactionValidator<Client, Tx, Evm> {
     require_l1_data_gas_fee: bool,
     /// Client used to check transaction validity with op-supervisor
     supervisor_client: Option<SupervisorClient>,
-    /// tracks activated forks relevant for transaction validation
-    fork_tracker: Arc<OpForkTracker>,
 }
 
 impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
@@ -125,7 +123,6 @@ where
             block_info: Arc::new(block_info),
             require_l1_data_gas_fee: true,
             supervisor_client: None,
-            fork_tracker: Arc::new(OpForkTracker { interop: AtomicBool::from(false) }),
         }
     }
 
@@ -147,10 +144,6 @@ where
 
         if let Some(Ok(l1_block_info)) = tx.map(reth_optimism_evm::extract_l1_info_from_tx) {
             *self.block_info.l1_block_info.write() = l1_block_info;
-        }
-
-        if self.chain_spec().is_interop_active_at_timestamp(header.timestamp()) {
-            self.fork_tracker.interop.store(true, Ordering::Relaxed);
         }
     }
 
@@ -195,13 +188,10 @@ where
         // Interop cross tx validation
         match self.is_valid_cross_tx(&transaction).await {
             Some(Err(err)) => {
-                let err = match err {
-                    InvalidCrossTx::CrossChainTxPreInterop => {
-                        InvalidTransactionError::TxTypeNotSupported.into()
-                    }
-                    err => InvalidPoolTransactionError::Other(Box::new(err)),
-                };
-                return TransactionValidationOutcome::Invalid(transaction, err);
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidPoolTransactionError::Other(Box::new(err)),
+                );
             }
             Some(Ok(_)) => {
                 // valid interop tx
@@ -287,7 +277,6 @@ where
                 tx.hash(),
                 self.block_info.timestamp.load(Ordering::Relaxed),
                 Some(TRANSACTION_VALIDITY_WINDOW_SECS),
-                self.fork_tracker.is_interop_activated(),
             )
             .await
     }
@@ -317,19 +306,5 @@ where
             new_tip_block.header(),
             new_tip_block.body().transactions().first(),
         );
-    }
-}
-
-/// Keeps track of whether certain forks are activated
-#[derive(Debug)]
-pub(crate) struct OpForkTracker {
-    /// Tracks if interop is activated at the block's timestamp.
-    interop: AtomicBool,
-}
-
-impl OpForkTracker {
-    /// Returns `true` if Interop fork is activated.
-    pub(crate) fn is_interop_activated(&self) -> bool {
-        self.interop.load(Ordering::Relaxed)
     }
 }

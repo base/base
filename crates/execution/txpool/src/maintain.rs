@@ -15,7 +15,7 @@ use metrics::{Gauge, Histogram};
 use reth_chain_state::CanonStateNotification;
 use reth_metrics::{Metrics, metrics::Counter};
 use reth_primitives_traits::NodePrimitives;
-use reth_transaction_pool::{PoolTransaction, TransactionPool, error::PoolTransactionError};
+use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use tracing::warn;
 
 use crate::{
@@ -207,11 +207,7 @@ pub async fn maintain_transaction_pool_interop<N, Pool, St>(
                             tx_item_from_stream
                                 .set_interop_deadline(timestamp + TRANSACTION_VALIDITY_WINDOW);
                         }
-                        Some(Err(err)) => {
-                            if err.is_bad_transaction() {
-                                to_remove.push(*tx_item_from_stream.hash());
-                            }
-                        }
+                        Some(Err(_)) => {}
                         None => {
                             warn!(
                                 target: "txpool",
