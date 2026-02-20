@@ -257,7 +257,7 @@ impl<T: BundleTxs> BundleExtensions for T {
     }
 
     fn senders(&self) -> Vec<Address> {
-        self.transactions().iter().map(|t| t.recover_signer().unwrap()).collect()
+        self.transactions().iter().map(|t| t.signer()).collect()
     }
 
     fn gas_limit(&self) -> u64 {
