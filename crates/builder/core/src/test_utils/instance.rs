@@ -287,7 +287,7 @@ fn chain_spec() -> Arc<OpChainSpec> {
 }
 
 fn pool_component() -> OpPoolBuilder<OpPooledTransaction> {
-    OpPoolBuilder::<OpPooledTransaction>::default().with_enable_tx_conditional(false)
+    OpPoolBuilder::<OpPooledTransaction>::default()
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.

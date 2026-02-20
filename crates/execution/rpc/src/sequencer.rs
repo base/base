@@ -5,7 +5,6 @@ use std::{str::FromStr, sync::Arc, time::Instant};
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{B256, hex};
 use alloy_rpc_client::{BuiltInConnectionString, ClientBuilder, RpcClient as Client};
-use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use alloy_transport_http::{Http, reqwest as alloy_reqwest};
 use thiserror::Error;
 use tracing::warn;
@@ -170,28 +169,6 @@ impl SequencerClient {
         self.metrics().record_forward_latency(start.elapsed());
         Ok(tx_hash)
     }
-
-    /// Forwards a transaction conditional to the sequencer endpoint.
-    pub async fn forward_raw_transaction_conditional(
-        &self,
-        tx: &[u8],
-        condition: TransactionConditional,
-    ) -> Result<B256, SequencerClientError> {
-        let start = Instant::now();
-        let rlp_hex = hex::encode_prefixed(tx);
-        let tx_hash = self
-            .request("eth_sendRawTransactionConditional", (rlp_hex, condition))
-            .await
-            .inspect_err(|err| {
-                warn!(
-                    target: "rpc::eth",
-                    %err,
-                    "Failed to forward transaction conditional for sequencer",
-                );
-            })?;
-        self.metrics().record_forward_latency(start.elapsed());
-        Ok(tx_hash)
-    }
 }
 
 #[derive(Debug)]
@@ -226,24 +203,6 @@ mod tests {
             body,
             r#"{"method":"eth_getBlockByNumber","params":["0xa"],"id":0,"jsonrpc":"2.0"}"#
         );
-
-        let condition = TransactionConditional::default();
-
-        let request = client
-            .client()
-            .make_request(
-                "eth_sendRawTransactionConditional",
-                (format!("0x{}", hex::encode("abcd")), condition),
-            )
-            .serialize()
-            .unwrap()
-            .take_request();
-        let body = request.get();
-
-        assert_eq!(
-            body,
-            r#"{"method":"eth_sendRawTransactionConditional","params":["0x61626364",{"knownAccounts":{}}],"id":1,"jsonrpc":"2.0"}"#
-        );
     }
 
     #[tokio::test]
@@ -262,24 +221,6 @@ mod tests {
         assert_eq!(
             body,
             r#"{"method":"eth_getBlockByNumber","params":["0xa"],"id":0,"jsonrpc":"2.0"}"#
-        );
-
-        let condition = TransactionConditional::default();
-
-        let request = client
-            .client()
-            .make_request(
-                "eth_sendRawTransactionConditional",
-                (format!("0x{}", hex::encode("abcd")), condition),
-            )
-            .serialize()
-            .unwrap()
-            .take_request();
-        let body = request.get();
-
-        assert_eq!(
-            body,
-            r#"{"method":"eth_sendRawTransactionConditional","params":["0x61626364",{"knownAccounts":{}}],"id":1,"jsonrpc":"2.0"}"#
         );
     }
 }

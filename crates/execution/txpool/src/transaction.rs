@@ -12,7 +12,6 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use c_kzg::KzgSettings;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -20,7 +19,7 @@ use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
 };
 
-use crate::{conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized};
+use crate::estimated_da_size::DataAvailabilitySized;
 
 /// Pool transaction for OP.
 ///
@@ -39,9 +38,6 @@ pub struct OpPooledTransaction<
     /// The pooled transaction type.
     _pd: core::marker::PhantomData<Pooled>,
 
-    /// Optional conditional attached to this transaction.
-    conditional: Option<Box<TransactionConditional>>,
-
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
 }
@@ -52,7 +48,6 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
         Self {
             inner: EthPooledTransaction::new(transaction, encoded_length),
             estimated_tx_compressed_size: Default::default(),
-            conditional: None,
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
         }
@@ -71,22 +66,6 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
-    }
-
-    /// Conditional setter.
-    pub fn with_conditional(mut self, conditional: TransactionConditional) -> Self {
-        self.conditional = Some(Box::new(conditional));
-        self
-    }
-}
-
-impl<Cons, Pooled> MaybeConditionalTransaction for OpPooledTransaction<Cons, Pooled> {
-    fn set_conditional(&mut self, conditional: TransactionConditional) {
-        self.conditional = Some(Box::new(conditional))
-    }
-
-    fn conditional(&self) -> Option<&TransactionConditional> {
-        self.conditional.as_deref()
     }
 }
 
@@ -263,11 +242,9 @@ where
     }
 }
 
-/// Helper trait to provide payload builder with access to conditionals and encoded bytes of
+/// Helper trait to provide payload builder with access to encoded bytes of
 /// transaction.
-pub trait OpPooledTx:
-    MaybeConditionalTransaction + PoolTransaction + DataAvailabilitySized
-{
+pub trait OpPooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 }

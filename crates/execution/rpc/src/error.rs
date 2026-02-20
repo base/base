@@ -1,12 +1,12 @@
 //! RPC errors specific to OP.
 
-use std::{convert::Infallible, fmt::Display};
+use std::convert::Infallible;
 
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
-use jsonrpsee_types::error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE};
+use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use op_revm::{OpHaltReason, OpTransactionError};
 use reth_evm::execute::ProviderError;
 use reth_optimism_evm::OpBlockExecutionError;
@@ -75,9 +75,6 @@ pub enum OpInvalidTransactionError {
     /// The encoded transaction was missing during evm execution.
     #[error("missing enveloped transaction bytes")]
     MissingEnvelopedTx,
-    /// Transaction conditional errors.
-    #[error(transparent)]
-    TxConditionalErr(#[from] TxConditionalErr),
 }
 
 impl From<OpInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -88,7 +85,6 @@ impl From<OpInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'st
             | OpInvalidTransactionError::MissingEnvelopedTx => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
-            OpInvalidTransactionError::TxConditionalErr(_) => err.into(),
         }
     }
 }
@@ -105,44 +101,6 @@ impl TryFrom<OpTransactionError> for OpInvalidTransactionError {
             OpTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
             OpTransactionError::Base(err) => Err(err),
         }
-    }
-}
-
-/// Transaction conditional related errors.
-#[derive(Debug, thiserror::Error)]
-pub enum TxConditionalErr {
-    /// Transaction conditional cost exceeded maximum allowed
-    #[error("conditional cost exceeded maximum allowed")]
-    ConditionalCostExceeded,
-    /// Invalid conditional parameters
-    #[error("invalid conditional parameters")]
-    InvalidCondition,
-    /// Internal error
-    #[error("internal error: {0}")]
-    Internal(String),
-    /// Thrown if the conditional's storage value doesn't match the latest state's.
-    #[error("storage value mismatch")]
-    StorageValueMismatch,
-    /// Thrown when the conditional's storage root doesn't match the latest state's root.
-    #[error("storage root mismatch")]
-    StorageRootMismatch,
-}
-
-impl TxConditionalErr {
-    /// Creates an internal error variant
-    pub fn internal<E: Display>(err: E) -> Self {
-        Self::Internal(err.to_string())
-    }
-}
-
-impl From<TxConditionalErr> for jsonrpsee_types::error::ErrorObject<'static> {
-    fn from(err: TxConditionalErr) -> Self {
-        let code = match &err {
-            TxConditionalErr::Internal(_) => INTERNAL_ERROR_CODE,
-            _ => INVALID_PARAMS_CODE,
-        };
-
-        jsonrpsee_types::error::ErrorObject::owned(code, err.to_string(), None::<String>)
     }
 }
 
