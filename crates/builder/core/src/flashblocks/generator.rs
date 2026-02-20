@@ -422,7 +422,7 @@ impl<T: Clone> BlockCell<T> {
     pub fn set(&self, value: T) {
         let mut inner = self.inner.lock();
         *inner = Some(value);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
     }
 
     pub fn get(&self) -> Option<T> {
@@ -431,15 +431,27 @@ impl<T: Clone> BlockCell<T> {
     }
 
     /// Return a future that resolves when a value is set.
-    pub fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
+    pub fn wait_for_value(&self) -> WaitForValue<T>
+    where
+        T: Send + 'static,
+    {
+        let cell = self.clone();
+        WaitForValue {
+            inner: Box::pin(async move {
+                loop {
+                    if let Some(value) = cell.get() {
+                        return value;
+                    }
+                    cell.notify.notified().await;
+                }
+            }),
+        }
     }
 }
 
 /// Future that resolves when a value is set in [`BlockCell`].
-#[derive(Clone)]
 pub struct WaitForValue<T> {
-    cell: BlockCell<T>,
+    inner: Pin<Box<dyn Future<Output = T> + Send>>,
 }
 
 impl<T> std::fmt::Debug for WaitForValue<T> {
@@ -448,17 +460,11 @@ impl<T> std::fmt::Debug for WaitForValue<T> {
     }
 }
 
-impl<T: Clone> Future for WaitForValue<T> {
+impl<T> Future for WaitForValue<T> {
     type Output = T;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner.as_mut().poll(cx)
     }
 }
 
