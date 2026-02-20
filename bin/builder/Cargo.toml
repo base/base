@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 base-builder-core.workspace = true
 base-builder-metering.workspace = true
 base-txpool-rpc.workspace = true

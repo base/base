@@ -15,7 +15,7 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-flashblocks.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 
 # reth
 reth-evm.workspace = true
@@ -59,7 +59,7 @@ derive_more.workspace = true
 # workspace
 base-flashblocks.workspace = true
 base-primitives.workspace = true
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-db-common.workspace = true

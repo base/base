@@ -139,7 +139,7 @@ base-txpool-rpc = { path = "crates/shared/txpool-rpc" }
 # Client
 base-metering = { path = "crates/client/metering" }
 base-client-cli = { path = "crates/client/cli" }
-base-client-node = { path = "crates/shared/node" }
+base-node = { path = "crates/shared/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-client-engine = { path = "crates/client/engine" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }

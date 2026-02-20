@@ -1,5 +1,5 @@
 [package]
-name = "base-client-node"
+name = "base-node"
 description = "Primitive types and traits for Base node runner extensions"
 version.workspace = true
 edition.workspace = true

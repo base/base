@@ -18,7 +18,7 @@ base-txpool-tracing.workspace = true
 base-metering.workspace = true
 base-cli-utils.workspace = true
 base-flashblocks.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 base-flashblocks-node.workspace = true
 base-proofs-extension.workspace = true
 

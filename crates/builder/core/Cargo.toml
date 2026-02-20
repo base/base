@@ -26,7 +26,7 @@ min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
-	"base-client-node/test-utils",
+	"base-node/test-utils",
 	"base-primitives/test-utils",
 	"ctor",
 	"http-body-util",
@@ -55,7 +55,7 @@ test-utils = [
 [dependencies]
 # workspace
 base-bundles.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 base-primitives.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true

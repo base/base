@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # workspace
 base-flashblocks.workspace = true
-base-client-node.workspace = true
+base-node.workspace = true
 
 # reth
 reth-node-api.workspace = true
@@ -43,7 +43,7 @@ metrics-derive.workspace = true
 # workspace
 base-flashblocks.workspace = true
 base-primitives.workspace = true
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { workspace = true, features = ["test-utils"] }
 
 # reth
