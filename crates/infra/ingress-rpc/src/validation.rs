@@ -108,8 +108,8 @@ pub fn validate_bundle(
     max_timestamp_window_secs: u64,
 ) -> RpcResult<()> {
     // Don't allow bundles to be submitted too far into the future
-    let valid_timestamp_window = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
-        + max_timestamp_window_secs;
+    let valid_timestamp_window =
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + max_timestamp_window_secs;
     if let Some(max_timestamp) = bundle.max_timestamp
         && max_timestamp > valid_timestamp_window
     {
