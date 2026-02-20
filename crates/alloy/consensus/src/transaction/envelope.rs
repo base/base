@@ -520,7 +520,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
 
 /// Bincode-compatible serde implementation for [`OpTxEnvelope`].
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub mod serde_bincode_compat {
+pub(crate) mod serde_bincode_compat {
     use alloy_consensus::{
         Sealed, Signed,
         transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},

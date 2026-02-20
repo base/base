@@ -1,9 +1,12 @@
 //! Versioned execution payloads
 
-pub mod error;
-pub mod v3;
-pub mod v4;
+mod error;
+pub use error::OpPayloadError;
 
+mod v3;
+pub use v3::OpExecutionPayloadEnvelopeV3;
+
+mod v4;
 use alloc::vec::Vec;
 
 use alloy_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
@@ -13,9 +16,9 @@ use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
 };
-use error::OpPayloadError;
+pub use v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4};
 
-use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
+use crate::OpExecutionPayloadSidecar;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
 /// [`OpExecutionPayloadV4`].

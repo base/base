@@ -17,13 +17,13 @@ pub use receipts::{
     OpDepositReceipt, OpDepositReceiptWithBloom, OpReceipt, OpReceiptEnvelope, OpTxReceipt,
 };
 
-pub mod transaction;
+mod transaction;
 pub use transaction::{
-    DEPOSIT_TX_TYPE_ID, DepositTransaction, OpPooledTransaction, OpTransaction, OpTxEnvelope,
-    OpTxType, OpTypedTransaction, TxDeposit,
+    DEPOSIT_TX_TYPE_ID, DepositTransaction, OpDepositInfo, OpPooledTransaction, OpTransaction,
+    OpTransactionInfo, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit,
 };
 
-pub mod eip1559;
+mod eip1559;
 pub use eip1559::{
     EIP1559ParamError, decode_eip_1559_params, decode_holocene_extra_data,
     decode_jovian_extra_data, encode_holocene_extra_data, encode_jovian_extra_data,
@@ -52,10 +52,7 @@ pub use transaction::serde_deposit_tx_rpc;
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
     pub use super::{
-        receipts::{
-            deposit::serde_bincode_compat::OpDepositReceipt,
-            receipt::serde_bincode_compat::OpReceipt,
-        },
+        receipts::serde_bincode_compat::{OpDepositReceipt, OpReceipt},
         transaction::{serde_bincode_compat as transaction, serde_bincode_compat::TxDeposit},
     };
 }

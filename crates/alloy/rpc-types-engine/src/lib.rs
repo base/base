@@ -23,12 +23,10 @@ pub use envelope::{
 mod sidecar;
 pub use sidecar::OpExecutionPayloadSidecar;
 
-pub mod payload;
+mod payload;
 pub use payload::{
-    OpExecutionPayload,
-    error::OpPayloadError,
-    v3::OpExecutionPayloadEnvelopeV3,
-    v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4},
+    OpExecutionPayload, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
+    OpExecutionPayloadV4, OpPayloadError,
 };
 
 mod superchain;
@@ -36,7 +34,7 @@ pub use superchain::{
     ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
 };
 
-pub mod flashblock;
+mod flashblock;
 pub use flashblock::{
     OpFlashblockError, OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
