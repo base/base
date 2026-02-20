@@ -355,7 +355,7 @@ mod tests {
     use alloy_consensus::{Block, BlockBody};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::keccak256;
-    use reth_optimism_chainspec::OP_MAINNET;
+    use reth_optimism_chainspec::BASE_MAINNET;
     use reth_optimism_forks::OpHardforks;
     use reth_optimism_primitives::OpTransactionSigned;
 
@@ -396,7 +396,7 @@ mod tests {
         // OP mainnet ecotone block 118024092
         // <https://optimistic.etherscan.io/block/118024092>
         const TIMESTAMP: u64 = 1711603765;
-        assert!(OP_MAINNET.is_ecotone_active_at_timestamp(TIMESTAMP));
+        assert!(BASE_MAINNET.is_ecotone_active_at_timestamp(TIMESTAMP));
 
         // First transaction in OP mainnet block 118024092
         //

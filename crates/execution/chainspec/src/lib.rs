@@ -38,8 +38,6 @@ mod basefee;
 
 pub mod constants;
 mod dev;
-mod op;
-mod op_sepolia;
 
 #[cfg(feature = "superchain-configs")]
 mod superchain;
@@ -56,8 +54,6 @@ pub use base_sepolia::BASE_SEPOLIA;
 pub use basefee::*;
 use derive_more::{Constructor, Deref, From, Into};
 pub use dev::OP_DEV;
-pub use op::OP_MAINNET;
-pub use op_sepolia::OP_SEPOLIA;
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, ChainSpecBuilder, DepositContract,
     DisplayHardforks, EthChainSpec, EthereumHardforks, ForkFilter, ForkId, Hardforks, Head,
@@ -85,16 +81,6 @@ impl OpChainSpecBuilder {
             .chain(BASE_MAINNET.chain)
             .genesis(BASE_MAINNET.genesis.clone());
         let forks = BASE_MAINNET.hardforks.clone();
-        inner = inner.with_forks(forks);
-
-        Self { inner }
-    }
-
-    /// Construct a new builder from the optimism mainnet chain spec.
-    pub fn optimism_mainnet() -> Self {
-        let mut inner =
-            ChainSpecBuilder::default().chain(OP_MAINNET.chain).genesis(OP_MAINNET.genesis.clone());
-        let forks = OP_MAINNET.hardforks.clone();
         inner = inner.with_forks(forks);
 
         Self { inner }
@@ -404,7 +390,7 @@ impl From<Genesis> for OpChainSpec {
         block_hardforks.append(&mut time_hardforks);
 
         // Ordered Hardforks
-        let mainnet_hardforks = OP_MAINNET_HARDFORKS.clone();
+        let mainnet_hardforks = BASE_MAINNET_HARDFORKS.clone();
         let mainnet_order = mainnet_hardforks.forks_iter();
 
         let mut ordered_hardforks = Vec::with_capacity(block_hardforks.len());
@@ -514,10 +500,7 @@ mod tests {
     use alloc::string::{String, ToString};
 
     use alloy_genesis::{ChainConfig, Genesis};
-    use alloy_op_hardforks::{
-        BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP, OP_MAINNET_JOVIAN_TIMESTAMP,
-        OP_SEPOLIA_JOVIAN_TIMESTAMP,
-    };
+    use alloy_op_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
     use alloy_primitives::{b256, hex};
     use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, test_fork_ids};
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
@@ -630,148 +613,6 @@ mod tests {
     }
 
     #[test]
-    fn op_sepolia_forkids() {
-        test_fork_ids(
-            &OP_SEPOLIA,
-            &[
-                (
-                    Head { number: 0, ..Default::default() },
-                    ForkId { hash: ForkHash([0x67, 0xa4, 0x03, 0x28]), next: 1699981200 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1699981199, ..Default::default() },
-                    ForkId { hash: ForkHash([0x67, 0xa4, 0x03, 0x28]), next: 1699981200 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1699981200, ..Default::default() },
-                    ForkId { hash: ForkHash([0xa4, 0x8d, 0x6a, 0x00]), next: 1708534800 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1708534799, ..Default::default() },
-                    ForkId { hash: ForkHash([0xa4, 0x8d, 0x6a, 0x00]), next: 1708534800 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1708534800, ..Default::default() },
-                    ForkId { hash: ForkHash([0xcc, 0x17, 0xc7, 0xeb]), next: 1716998400 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1716998399, ..Default::default() },
-                    ForkId { hash: ForkHash([0xcc, 0x17, 0xc7, 0xeb]), next: 1716998400 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1716998400, ..Default::default() },
-                    ForkId { hash: ForkHash([0x54, 0x0a, 0x8c, 0x5d]), next: 1723478400 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1723478399, ..Default::default() },
-                    ForkId { hash: ForkHash([0x54, 0x0a, 0x8c, 0x5d]), next: 1723478400 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1723478400, ..Default::default() },
-                    ForkId { hash: ForkHash([0x75, 0xde, 0xa4, 0x1e]), next: 1732633200 },
-                ),
-                (
-                    Head { number: 0, timestamp: 1732633200, ..Default::default() },
-                    ForkId { hash: ForkHash([0x4a, 0x1c, 0x79, 0x2e]), next: 1744905600 },
-                ),
-                // Isthmus
-                (
-                    Head { number: 0, timestamp: 1744905600, ..Default::default() },
-                    ForkId {
-                        hash: ForkHash([0x6c, 0x62, 0x5e, 0xe1]),
-                        next: OP_SEPOLIA_JOVIAN_TIMESTAMP,
-                    },
-                ),
-                // Jovian
-                (
-                    Head {
-                        number: 0,
-                        timestamp: OP_SEPOLIA_JOVIAN_TIMESTAMP,
-                        ..Default::default()
-                    },
-                    OP_SEPOLIA.hardfork_fork_id(OpHardfork::Jovian).unwrap(),
-                ),
-            ],
-        );
-    }
-
-    #[test]
-    fn op_mainnet_forkids() {
-        let mut op_mainnet = OpChainSpecBuilder::optimism_mainnet().build();
-        // for OP mainnet we have to do this because the genesis header can't be properly computed
-        // from the genesis.json file
-        op_mainnet.inner.genesis_header.set_hash(OP_MAINNET.genesis_hash());
-        test_fork_ids(
-            &op_mainnet,
-            &[
-                (
-                    Head { number: 0, ..Default::default() },
-                    ForkId { hash: ForkHash([0xca, 0xf5, 0x17, 0xed]), next: 3950000 },
-                ),
-                // London
-                (
-                    Head { number: 105235063, ..Default::default() },
-                    ForkId { hash: ForkHash([0xe3, 0x39, 0x8d, 0x7c]), next: 1704992401 },
-                ),
-                // Bedrock
-                (
-                    Head { number: 105235063, ..Default::default() },
-                    ForkId { hash: ForkHash([0xe3, 0x39, 0x8d, 0x7c]), next: 1704992401 },
-                ),
-                // Shanghai
-                (
-                    Head { number: 105235063, timestamp: 1704992401, ..Default::default() },
-                    ForkId { hash: ForkHash([0xbd, 0xd4, 0xfd, 0xb2]), next: 1710374401 },
-                ),
-                // OP activation timestamps
-                // https://specs.optimism.io/protocol/superchain-upgrades.html#activation-timestamps
-                // Canyon
-                (
-                    Head { number: 105235063, timestamp: 1704992401, ..Default::default() },
-                    ForkId { hash: ForkHash([0xbd, 0xd4, 0xfd, 0xb2]), next: 1710374401 },
-                ),
-                // Ecotone
-                (
-                    Head { number: 105235063, timestamp: 1710374401, ..Default::default() },
-                    ForkId { hash: ForkHash([0x19, 0xda, 0x4c, 0x52]), next: 1720627201 },
-                ),
-                // Fjord
-                (
-                    Head { number: 105235063, timestamp: 1720627201, ..Default::default() },
-                    ForkId { hash: ForkHash([0x49, 0xfb, 0xfe, 0x1e]), next: 1726070401 },
-                ),
-                // Granite
-                (
-                    Head { number: 105235063, timestamp: 1726070401, ..Default::default() },
-                    ForkId { hash: ForkHash([0x44, 0x70, 0x4c, 0xde]), next: 1736445601 },
-                ),
-                // Holocene
-                (
-                    Head { number: 105235063, timestamp: 1736445601, ..Default::default() },
-                    ForkId { hash: ForkHash([0x2b, 0xd9, 0x3d, 0xc8]), next: 1746806401 },
-                ),
-                // Isthmus
-                (
-                    Head { number: 105235063, timestamp: 1746806401, ..Default::default() },
-                    ForkId {
-                        hash: ForkHash([0x37, 0xbe, 0x75, 0x8f]),
-                        next: OP_MAINNET_JOVIAN_TIMESTAMP,
-                    },
-                ),
-                // Jovian
-                (
-                    Head {
-                        number: 105235063,
-                        timestamp: OP_MAINNET_JOVIAN_TIMESTAMP,
-                        ..Default::default()
-                    },
-                    OP_MAINNET.hardfork_fork_id(OpHardfork::Jovian).unwrap(),
-                ),
-            ],
-        );
-    }
-
-    #[test]
     fn base_sepolia_forkids() {
         test_fork_ids(
             &BASE_SEPOLIA,
@@ -862,18 +703,6 @@ mod tests {
     }
 
     #[test]
-    fn op_sepolia_genesis() {
-        let genesis = OP_SEPOLIA.genesis_header();
-        assert_eq!(
-            genesis.hash_slow(),
-            b256!("0x102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d")
-        );
-        let base_fee = OP_SEPOLIA.next_block_base_fee(genesis, genesis.timestamp).unwrap();
-        // <https://optimism-sepolia.blockscout.com/block/1>
-        assert_eq!(base_fee, 980000000);
-    }
-
-    #[test]
     fn latest_base_mainnet_fork_id() {
         assert_eq!(
             ForkId { hash: ForkHash(hex!("1cfeafc9")), next: 0 },
@@ -888,12 +717,6 @@ mod tests {
             ForkId { hash: ForkHash(hex!("1cfeafc9")), next: 0 },
             base_mainnet.latest_fork_id()
         )
-    }
-
-    #[test]
-    fn is_bedrock_active() {
-        let op_mainnet = OpChainSpecBuilder::optimism_mainnet().build();
-        assert!(!op_mainnet.is_bedrock_active_at_block(1))
     }
 
     #[test]

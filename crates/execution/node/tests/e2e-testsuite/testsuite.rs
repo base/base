@@ -8,7 +8,7 @@ use reth_e2e_test_utils::testsuite::{
     actions::AssertMineBlock,
     setup::{NetworkSetup, Setup},
 };
-use reth_optimism_chainspec::{OP_MAINNET, OpChainSpecBuilder};
+use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
 use reth_optimism_node::{OpEngineTypes, OpNode};
 
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
     let setup = Setup::default()
         .with_chain_spec(Arc::new(
             OpChainSpecBuilder::default()
-                .chain(OP_MAINNET.chain)
+                .chain(BASE_MAINNET.chain)
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .build()
                 .into(),
@@ -62,7 +62,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
     let setup = Setup::default()
         .with_chain_spec(Arc::new(
             OpChainSpecBuilder::default()
-                .chain(OP_MAINNET.chain)
+                .chain(BASE_MAINNET.chain)
                 .genesis(serde_json::from_str(include_str!("../assets/genesis.json")).unwrap())
                 .isthmus_activated()
                 .build()

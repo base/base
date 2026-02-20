@@ -316,7 +316,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
     use op_alloy_consensus::TxDeposit;
-    use reth_optimism_chainspec::OP_MAINNET;
+    use reth_optimism_chainspec::BASE_MAINNET;
     use reth_optimism_evm::OpEvmConfig;
     use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_provider::test_utils::MockEthProvider;
@@ -329,9 +329,9 @@ mod tests {
     #[tokio::test]
     async fn validate_optimism_transaction() {
         let client = MockEthProvider::<OpPrimitives>::new()
-            .with_chain_spec(OP_MAINNET.clone())
+            .with_chain_spec(BASE_MAINNET.clone())
             .with_genesis_block();
-        let evm_config = OpEvmConfig::optimism(OP_MAINNET.clone());
+        let evm_config = OpEvmConfig::optimism(BASE_MAINNET.clone());
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()

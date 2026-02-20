@@ -247,7 +247,7 @@ mod tests {
     };
     use reth_chainspec::BaseFeeParams;
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
-    use reth_optimism_chainspec::{OP_MAINNET, OpChainSpec, OpChainSpecBuilder};
+    use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
     use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
@@ -277,8 +277,8 @@ mod tests {
     fn test_block_blob_gas_used_validation_isthmus() {
         let chain_spec = OpChainSpecBuilder::default()
             .isthmus_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -314,8 +314,8 @@ mod tests {
     fn test_block_blob_gas_used_validation_failure_isthmus() {
         let chain_spec = OpChainSpecBuilder::default()
             .isthmus_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -357,8 +357,8 @@ mod tests {
 
         let chain_spec = OpChainSpecBuilder::default()
             .jovian_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -427,8 +427,8 @@ mod tests {
 
         let chain_spec = OpChainSpecBuilder::default()
             .jovian_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -500,8 +500,8 @@ mod tests {
 
         let chain_spec = OpChainSpecBuilder::default()
             .jovian_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -571,8 +571,8 @@ mod tests {
 
         let chain_spec = OpChainSpecBuilder::default()
             .jovian_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -648,8 +648,8 @@ mod tests {
 
         let chain_spec = OpChainSpecBuilder::default()
             .jovian_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx
@@ -722,8 +722,8 @@ mod tests {
 
         let chain_spec = OpChainSpecBuilder::default()
             .isthmus_activated()
-            .genesis(OP_MAINNET.genesis.clone())
-            .chain(OP_MAINNET.chain)
+            .genesis(BASE_MAINNET.genesis.clone())
+            .chain(BASE_MAINNET.chain)
             .build();
 
         // create a tx

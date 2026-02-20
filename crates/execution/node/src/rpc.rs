@@ -15,7 +15,7 @@
 //!     hooks::OnComponentInitializedHook,
 //!     rpc::{EthApiBuilder, EthApiCtx},
 //! };
-//! use reth_optimism_chainspec::OP_SEPOLIA;
+//! use reth_optimism_chainspec::BASE_SEPOLIA;
 //! use reth_optimism_evm::OpEvmConfig;
 //! use reth_optimism_node::{OpExecutorBuilder, OpNetworkPrimitives, OpNode};
 //! use reth_optimism_rpc::OpEthApiBuilder;
@@ -30,7 +30,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     // build core node with all components disabled except EVM and state
-//!     let sepolia = NodeConfig::new(OP_SEPOLIA.clone());
+//!     let sepolia = NodeConfig::new(BASE_SEPOLIA.clone());
 //!     let db = create_test_rw_db_with_path(sepolia.datadir());
 //!     let runtime = Runtime::with_existing_handle(tokio::runtime::Handle::current()).unwrap();
 //!     let launch_ctx = LaunchContext::new(runtime, sepolia.datadir());
