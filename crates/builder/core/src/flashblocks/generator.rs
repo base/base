@@ -390,6 +390,7 @@ impl<T> std::fmt::Debug for ResolvePayload<T> {
 }
 
 impl<T> ResolvePayload<T> {
+    /// Creates a new `ResolvePayload` future that waits for the value.
     pub const fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
