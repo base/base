@@ -565,7 +565,7 @@ mod tests {
             .map_err(|e| e.to_string());
 
         assert!(result.is_ok());
-        // we're assumging that `base_meterBundle` will not error hence the second unwrap
+        // we're assuming that `base_meterBundle` will not error hence the second unwrap
         let res = result.unwrap().unwrap();
         assert_eq!(res, create_test_meter_bundle_response());
     }

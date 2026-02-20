@@ -71,7 +71,7 @@ impl DaMonitorView {
         }
     }
 
-    fn next_panel(&mut self) {
+    const fn next_panel(&mut self) {
         self.selected_panel = match self.selected_panel {
             Panel::L2Blocks => Panel::L1Blocks,
             Panel::L1Blocks => Panel::L2Blocks,

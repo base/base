@@ -33,6 +33,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install default CryptoProvider");
+
     let cli = Cli::parse();
 
     let chain_config = ChainConfig::load(&cli.config).await?;

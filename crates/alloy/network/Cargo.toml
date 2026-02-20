@@ -26,6 +26,9 @@ alloy-provider.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer.workspace = true
 
+[dev-dependencies]
+rstest.workspace = true
+
 [features]
 std = [ "base-alloy-consensus/std", "base-alloy-rpc-types/std" ]
 serde = [ "base-alloy-consensus/serde", "base-alloy-rpc-types/serde" ]

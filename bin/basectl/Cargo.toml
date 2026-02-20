@@ -12,7 +12,8 @@ path = "main.rs"
 workspace = true
 
 [dependencies]
-basectl-cli = { workspace = true }
-clap = { workspace = true }
-tokio = { workspace = true }
 anyhow = { workspace = true }
+basectl-cli = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+rustls = { workspace = true, features = ["ring"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

@@ -13,7 +13,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BENCHMARK_REPO: "base/benchmark"
-  BENCHMARK_REF: "6a757e9bbaa68f5fb9d149ff43cc0c9aa5b9e01f"
+  BENCHMARK_REF: "31eb579e06d8bba3d305c5a5bd84ad44f236f302"
 
 permissions:
   contents: read

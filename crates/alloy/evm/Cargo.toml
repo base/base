@@ -1,0 +1,50 @@
+[package]
+name = "base-alloy-evm"
+description = "EVM implementation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-evm = { workspace = true, features = ["op"] }
+
+# base
+base-alloy-hardforks.workspace = true
+
+# op
+op-revm.workspace = true
+op-alloy-consensus.workspace = true
+
+# revm
+revm.workspace = true
+
+# misc
+auto_impl.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+alloy-hardforks.workspace = true
+
+[features]
+default = [ "std" ]
+std = [
+	"alloy-consensus/std",
+	"alloy-eips/std",
+	"alloy-evm/std",
+	"alloy-primitives/std",
+	"op-alloy-consensus/std",
+	"op-revm/std",
+	"revm/std",
+	"thiserror/std",
+]
