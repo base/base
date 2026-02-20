@@ -10,9 +10,9 @@ use alloy_consensus::{
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use audit_archiver_lib::BundleEvent;
+use base_bundles::BundleExtensions;
 use base_primitives::{
-    AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
-    ParsedBundle,
+    AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
 };
 use base_reth_rpc_types::EthApiError;
 use jsonrpsee::{

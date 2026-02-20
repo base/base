@@ -320,7 +320,7 @@ pub struct MeterBundleResponse {
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::Keccak256;
+    use alloy_primitives::{Keccak256, keccak256};
     use alloy_signer_local::PrivateKeySigner;
 
     use super::*;

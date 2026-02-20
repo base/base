@@ -6795,6 +6795,7 @@ dependencies = [
  "audit-archiver-lib",
  "axum 0.8.8",
  "backon",
+ "base-bundles",
  "base-cli-utils",
  "base-primitives",
  "base-reth-rpc-types",

@@ -17,6 +17,7 @@ metrics.workspace = true
 async-trait.workspace = true
 base-cli-utils.workspace = true
 metrics-derive.workspace = true
+base-bundles.workspace = true
 base-primitives.workspace = true
 op-alloy-network.workspace = true
 audit-archiver-lib.workspace = true
