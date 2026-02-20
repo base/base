@@ -9,8 +9,7 @@ use alloy_op_hardforks::{
 };
 use alloy_primitives::{address, b256, uint};
 use kona_genesis::{
-    BASE_SEPOLIA_BASE_FEE_CONFIG, ChainGenesis, DEFAULT_INTEROP_MESSAGE_EXPIRY_WINDOW,
-    HardForkConfig, RollupConfig, SystemConfig,
+    BASE_SEPOLIA_BASE_FEE_CONFIG, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig,
 };
 
 /// The [`RollupConfig`] for Base Sepolia.
@@ -60,7 +59,6 @@ pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
         pectra_blob_schedule_time: Some(1742486400),
         isthmus_time: Some(BASE_SEPOLIA_ISTHMUS_TIMESTAMP),
         jovian_time: Some(BASE_SEPOLIA_JOVIAN_TIMESTAMP),
-        interop_time: None,
     },
     batch_inbox_address: address!("ff00000000000000000000000000000000084532"),
     deposit_contract_address: address!("49f53e41452c74589e85ca1677426ba426459e85"),
@@ -69,5 +67,4 @@ pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
     superchain_config_address: Some(address!("C2Be75506d5724086DEB7245bd260Cc9753911Be")),
     da_challenge_address: None,
     blobs_enabled_l1_timestamp: None,
-    interop_message_expiry_window: DEFAULT_INTEROP_MESSAGE_EXPIRY_WINDOW,
 };

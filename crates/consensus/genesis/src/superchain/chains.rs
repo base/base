@@ -106,7 +106,6 @@ mod tests {
                         pectra_blob_schedule_time: None,
                         isthmus_time: None,
                         jovian_time: None,
-                        interop_time: None,
                     },
                     protocol_versions_addr: None,
                     superchain_config_addr: None,

@@ -72,10 +72,7 @@ impl BaseNode {
             self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(OpPoolBuilder::default().with_supervisor(
-                self.args.supervisor_http.clone(),
-                self.args.supervisor_safety_level,
-            ))
+            .pool(OpPoolBuilder::default())
             .executor(OpExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)

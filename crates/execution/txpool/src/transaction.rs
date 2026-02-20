@@ -1,10 +1,7 @@
 use core::fmt::Debug;
 use std::{
     borrow::Cow,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, OnceLock},
 };
 
 use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
@@ -23,13 +20,7 @@ use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
 };
 
-use crate::{
-    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
-    interop::MaybeInteropTransaction,
-};
-
-/// Marker for no-interop transactions
-pub(crate) const NO_INTEROP_TX: u64 = 0;
+use crate::{conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized};
 
 /// Pool transaction for OP.
 ///
@@ -51,9 +42,6 @@ pub struct OpPooledTransaction<
     /// Optional conditional attached to this transaction.
     conditional: Option<Box<TransactionConditional>>,
 
-    /// Optional interop deadline attached to this transaction.
-    interop: Arc<AtomicU64>,
-
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
 }
@@ -65,7 +53,6 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
             inner: EthPooledTransaction::new(transaction, encoded_length),
             estimated_tx_compressed_size: Default::default(),
             conditional: None,
-            interop: Arc::new(AtomicU64::new(NO_INTEROP_TX)),
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
         }
@@ -100,20 +87,6 @@ impl<Cons, Pooled> MaybeConditionalTransaction for OpPooledTransaction<Cons, Poo
 
     fn conditional(&self) -> Option<&TransactionConditional> {
         self.conditional.as_deref()
-    }
-}
-
-impl<Cons, Pooled> MaybeInteropTransaction for OpPooledTransaction<Cons, Pooled> {
-    fn set_interop_deadline(&self, deadline: u64) {
-        self.interop.store(deadline, Ordering::Relaxed);
-    }
-
-    fn interop_deadline(&self) -> Option<u64> {
-        let interop = self.interop.load(Ordering::Relaxed);
-        if interop > NO_INTEROP_TX {
-            return Some(interop);
-        }
-        None
     }
 }
 
@@ -293,7 +266,7 @@ where
 /// Helper trait to provide payload builder with access to conditionals and encoded bytes of
 /// transaction.
 pub trait OpPooledTx:
-    MaybeConditionalTransaction + MaybeInteropTransaction + PoolTransaction + DataAvailabilitySized
+    MaybeConditionalTransaction + PoolTransaction + DataAvailabilitySized
 {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;

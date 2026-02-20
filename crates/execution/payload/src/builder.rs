@@ -19,11 +19,7 @@ use reth_evm::{
 use reth_execution_types::BlockExecutionOutput;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, transaction::OpTransaction};
-use reth_optimism_txpool::{
-    OpPooledTx,
-    estimated_da_size::DataAvailabilitySized,
-    interop::{MaybeInteropTransaction, is_valid_interop},
-};
+use reth_optimism_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderAttributes};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
@@ -458,7 +454,7 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
     ) -> impl PayloadTransactions<Transaction = Transaction>;
 }
 
-impl<T: PoolTransaction + MaybeInteropTransaction> OpPayloadTransactions<T> for () {
+impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
     fn best_transactions<Pool: TransactionPool<Transaction = T>>(
         &self,
         pool: Pool,
@@ -690,7 +686,6 @@ where
         let base_fee = builder.evm_mut().block().basefee();
 
         while let Some(tx) = best_txs.next(()) {
-            let interop = tx.interop_deadline();
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
 
@@ -724,14 +719,6 @@ where
                 continue;
             }
 
-            // We skip invalid cross chain txs, they would be removed on the next block update in
-            // the maintenance job
-            if let Some(interop) = interop
-                && !is_valid_interop(interop, self.config.attributes.timestamp())
-            {
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                continue;
-            }
             // check if the job was cancelled, if so we can exit early
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));

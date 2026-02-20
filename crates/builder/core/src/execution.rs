@@ -139,10 +139,6 @@ pub enum TxnExecutionError {
     #[error("nonce too low")]
     NonceTooLow,
 
-    /// Interop validation failed.
-    #[error("interop failed")]
-    InteropFailed,
-
     /// Internal EVM error during transaction execution.
     #[error("internal error: {0}")]
     InternalError(OpTransactionError),

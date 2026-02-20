@@ -42,7 +42,7 @@ pub enum BatchDropReason {
     DepositTransaction,
     /// EIP-7702 transaction included before Isthmus activation.
     Eip7702PreIsthmus,
-    /// Non-empty batch in Jovian or Interop transition block.
+    /// Non-empty batch in Jovian transition block.
     NonEmptyTransitionBlock,
 
     // === Span batch specific drops ===

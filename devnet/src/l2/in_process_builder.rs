@@ -356,8 +356,6 @@ fn create_test_db(
     Ok((Arc::new(TempDatabase::new(db, db_path.clone())), db_path))
 }
 
-fn pool_component(rollup_args: &RollupArgs) -> OpPoolBuilder<OpPooledTransaction> {
-    OpPoolBuilder::<OpPooledTransaction>::default()
-        .with_enable_tx_conditional(false)
-        .with_supervisor(rollup_args.supervisor_http.clone(), rollup_args.supervisor_safety_level)
+fn pool_component(_rollup_args: &RollupArgs) -> OpPoolBuilder<OpPooledTransaction> {
+    OpPoolBuilder::<OpPooledTransaction>::default().with_enable_tx_conditional(false)
 }

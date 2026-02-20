@@ -164,19 +164,10 @@ where
 
                                     kona_macros::inc!(counter, Metrics::L1_REORG_COUNT);
                                 }
-                                // send the `reset` signal to the engine actor only when interop is
-                                // not active.
-                                if !self.pipeline.rollup_config().is_interop_active(
-                                    self.derivation_state_machine
-                                        .last_confirmed_safe_head()
-                                        .block_info
-                                        .timestamp,
-                                ) {
-                                    self.engine_client.reset_engine_forkchoice().await.map_err(|e| {
-                                        error!(target: "derivation", ?e, "Failed to send reset request");
-                                        DerivationError::Sender(Box::new(e))
-                                    })?;
-                                }
+                                self.engine_client.reset_engine_forkchoice().await.map_err(|e| {
+                                    error!(target: "derivation", ?e, "Failed to send reset request");
+                                    DerivationError::Sender(Box::new(e))
+                                })?;
                                 self.derivation_state_machine
                                     .update(&DerivationStateUpdate::SignalNeeded)?;
                                 return Err(DerivationError::Yield);

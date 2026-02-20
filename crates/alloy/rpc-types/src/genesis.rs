@@ -52,8 +52,6 @@ pub struct OpGenesisInfo {
     pub holocene_time: Option<u64>,
     /// isthmus hardfork timestamp
     pub isthmus_time: Option<u64>,
-    /// interop hardfork timestamp
-    pub interop_time: Option<u64>,
     /// jovian hardfork timestamp
     pub jovian_time: Option<u64>,
 }
@@ -134,7 +132,6 @@ mod tests {
                 granite_time: None,
                 holocene_time: None,
                 isthmus_time: None,
-                interop_time: None,
                 jovian_time: None,
             }
         );
@@ -195,7 +192,6 @@ mod tests {
                     granite_time: None,
                     holocene_time: None,
                     isthmus_time: None,
-                    interop_time: None,
                     jovian_time: None,
                 }),
                 base_fee_info: Some(OpBaseFeeInfo {
@@ -220,7 +216,6 @@ mod tests {
                     granite_time: None,
                     holocene_time: None,
                     isthmus_time: None,
-                    interop_time: None,
                     jovian_time: None,
                 }),
                 base_fee_info: Some(OpBaseFeeInfo {
@@ -263,7 +258,6 @@ mod tests {
                     granite_time: Some(0),
                     holocene_time: Some(0),
                     isthmus_time: Some(0),
-                    interop_time: None,
                     jovian_time: Some(0),
                 }),
                 base_fee_info: None,

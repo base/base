@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
     DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest, EngineConfig,
-    EngineProcessor, EngineRpcProcessor, InteropMode, L1OriginSelector, L1WatcherActor,
-    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeMode, QueuedDerivationEngineClient,
+    EngineProcessor, EngineRpcProcessor, L1OriginSelector, L1WatcherActor, NetworkActor,
+    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RollupBoostAdminApiClient, RollupBoostHealthRpcClient, RpcActor, RpcContext, SequencerActor,
@@ -53,8 +53,6 @@ pub struct RollupNode {
     pub(crate) config: Arc<RollupConfig>,
     /// The L1 configuration.
     pub(crate) l1_config: L1Config,
-    /// The interop mode for the node.
-    pub(crate) interop_mode: InteropMode,
     /// The L2 EL provider.
     pub(crate) l2_provider: RootProvider<Optimism>,
     /// Whether to trust the L2 RPC.
@@ -161,22 +159,13 @@ impl RollupNode {
             self.l2_trust_rpc,
         );
 
-        match self.interop_mode {
-            InteropMode::Polled => OnlinePipeline::new_polled(
-                Arc::clone(&self.config),
-                Arc::clone(&self.l1_config.chain_config),
-                OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
-                l1_derivation_provider,
-                l2_derivation_provider,
-            ),
-            InteropMode::Indexed => OnlinePipeline::new_indexed(
-                Arc::clone(&self.config),
-                Arc::clone(&self.l1_config.chain_config),
-                OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
-                l1_derivation_provider,
-                l2_derivation_provider,
-            ),
-        }
+        OnlinePipeline::new_polled(
+            Arc::clone(&self.config),
+            Arc::clone(&self.l1_config.chain_config),
+            OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
+            l1_derivation_provider,
+            l2_derivation_provider,
+        )
     }
 
     /// Helper function to assemble the [`EngineActor`] since there are many structs created that

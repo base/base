@@ -88,7 +88,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     }
 
     /// This RPC endpoint is not supported. It is not necessary to track the safe head for every L1
-    /// block post-interop anymore so we can remove this method from the rpc interface.
+    /// block anymore so we can remove this method from the rpc interface.
     async fn op_safe_head_at_l1_block(
         &self,
         _block_num: BlockNumberOrTag,

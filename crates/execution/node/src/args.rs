@@ -5,8 +5,6 @@
 use std::{path::PathBuf, time::Duration};
 
 use clap::builder::ArgPredicate;
-use op_alloy_consensus::interop::SafetyLevel;
-use reth_optimism_txpool::supervisor::DEFAULT_SUPERVISOR_URL;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -38,21 +36,6 @@ pub struct RollupArgs {
     /// Enable transaction conditional support on sequencer
     #[arg(long = "rollup.enable-tx-conditional", default_value = "false")]
     pub enable_tx_conditional: bool,
-
-    /// HTTP endpoint for the supervisor
-    #[arg(
-        long = "rollup.supervisor-http",
-        value_name = "SUPERVISOR_HTTP_URL",
-        default_value = DEFAULT_SUPERVISOR_URL
-    )]
-    pub supervisor_http: String,
-
-    /// Safety level for the supervisor
-    #[arg(
-        long = "rollup.supervisor-safety-level",
-        default_value_t = SafetyLevel::CrossUnsafe,
-    )]
-    pub supervisor_safety_level: SafetyLevel,
 
     /// Optional headers to use when connecting to the sequencer.
     #[arg(long = "rollup.sequencer-headers", requires = "sequencer")]
@@ -139,8 +122,6 @@ impl Default for RollupArgs {
             compute_pending_block: false,
             discovery_v4: false,
             enable_tx_conditional: false,
-            supervisor_http: DEFAULT_SUPERVISOR_URL.to_string(),
-            supervisor_safety_level: SafetyLevel::CrossUnsafe,
             sequencer_headers: Vec::new(),
             historical_rpc: None,
             min_suggested_priority_fee: 1_000_000,

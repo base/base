@@ -13786,18 +13786,14 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-json-rpc",
  "alloy-primitives",
- "alloy-rpc-client",
  "alloy-rpc-types-eth",
- "alloy-serde",
  "c-kzg",
  "derive_more",
  "futures-util",
  "metrics",
  "op-alloy-consensus",
  "op-alloy-flz",
- "op-alloy-rpc-types",
  "op-revm",
  "parking_lot",
  "reth-chain-state",
@@ -13812,10 +13808,7 @@ dependencies = [
  "reth-provider",
  "reth-storage-api",
  "reth-transaction-pool",
- "serde",
- "thiserror 2.0.18",
  "tokio",
- "tracing",
 ]
 
 [[package]]

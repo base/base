@@ -34,9 +34,6 @@ pub struct OverrideArgs {
     /// setting.
     #[arg(long, env = "KONA_OVERRIDE_PECTRA_BLOB_SCHEDULE")]
     pub pectra_blob_schedule_override: Option<u64>,
-    /// Manually specify the timestamp for the Interop fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_INTEROP")]
-    pub interop_override: Option<u64>,
 }
 
 impl Default for OverrideArgs {
@@ -67,7 +64,6 @@ impl OverrideArgs {
                 .unwrap_or(config.hardforks.pectra_blob_schedule_time),
             isthmus_time: self.isthmus_override.map(Some).unwrap_or(config.hardforks.isthmus_time),
             jovian_time: self.jovian_override.map(Some).unwrap_or(config.hardforks.jovian_time),
-            interop_time: self.interop_override.map(Some).unwrap_or(config.hardforks.interop_time),
         };
         RollupConfig { hardforks, ..config }
     }
@@ -108,8 +104,6 @@ mod tests {
             "1740000000",
             "--jovian-override",
             "1745000001",
-            "--interop-override",
-            "1750000000",
         ]);
         let config = RollupConfig::default();
         let updated_config = args.override_flags.apply(config);
@@ -126,7 +120,6 @@ mod tests {
                 pectra_blob_schedule_time: Some(1745000000),
                 isthmus_time: Some(1740000000),
                 jovian_time: Some(1745000001),
-                interop_time: Some(1750000000),
             }
         );
     }
@@ -159,7 +152,6 @@ mod tests {
                 pectra_blob_schedule_override: None,
                 isthmus_override: None,
                 jovian_override: None,
-                interop_override: None,
             }
         );
         // Sanity check that the default impl matches the expected default values.

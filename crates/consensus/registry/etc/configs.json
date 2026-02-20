@@ -3017,9 +3017,7 @@
           "public_rpc": "https://ci-sepolia-l1-archive.optimism.io",
           "explorer": ""
         },
-        "hardforks": {
-          "interop_time": 1749150000
-        },
+        "hardforks": {},
         "protocol_versions_addr": "0x72b9c5a159b0dee8331a268791aa432619693c06",
         "superchain_config_addr": "0x672f11f34b7be67c13a6fcba819c339bc3b0a585",
         "op_contracts_manager_proxy_addr": null
@@ -3047,8 +3045,7 @@
             "fjord_time": 0,
             "granite_time": 0,
             "holocene_time": 0,
-            "isthmus_time": 0,
-            "interop_time": 1749150000
+            "isthmus_time": 0
           },
           "optimism": {
             "eip1559Elasticity": 6,
@@ -3133,8 +3130,7 @@
             "fjord_time": 0,
             "granite_time": 0,
             "holocene_time": 0,
-            "isthmus_time": 0,
-            "interop_time": 1749150000
+            "isthmus_time": 0
           },
           "optimism": {
             "eip1559Elasticity": 6,

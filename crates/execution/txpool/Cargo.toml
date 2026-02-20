@@ -17,9 +17,6 @@ alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
-alloy-rpc-client = { workspace = true, features = ["reqwest", "default"] }
-alloy-json-rpc.workspace = true
-alloy-serde.workspace = true
 
 # reth
 reth-chainspec.workspace = true
@@ -35,7 +32,6 @@ op-revm.workspace = true
 # optimism
 op-alloy-consensus.workspace = true
 op-alloy-flz.workspace = true
-op-alloy-rpc-types.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-forks.workspace = true
 reth-optimism-primitives.workspace = true
@@ -49,11 +45,8 @@ c-kzg.workspace = true
 derive_more.workspace = true
 futures-util.workspace = true
 parking_lot.workspace = true
-serde.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["time"] }
 reth-optimism-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }

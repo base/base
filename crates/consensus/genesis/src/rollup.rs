@@ -19,17 +19,9 @@ pub const FJORD_MAX_SEQUENCER_DRIFT: u64 = 1800;
 /// The channel timeout once the Granite hardfork is active.
 pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
 
-/// The default interop message expiry window. (1 hour, in seconds)
-pub const DEFAULT_INTEROP_MESSAGE_EXPIRY_WINDOW: u64 = 60 * 60;
-
 #[cfg(feature = "serde")]
 const fn default_granite_channel_timeout() -> u64 {
     GRANITE_CHANNEL_TIMEOUT
-}
-
-#[cfg(feature = "serde")]
-const fn default_interop_message_expiry_window() -> u64 {
-    DEFAULT_INTEROP_MESSAGE_EXPIRY_WINDOW
 }
 
 /// The Rollup configuration.
@@ -85,10 +77,6 @@ pub struct RollupConfig {
     /// stored at.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub da_challenge_address: Option<Address>,
-    /// `interop_message_expiry_window` is the maximum time (in seconds) that an initiating message
-    /// can be referenced on a remote chain before it expires.
-    #[cfg_attr(feature = "serde", serde(default = "default_interop_message_expiry_window"))]
-    pub interop_message_expiry_window: u64,
     /// `alt_da_config` is the chain-specific DA config for the rollup.
     #[cfg_attr(feature = "serde", serde(rename = "alt_da"))]
     pub alt_da_config: Option<AltDAConfig>,
@@ -126,7 +114,6 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             superchain_config_address: Option::<Address>::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
             da_challenge_address: Option::<Address>::arbitrary(u)?,
-            interop_message_expiry_window: u.arbitrary()?,
             chain_op_config,
             alt_da_config: Option::<AltDAConfig>::arbitrary(u)?,
         })
@@ -153,7 +140,6 @@ impl Default for RollupConfig {
             superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
             da_challenge_address: None,
-            interop_message_expiry_window: DEFAULT_INTEROP_MESSAGE_EXPIRY_WINDOW,
             alt_da_config: None,
             chain_op_config: OP_MAINNET_BASE_FEE_CONFIG,
         }
@@ -170,9 +156,7 @@ impl RollupConfig {
     /// ## Returns
     /// The active [`op_revm::OpSpecId`] for the executor.
     pub fn spec_id(&self, timestamp: u64) -> op_revm::OpSpecId {
-        if self.is_interop_active(timestamp) {
-            op_revm::OpSpecId::INTEROP
-        } else if self.is_jovian_active(timestamp) {
+        if self.is_jovian_active(timestamp) {
             op_revm::OpSpecId::JOVIAN
         } else if self.is_isthmus_active(timestamp) {
             op_revm::OpSpecId::ISTHMUS
@@ -303,24 +287,12 @@ impl RollupConfig {
     /// Returns true if Jovian is active at the given timestamp.
     pub fn is_jovian_active(&self, timestamp: u64) -> bool {
         self.hardforks.jovian_time.is_some_and(|t| timestamp >= t)
-            || self.is_interop_active(timestamp)
     }
 
     /// Returns true if the timestamp marks the first Jovian block.
     pub fn is_first_jovian_block(&self, timestamp: u64) -> bool {
         self.is_jovian_active(timestamp)
             && !self.is_jovian_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if Interop is active at the given timestamp.
-    pub fn is_interop_active(&self, timestamp: u64) -> bool {
-        self.hardforks.interop_time.is_some_and(|t| timestamp >= t)
-    }
-
-    /// Returns true if the timestamp marks the first Interop block.
-    pub fn is_first_interop_block(&self, timestamp: u64) -> bool {
-        self.is_interop_active(timestamp)
-            && !self.is_interop_active(timestamp.saturating_sub(self.block_time))
     }
 
     /// Returns true if a DA Challenge proxy Address is provided in the rollup config and the
@@ -460,11 +432,6 @@ impl OpHardforks for RollupConfig {
             OpHardfork::Jovian => self
                 .hardforks
                 .jovian_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            OpHardfork::Interop => self
-                .hardforks
-                .interop_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             _ => ForkCondition::Never,
@@ -635,7 +602,7 @@ mod tests {
     #[test]
     fn test_jovian_active() {
         let mut config = RollupConfig::default();
-        assert!(!config.is_interop_active(0));
+        assert!(!config.is_jovian_active(0));
         config.hardforks.jovian_time = Some(10);
         assert!(config.is_regolith_active(10));
         assert!(config.is_canyon_active(10));
@@ -648,24 +615,6 @@ mod tests {
         assert!(config.is_isthmus_active(10));
         assert!(config.is_jovian_active(10));
         assert!(!config.is_jovian_active(9));
-    }
-
-    #[test]
-    fn test_interop_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_interop_active(0));
-        config.hardforks.interop_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(config.is_fjord_active(10));
-        assert!(config.is_granite_active(10));
-        assert!(config.is_holocene_active(10));
-        assert!(!config.is_pectra_blob_schedule_active(10));
-        assert!(config.is_isthmus_active(10));
-        assert!(config.is_interop_active(10));
-        assert!(!config.is_interop_active(9));
     }
 
     #[test]
@@ -682,7 +631,6 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                interop_time: Some(110),
             },
             block_time: 2,
             ..Default::default()
@@ -737,11 +685,6 @@ mod tests {
         assert!(!cfg.is_first_jovian_block(98));
         assert!(cfg.is_first_jovian_block(100));
         assert!(!cfg.is_first_jovian_block(102));
-
-        // Interop
-        assert!(!cfg.is_first_interop_block(108));
-        assert!(cfg.is_first_interop_block(110));
-        assert!(!cfg.is_first_interop_block(112));
     }
 
     #[test]
@@ -880,7 +823,6 @@ mod tests {
             superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
             da_challenge_address: None,
-            interop_message_expiry_window: DEFAULT_INTEROP_MESSAGE_EXPIRY_WINDOW,
             chain_op_config: OP_MAINNET_BASE_FEE_CONFIG,
             alt_da_config: None,
         };

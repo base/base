@@ -347,12 +347,6 @@ where
             return false;
         }
 
-        // Do not include transactions in the first Interop block.
-        if self.rollup_config.is_first_interop_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing interop upgrade block");
-            return false;
-        }
-
         // Transaction pool transactions are enabled if none of the reasons to disable are satisfied
         // above.
         true

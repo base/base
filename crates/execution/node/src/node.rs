@@ -2,7 +2,7 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
-use op_alloy_consensus::{OpPooledTransaction, interop::SafetyLevel};
+use op_alloy_consensus::OpPooledTransaction;
 use op_alloy_rpc_types_engine::OpExecutionData;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_engine_local::LocalPayloadAttributesBuilder;
@@ -47,10 +47,7 @@ use reth_optimism_rpc::{
     witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
 };
 use reth_optimism_storage::OpStorage;
-use reth_optimism_txpool::{
-    OpPooledTx,
-    supervisor::{DEFAULT_SUPERVISOR_URL, SupervisorClient},
-};
+use reth_optimism_txpool::OpPooledTx;
 use reth_provider::{CanonStateSubscriptions, providers::ProviderFactoryBuilder};
 use reth_rpc_api::{DebugApiServer, L2EthApiExtServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
@@ -169,11 +166,7 @@ impl OpNode {
             .executor(OpExecutorBuilder::default())
             .pool(
                 OpPoolBuilder::default()
-                    .with_enable_tx_conditional(self.args.enable_tx_conditional)
-                    .with_supervisor(
-                        self.args.supervisor_http.clone(),
-                        self.args.supervisor_safety_level,
-                    ),
+                    .with_enable_tx_conditional(self.args.enable_tx_conditional),
             )
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
@@ -874,10 +867,6 @@ pub struct OpPoolBuilder<T = crate::txpool::OpPooledTransaction> {
     pub pool_config_overrides: PoolBuilderConfigOverrides,
     /// Enable transaction conditionals.
     pub enable_tx_conditional: bool,
-    /// Supervisor client url
-    pub supervisor_http: String,
-    /// Supervisor safety level
-    pub supervisor_safety_level: SafetyLevel,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -887,8 +876,6 @@ impl<T> Default for OpPoolBuilder<T> {
         Self {
             pool_config_overrides: Default::default(),
             enable_tx_conditional: false,
-            supervisor_http: DEFAULT_SUPERVISOR_URL.to_string(),
-            supervisor_safety_level: SafetyLevel::CrossUnsafe,
             _pd: Default::default(),
         }
     }
@@ -899,8 +886,6 @@ impl<T> Clone for OpPoolBuilder<T> {
         Self {
             pool_config_overrides: self.pool_config_overrides.clone(),
             enable_tx_conditional: self.enable_tx_conditional,
-            supervisor_http: self.supervisor_http.clone(),
-            supervisor_safety_level: self.supervisor_safety_level,
             _pd: core::marker::PhantomData,
         }
     }
@@ -921,17 +906,6 @@ impl<T> OpPoolBuilder<T> {
         self.pool_config_overrides = pool_config_overrides;
         self
     }
-
-    /// Sets the supervisor client
-    pub fn with_supervisor(
-        mut self,
-        supervisor_client: String,
-        supervisor_safety_level: SafetyLevel,
-    ) -> Self {
-        self.supervisor_http = supervisor_client;
-        self.supervisor_safety_level = supervisor_safety_level;
-        self
-    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for OpPoolBuilder<T>
@@ -948,20 +922,6 @@ where
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
         let Self { pool_config_overrides, .. } = self;
-
-        // supervisor used for interop
-        if ctx.chain_spec().is_interop_active_at_timestamp(ctx.head().timestamp)
-            && self.supervisor_http == DEFAULT_SUPERVISOR_URL
-        {
-            info!(target: "reth::cli",
-                url=%DEFAULT_SUPERVISOR_URL,
-                "Default supervisor url is used, consider changing --rollup.supervisor-http."
-            );
-        }
-        let supervisor_client = SupervisorClient::builder(self.supervisor_http.clone())
-            .minimum_safety(self.supervisor_safety_level)
-            .build()
-            .await;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
@@ -983,7 +943,6 @@ where
                         // In --dev mode we can't require gas fees because we're unable to decode
                         // the L1 block info
                         .require_l1_data_gas_fee(!ctx.config().dev.dev)
-                        .with_supervisor(supervisor_client.clone())
                 });
 
         let final_pool_config = pool_config_overrides.apply(ctx.pool_config());
@@ -994,21 +953,6 @@ where
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
-
-        // The Op txpool maintenance task is only spawned when interop is active
-        if ctx.chain_spec().is_interop_active_at_timestamp(ctx.head().timestamp) {
-            // spawn the Op txpool maintenance task
-            let chain_events = ctx.provider().canonical_state_stream();
-            ctx.task_executor().spawn_critical_task(
-                "Op txpool interop maintenance task",
-                reth_optimism_txpool::maintain::maintain_transaction_pool_interop_future(
-                    transaction_pool.clone(),
-                    chain_events,
-                    supervisor_client,
-                ),
-            );
-            debug!(target: "reth::cli", "Spawned Op interop txpool maintenance task");
-        }
 
         if self.enable_tx_conditional {
             // spawn the Op txpool maintenance task

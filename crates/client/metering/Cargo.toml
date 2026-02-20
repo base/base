@@ -38,9 +38,6 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives.workspace = true
 
-# op-alloy
-op-alloy-consensus.workspace = true
-
 # rpc
 jsonrpsee.workspace = true
 

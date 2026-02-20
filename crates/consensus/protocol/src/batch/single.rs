@@ -155,14 +155,12 @@ impl SingleBatch {
             }
         }
 
-        // If this is the first block in the jovian or interop hardfork, and the batch contains any
+        // If this is the first block in the jovian hardfork, and the batch contains any
         // transactions, it must be dropped.
-        if (cfg.is_first_jovian_block(self.timestamp) || cfg.is_first_interop_block(self.timestamp))
-            && !self.transactions.is_empty()
-        {
+        if cfg.is_first_jovian_block(self.timestamp) && !self.transactions.is_empty() {
             warn!(
                 target: "single_batch",
-                "Sequencer included user transactions in jovian or interop transition block. Dropping batch."
+                "Sequencer included user transactions in jovian transition block. Dropping batch."
             );
             return BatchValidity::Drop(BatchDropReason::NonEmptyTransitionBlock);
         }
@@ -600,7 +598,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std")]
-    fn test_check_batch_drop_non_empty_interop_transition() {
+    fn test_check_batch_drop_non_empty_jovian_transition() {
         let trace_store: TraceStorage = Default::default();
         let layer = CollectingLayer::new(trace_store.clone());
         let subscriber = tracing_subscriber::Registry::default().with(layer);
@@ -621,7 +619,7 @@ mod tests {
         let cfg = RollupConfig {
             max_sequencer_drift: 1,
             block_time: 1,
-            hardforks: HardForkConfig { interop_time: Some(1), ..Default::default() },
+            hardforks: HardForkConfig { jovian_time: Some(1), ..Default::default() },
             ..Default::default()
         };
         let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
