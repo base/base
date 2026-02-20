@@ -206,4 +206,3 @@ impl From<(Sealed<Header>, BlockExecutionResult<OpReceiptEnvelope>)> for BlockBu
         Self { header, execution_result }
     }
 }
-
