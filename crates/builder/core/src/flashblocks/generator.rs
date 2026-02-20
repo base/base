@@ -318,6 +318,7 @@ where
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
 {
+    /// Spawns the payload building job on the executor.
     pub fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
@@ -415,16 +416,19 @@ pub struct BlockCell<T> {
 }
 
 impl<T: Clone> BlockCell<T> {
+    /// Creates a new empty `BlockCell`.
     pub fn new() -> Self {
         Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
     }
 
+    /// Sets a new value in the cell and notifies waiters.
     pub fn set(&self, value: T) {
         let mut inner = self.inner.lock();
         *inner = Some(value);
         self.notify.notify_one();
     }
 
+    /// Gets a clone of the current value if it has been set.
     pub fn get(&self) -> Option<T> {
         let inner = self.inner.lock();
         inner.clone()
