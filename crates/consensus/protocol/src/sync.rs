@@ -40,14 +40,14 @@ pub struct SyncStatus {
     /// This is the absolute tip of the L2 chain, pointing to block data that has not been
     /// submitted to L1 yet. The sequencer is building this, and verifiers may also be ahead of
     /// the safe L2 block if they sync blocks via p2p or other offchain sources.
-    /// This is considered to only be local-unsafe post-interop, see `cross_unsafe_l2` for cross-L2
+    /// This is considered to only be local-unsafe, see `cross_unsafe_l2` for cross-L2
     /// guarantees.
     pub unsafe_l2: L2BlockInfo,
     /// The safe L2 block ref.
     ///
     /// This points to the L2 block that was derived from the L1 chain.
     /// This point may still reorg if the L1 chain reorgs.
-    /// This is considered to be cross-safe post-interop, see `local_safe_l2` to ignore cross-L2
+    /// This is considered to be cross-safe, see `local_safe_l2` to ignore cross-L2
     /// guarantees.
     pub safe_l2: L2BlockInfo,
     /// The finalized L2 block ref.
@@ -58,7 +58,6 @@ pub struct SyncStatus {
     /// Cross unsafe L2 block ref.
     ///
     /// This is an unsafe L2 block, that has been verified to match cross-L2 dependencies.
-    /// Pre-interop every unsafe L2 block is also cross-unsafe.
     pub cross_unsafe_l2: L2BlockInfo,
     /// Local safe L2 block ref.
     ///

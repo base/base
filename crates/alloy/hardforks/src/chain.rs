@@ -83,7 +83,7 @@ impl Index<OpHardfork> for OpChainHardforks {
 
     fn index(&self, hf: OpHardfork) -> &Self::Output {
         use OpHardfork::{
-            Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Interop, Isthmus, Jovian, Regolith,
+            Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
         };
 
         match hf {
@@ -96,7 +96,6 @@ impl Index<OpHardfork> for OpChainHardforks {
             Holocene => &self.forks[Holocene.idx()].1,
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
-            Interop => &self.forks[Interop.idx()].1,
         }
     }
 }
@@ -176,7 +175,6 @@ mod tests {
             base_mainnet_forks[Jovian],
             ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)
         );
-        assert_eq!(base_mainnet_forks.op_fork_activation(Interop), ForkCondition::Never);
     }
 
     #[test]
@@ -217,7 +215,6 @@ mod tests {
             base_sepolia_forks.op_fork_activation(Jovian),
             ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
         );
-        assert_eq!(base_sepolia_forks.op_fork_activation(Interop), ForkCondition::Never);
     }
 
     #[test]

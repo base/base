@@ -67,11 +67,6 @@ pub struct HardForkConfig {
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub jovian_time: Option<u64>,
-    /// `interop_time` sets the activation time for the Interop network upgrade.
-    /// Active if `interop_time` != None && L2 block timestamp >= `Some(interop_time)`, inactive
-    /// otherwise.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub interop_time: Option<u64>,
 }
 
 impl Display for HardForkConfig {
@@ -103,7 +98,6 @@ impl HardForkConfig {
             ("Pectra Blob Schedule", self.pectra_blob_schedule_time),
             ("Isthmus", self.isthmus_time),
             ("Jovian", self.jovian_time),
-            ("Interop", self.interop_time),
         ]
         .into_iter()
     }
@@ -138,7 +132,6 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            interop_time: None,
         };
 
         let deserialized: HardForkConfig = serde_json::from_str(raw).unwrap();
@@ -185,7 +178,6 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            interop_time: None,
         };
 
         let deserialized: HardForkConfig = toml::from_str(raw).unwrap();
@@ -219,7 +211,6 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            interop_time: Some(11),
         };
 
         let mut iter = hardforks.iter();
@@ -233,7 +224,6 @@ mod tests {
         assert_eq!(iter.next(), Some(("Pectra Blob Schedule", Some(8))));
         assert_eq!(iter.next(), Some(("Isthmus", Some(9))));
         assert_eq!(iter.next(), Some(("Jovian", Some(10))));
-        assert_eq!(iter.next(), Some(("Interop", Some(11))));
         assert_eq!(iter.next(), None);
     }
 }

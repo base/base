@@ -35,15 +35,3 @@ impl NodeMode {
         matches!(self, Self::Sequencer)
     }
 }
-
-/// The [`InteropMode`] enum represents how the node works with interop.
-#[derive(Debug, derive_more::Display, Default, Clone, Copy, PartialEq, Eq)]
-pub enum InteropMode {
-    /// The node is in polled mode.
-    #[display("Polled")]
-    #[default]
-    Polled,
-    /// The node is in indexed mode.
-    #[display("Indexed")]
-    Indexed,
-}

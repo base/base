@@ -198,13 +198,6 @@ impl OpChainSpecBuilder {
         self
     }
 
-    /// Enable Interop at genesis
-    pub fn interop_activated(mut self) -> Self {
-        self = self.jovian_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Interop, ForkCondition::Timestamp(0));
-        self
-    }
-
     /// Build the resulting [`OpChainSpec`].
     ///
     /// # Panics
@@ -391,7 +384,6 @@ impl From<Genesis> for OpChainSpec {
             (OpHardfork::Holocene.boxed(), genesis_info.holocene_time),
             (OpHardfork::Isthmus.boxed(), genesis_info.isthmus_time),
             (OpHardfork::Jovian.boxed(), genesis_info.jovian_time),
-            (OpHardfork::Interop.boxed(), genesis_info.interop_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
@@ -1199,7 +1191,6 @@ mod tests {
             EthereumHardfork::Prague.boxed(),
             OpHardfork::Isthmus.boxed(),
             OpHardfork::Jovian.boxed(),
-            // OpHardfork::Interop.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {

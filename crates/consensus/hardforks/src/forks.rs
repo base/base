@@ -1,6 +1,6 @@
 //! Contains all hardforks represented in the [`crate::Hardfork`] type.
 
-use crate::{Ecotone, Fjord, Interop, Isthmus, Jovian};
+use crate::{Ecotone, Fjord, Isthmus, Jovian};
 
 /// Optimism Hardforks
 ///
@@ -30,13 +30,6 @@ use crate::{Ecotone, Fjord, Interop, Isthmus, Jovian};
 /// let isthmus_upgrade_tx = Hardforks::ISTHMUS.txs();
 /// assert_eq!(isthmus_upgrade_tx.collect::<Vec<_>>().len(), 8);
 /// ```
-///
-/// Build interop hardfork upgrade transaction:
-/// ```rust
-/// use kona_hardforks::{Hardfork, Hardforks};
-/// let interop_upgrade_tx = Hardforks::INTEROP.txs();
-/// assert_eq!(interop_upgrade_tx.collect::<Vec<_>>().len(), 4);
-/// ```
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct Hardforks;
@@ -54,8 +47,6 @@ impl Hardforks {
     /// The Jovian hardfork upgrade transactions.
     pub const JOVIAN: Jovian = Jovian;
 
-    /// The Interop hardfork upgrade transactions.
-    pub const INTEROP: Interop = Interop;
 }
 
 #[cfg(test)]
@@ -79,7 +70,5 @@ mod tests {
         let jovian_upgrade_tx = Hardforks::JOVIAN.txs();
         assert_eq!(jovian_upgrade_tx.collect::<Vec<_>>().len(), 5);
 
-        let interop_upgrade_tx = Hardforks::INTEROP.txs();
-        assert_eq!(interop_upgrade_tx.collect::<Vec<_>>().len(), 4);
     }
 }

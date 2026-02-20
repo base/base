@@ -27,7 +27,7 @@ use crate::Metrics;
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).
     unsafe_head: L2BlockInfo,
-    /// Cross-verified unsafe head (equal to `unsafe_head` pre-interop).
+    /// Cross-verified unsafe head.
     cross_unsafe_head: L2BlockInfo,
     /// Derived from L1 data as a completed span-batch, but not yet cross-verified.
     local_safe_head: L2BlockInfo,
@@ -138,7 +138,7 @@ impl EngineSyncState {
 pub struct EngineSyncStateUpdate {
     /// Most recent block found on the p2p network
     pub unsafe_head: Option<L2BlockInfo>,
-    /// Cross-verified unsafe head, always equal to the unsafe head pre-interop
+    /// Cross-verified unsafe head
     pub cross_unsafe_head: Option<L2BlockInfo>,
     /// Derived from L1, and known to be a completed span-batch,
     /// but not cross-verified yet.

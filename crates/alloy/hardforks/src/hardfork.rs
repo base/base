@@ -36,8 +36,6 @@ hardfork!(
         Isthmus,
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
-        /// TODO: add interop hardfork overview when available
-        Interop,
     }
 );
 
@@ -139,7 +137,7 @@ mod tests {
     fn check_op_hardfork_from_str() {
         let hardfork_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
-            "jOvIaN", "inTerOP",
+            "jOvIaN",
         ];
         let expected_hardforks = [
             OpHardfork::Bedrock,
@@ -151,7 +149,6 @@ mod tests {
             OpHardfork::Holocene,
             OpHardfork::Isthmus,
             OpHardfork::Jovian,
-            OpHardfork::Interop,
         ];
 
         let hardforks: alloc::vec::Vec<OpHardfork> =

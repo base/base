@@ -2,7 +2,6 @@ use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
 use derive_more::Display;
-use op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS;
 use op_revm::{OpSpecId, l1block::L1BlockInfo};
 use reth_primitives_traits::{Account, Bytecode};
 use tracing::warn;
@@ -10,9 +9,6 @@ use tracing::warn;
 /// Errors that can occur when validating a transaction.
 #[derive(Debug, PartialEq, Eq, Display)]
 pub enum TxValidationError {
-    /// Interop transactions are not supported
-    #[display("Interop transactions are not supported")]
-    InteropNotSupported,
     /// Signer account has non-EIP-7702 bytecode (i.e., it's a contract, not an EOA)
     #[display("Signer account has bytecode that is not EIP-7702 delegation")]
     SignerAccountHasBytecode,
@@ -32,7 +28,6 @@ pub enum TxValidationError {
 
 /// Helper function to validate a transaction. A valid transaction must satisfy the following criteria:
 /// - The transaction is not EIP-4844
-/// - The transaction is not a cross chain tx
 /// - If the account has bytecode, it MUST be EIP-7702 bytecode
 /// - The transaction's nonce is the latest
 /// - The transaction's execution cost is less than the account's balance
@@ -47,18 +42,6 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     l1_block_info: &mut L1BlockInfo,
 ) -> Result<(), TxValidationError> {
     let data = txn.encoded_2718();
-
-    // from: https://github.com/paradigmxyz/reth/blob/3b0d98f3464b504d96154b787a860b2488a61b3e/crates/optimism/txpool/src/supervisor/client.rs#L76-L84
-    // It returns `None` if a tx is not cross chain, which is when `inbox_entries` is empty in the snippet above.
-    // We can do something similar where if the inbox_entries is non-empty then it is a cross chain tx and it's something we don't support
-    if let Some(access_list) = txn.access_list() {
-        let inbox_entries =
-            access_list.iter().filter(|entry| entry.address == CROSS_L2_INBOX_ADDRESS);
-        if inbox_entries.count() > 0 {
-            warn!(message = "Interop transactions are not supported");
-            return Err(TxValidationError::InteropNotSupported);
-        }
-    }
 
     // If an account has bytecode, it MUST be EIP-7702 bytecode
     if let Some(bytecode) = sender_code
@@ -114,7 +97,6 @@ mod tests {
     use op_alloy_consensus::OpTxEnvelope;
     use op_alloy_network::TxSignerSync;
     use revm_bytecode::eip7702::Eip7702Bytecode;
-    use revm_context_interface::transaction::{AccessList, AccessListItem};
 
     use super::*;
 
@@ -228,40 +210,6 @@ mod tests {
         let recovered_tx = envelope.try_into_recovered().unwrap();
         assert!(
             validate_tx(account, Some(&eip7702_code), &recovered_tx, &mut l1_block_info).is_ok()
-        );
-    }
-
-    #[test]
-    fn test_err_interop_tx() {
-        let signer = BaseAccount::Alice.signer();
-
-        let access_list = AccessList::from(vec![AccessListItem {
-            address: CROSS_L2_INBOX_ADDRESS,
-            storage_keys: vec![],
-        }]);
-
-        let mut tx = TxEip1559 {
-            chain_id: 1,
-            nonce: 0,
-            gas_limit: 21000,
-            max_fee_per_gas: 20000000000u128,
-            max_priority_fee_per_gas: 1000000000u128,
-            to: Address::random().into(),
-            value: U256::from(10000000000000u128),
-            access_list,
-            input: bytes!(""),
-        };
-
-        let account = create_account(0, U256::from(1000000000000000000u128));
-        let mut l1_block_info = create_l1_block_info();
-
-        let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-        let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
-        let recovered_tx = envelope.try_into_recovered().unwrap();
-
-        assert_eq!(
-            validate_tx(account, None, &recovered_tx, &mut l1_block_info),
-            Err(TxValidationError::InteropNotSupported)
         );
     }
 

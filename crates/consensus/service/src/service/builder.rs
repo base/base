@@ -18,7 +18,7 @@ use tower::ServiceBuilder;
 use url::Url;
 
 use crate::{
-    EngineConfig, InteropMode, NetworkConfig, RollupNode, SequencerConfig,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig,
     actors::DerivationDelegateClient, service::node::L1Config,
 };
 
@@ -69,8 +69,6 @@ pub struct RollupNodeBuilder {
     pub rpc_config: Option<RpcBuilder>,
     /// The [`SequencerConfig`].
     pub sequencer_config: Option<SequencerConfig>,
-    /// Whether to run the node in interop mode.
-    pub interop_mode: InteropMode,
     /// Optional configuration for Derivation Delegate mode.
     /// When present, the node does not run derivation, instead trusting the configured delegate.
     pub derivation_delegate_config: Option<DerivationDelegateConfig>,
@@ -93,7 +91,6 @@ impl RollupNodeBuilder {
             engine_config,
             p2p_config,
             rpc_config,
-            interop_mode: InteropMode::default(),
             sequencer_config: None,
             derivation_delegate_config: None,
         }
@@ -173,7 +170,6 @@ impl RollupNodeBuilder {
         RollupNode {
             config: rollup_config,
             l1_config,
-            interop_mode: self.interop_mode,
             l2_provider,
             l2_trust_rpc: self.l2_trust_rpc,
             engine_config: self.engine_config,
