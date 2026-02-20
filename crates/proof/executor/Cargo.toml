@@ -42,7 +42,6 @@ thiserror.workspace = true
 
 # `test-utils` feature dependencies
 rand = { workspace = true, optional = true }
-rstest = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tempfile = { workspace = true, optional = true }
@@ -66,7 +65,6 @@ test-utils = [
 	"dep:kona-registry",
 	"dep:rand",
 	"dep:rocksdb",
-	"dep:rstest",
 	"dep:serde",
 	"dep:serde_json",
 	"dep:tempfile",

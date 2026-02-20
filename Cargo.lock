@@ -7520,7 +7520,6 @@ dependencies = [
  "rand 0.9.2",
  "revm",
  "rocksdb",
- "rstest",
  "serde",
  "serde_json",
  "tempfile",
