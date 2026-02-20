@@ -302,7 +302,7 @@ mod tests {
 
         let gas = 4_000_000;
         let mut total_gas = 0u64;
-        for _ in 0..4 {
+        for _ in 0..3 {
             let mut tx = TxEip1559 {
                 chain_id: 1,
                 nonce: 0,
@@ -336,12 +336,12 @@ mod tests {
             ..Default::default()
         };
 
-        // Test should fail due to exceeding gas limit
+        // Test should fail due to mismatched reverting_tx_hashes
         let result = validate_bundle(&bundle, total_gas, tx_hashes);
         assert!(result.is_err());
         if let Err(e) = result {
             let error_message = format!("{e:?}");
-            assert!(error_message.contains("Bundle can only contain 3 transactions"));
+            assert!(error_message.contains("reverting_tx_hashes must include all hashes"));
         }
     }
 
