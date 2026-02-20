@@ -13,7 +13,7 @@ pub use receipt::OpReceipt;
 
 /// Bincode-compatible serde implementations for receipt types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub mod serde_bincode_compat {
+pub(crate) mod serde_bincode_compat {
     pub use super::{
         deposit::serde_bincode_compat::OpDepositReceipt, receipt::serde_bincode_compat::OpReceipt,
     };

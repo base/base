@@ -7,8 +7,6 @@ mod tx_type;
 pub use tx_type::DEPOSIT_TX_TYPE_ID;
 
 mod envelope;
-#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub use envelope::serde_bincode_compat as envelope_serde_bincode_compat;
 pub use envelope::{OpTransaction, OpTxEnvelope, OpTxType};
 
 mod typed;
