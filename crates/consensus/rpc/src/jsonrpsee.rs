@@ -212,4 +212,3 @@ pub trait HealthzApi {
     #[method(name = "healthz")]
     async fn healthz(&self) -> RpcResult<HealthzResponse>;
 }
-

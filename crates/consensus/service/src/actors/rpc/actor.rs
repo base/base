@@ -5,8 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base_consensus_rpc::{
     AdminApiServer, AdminRpc, DevEngineApiServer, DevEngineRpc, EngineRpcClient, HealthzApiServer,
-    HealthzRpc, L1WatcherQueries, NetworkAdminQuery, OpP2PApiServer, P2pRpc,
-    RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient, WsRPC, WsServer,
+    HealthzRpc, L1WatcherQueries, NetworkAdminQuery, OpP2PApiServer, P2pRpc, RollupNodeApiServer,
+    RollupRpc, RpcBuilder, SequencerAdminAPIClient, WsRPC, WsServer,
 };
 use derive_more::Constructor;
 use jsonrpsee::{
@@ -107,9 +107,7 @@ where
         modules.merge(P2pRpc::new(p2p_network).into_rpc())?;
 
         // Build the admin rpc module.
-        modules.merge(
-            AdminRpc::new(self.sequencer_admin_rpc_client, network_admin).into_rpc(),
-        )?;
+        modules.merge(AdminRpc::new(self.sequencer_admin_rpc_client, network_admin).into_rpc())?;
 
         // Create context for communication between actors.
         let rollup_rpc = RollupRpc::new(self.engine_rpc_client.clone(), l1_watcher_queries);

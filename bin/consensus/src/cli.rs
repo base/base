@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,

@@ -2737,7 +2737,6 @@ dependencies = [
 name = "base-consensus"
 version = "0.0.0"
 dependencies = [
- "alloy-rpc-types-engine",
  "base-cli-utils",
  "base-client-cli",
  "clap",

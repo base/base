@@ -79,5 +79,6 @@ serde = [
 	"alloy-network-primitives/serde",
 	"alloy-primitives/serde",
 	"base-alloy-consensus/serde",
+	"alloy-rpc-types-eth/serde"
 ]
 jsonrpsee = [ "dep:jsonrpsee" ]

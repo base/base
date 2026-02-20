@@ -50,7 +50,9 @@ mod attributes;
 pub use attributes::{AttributesMatch, AttributesMismatch};
 
 mod client;
-pub use client::{EngineClient, EngineClientBuilder, EngineClientError, HyperAuthClient, OpEngineClient};
+pub use client::{
+    EngineClient, EngineClientBuilder, EngineClientError, HyperAuthClient, OpEngineClient,
+};
 
 mod versions;
 pub use versions::{EngineForkchoiceVersion, EngineGetPayloadVersion, EngineNewPayloadVersion};

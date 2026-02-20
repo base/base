@@ -34,10 +34,13 @@ std = [
 	"alloy-primitives/std",
 	"base-alloy-consensus/std",
 	"base-alloy-rpc-types/std",
+	"alloy-consensus/std",
+	"alloy-rpc-types-eth/std"
 ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-primitives/serde",
 	"base-alloy-consensus/serde",
 	"base-alloy-rpc-types/serde",
+	"alloy-rpc-types-eth/serde"
 ]

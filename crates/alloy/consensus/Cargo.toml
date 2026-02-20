@@ -51,6 +51,9 @@ std = [
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"thiserror/std",
+	"alloy-rpc-types-eth?/std",
+	"alloy-serde?/std",
+	"serde?/std"
 ]
 alloy-compat = [ "dep:alloy-network", "dep:alloy-rpc-types-eth", "serde" ]
 k256 = [ "alloy-consensus/k256", "alloy-primitives/k256" ]
@@ -71,5 +74,6 @@ serde = [
 	"alloy-primitives/serde",
 	"dep:alloy-serde",
 	"dep:serde",
+	"alloy-rpc-types-eth?/serde"
 ]
 serde-bincode-compat = [ "alloy-consensus/serde-bincode-compat", "serde_with" ]

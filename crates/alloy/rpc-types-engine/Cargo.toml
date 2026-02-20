@@ -64,6 +64,8 @@ std = [
 	"derive_more/std",
 	"sha2/std",
 	"thiserror/std",
+	"alloy-serde?/std",
+	"serde?/std"
 ]
 serde = [
 	"alloy-consensus/serde",
