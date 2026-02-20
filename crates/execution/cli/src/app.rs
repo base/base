@@ -96,12 +96,6 @@ where
             Commands::InitState(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
             }
-            Commands::ImportOp(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
-            }
-            Commands::ImportReceiptsOp(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
-            }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
                 runner.run_blocking_command_until_exit(|ctx| command.execute::<OpNode>(ctx))

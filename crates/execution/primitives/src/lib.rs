@@ -11,8 +11,6 @@
 #![allow(unused)]
 extern crate alloc;
 
-pub mod bedrock;
-
 // Re-export predeploys from op-alloy-consensus
 pub use op_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 

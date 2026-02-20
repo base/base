@@ -158,11 +158,6 @@ where
 {
     fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError> {
         let header = header.header();
-        // with OP-stack Bedrock activation number determines when TTD (eth Merge) has been reached.
-        debug_assert!(
-            self.chain_spec.is_bedrock_active_at_block(header.number()),
-            "manually import OVM blocks"
-        );
 
         if header.nonce() != Some(B64::ZERO) {
             return Err(ConsensusError::TheMergeNonceIsNotZero);
