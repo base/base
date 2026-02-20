@@ -20,7 +20,7 @@ kona-genesis = { workspace = true, features = ["serde", "std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 
 # OP Alloy
-op-alloy-rpc-jsonrpsee.workspace = true
+base-alloy-rpc-jsonrpsee.workspace = true
 op-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
 # Alloy
@@ -52,10 +52,10 @@ serde_json = { workspace = true, features = ["std"] }
 default = []
 reqwest = [ "client" ]
 client = [
+	"base-alloy-rpc-jsonrpsee/client",
 	"jsonrpsee/async-client",
 	"jsonrpsee/client",
 	"jsonrpsee/http-client",
-	"op-alloy-rpc-jsonrpsee/client",
 ]
 metrics = [
 	"dep:metrics",
