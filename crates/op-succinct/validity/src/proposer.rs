@@ -106,7 +106,7 @@ where
 
         let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
         let agg_vk = agg_pk.verifying_key().clone();
-        let multi_block_vkey_u8 = u32_to_u8(range_vk.vk.hash_u32());
+        let multi_block_vkey_u8 = u32_to_u8(range_vk.hash_u32());
         let range_vkey_commitment = B256::from(multi_block_vkey_u8);
         let agg_vkey_hash = B256::from_str(&agg_vk.bytes32())?;
 

@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     let range_pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
     let range_vk = range_pk.verifying_key();
 
-    // Get the 32 byte commitment to the vkey from vkey.vk.hash_u32()
+    // Get the 32 byte commitment to the vkey from hash_u32()
     let range_vk_hash = B256::from(u32_to_u8(range_vk.hash_u32()));
     println!("Range Verification Key Hash: {range_vk_hash}");
 

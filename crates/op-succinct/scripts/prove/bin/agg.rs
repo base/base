@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
 
     let header = fetcher.get_latest_l1_head_in_batch(&boot_infos).await?;
     let headers = fetcher.get_header_preimages(&boot_infos, header.hash_slow()).await?;
-    let multi_block_vkey_u8 = u32_to_u8(vkey.vk.hash_u32());
+    let multi_block_vkey_u8 = u32_to_u8(vkey.hash_u32());
     let multi_block_vkey_b256 = B256::from(multi_block_vkey_u8);
     println!("Range ELF Verification Key Commitment: {multi_block_vkey_b256}");
     let stdin =
