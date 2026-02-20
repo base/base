@@ -1,0 +1,34 @@
+[package]
+name = "kona-driver"
+description = "A no_std derivation pipeline driver"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+kona-derive.workspace = true
+kona-genesis.workspace = true
+kona-executor.workspace = true
+base-protocol.workspace = true
+
+# Alloy
+alloy-rlp.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-evm = { workspace = true, features = ["op"] }
+
+# OP Alloy
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+
+# Misc
+spin.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true

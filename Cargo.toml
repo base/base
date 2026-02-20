@@ -13,6 +13,7 @@ members = [
     "bin/*",
     "crates/client/*",
     "crates/consensus/*",
+    "crates/proof/*",
     "crates/shared/*",
     "crates/builder/*",
     "crates/infra/*",
@@ -172,6 +173,15 @@ kona-registry = { path = "crates/consensus/registry", default-features = false }
 kona-hardforks = { path = "crates/consensus/hardforks", default-features = false }
 kona-node-service = { path = "crates/consensus/service", default-features = false }
 kona-providers-alloy = { path = "crates/consensus/providers-alloy", default-features = false }
+
+# Kona Proof
+kona-mpt = { path = "crates/proof/mpt", default-features = false }
+kona-proof = { path = "crates/proof/proof", default-features = false }
+kona-driver = { path = "crates/proof/driver", default-features = false }
+kona-executor = { path = "crates/proof/executor", default-features = false }
+kona-preimage = { path = "crates/proof/preimage", default-features = false }
+kona-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
+kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
 
 # reth
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }
@@ -443,6 +453,7 @@ redis = "0.30.0"
 similar-asserts = "1"
 
 # kona transitive deps
+syn = "2.0"
 spin = "0.9"
 toml = "0.8"
 c-kzg = "2.1"
@@ -458,8 +469,15 @@ miniz_oxide = "0.8"
 libp2p-stream = "0.4.0-alpha"
 unsigned-varint = "0.8"
 alloc-no-stdlib = "2.0"
+async-channel = "2.5"
 rollup-boost-types = "0.1"
+buddy_system_allocator = "0.12"
 tabled = { version = "0.20", default-features = false }
+cfg-if = "1.0"
+quote = "1.0"
+proc-macro2 = "1.0"
+ark-ff = { version = "0.5.0", default-features = false }
+ark-bls12-381 = { version = "0.5.0", default-features = false }
 
 # copied from ethereum-optimism/optimism
 [patch.crates-io]
