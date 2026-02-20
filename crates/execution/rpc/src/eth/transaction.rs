@@ -26,7 +26,6 @@ use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
-use tokio_stream::wrappers::WatchStream;
 
 use crate::{OpEthApi, OpEthApiError, SequencerClient};
 
@@ -84,8 +83,7 @@ where
 
     /// Decodes and recovers the transaction and submits it to the pool.
     ///
-    /// And awaits the receipt, checking both canonical blocks and flashblocks for faster
-    /// confirmation.
+    /// And awaits the receipt from canonical blocks.
     fn send_raw_transaction_sync(
         &self,
         tx: Bytes,
@@ -95,51 +93,22 @@ where
         async move {
             let mut canonical_stream = this.provider().canonical_state_stream();
             let hash = EthTransactions::send_raw_transaction(&this, tx).await?;
-            let mut flashblock_stream = this.pending_block_rx().map(WatchStream::new);
 
             tokio::time::timeout(timeout_duration, async {
-                loop {
-                    tokio::select! {
-                        biased;
-                        // check if the tx was preconfirmed in a new flashblock
-                        flashblock = async {
-                            if let Some(stream) = &mut flashblock_stream {
-                                stream.next().await
-                            } else {
-                                futures::future::pending().await
-                            }
-                        } => {
-                            if let Some(flashblock) = flashblock.flatten() {
-                                // if flashblocks are supported, attempt to find id from the pending block
-                                if let Some(receipt) = flashblock
-                                .find_and_convert_transaction_receipt(hash, this.converter())
-                                {
-                                    return receipt;
-                                }
-                            }
-                        }
-                        // Listen for regular canonical block updates for inclusion
-                        canonical_notification = canonical_stream.next() => {
-                            if let Some(notification) = canonical_notification {
-                                let chain = notification.committed();
-                                if let Some((block, tx, receipt, all_receipts)) =
-                                    chain.find_transaction_and_receipt_by_hash(hash) &&
-                                    let Some(receipt) = convert_transaction_receipt(
-                                        block,
-                                        all_receipts,
-                                        tx,
-                                        receipt,
-                                        this.converter(),
-                                    )
-                                    .transpose()?
-                                {
-                                    return Ok(receipt);
-                                }
-                            } else {
-                                // Canonical stream ended
-                                break;
-                            }
-                        }
+                while let Some(notification) = canonical_stream.next().await {
+                    let chain = notification.committed();
+                    if let Some((block, tx, receipt, all_receipts)) =
+                        chain.find_transaction_and_receipt_by_hash(hash)
+                        && let Some(receipt) = convert_transaction_receipt(
+                            block,
+                            all_receipts,
+                            tx,
+                            receipt,
+                            this.converter(),
+                        )
+                        .transpose()?
+                    {
+                        return Ok(receipt);
                     }
                 }
                 Err(Self::Error::from_eth_err(EthApiError::TransactionConfirmationTimeout {
@@ -158,9 +127,6 @@ where
     }
 
     /// Returns the transaction receipt for the given hash.
-    ///
-    /// With flashblocks, we should also lookup the pending block for the transaction
-    /// because this is considered confirmed/mined.
     fn transaction_receipt(
         &self,
         hash: B256,
@@ -168,19 +134,9 @@ where
     {
         let this = self.clone();
         async move {
-            // first attempt to fetch the mined transaction receipt data
-            let tx_receipt = this.load_transaction_and_receipt(hash).await?;
-
-            if tx_receipt.is_none() {
-                // if flashblocks are supported, attempt to find id from the pending block
-                if let Ok(Some(pending_block)) = this.pending_flashblock().await
-                    && let Some(Ok(receipt)) =
-                        pending_block.find_and_convert_transaction_receipt(hash, this.converter())
-                {
-                    return Ok(Some(receipt));
-                }
-            }
-            let Some((tx, meta, receipt)) = tx_receipt else { return Ok(None) };
+            let Some((tx, meta, receipt)) = this.load_transaction_and_receipt(hash).await? else {
+                return Ok(None);
+            };
             self.build_transaction_receipt(tx, meta, receipt).await.map(Some)
         }
     }
@@ -218,21 +174,7 @@ where
             }));
         }
 
-        // 2. check flashblocks (sequencer preconfirmations)
-        if let Ok(Some(pending_block)) = self.pending_flashblock().await
-            && let Some(indexed_tx) = pending_block.block().find_indexed(hash)
-        {
-            let meta = indexed_tx.meta();
-            return Ok(Some(TransactionSource::Block {
-                transaction: indexed_tx.recovered_tx().cloned(),
-                index: meta.index,
-                block_hash: meta.block_hash,
-                block_number: meta.block_number,
-                base_fee: meta.base_fee,
-            }));
-        }
-
-        // 3. check local pool
+        // 2. check local pool
         if let Some(tx) = self.pool().get(&hash).map(|tx| tx.transaction.clone_into_consensus()) {
             return Ok(Some(TransactionSource::Pool(tx)));
         }

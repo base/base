@@ -35,7 +35,6 @@ reth-provider.workspace = true
 
 # op-reth
 reth-optimism-evm.workspace = true
-reth-optimism-flashblocks.workspace = true
 reth-optimism-payload-builder.workspace = true
 reth-optimism-txpool.workspace = true
 # TODO remove node-builder import
@@ -68,7 +67,6 @@ op-revm.workspace = true
 serde.workspace = true
 tokio.workspace = true
 futures.workspace = true
-tokio-stream.workspace = true
 reqwest.workspace = true
 async-trait.workspace = true
 tower.workspace = true

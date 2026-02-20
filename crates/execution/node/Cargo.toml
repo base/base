@@ -76,7 +76,6 @@ tokio.workspace = true
 clap.workspace = true
 serde.workspace = true
 eyre.workspace = true
-url.workspace = true
 humantime.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
