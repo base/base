@@ -149,9 +149,10 @@ mod tests {
     /// - In flashblock 2, TX_B (HIGH tip) should come before TX_C (MEDIUM tip)
     ///
     /// Expected: TX_B (100 gwei) before TX_C (10 gwei) in flashblock 2
-    /// Actual: TX_C comes first because pool still thinks TX_A is pending
-    ///
-    /// This test is intentionally written to FAIL to prove the bug exists.
+    /// Previously, actual: TX_C comes first because pool still thinks TX_A is pending
+    /// Now, it should match expected with the fix
+    /// This test doesn't test the exact fix, since we cannot simulate the transaction getting pruned from the pool
+    /// within the test - but it stands as a proof of concept of the original issue it was fixing
     #[test]
     fn test_nonce_chain_gating_bug_across_flashblocks() {
         use alloy_primitives::Address;
