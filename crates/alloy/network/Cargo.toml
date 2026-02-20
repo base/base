@@ -30,5 +30,14 @@ alloy-signer.workspace = true
 rstest.workspace = true
 
 [features]
-std = [ "base-alloy-consensus/std", "base-alloy-rpc-types/std" ]
-serde = [ "base-alloy-consensus/serde", "base-alloy-rpc-types/serde" ]
+std = [
+	"alloy-primitives/std",
+	"base-alloy-consensus/std",
+	"base-alloy-rpc-types/std",
+]
+serde = [
+	"alloy-consensus/serde",
+	"alloy-primitives/serde",
+	"base-alloy-consensus/serde",
+	"base-alloy-rpc-types/serde",
+]

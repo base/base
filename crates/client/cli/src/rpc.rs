@@ -7,8 +7,8 @@ use std::{
     path::PathBuf,
 };
 
+use base_consensus_rpc::RpcBuilder;
 use clap::Parser;
-use kona_rpc::RpcBuilder;
 
 /// RPC CLI Arguments
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]

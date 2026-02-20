@@ -17,7 +17,7 @@ members = [
     "crates/builder/*",
     "crates/infra/*",
     "crates/alloy/*",
-    "devnet"
+    "devnet",
 ]
 default-members = [
     "bin/based",
@@ -159,18 +159,19 @@ websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Kona
-kona-cli = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-rpc = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-disc = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-peers = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-engine = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-derive = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-gossip = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-genesis = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-sources = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-registry = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-node-service = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
-kona-providers-alloy = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
+kona-cli = { path = "crates/consensus/cli", default-features = false }
+kona-disc = { path = "crates/consensus/disc", default-features = false }
+kona-peers = { path = "crates/consensus/peers", default-features = false }
+kona-derive = { path = "crates/consensus/derive", default-features = false }
+kona-engine = { path = "crates/consensus/engine", default-features = false }
+kona-macros = { path = "crates/consensus/macros", default-features = false }
+kona-gossip = { path = "crates/consensus/gossip", default-features = false }
+kona-sources = { path = "crates/consensus/sources", default-features = false }
+kona-genesis = { path = "crates/consensus/genesis", default-features = false }
+kona-registry = { path = "crates/consensus/registry", default-features = false }
+kona-hardforks = { path = "crates/consensus/hardforks", default-features = false }
+kona-node-service = { path = "crates/consensus/service", default-features = false }
+kona-providers-alloy = { path = "crates/consensus/providers-alloy", default-features = false }
 
 # reth
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.0" }
@@ -398,7 +399,7 @@ itertools = "0.14.0"
 dirs-next = "2.0.0"
 once_cell = "1.21.3"
 hyper-util = "0.1.11"
-derive_more = "2.1.0"
+derive_more = { version = "2.1.0", default-features = false }
 lazy_static = "1.4.0"
 parking_lot = "0.12.3"
 shellexpand = "3.1"
@@ -440,6 +441,25 @@ backoff = "0.4.0"
 hostname = "0.4.0"
 redis = "0.30.0"
 similar-asserts = "1"
+
+# kona transitive deps
+spin = "0.9"
+toml = "0.8"
+c-kzg = "2.1"
+ipnet = "2.11"
+notify = "8.2"
+openssl = "0.10"
+proptest = "1.9"
+multihash = "0.19"
+serde_repr = "0.1"
+getrandom = "0.3"
+async-stream = "0.3"
+miniz_oxide = "0.8"
+libp2p-stream = "0.4.0-alpha"
+unsigned-varint = "0.8"
+alloc-no-stdlib = "2.0"
+rollup-boost-types = "0.1"
+tabled = { version = "0.20", default-features = false }
 
 # copied from ethereum-optimism/optimism
 [patch.crates-io]

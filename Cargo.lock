@@ -94,7 +94,9 @@ checksum = "90f374d3c6d729268bbe2d0e0ff992bb97898b2df756691a62ee1d5f0506bc39"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
  "num_enum",
+ "proptest",
  "serde",
  "strum",
 ]
@@ -963,14 +965,14 @@ dependencies = [
 
 [[package]]
 name = "ambassador"
-version = "0.5.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8184c5d23ba3829fb1e93388d776c3469cd9f4162af65250490b4f22d3ecf614"
+checksum = "e68de4cdc6006162265d0957edb4a860fe4e711b1dc17a5746fd95f952f08285"
 dependencies = [
  "itertools 0.10.5",
  "proc-macro2",
  "quote",
- "syn 2.0.116",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2620,6 +2622,7 @@ dependencies = [
  "alloy-provider",
  "alloy-signer",
  "alloy-signer-local",
+ "base-consensus-rpc",
  "base-jwt",
  "clap",
  "discv5",
@@ -2633,7 +2636,6 @@ dependencies = [
  "kona-peers",
  "kona-providers-alloy",
  "kona-registry",
- "kona-rpc",
  "kona-sources",
  "libp2p",
  "reqwest 0.13.2",
@@ -2768,8 +2770,28 @@ dependencies = [
 name = "base-consensus-rpc"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "async-trait",
+ "backon",
  "base-protocol",
+ "getrandom 0.3.4",
+ "ipnet",
  "jsonrpsee",
+ "kona-engine",
+ "kona-genesis",
+ "kona-gossip",
+ "kona-macros",
+ "libp2p",
+ "metrics",
+ "op-alloy-rpc-jsonrpsee",
+ "op-alloy-rpc-types-engine",
+ "rollup-boost",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3008,18 +3030,36 @@ dependencies = [
 name = "base-protocol"
 version = "0.0.0"
 dependencies = [
+ "alloc-no-stdlib",
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "alloy-sol-types",
+ "ambassador",
  "arbitrary",
+ "async-trait",
+ "brotli",
  "derive_more",
+ "kona-genesis",
+ "kona-registry",
+ "miniz_oxide 0.8.9",
  "op-alloy-consensus",
+ "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
+ "proptest",
  "rand 0.9.2",
+ "rstest",
  "serde",
  "serde_json",
+ "spin",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "unsigned-varint 0.8.0",
 ]
 
 [[package]]
@@ -4929,6 +4969,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
+name = "downcast"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
+
+[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5519,6 +5565,12 @@ checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
 ]
+
+[[package]]
+name = "fragile"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dd6caf6059519a65843af8fe2a3ae298b14b80179855aeb4adc2c1934ee619"
 
 [[package]]
 name = "fs_extra"
@@ -7266,8 +7318,7 @@ dependencies = [
 
 [[package]]
 name = "kona-cli"
-version = "0.3.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -7278,6 +7329,7 @@ dependencies = [
  "libp2p",
  "metrics-exporter-prometheus 0.18.1",
  "metrics-process",
+ "rstest",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -7287,8 +7339,7 @@ dependencies = [
 
 [[package]]
 name = "kona-derive"
-version = "0.4.5"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7296,32 +7347,41 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "async-trait",
+ "base-protocol",
  "kona-genesis",
  "kona-hardforks",
  "kona-macros",
- "kona-protocol",
+ "kona-registry",
  "metrics",
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
+ "proptest",
+ "serde",
+ "serde_json",
+ "spin",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
 name = "kona-disc"
-version = "0.1.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-rlp",
  "backon",
  "derive_more",
  "discv5",
+ "kona-cli",
  "kona-genesis",
  "kona-macros",
  "kona-peers",
  "libp2p",
  "metrics",
  "rand 0.9.2",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7329,8 +7389,7 @@ dependencies = [
 
 [[package]]
 name = "kona-engine"
-version = "0.1.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7343,23 +7402,28 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-transport",
  "alloy-transport-http",
+ "arbitrary",
  "async-trait",
+ "base-protocol",
  "derive_more",
  "http 1.4.0",
  "http-body-util",
  "jsonrpsee-types",
  "kona-genesis",
  "kona-macros",
- "kona-protocol",
+ "kona-registry",
  "metrics",
+ "metrics-exporter-prometheus 0.18.1",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-provider",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "parking_lot",
+ "rand 0.9.2",
  "rollup-boost",
  "rollup-boost-types",
+ "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -7371,8 +7435,7 @@ dependencies = [
 
 [[package]]
 name = "kona-genesis"
-version = "0.4.5"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -7382,24 +7445,29 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
  "alloy-sol-types",
+ "arbitrary",
  "derive_more",
  "op-revm",
+ "rand 0.9.2",
  "serde",
+ "serde_json",
  "serde_repr",
  "tabled",
  "thiserror 2.0.18",
+ "toml 0.8.23",
 ]
 
 [[package]]
 name = "kona-gossip"
-version = "0.1.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-engine",
+ "arbitrary",
  "derive_more",
  "discv5",
  "futures",
@@ -7413,12 +7481,16 @@ dependencies = [
  "libp2p-identity",
  "libp2p-stream",
  "metrics",
+ "multihash",
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
  "openssl",
+ "rand 0.9.2",
  "serde",
+ "serde_json",
  "serde_repr",
  "snap",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -7426,26 +7498,26 @@ dependencies = [
 
 [[package]]
 name = "kona-hardforks"
-version = "0.4.5"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
- "kona-protocol",
+ "base-protocol",
  "op-alloy-consensus",
+ "op-revm",
+ "revm",
 ]
 
 [[package]]
 name = "kona-macros"
-version = "0.1.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 
 [[package]]
 name = "kona-node-service"
-version = "0.1.3"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-provider",
@@ -7456,12 +7528,17 @@ dependencies = [
  "alloy-signer-local",
  "alloy-transport",
  "alloy-transport-http",
+ "anyhow",
+ "arbitrary",
  "async-stream",
  "async-trait",
  "backon",
+ "base-consensus-rpc",
+ "base-protocol",
  "derive_more",
  "discv5",
  "futures",
+ "http 1.4.0",
  "http-body-util",
  "jsonrpsee",
  "kona-derive",
@@ -7471,17 +7548,19 @@ dependencies = [
  "kona-gossip",
  "kona-macros",
  "kona-peers",
- "kona-protocol",
  "kona-providers-alloy",
- "kona-rpc",
  "kona-sources",
  "libp2p",
  "libp2p-stream",
  "metrics",
+ "mockall",
+ "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-provider",
  "op-alloy-rpc-types-engine",
+ "rand 0.9.2",
  "rollup-boost",
+ "rstest",
  "strum",
  "thiserror 2.0.18",
  "tokio",
@@ -7494,21 +7573,26 @@ dependencies = [
 
 [[package]]
 name = "kona-peers"
-version = "0.1.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
  "alloy-rlp",
+ "arbitrary",
+ "arbtest",
  "derive_more",
  "dirs",
  "discv5",
+ "kona-genesis",
  "kona-registry",
  "lazy_static",
  "libp2p",
  "libp2p-identity",
- "secp256k1 0.31.1",
+ "multihash",
+ "secp256k1 0.30.0",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
  "unsigned-varint 0.8.0",
@@ -7516,40 +7600,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "kona-protocol"
-version = "0.4.5"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
-dependencies = [
- "alloc-no-stdlib",
- "alloy-consensus",
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "ambassador",
- "async-trait",
- "brotli",
- "derive_more",
- "kona-genesis",
- "miniz_oxide 0.9.0",
- "op-alloy-consensus",
- "op-alloy-rpc-types",
- "op-alloy-rpc-types-engine",
- "serde",
- "spin 0.10.0",
- "thiserror 2.0.18",
- "tracing",
- "tracing-subscriber 0.3.22",
- "unsigned-varint 0.8.0",
-]
-
-[[package]]
 name = "kona-providers-alloy"
-version = "0.3.3"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7562,25 +7614,28 @@ dependencies = [
  "alloy-transport",
  "alloy-transport-http",
  "async-trait",
+ "base-protocol",
  "c-kzg",
  "http-body-util",
+ "httpmock",
  "kona-derive",
  "kona-genesis",
  "kona-macros",
- "kona-protocol",
  "lru 0.16.3",
  "metrics",
  "op-alloy-consensus",
  "op-alloy-network",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "tower 0.5.3",
+ "url",
 ]
 
 [[package]]
 name = "kona-registry"
-version = "0.4.5"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
@@ -7592,45 +7647,13 @@ dependencies = [
  "lazy_static",
  "serde",
  "serde_json",
- "toml",
-]
-
-[[package]]
-name = "kona-rpc"
-version = "0.3.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "async-trait",
- "backon",
- "derive_more",
- "getrandom 0.3.4",
- "ipnet",
- "jsonrpsee",
- "kona-engine",
- "kona-genesis",
- "kona-gossip",
- "kona-macros",
- "kona-protocol",
- "libp2p",
- "metrics",
- "op-alloy-consensus",
- "op-alloy-rpc-jsonrpsee",
- "op-alloy-rpc-types",
- "op-alloy-rpc-types-engine",
- "rollup-boost",
- "serde",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
+ "tabled",
+ "toml 0.8.23",
 ]
 
 [[package]]
 name = "kona-sources"
-version = "0.1.2"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
+version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-client",
@@ -7682,7 +7705,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin 0.9.8",
+ "spin",
 ]
 
 [[package]]
@@ -8602,6 +8625,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
 dependencies = [
  "adler2",
+ "serde",
  "simd-adler32",
 ]
 
@@ -8625,6 +8649,32 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mockall"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39a6bfcc6c8c7eed5ee98b9c3e33adc726054389233e201c95dab2d41a3839d2"
+dependencies = [
+ "cfg-if",
+ "downcast",
+ "fragile",
+ "mockall_derive",
+ "predicates",
+ "predicates-tree",
+]
+
+[[package]]
+name = "mockall_derive"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25ca3004c2efe9011bd4e461bd8256445052b9615405b4f7ea43fc8ca5c20898"
+dependencies = [
+ "cfg-if",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.116",
 ]
 
 [[package]]
@@ -9293,8 +9343,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-serde",
+ "arbitrary",
  "derive_more",
- "jsonrpsee",
  "op-alloy-consensus",
  "serde",
  "serde_json",
@@ -10152,6 +10202,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "predicates"
+version = "3.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ada8f2932f28a27ee7b70dd6c1c39ea0675c55a36879ab92f3a715eaa1e63cfe"
+dependencies = [
+ "anstyle",
+ "predicates-core",
+]
+
+[[package]]
+name = "predicates-core"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cad38746f3166b4031b1a0d39ad9f954dd291e7854fcc0eed52ee41a0b50d144"
+
+[[package]]
+name = "predicates-tree"
+version = "1.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0de1b847b39c8131db0467e9df1ff60e6d0562ab8e9a16e568ad0fdb372e2f2"
+dependencies = [
+ "predicates-core",
+ "termtree",
+]
+
+[[package]]
 name = "pretty_assertions"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10197,7 +10273,7 @@ version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219cb19e96be00ab2e37d6e299658a0cfa83e52429179969b0f0121b4ac46983"
 dependencies = [
- "toml_edit",
+ "toml_edit 0.23.10+spec-1.0.0",
 ]
 
 [[package]]
@@ -11129,7 +11205,7 @@ dependencies = [
  "tar",
  "tokio",
  "tokio-stream",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "url",
  "zstd",
@@ -11205,7 +11281,7 @@ dependencies = [
  "reth-stages-types",
  "reth-static-file-types",
  "serde",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "url",
 ]
 
@@ -12470,7 +12546,7 @@ dependencies = [
  "shellexpand",
  "strum",
  "thiserror 2.0.18",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
  "url",
  "vergen",
@@ -15147,6 +15223,15 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde_spanned"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8bbf91e5a4d6315eee45e704372590b30e260ee83af6639d64557f51b067776"
@@ -15489,12 +15574,6 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
-
-[[package]]
-name = "spin"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
 ]
@@ -15732,7 +15811,6 @@ dependencies = [
  "dashmap",
  "hex",
  "indicatif",
- "jsonrpsee",
  "op-alloy-consensus",
  "op-alloy-network",
  "rand 0.9.2",
@@ -15848,6 +15926,12 @@ checksum = "411c5bf740737c7918b8b1fe232dca4dc9f8e754b8ad5e20966814001ed0ac6b"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "termtree"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 
 [[package]]
 name = "termwiz"
@@ -16255,17 +16339,38 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "toml"
 version = "0.9.12+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
 dependencies = [
  "indexmap 2.13.0",
  "serde_core",
- "serde_spanned",
- "toml_datetime",
+ "serde_spanned 1.0.4",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -16279,12 +16384,26 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap 2.13.0",
+ "serde",
+ "serde_spanned 0.6.9",
+ "toml_datetime 0.6.11",
+ "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_edit"
 version = "0.23.10+spec-1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84c8b9f757e028cee9fa244aea147aab2a9ec09d5325a9b01e0a49730c2b5269"
 dependencies = [
  "indexmap 2.13.0",
- "toml_datetime",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "winnow",
 ]
@@ -16297,6 +16416,12 @@ checksum = "702d4415e08923e7e1ef96cd5727c0dfed80b4d2fa25db9647fe5eb6f7c5a4c4"
 dependencies = [
  "winnow",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "toml_writer"
@@ -16796,9 +16921,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-width"
-version = "0.2.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "unicode-xid"

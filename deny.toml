@@ -175,6 +175,13 @@ skip = [
     "rustls",
     "rustls-webpki",
     "tokio-rustls",
+
+    # toml/serde stack version mismatches from kona upstream deps
+    "serde_spanned",
+    "syn",
+    "toml",
+    "toml_datetime",
+    "toml_edit",
 ]
 
 [sources]

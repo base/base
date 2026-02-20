@@ -13,6 +13,19 @@ DISALLOWED_DEPS=(
   "consensus:infra"
 )
 
+# Allowed exceptions: "dep_name" entries here are excluded from all rules.
+# These are foundational kona protocol crates that were previously external git
+# dependencies and are now local path deps under crates/consensus/.
+ALLOWED_DEPS=(
+  "kona-genesis"
+  "kona-registry"
+  "kona-engine"
+)
+
+# Build a jq filter string for allowed deps
+ALLOWED_FILTER=$(printf '"%s",' "${ALLOWED_DEPS[@]}")
+ALLOWED_FILTER="[${ALLOWED_FILTER%,}]"
+
 # Fetch cargo metadata once
 METADATA=$(cargo metadata --format-version 1 --no-deps)
 
@@ -22,13 +35,14 @@ for rule in "${DISALLOWED_DEPS[@]}"; do
   SOURCE="${rule%%:*}"
   TARGET="${rule##*:}"
 
-  VIOLATIONS=$(echo "$METADATA" | jq -r "
+  VIOLATIONS=$(echo "$METADATA" | jq -r --argjson allowed "$ALLOWED_FILTER" "
     [.packages[]
      | select(.manifest_path | contains(\"/crates/$SOURCE/\"))
      | . as \$pkg
      | .dependencies[]
      | select(.path)
      | select(.path | contains(\"/crates/$TARGET/\"))
+     | select(.name as \$n | \$allowed | index(\$n) | not)
      | \"\(\$pkg.name) -> \(.name)\"
     ]
     | .[]

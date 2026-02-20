@@ -58,8 +58,12 @@ std = [
 	"dep:ethereum_ssz",
 	"dep:ethereum_ssz_derive",
 	"dep:snap",
+	"derive_more/std",
 ]
 serde = [
+	"alloy-consensus/serde",
+	"alloy-eips/serde",
+	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
 	"base-alloy-consensus/serde",
 	"dep:alloy-serde",
@@ -67,8 +71,12 @@ serde = [
 ]
 k256 = [ "base-alloy-consensus/k256" ]
 arbitrary = [
+	"alloy-consensus/arbitrary",
+	"alloy-eips/arbitrary",
 	"alloy-primitives/arbitrary",
 	"alloy-primitives/rand",
+	"alloy-rpc-types-engine/arbitrary",
+	"alloy-serde?/arbitrary",
 	"base-alloy-consensus/arbitrary",
 	"dep:arbitrary",
 	"std",

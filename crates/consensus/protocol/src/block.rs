@@ -1,11 +1,18 @@
-//! Block Types
+//! Block Types for Optimism.
 
-use alloy_consensus::Block;
-use alloy_eips::{BlockNumHash, eip2718::Eip2718Error};
+use alloc::vec::Vec;
+
+use alloy_consensus::{Block, Transaction, Typed2718};
+use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
+use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
 use derive_more::Display;
-use op_alloy_rpc_types_engine::OpPayloadError;
+use kona_genesis::ChainGenesis;
+use op_alloy_consensus::{OpBlock, OpTxEnvelope};
+use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
+
+use crate::{DecodeError, L1BlockInfoTx};
 
 /// Block Header Info
 #[derive(Debug, Clone, Display, Copy, Eq, Hash, PartialEq, Default)]
@@ -123,20 +130,23 @@ impl arbitrary::Arbitrary<'_> for L2BlockInfo {
 #[derive(Debug, thiserror::Error)]
 pub enum FromBlockError {
     /// The genesis block hash does not match the expected value.
-    #[error("invalid genesis hash")]
+    #[error("Invalid genesis hash")]
     InvalidGenesisHash,
     /// The L2 block is missing the L1 info deposit transaction.
     #[error("L2 block is missing L1 info deposit transaction ({0})")]
     MissingL1InfoDeposit(B256),
     /// The first payload transaction has an unexpected type.
-    #[error("first payload transaction has unexpected type: {0}")]
+    #[error("First payload transaction has unexpected type: {0}")]
     UnexpectedTxType(u8),
     /// Failed to decode the first transaction into an OP transaction.
-    #[error("failed to decode the first transaction into an OP transaction: {0}")]
+    #[error("Failed to decode the first transaction into an OP transaction: {0}")]
     TxEnvelopeDecodeError(Eip2718Error),
     /// The first payload transaction is not a deposit transaction.
-    #[error("first payload transaction is not a deposit transaction, type: {0}")]
+    #[error("First payload transaction is not a deposit transaction, type: {0}")]
     FirstTxNonDeposit(u8),
+    /// Failed to decode the [`L1BlockInfoTx`] from the deposit transaction.
+    #[error("Failed to decode the L1BlockInfoTx from the deposit transaction: {0}")]
+    BlockInfoDecodeError(#[from] DecodeError),
     /// Failed to convert [`OpExecutionPayload`] to [`OpBlock`].
     #[error(transparent)]
     OpPayload(#[from] OpPayloadError),
@@ -145,12 +155,12 @@ pub enum FromBlockError {
 impl PartialEq<Self> for FromBlockError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::InvalidGenesisHash, Self::InvalidGenesisHash)
+            | (Self::TxEnvelopeDecodeError(_), Self::TxEnvelopeDecodeError(_)) => true,
             (Self::MissingL1InfoDeposit(a), Self::MissingL1InfoDeposit(b)) => a == b,
             (Self::UnexpectedTxType(a), Self::UnexpectedTxType(b))
-            | (Self::FirstTxNonDeposit(a), Self::FirstTxNonDeposit(b)) => a == b,
-            (Self::InvalidGenesisHash, Self::InvalidGenesisHash)
-            | (Self::TxEnvelopeDecodeError(_), Self::TxEnvelopeDecodeError(_))
-            | (Self::OpPayload(_), Self::OpPayload(_)) => true,
+            | (Self::FirstTxNonDeposit(a), Self::FirstTxNonDeposit(b)) => *a == *b,
+            (Self::BlockInfoDecodeError(a), Self::BlockInfoDecodeError(b)) => a.eq(b),
             _ => false,
         }
     }
@@ -167,13 +177,74 @@ impl L2BlockInfo {
     pub const fn new(block_info: BlockInfo, l1_origin: BlockNumHash, seq_num: u64) -> Self {
         Self { block_info, l1_origin, seq_num }
     }
+
+    /// Constructs an [`L2BlockInfo`] from a given OP [`Block`] and [`ChainGenesis`].
+    pub fn from_block_and_genesis<T: Typed2718 + AsRef<OpTxEnvelope>>(
+        block: &Block<T>,
+        genesis: &ChainGenesis,
+    ) -> Result<Self, FromBlockError> {
+        let block_info = BlockInfo::from(block);
+
+        let (l1_origin, sequence_number) = if block_info.number == genesis.l2.number {
+            if block_info.hash != genesis.l2.hash {
+                return Err(FromBlockError::InvalidGenesisHash);
+            }
+            (genesis.l1, 0)
+        } else {
+            if block.body.transactions.is_empty() {
+                return Err(FromBlockError::MissingL1InfoDeposit(block_info.hash));
+            }
+
+            let tx = block.body.transactions[0].as_ref();
+            let Some(tx) = tx.as_deposit() else {
+                return Err(FromBlockError::FirstTxNonDeposit(tx.ty()));
+            };
+
+            let l1_info = L1BlockInfoTx::decode_calldata(tx.input().as_ref())
+                .map_err(FromBlockError::BlockInfoDecodeError)?;
+            (l1_info.id(), l1_info.sequence_number())
+        };
+
+        Ok(Self { block_info, l1_origin, seq_num: sequence_number })
+    }
+
+    /// Constructs an [`L2BlockInfo`] From a given [`OpExecutionPayload`] and [`ChainGenesis`].
+    pub fn from_payload_and_genesis(
+        payload: OpExecutionPayload,
+        parent_beacon_block_root: Option<B256>,
+        genesis: &ChainGenesis,
+    ) -> Result<Self, FromBlockError> {
+        let block: OpBlock = match payload {
+            OpExecutionPayload::V4(_) => {
+                let sidecar = OpExecutionPayloadSidecar::v4(
+                    CancunPayloadFields::new(
+                        parent_beacon_block_root.unwrap_or_default(),
+                        Vec::new(),
+                    ),
+                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                );
+                payload.try_into_block_with_sidecar(&sidecar)?
+            }
+            OpExecutionPayload::V3(_) => {
+                let sidecar = OpExecutionPayloadSidecar::v3(CancunPayloadFields::new(
+                    parent_beacon_block_root.unwrap_or_default(),
+                    Vec::new(),
+                ));
+                payload.try_into_block_with_sidecar(&sidecar)?
+            }
+            _ => payload.try_into_block()?,
+        };
+        Self::from_block_and_genesis(&block, genesis)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+
     use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
-    use op_alloy_consensus::OpTxEnvelope;
+    use op_alloy_consensus::OpBlock;
 
     use super::*;
 
@@ -205,6 +276,74 @@ mod tests {
     }
 
     #[test]
+    fn test_from_block_and_genesis() {
+        use alloc::vec;
+
+        use crate::test_utils::RAW_BEDROCK_INFO_TX;
+        let genesis = ChainGenesis {
+            l1: BlockNumHash { hash: B256::from([4; 32]), number: 2 },
+            l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
+            ..Default::default()
+        };
+        let tx_env = alloy_rpc_types_eth::Transaction {
+            inner: alloy_consensus::transaction::Recovered::new_unchecked(
+                op_alloy_consensus::OpTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    op_alloy_consensus::TxDeposit {
+                        input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
+                        ..Default::default()
+                    },
+                )),
+                Default::default(),
+            ),
+            block_hash: None,
+            block_number: Some(1),
+            effective_gas_price: Some(1),
+            transaction_index: Some(0),
+        };
+        let block: alloy_rpc_types_eth::Block<op_alloy_rpc_types::Transaction> =
+            alloy_rpc_types_eth::Block {
+                header: alloy_rpc_types_eth::Header {
+                    hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
+                    inner: alloy_consensus::Header {
+                        number: 3,
+                        parent_hash: b256!(
+                            "0202020202020202020202020202020202020202020202020202020202020202"
+                        ),
+                        timestamp: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
+                    op_alloy_rpc_types::Transaction {
+                        inner: tx_env,
+                        deposit_nonce: None,
+                        deposit_receipt_version: None,
+                    },
+                ]),
+                ..Default::default()
+            };
+        let expected = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: b256!("e65ecd961cee8e4d2d6e1d424116f6fe9a794df0244578b6d5860a3d2dfcd97e"),
+                number: 3,
+                parent_hash: b256!(
+                    "0202020202020202020202020202020202020202020202020202020202020202"
+                ),
+                timestamp: 1,
+            },
+            l1_origin: BlockNumHash {
+                hash: b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc"),
+                number: 18334955,
+            },
+            seq_num: 4,
+        };
+        let block = block.into_consensus();
+        let derived = L2BlockInfo::from_block_and_genesis(&block, &genesis).unwrap();
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
     fn test_from_block_error_partial_eq() {
         assert_eq!(FromBlockError::InvalidGenesisHash, FromBlockError::InvalidGenesisHash);
         assert_eq!(
@@ -221,6 +360,30 @@ mod tests {
             FromBlockError::TxEnvelopeDecodeError(Eip2718Error::UnexpectedType(1))
         );
         assert_eq!(FromBlockError::FirstTxNonDeposit(1), FromBlockError::FirstTxNonDeposit(1));
+        assert_eq!(
+            FromBlockError::BlockInfoDecodeError(DecodeError::InvalidSelector),
+            FromBlockError::BlockInfoDecodeError(DecodeError::InvalidSelector)
+        );
+    }
+
+    #[test]
+    fn test_l2_block_info_invalid_genesis_hash() {
+        let genesis = ChainGenesis {
+            l1: BlockNumHash { hash: B256::from([4; 32]), number: 2 },
+            l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
+            ..Default::default()
+        };
+        let op_block = OpBlock {
+            header: Header {
+                number: 1,
+                parent_hash: B256::from([2; 32]),
+                timestamp: 1,
+                ..Default::default()
+            },
+            body: Default::default(),
+        };
+        let err = L2BlockInfo::from_block_and_genesis(&op_block, &genesis).unwrap_err();
+        assert_eq!(err, FromBlockError::InvalidGenesisHash);
     }
 
     #[test]

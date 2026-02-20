@@ -11,52 +11,103 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# workspace
+kona-genesis.workspace = true
+
+# alloy
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-engine.workspace = true
+alloy-primitives = { workspace = true, features = ["map"] }
+
+# op-alloy
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+
+# misc
+tracing.workspace = true
+thiserror.workspace = true
+ambassador = "0.4.2"
+async-trait.workspace = true
+unsigned-varint.workspace = true
+derive_more = { workspace = true, features = ["display"] }
+
+# compression
+brotli.workspace = true
+miniz_oxide.workspace = true
+alloc-no-stdlib.workspace = true
+
+# optional
+serde = { workspace = true, optional = true }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+spin = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
+
+[dev-dependencies]
+spin.workspace = true
+rstest.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+alloy-sol-types.workspace = true
+kona-registry.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types.workspace = true
+alloy-rpc-types-eth.workspace = true
+brotli = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["full"] }
+arbitrary = { workspace = true, features = ["derive"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
+rand = { workspace = true, features = ["std", "std_rng"] }
+
 [features]
 default = [ "std" ]
+test-utils = [ "dep:spin", "dep:tracing-subscriber" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
 	"alloy-primitives/std",
+	"alloy-rlp/std",
+	"alloy-rpc-types-engine/std",
+	"alloy-rpc-types-eth/std",
+	"brotli/std",
+	"derive_more/std",
+	"kona-genesis/std",
+	"miniz_oxide/std",
+	"op-alloy-consensus/std",
 	"op-alloy-rpc-types-engine/std",
+	"serde?/std",
+	"spin?/std",
+	"thiserror/std",
+	"tracing/std",
+	"unsigned-varint/std",
 ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
+	"alloy-rpc-types-engine/serde",
+	"alloy-rpc-types-eth/serde",
 	"dep:serde",
+	"kona-genesis/serde",
+	"miniz_oxide/serde",
+	"op-alloy-consensus/serde",
 	"op-alloy-rpc-types-engine/serde",
+	"tracing-subscriber?/serde",
 ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
 	"alloy-eips/arbitrary",
 	"alloy-primitives/arbitrary",
+	"alloy-primitives/rand",
+	"alloy-rpc-types-engine/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
 	"dep:arbitrary",
+	"kona-genesis/arbitrary",
+	"op-alloy-consensus/arbitrary",
 	"op-alloy-rpc-types-engine/arbitrary",
+	"std",
 ]
-
-[dependencies]
-# alloy
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-alloy-rpc-types-eth.workspace = true
-
-# op-alloy
-op-alloy-rpc-types-engine.workspace = true
-
-# misc
-thiserror.workspace = true
-derive_more = { workspace = true, features = ["display"] }
-
-# optional
-arbitrary = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-
-[dev-dependencies]
-# op-alloy
-op-alloy-consensus.workspace = true
-
-# misc
-rand.workspace = true
-serde_json.workspace = true
