@@ -658,6 +658,7 @@ where
             return Err("proposer is already running".into());
         }
 
+        // Create a fresh session token (child of global, so SIGTERM still propagates).
         let cancel = self.global_cancel.child_token();
         {
             let mut driver = self.driver.lock().await;
@@ -686,8 +687,10 @@ where
             return Err("proposer is not running".into());
         }
 
+        // Cancel the current session (does not cancel the global token).
         self.session_cancel.lock().await.cancel();
 
+        // Await the spawned task so the driver mutex is released cleanly.
         if let Some(task) = self.task.lock().await.take() {
             let _ = task.await;
         }
@@ -700,6 +703,10 @@ where
         self.running.load(Ordering::SeqCst)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -750,7 +757,8 @@ mod tests {
         }
     }
 
-    /// Mock enclave that returns a valid aggregated `Proposal`.
+    /// Mock enclave that returns a valid `Proposal` from `aggregate()`.
+    /// Used for testing the aggregation code path in `next_output()`.
     struct MockEnclaveForAggregation;
 
     #[async_trait]
@@ -899,7 +907,7 @@ mod tests {
         let sync_status = test_sync_status(200, B256::ZERO);
         let mut driver = test_driver(1000, sync_status, None);
 
-        // starting_block_number=100, target=110, empty pending
+        // Empty pending queue
         let result = driver.next_output(100, B256::ZERO).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
