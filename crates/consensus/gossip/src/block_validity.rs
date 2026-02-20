@@ -501,7 +501,7 @@ pub(crate) mod tests {
     fn test_block_invalid_timestamp_too_far() {
         let mut block = v1_valid_block();
 
-        block.header.timestamp += 6;
+        block.header.timestamp += 60;
 
         let v1 = ExecutionPayloadV1::from_block_slow(&block);
 
