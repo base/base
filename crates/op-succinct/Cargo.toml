@@ -198,15 +198,15 @@ revm = { version = "33.1.0", default-features = false, features = [
 revm-precompile = { version = "31.0.0", default-features = false }
 op-revm = { version = "14.1.0", default-features = false }
 
-# SP1 v6.0.0 (Hypercube)
-sp1-sdk = { version = "6.0.0", features = ["network", "blocking", "profiling"] }
-sp1-lib = { version = "6.0.0", features = ["verify"] }
-sp1-zkvm = { version = "6.0.0", features = ["verify"] }
-sp1-build = "6.0.0"
-sp1-prover = "6.0.0"
-sp1-core-executor = "6.0.0"
-sp1-hypercube = "6.0.0"
-sp1-primitives = "6.0.0"
+# SP1 v6.0.1 (Hypercube)
+sp1-sdk = { version = "=6.0.1", features = ["network", "blocking", "profiling"] }
+sp1-lib = { version = "=6.0.1", features = ["verify"] }
+sp1-zkvm = { version = "=6.0.1", features = ["verify"] }
+sp1-build = "=6.0.1"
+sp1-prover = "=6.0.1"
+sp1-core-executor = "=6.0.1"
+sp1-hypercube = "=6.0.1"
+sp1-primitives = "=6.0.1"
 
 # kzg
 kzg-rs = { version = "0.2.8", features = ["rkyv", "serde"] }
