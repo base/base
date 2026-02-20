@@ -56,6 +56,9 @@ impl L1Client for MockL1 {
 /// Mock L2 client with configurable `block_by_number()` behavior.
 pub(crate) struct MockL2 {
     pub block_not_found: bool,
+    /// If set, `header_by_number` returns a header with this hash.
+    /// Used for reorg detection tests.
+    pub canonical_hash: Option<B256>,
 }
 
 #[async_trait]
@@ -67,7 +70,11 @@ impl L2Client for MockL2 {
         unimplemented!()
     }
     async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
-        unimplemented!()
+        let hash = self.canonical_hash.unwrap_or(B256::repeat_byte(0x30));
+        Ok(alloy_rpc_types_eth::Header {
+            hash,
+            ..Default::default()
+        })
     }
     async fn block_by_number(&self, _: Option<u64>) -> RpcResult<OpBlock> {
         if self.block_not_found {
@@ -88,7 +95,6 @@ impl L2Client for MockL2 {
 }
 
 /// Mock rollup client that returns a configurable `SyncStatus`.
-#[allow(dead_code)]
 pub(crate) struct MockRollupClient {
     pub sync_status: SyncStatus,
 }
@@ -104,7 +110,6 @@ impl RollupClient for MockRollupClient {
 }
 
 /// Mock anchor state registry with configurable anchor root.
-#[allow(dead_code)]
 pub(crate) struct MockAnchorStateRegistry {
     pub anchor_root: AnchorRoot,
 }
@@ -117,7 +122,6 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
 }
 
 /// Mock dispute game factory with configurable game count.
-#[allow(dead_code)]
 pub(crate) struct MockDisputeGameFactory {
     pub game_count: u64,
 }
@@ -175,6 +179,7 @@ pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, M
         }),
         Arc::new(MockL2 {
             block_not_found: false,
+            canonical_hash: None,
         }),
         enclave,
         Address::ZERO,
@@ -182,7 +187,6 @@ pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, M
     )
 }
 
-#[allow(dead_code)]
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
     L1BlockRef {
         hash: B256::ZERO,
@@ -192,7 +196,6 @@ pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     L2BlockRef {
         hash,
@@ -207,7 +210,6 @@ pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
     let l1 = test_l1_block_ref(100);
     let l2 = test_l2_block_ref(safe_number, safe_hash);
@@ -224,7 +226,6 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot {
         root: B256::ZERO,
@@ -233,7 +234,6 @@ pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).
-#[allow(dead_code)]
 pub(crate) struct MockOutputProposer;
 
 #[async_trait]
