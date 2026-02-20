@@ -156,9 +156,13 @@ bench-flashblocks:
 devnet: devnet-down
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --build --scale contender=0
 
+# Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
+devnet-profiling: devnet-down
+    CARGO_PROFILE=profiling docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling up -d --build --scale contender=0
+
 # Stops devnet and deletes all data
 devnet-down:
-    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml down
+    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling down
     rm -rf .devnet
 
 # Shows devnet block numbers and sync status
@@ -192,3 +196,7 @@ devnet-flashblocks:
 # Stream logs from devnet containers (optionally specify container names)
 devnet-logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
+
+# Run basectl with specified config (mainnet, sepolia, devnet, or path)
+basectl config="mainnet":
+    cargo run -p basectl --release -- -c {{config}}

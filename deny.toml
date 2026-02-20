@@ -60,8 +60,6 @@ skip = [
     "windows-sys",
     "windows",
     "windows-core",
-    "windows-implement",
-    "windows-interface",
     "windows-result",
     "windows-targets",
     "windows_aarch64_gnullvm",
@@ -74,15 +72,11 @@ skip = [
     "windows_x86_64_msvc",
 
     # Core macro/derive crates - commonly have version differences across ecosystem
-    "syn",
     "darling",
     "darling_core",
     "darling_macro",
     "thiserror",
     "thiserror-impl",
-    "strum",
-    "strum_macros",
-    "proptest-derive",
 
     # Crypto/random crates - version differences from different crypto stacks
     "rand",
@@ -94,10 +88,10 @@ skip = [
 
     # Hash/collection crates
     "hashbrown",
+    "hashlink",
     "foldhash",
     "itertools",
     "lru",
-    "dashmap",
     "rustc-hash",
 
     # System/platform crates
@@ -106,6 +100,7 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
+    "system-configuration",
 
     # Network crates
     "tungstenite",
@@ -115,19 +110,15 @@ skip = [
     "metrics-util",
     "metrics-exporter-prometheus",
 
-    # Serialization crates - version differences across ecosystem
-    "serde_spanned",
-    "toml",
-
     # Other common duplicates from upstream
     "axum",
     "axum-core",
     "base64",
     "bindgen",
-    "cargo_metadata",
-    "cargo-platform",
+    "bincode",
     "core-foundation",
     "crossterm",
+    "ethereum_ssz",
     "generic-array",
     "matchit",
     "nix",
@@ -140,18 +131,14 @@ skip = [
     "opentelemetry-otlp",
     "opentelemetry-proto",
     "opentelemetry",
-    "procfs-core",
-    "procfs",
     "prost-derive",
     "prost",
     "security-framework",
     "send_wrapper",
-    "toml_datetime",
-    "toml_edit",
     "tonic",
     "tower",
     "tracing-opentelemetry",
-    "unicode-width",
+    "wit-bindgen",
     "webpki-roots",
     "webpki-root-certs",
 

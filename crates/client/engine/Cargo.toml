@@ -40,6 +40,7 @@ reth-rpc-engine-api.workspace = true
 reth-primitives-traits.workspace = true
 reth-engine-primitives.workspace = true
 reth-payload-primitives.workspace = true
+reth-tasks.workspace = true
 
 # revm
 revm-primitives.workspace = true

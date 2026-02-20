@@ -168,7 +168,7 @@ where
             config
                 .attributes
                 .get_jovian_extra_data(chain_spec.base_fee_params_at_timestamp(timestamp))
-                .wrap_err("failed to get holocene extra data for flashblocks payload builder")?
+                .wrap_err("failed to get jovian extra data for flashblocks payload builder")?
         } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
             config
                 .attributes
@@ -761,7 +761,7 @@ where
             );
         }
 
-        // We use this system time to determine remining time to build a block
+        // We use this system time to determine remaining time to build a block
         // Things to consider:
         // FCU(a) - FCU with attributes
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
