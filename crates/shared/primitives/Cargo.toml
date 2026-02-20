@@ -19,16 +19,16 @@ base-bundles.workspace = true
 kona-genesis = { workspace = true, optional = true }
 
 # alloy
-alloy-eips.workspace = true
-alloy-serde.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-serde = { workspace = true, features = ["std"] }
 alloy-signer = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true, features = ["std"] }
 alloy-contract = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
-alloy-sol-types = { workspace = true, optional = true }
-alloy-rpc-types-eth.workspace = true
+alloy-sol-types = { workspace = true, optional = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-signer-local = { workspace = true, optional = true }
-alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
@@ -41,10 +41,10 @@ op-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # misc
 bytes.workspace = true
-serde.workspace = true
-brotli.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
+serde = { workspace = true, features = ["std"] }
+brotli = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 eyre = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v5", "serde"] }
 

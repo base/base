@@ -35,13 +35,13 @@ revm.workspace = true
 revm-database.workspace = true
 
 # alloy
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # op-alloy
 op-alloy-network.workspace = true
@@ -58,7 +58,7 @@ tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 futures-util.workspace = true
 
 # rpc
-serde.workspace = true
+serde = { workspace = true, features = ["std"] }
 jsonrpsee.workspace = true
 jsonrpsee-types.workspace = true
 
@@ -69,9 +69,9 @@ metrics-derive.workspace = true
 # misc
 url.workspace = true
 rayon.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 arc-swap.workspace = true
-thiserror.workspace = true
+thiserror = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]

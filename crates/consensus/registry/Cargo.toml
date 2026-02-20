@@ -27,7 +27,7 @@ alloy-op-hardforks = { workspace = true }
 
 # `serde`
 serde = { workspace = true, features = ["derive", "alloc"] }
-serde_json = { workspace = true, features = ["raw_value"] }
+serde_json = { workspace = true, features = ["raw_value", "alloc"] }
 
 # misc
 lazy_static = { workspace = true, features = ["spin_no_std"] }

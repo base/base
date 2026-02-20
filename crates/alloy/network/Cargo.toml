@@ -15,15 +15,15 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
+base-alloy-consensus = { workspace = true, features = ["alloy-compat", "std"] }
 base-alloy-rpc-types.workspace = true
 
 # Alloy
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
-alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
 
 [dev-dependencies]

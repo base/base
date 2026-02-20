@@ -51,10 +51,10 @@ reth-optimism-primitives = { workspace = true, optional = true }
 reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
 
 # alloy
-alloy-eips = { workspace = true, optional = true }
-alloy-consensus = { workspace = true, optional = true }
+alloy-eips = { workspace = true, features = ["std"], optional = true }
+alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-primitives = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 
 # op-alloy
 op-alloy-consensus = { workspace = true, optional = true }
@@ -64,7 +64,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 
 # tracing
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 
 # test-utils (optional)
 eyre = { workspace = true, optional = true }
@@ -91,13 +91,13 @@ reth-db = { workspace = true, features = ["op"] }
 revm = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-genesis.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
 alloy-contract.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
-alloy-sol-types.workspace = true
+alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-rpc-client.workspace = true
-alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-sol-macro = { workspace = true, features = ["json"] }
 
 # op-alloy
@@ -117,7 +117,7 @@ tracing-subscriber.workspace = true
 rand.workspace = true
 rayon.workspace = true
 once_cell.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 
 [[bench]]

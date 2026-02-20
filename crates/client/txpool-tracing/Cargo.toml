@@ -36,7 +36,7 @@ lru.workspace = true
 chrono.workspace = true
 metrics.workspace = true
 derive_more = { workspace = true, features = ["display"] }
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 metrics-derive.workspace = true
 
 [dev-dependencies]
@@ -54,9 +54,9 @@ reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 revm-database.workspace = true
 
 # alloy
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-alloy-rpc-types-engine.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # op-alloy
 op-alloy-consensus.workspace = true

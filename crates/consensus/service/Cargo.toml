@@ -28,15 +28,15 @@ kona-macros.workspace = true
 rollup-boost.workspace = true
 
 # alloy
-alloy-chains.workspace = true
+alloy-chains = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
-alloy-eips.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
 alloy-transport.workspace = true
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
 
@@ -51,8 +51,8 @@ libp2p.workspace = true
 libp2p-stream.workspace = true
 discv5.workspace = true
 futures.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 tokio-util.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
@@ -77,8 +77,8 @@ backon.workspace = true
 http = "1"
 mockall.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
-alloy-rpc-types-engine = { workspace = true, features = ["arbitrary"] }
-alloy-consensus = { workspace = true, features = ["arbitrary"] }
+alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
+alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
 op-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 kona-derive = {workspace = true, features = ["test-utils"]}
 

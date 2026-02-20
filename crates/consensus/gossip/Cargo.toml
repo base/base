@@ -20,10 +20,10 @@ kona-genesis.workspace = true
 kona-disc.workspace = true
 
 # Alloy
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-alloy-rpc-types-engine.workspace = true
+alloy-rlp = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 
 # Op Alloy
@@ -41,10 +41,10 @@ libp2p = { workspace = true, features = ["macros", "tokio", "tcp", "dns", "noise
 ipnet = { workspace = true, features = ["serde"] }
 
 # Misc
-serde.workspace = true
+serde = { workspace = true, features = ["std"] }
 tokio.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 serde_repr.workspace = true
 lazy_static.workspace = true
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
@@ -55,15 +55,15 @@ metrics = { workspace = true, optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 multihash.workspace = true
-serde_json.workspace = true
-alloy-eips.workspace = true
-alloy-chains.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-chains = { workspace = true, features = ["std"] }
 
 rand = { workspace = true, features = ["thread_rng"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
+alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
 op-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 
 [features]

@@ -27,7 +27,7 @@ kona-node-service = { workspace = true, features = ["metrics"] }
 kona-providers-alloy = { workspace = true, features = ["metrics"] }
 
 # alloy
-alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # cli
 url.workspace = true
@@ -35,7 +35,7 @@ strum.workspace = true
 clap.workspace = true
 
 # tracing
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 
 # metrics
 metrics.workspace = true

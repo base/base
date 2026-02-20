@@ -17,7 +17,7 @@ workspace = true
 kona-registry.workspace = true
 
 # Alloy
-alloy-rlp.workspace = true
+alloy-rlp = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 
 # Networking
@@ -31,11 +31,11 @@ secp256k1.workspace = true
 # Misc
 url.workspace = true
 dirs.workspace = true
-serde.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
+serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 lazy_static.workspace = true
-unsigned-varint.workspace = true
+unsigned-varint = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
 
@@ -46,13 +46,13 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 arbtest.workspace = true
 tempfile.workspace = true
 multihash.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 
 kona-genesis.workspace = true
 
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
+alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
 [features]
 default = []

@@ -51,7 +51,10 @@ alloy-primitives = { workspace = true, features = ["arbitrary", "getrandom"] }
 [features]
 default = [ "serde", "std" ]
 std = [
+	"alloy-consensus/std",
+	"alloy-eips/std",
 	"alloy-primitives/std",
+	"alloy-rlp/std",
 	"alloy-rpc-types-engine/ssz",
 	"alloy-rpc-types-engine/std",
 	"base-alloy-consensus/std",
@@ -59,6 +62,8 @@ std = [
 	"dep:ethereum_ssz_derive",
 	"dep:snap",
 	"derive_more/std",
+	"sha2/std",
+	"thiserror/std",
 ]
 serde = [
 	"alloy-consensus/serde",

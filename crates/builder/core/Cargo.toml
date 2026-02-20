@@ -111,24 +111,24 @@ revm.workspace = true
 op-revm.workspace = true
 
 # alloy
-alloy-eips.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
 alloy-evm.workspace = true
-alloy-serde.workspace = true
+alloy-serde = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-contract.workspace = true
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-transport.workspace = true
 alloy-json-rpc.workspace = true
 alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-transport-http.workspace = true
 alloy-rpc-types-beacon.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-sol-types = { workspace = true, features = ["json"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
 # op-alloy
 alloy-op-evm.workspace = true
@@ -158,7 +158,7 @@ clap.workspace = true
 clap_builder.workspace = true
 
 # tracing
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 
 # metrics
@@ -175,7 +175,7 @@ sha3.workspace = true
 time.workspace = true
 eyre.workspace = true
 tower.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["std"] }
 either.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
@@ -183,8 +183,8 @@ dashmap.workspace = true
 secp256k1.workspace = true
 serde_with.workspace = true
 dirs-next.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 parking_lot.workspace = true
 derive_more.workspace = true
 shellexpand.workspace = true

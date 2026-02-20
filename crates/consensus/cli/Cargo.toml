@@ -16,17 +16,17 @@ kona-genesis.workspace = true
 kona-registry.workspace = true
 
 # Alloy
-alloy-chains.workspace = true
+alloy-chains = { workspace = true, features = ["std"] }
 
 # General
-tracing.workspace = true
-serde = { workspace = true, features = ["derive"]}
+tracing = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"]}
 clap = { workspace = true, features = ["derive", "env"] }
 tracing-subscriber = { workspace = true, features = ["fmt", "env-filter", "json", "tracing-log"] }
 tracing-appender.workspace = true
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 metrics-process = { workspace = true, features = ["metrics-rs"] }
-thiserror.workspace = true
+thiserror = { workspace = true, features = ["std"] }
 
 # `secrets` feature
 libp2p = { workspace = true, features = ["secp256k1"], optional = true }
