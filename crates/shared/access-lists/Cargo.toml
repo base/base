@@ -14,17 +14,17 @@ workspace = true
 [dependencies]
 # alloy
 alloy-primitives.workspace = true
-alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-rlp = { workspace = true, features = ["derive", "std"] }
 alloy-eip7928 = { workspace = true, features = ["serde", "rlp"] }
 
 # revm
 revm.workspace = true
 
 # tracing
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 
 # misc
-serde.workspace = true
+serde = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 # workspace
@@ -40,8 +40,8 @@ op-revm.workspace = true
 
 # alloy
 alloy-contract.workspace = true
-alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
 
 # misc
 eyre.workspace = true

@@ -16,7 +16,7 @@ test-utils = [ "dep:alloy-signer-local", "dep:op-alloy-rpc-types" ]
 
 [dependencies]
 # alloy
-alloy-serde.workspace = true
+alloy-serde = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }

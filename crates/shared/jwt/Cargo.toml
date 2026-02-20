@@ -28,16 +28,16 @@ engine-validation = [
 [dependencies]
 # alloy
 alloy-primitives.workspace = true
-alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # misc
-thiserror.workspace = true
+thiserror = { workspace = true, features = ["std"] }
 
 # optional: engine validation
 url = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
 backon = { workspace = true, optional = true }
-tracing = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true, features = ["std"] }
 kona-engine = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }

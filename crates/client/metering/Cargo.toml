@@ -34,8 +34,8 @@ revm-database.workspace = true
 op-revm.workspace = true
 
 # alloy
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives.workspace = true
 
 # op-alloy
@@ -50,8 +50,8 @@ metrics-derive.workspace = true
 
 # misc
 eyre.workspace = true
-serde.workspace = true
-tracing.workspace = true
+serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 arc-swap.workspace = true
 derive_more.workspace = true
 
@@ -72,7 +72,7 @@ revm-bytecode.workspace = true
 revm-context-interface.workspace = true
 
 # alloy
-alloy-genesis.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-client.workspace = true
 
 # op-alloy

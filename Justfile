@@ -16,7 +16,7 @@ default:
     @just --list
 
 # Runs all ci checks
-ci: fix check lychee zepter
+ci: fix check lychee zepter check-no-std
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
@@ -73,6 +73,10 @@ system-tests-pull-images:
     docker pull sigp/lighthouse:v8.0.1
     docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
+
+# Checks that no_std crates compile without std
+check-no-std:
+    ./etc/scripts/ci/check-no-std.sh
 
 # Runs cargo hack against the workspace
 hack:

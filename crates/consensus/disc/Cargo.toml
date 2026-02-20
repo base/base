@@ -19,7 +19,7 @@ kona-macros.workspace = true
 kona-genesis.workspace = true
 
 # Alloy
-alloy-rlp.workspace = true
+alloy-rlp = { workspace = true, features = ["std"] }
 
 # Networking
 discv5 = { workspace = true, features = ["libp2p"] }
@@ -27,8 +27,8 @@ libp2p.workspace = true
 
 # Misc
 tokio.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 derive_more.workspace = true
 backon = { workspace = true, features = ["std", "tokio", "tokio-sleep"] }
 rand = { workspace = true, features = ["thread_rng"] }
@@ -38,7 +38,7 @@ metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 kona-cli.workspace = true
 
 [features]

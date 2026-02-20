@@ -16,17 +16,17 @@ workspace = true
 
 [dependencies]
 http.workspace = true
-brotli.workspace = true
+brotli = { workspace = true, features = ["std"] }
 metrics.workspace = true
 futures.workspace = true
 backoff.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 tokio-util.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 metrics-derive.workspace = true
 tokio-tungstenite.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
 

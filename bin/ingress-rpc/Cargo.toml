@@ -14,7 +14,7 @@ workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 dotenvy.workspace = true
 rdkafka.workspace = true
 jsonrpsee.workspace = true

@@ -20,13 +20,13 @@ base-protocol.workspace = true
 kona-derive.workspace = true
 
 # Alloy
-alloy-serde.workspace = true
-alloy-eips = { workspace = true, features = ["kzg"] }
+alloy-serde = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["kzg", "std"] }
 alloy-transport.workspace = true
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-beacon.workspace = true
-alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-rpc-client.workspace = true
 alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest"] }
 alloy-primitives = { workspace = true, features = ["map"] }
@@ -37,8 +37,8 @@ op-alloy-network.workspace = true
 
 # Misc
 lru.workspace = true
-serde.workspace = true
-thiserror.workspace = true
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 async-trait.workspace = true
 tower.workspace = true
 url.workspace = true
@@ -56,4 +56,4 @@ metrics = [ "dep:metrics", "kona-derive/metrics" ]
 [dev-dependencies]
 tokio.workspace = true
 httpmock.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }

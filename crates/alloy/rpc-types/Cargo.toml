@@ -26,8 +26,8 @@ alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 
 # Serde
-serde_json.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["derive", "alloc"] }
 
 # RPC
 jsonrpsee = { workspace = true, optional = true }
@@ -50,12 +50,17 @@ similar-asserts.workspace = true
 [features]
 default = [ "std" ]
 std = [
+	"alloy-consensus/std",
 	"alloy-eips/std",
 	"alloy-network-primitives/std",
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
+	"alloy-serde/std",
 	"base-alloy-consensus/std",
 	"derive_more/std",
+	"serde/std",
+	"serde_json/std",
+	"thiserror/std",
 ]
 arbitrary = [
 	"alloy-consensus/arbitrary",

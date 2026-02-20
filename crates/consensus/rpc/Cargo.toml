@@ -31,8 +31,8 @@ alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"]
 ipnet.workspace = true
 backon.workspace = true
 libp2p.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 async-trait.workspace = true
 rollup-boost.workspace = true
 tokio = { workspace = true, features = ["time"] }
@@ -46,7 +46,7 @@ getrandom = { workspace = true, features = ["wasm_js"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []

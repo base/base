@@ -10,24 +10,24 @@ workspace = true
 [dependencies]
 dirs = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["std"] }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 arboard = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
 crossterm = { workspace = true }
 base-primitives.workspace = true
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }
-alloy-eips = { workspace = true }
+alloy-eips = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 alloy-contract = { workspace = true }
-alloy-sol-types = { workspace = true }
+alloy-sol-types = { workspace = true, features = ["std"] }
 op-alloy-network = { workspace = true }
 alloy-primitives = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 op-alloy-consensus = { workspace = true }
-alloy-rpc-types-eth = { workspace = true }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }

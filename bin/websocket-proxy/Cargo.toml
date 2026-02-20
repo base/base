@@ -15,11 +15,11 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-brotli.workspace = true
+brotli = { workspace = true, features = ["std"] }
 futures.workspace = true
 hostname.workspace = true
 dotenvy.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 tokio-util.workspace = true
 websocket-proxy.workspace = true
 tokio = { workspace = true, features = ["full"] }

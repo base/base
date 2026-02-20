@@ -123,7 +123,7 @@ incremental = false
 
 [workspace.dependencies]
 # Consensus
-base-protocol = { path = "crates/consensus/protocol" }
+base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 
 # Shared
@@ -294,34 +294,34 @@ revm-context-interface = { version = "14.0.0", default-features = false }
 revm-database-interface = { version = "9.0.0", default-features = false }
 
 # alloy
-alloy-rlp = "0.3.10"
+alloy-rlp = { version = "0.3.10", default-features = false }
 alloy-trie = "0.9.1"
-alloy-eips = "1.5.2"
-alloy-serde = "1.5.2"
+alloy-eips = { version = "1.5.2", default-features = false }
+alloy-serde = { version = "1.5.2", default-features = false }
 alloy-signer = "1.5.2"
-alloy-chains = "0.2.5"
+alloy-chains = { version = "0.2.5", default-features = false }
 alloy-pubsub = "1.5.2"
 alloy-network = "1.5.2"
-alloy-genesis = "1.5.2"
+alloy-genesis = { version = "1.5.2", default-features = false }
 alloy-eip7928 = "0.3.0"
 alloy-provider = "1.5.2"
 alloy-contract = "1.5.2"
 alloy-json-rpc = "1.5.2"
-alloy-consensus = "1.5.2"
+alloy-consensus = { version = "1.5.2", default-features = false }
 alloy-transport = "1.5.2"
 alloy-rpc-types = "1.5.2"
 alloy-hardforks = "0.4.5"
-alloy-sol-types = "1.5.0"
+alloy-sol-types = { version = "1.5.0", default-features = false }
 alloy-sol-macro = "1.5.0"
 alloy-rpc-client = "1.5.2"
 alloy-signer-local = "1.5.2"
 alloy-node-bindings = "1.5.2"
-alloy-rpc-types-eth = "1.5.2"
+alloy-rpc-types-eth = { version = "1.5.2", default-features = false }
 alloy-transport-http = "1.5.2"
 alloy-rpc-types-debug = { version = "1.6.3", default-features = false }
 alloy-rpc-types-beacon = "1.5.2"
-alloy-rpc-types-engine = "1.5.2"
-alloy-network-primitives = "1.5.2"
+alloy-rpc-types-engine = { version = "1.5.2", default-features = false }
+alloy-network-primitives = { version = "1.5.2", default-features = false }
 alloy-evm = { version = "0.27.0", default-features = false }
 alloy-primitives = { version = "1.5.0", default-features = false }
 
@@ -330,7 +330,7 @@ base-alloy-evm = { path = "crates/alloy/evm" }
 base-alloy-network = { path = "crates/alloy/network" }
 base-alloy-provider = { path = "crates/alloy/provider" }
 base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
-base-alloy-consensus = { path = "crates/alloy/consensus" }
+base-alloy-consensus = { path = "crates/alloy/consensus", default-features = false }
 base-alloy-hardforks = { path = "crates/alloy/hardforks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
 base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine" }
@@ -378,7 +378,7 @@ vergen-git2 = "9.1.0"
 clap_builder = "4.5.57"
 
 # Tracing
-tracing = "0.1.43"
+tracing = { version = "0.1.43", default-features = false }
 tracing-appender = "0.2.4"
 tracing-subscriber = "0.3.22"
 
@@ -414,13 +414,13 @@ warp = "0.3.7"
 hyper = "1.7.0"
 eyre = "0.6.12"
 backon = "1.6.0"
-brotli = "8.0.2"
+brotli = { version = "8.0.2", default-features = false }
 bytes = "1.11.1"
 rstest = "0.26.1"
 chrono = "0.4.42"
 rustls = "0.23.35"
-serde = "1.0.228"
-thiserror = "2.0"
+serde = { version = "1.0.228", default-features = false }
+thiserror = { version = "2.0", default-features = false }
 tempfile = "3.8"
 criterion = "0.5"
 secp256k1 = "0.30"
@@ -439,7 +439,7 @@ derive_more = { version = "2.1.0", default-features = false }
 lazy_static = "1.4.0"
 parking_lot = "0.12.3"
 shellexpand = "3.1"
-serde_json = "1.0.145"
+serde_json = { version = "1.0.145", default-features = false }
 opentelemetry = "0.31"
 ethereum_ssz = "0.9.0"
 http-body-util = "0.1.3"
@@ -469,7 +469,7 @@ serial_test = "3"
 mockall = "0.13"
 wiremock = { version = "0.6.2", default-features = false }
 testcontainers-modules = { version = "0.14.0", default-features = false }
-sha2 = "0.10"
+sha2 = { version = "0.10", default-features = false }
 c-kzg = { version = "2.1.5", default-features = false }
 rocksdb = { version = "0.24", default-features = false }
 snap = "1"
@@ -502,7 +502,7 @@ serde_repr = "0.1"
 getrandom = "0.3"
 async-stream = "0.3"
 libp2p-stream = "0.4.0-alpha"
-unsigned-varint = "0.8"
+unsigned-varint = { version = "0.8", default-features = false }
 alloc-no-stdlib = "2.0"
 async-channel = "2.5"
 rollup-boost-types = "0.1"

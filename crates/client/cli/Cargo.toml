@@ -29,7 +29,7 @@ kona-providers-alloy.workspace = true
 kona-cli = { workspace = true, features = ["secrets"] }
 
 # alloy
-alloy-chains.workspace = true
+alloy-chains = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
@@ -48,12 +48,12 @@ clap.workspace = true
 tokio.workspace = true
 
 # tracing
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 
 # misc
 eyre.workspace = true
-thiserror.workspace = true
-serde_json.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true

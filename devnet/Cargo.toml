@@ -22,7 +22,7 @@ base-txpool-tracing.workspace = true
 base-flashblocks.workspace = true
 base-primitives.workspace = true
 base-flashblocks-node.workspace = true
-base-protocol = { workspace = true, features = ["serde"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
 base-client-node = { workspace = true, features = ["test-utils"] }
@@ -39,12 +39,12 @@ reth-db = { workspace = true, features = ["op"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # alloy
-alloy-genesis.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
-alloy-rpc-types-engine.workspace = true
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
@@ -70,17 +70,17 @@ hex.workspace = true
 eyre.workspace = true
 rand.workspace = true
 nanoid.workspace = true
-tracing.workspace = true
+tracing = { workspace = true, features = ["std"] }
 tempfile.workspace = true
-serde_json.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
 [dev-dependencies]
 # alloy
-alloy-eips.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
-alloy-consensus.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
 
 # op-alloy
 op-alloy-rpc-types.workspace = true
