@@ -2772,7 +2772,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
- "alloy-rpc-client",
  "async-trait",
  "backon",
  "base-protocol",

@@ -7,7 +7,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod traits;
-pub use traits::{MinerApiExtServer, OpAdminApiServer};
-
 #[cfg(feature = "client")]
 pub use traits::{MinerApiExtClient, OpAdminApiClient};
+pub use traits::{MinerApiExtServer, OpAdminApiServer};
