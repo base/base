@@ -197,7 +197,12 @@ mod tests {
         assert_eq!(iterator.next(()), None);
 
         // Simulate: flashblock 1 is complete after TX_A was executed
-        iterator.mark_commited(vec![*tx_a.hash()]);
+        iterator.mark_committed(&[*tx_a.hash()]);
+        // We cannot simulate the transaction getting pruned from the pool
+        // so we instead recreate the pool without TX_A
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        pool.add_transaction(Arc::new(f.validated(tx_b.clone())), 0);
+        pool.add_transaction(Arc::new(f.validated(tx_c.clone())), 0);
 
         // === FLASHBLOCK 2 ===
         // We refresh the iterator with the latest best transactions
@@ -206,24 +211,14 @@ mod tests {
         // Now, theoretically, TX_A has already been executed, so
         // TX_B should be the best txn and TX_C the second best
         // Expected: TX_B (100 gwei) first, TX_C (10 gwei) second
-        // Actual bug: TX_C first, then TX_A skipped, then TX_B
         let fb2_first = iterator.next(()).unwrap();
         let fb2_second = iterator.next(()).unwrap();
 
-        // If this test passes, the bug has been proven
-        assert_eq!(fb2_first.sender(), sender_b);
-        assert_eq!(fb2_second.sender(), sender_a);
+        assert_eq!(fb2_first.sender(), sender_a);
+        assert_eq!(fb2_second.sender(), sender_b);
         assert!(
             fb2_second.effective_tip_per_gas(MIN_PROTOCOL_BASE_FEE)
-                > fb2_first.effective_tip_per_gas(MIN_PROTOCOL_BASE_FEE)
+                < fb2_first.effective_tip_per_gas(MIN_PROTOCOL_BASE_FEE)
         );
-
-        panic!("Critical ordering bug");
-
-        // SOLUTION:
-        // We need to loop over `committed_transactions` HashSet
-        // when we refresh the iterator
-        // and ensure we consume txns from the txpool that were executed in previous
-        // flashblocks before we start building the new one
     }
 }
