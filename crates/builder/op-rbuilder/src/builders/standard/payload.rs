@@ -450,6 +450,17 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             .payload_num_tx_gauge
             .set(info.executed_transactions.len() as f64);
 
+        info!(
+            target: "payload_builder",
+            id=%ctx.payload_id(),
+            cumulative_gas_used = info.cumulative_gas_used,
+            cumulative_da_bytes = info.cumulative_da_bytes_used,
+            cumulative_uncompressed_bytes = info.cumulative_uncompressed_bytes,
+            total_fees = %info.total_fees,
+            num_txs = info.executed_transactions.len(),
+            "standard block execution info cumulative settings"
+        );
+
         let payload = ExecutedPayload { info };
 
         ctx.metrics.block_built_success.increment(1);
