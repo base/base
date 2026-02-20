@@ -52,8 +52,7 @@ alloy-rpc-client = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
 alloy-rpc-types-engine = { workspace = true, optional = true }
-# rocksdb is not a workspace dep; used only by test-utils
-rocksdb = { version = "0.22", features = ["snappy"], optional = true }
+rocksdb = { workspace = true, features = ["snappy"], optional = true }
 
 [features]
 test-utils = [

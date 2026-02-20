@@ -1,0 +1,84 @@
+[package]
+name = "reth-optimism-evm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Reth
+reth-chainspec.workspace = true
+reth-evm = { workspace = true, features = ["op"] }
+reth-primitives-traits.workspace = true
+reth-execution-errors.workspace = true
+reth-execution-types.workspace = true
+reth-storage-errors.workspace = true
+
+reth-rpc-eth-api = { workspace = true, optional = true }
+
+# ethereum
+alloy-eips.workspace = true
+alloy-evm.workspace = true
+alloy-primitives.workspace = true
+alloy-op-evm.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+alloy-consensus.workspace = true
+
+# Optimism
+reth-optimism-chainspec.workspace = true
+reth-optimism-consensus.workspace = true
+reth-optimism-forks.workspace = true
+reth-optimism-primitives.workspace = true
+
+# revm
+revm.workspace = true
+op-revm.workspace = true
+
+# misc
+thiserror.workspace = true
+
+[dev-dependencies]
+reth-evm = { workspace = true, features = ["test-utils"] }
+reth-revm = { workspace = true, features = ["test-utils"] }
+alloy-genesis.workspace = true
+reth-optimism-primitives = { workspace = true, features = ["arbitrary"] }
+
+[features]
+default = [ "std" ]
+std = [
+	"alloy-consensus/std",
+	"alloy-eips/std",
+	"alloy-evm/std",
+	"alloy-genesis/std",
+	"alloy-op-evm/std",
+	"alloy-primitives/std",
+	"op-alloy-consensus/std",
+	"op-alloy-rpc-types-engine/std",
+	"op-revm/std",
+	"reth-chainspec/std",
+	"reth-evm/std",
+	"reth-execution-errors/std",
+	"reth-execution-types/std",
+	"reth-optimism-chainspec/std",
+	"reth-optimism-consensus/std",
+	"reth-optimism-forks/std",
+	"reth-optimism-primitives/std",
+	"reth-primitives-traits/std",
+	"reth-revm/std",
+	"reth-storage-errors/std",
+	"revm/std",
+	"thiserror/std",
+]
+portable = [ "op-revm/portable", "reth-revm/portable", "revm/portable" ]
+rpc = [
+	"alloy-evm/rpc",
+	"reth-optimism-primitives/reth-codec",
+	"reth-optimism-primitives/serde",
+	"reth-rpc-eth-api",
+]
