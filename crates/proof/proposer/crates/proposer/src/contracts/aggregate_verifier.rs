@@ -59,9 +59,6 @@ pub struct GameInfo {
 /// Async trait for querying `AggregateVerifier` game instances.
 #[async_trait]
 pub trait AggregateVerifierClient: Send + Sync {
-    /// Reads the `BLOCK_INTERVAL` from the implementation contract.
-    async fn block_interval(&self) -> Result<u64, ProposerError>;
-
     /// Queries game details from a game proxy address.
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ProposerError>;
 }
@@ -105,14 +102,6 @@ impl AggregateVerifierContractClient {
 
 #[async_trait]
 impl AggregateVerifierClient for AggregateVerifierContractClient {
-    async fn block_interval(&self) -> Result<u64, ProposerError> {
-        // This is a convenience method; callers with a specific impl address
-        // should use `read_block_interval()` directly.
-        Err(ProposerError::Contract(
-            "use read_block_interval(impl_address) instead".to_string(),
-        ))
-    }
-
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ProposerError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);

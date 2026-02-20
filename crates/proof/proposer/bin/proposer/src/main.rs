@@ -5,9 +5,9 @@
 //! 1. Parse and validate configuration
 //! 2. Initialise logging and metrics
 //! 3. Create RPC clients (L1, L2, rollup, enclave)
-//! 4. Read on-chain config (`BLOCK_INTERVAL`, `initBond`)
+//! 4. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
 //! 5. Create prover, output proposer, and driver
-//! 6. Recover parent game state from on-chain data
+//! 6. Recover parent game state from onchain data
 //! 7. Start health / admin HTTP server
 //! 8. Start balance monitor (if metrics enabled)
 //! 9. Start the driver loop
@@ -109,7 +109,7 @@ fn setup_signal_handler(cancel: CancellationToken) {
 // Parent game state recovery
 // ---------------------------------------------------------------------------
 
-/// Recovers parent game state from on-chain data on startup.
+/// Recovers parent game state from onchain data on startup.
 ///
 /// Walks backwards through the `DisputeGameFactory` to find the most recent
 /// game of the correct `game_type`. Returns `(game_index, output_root, l2_block_number)`
@@ -146,7 +146,7 @@ async fn recover_parent_game_state_standalone(
             game_proxy = %game.proxy,
             output_root = ?game_info.root_claim,
             l2_block_number = game_info.l2_block_number,
-            "Recovered parent game state from on-chain"
+            "Recovered parent game state from onchain"
         );
         return Ok(Some((idx, game_info.root_claim, game_info.l2_block_number)));
     }
@@ -228,7 +228,7 @@ async fn main() -> Result<()> {
         create_enclave_client(config.enclave_rpc.as_str(), config.skip_tls_verify)?;
     info!(endpoint = %config.enclave_rpc, "Enclave client initialized");
 
-    // ── 5. Create contract clients and read on-chain config ──────────────
+    // ── 5. Create contract clients and read onchain config ──────────────
     let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
         config.anchor_state_registry_addr,
         config.l1_eth_rpc.clone(),

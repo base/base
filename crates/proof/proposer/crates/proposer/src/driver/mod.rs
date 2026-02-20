@@ -3,9 +3,6 @@
 //! The driver coordinates between RPC clients, the enclave, and contract
 //! interactions to generate and submit output proposals as dispute games.
 //!
-//! TODO: Add unit tests for the driver (`step`, `generate_outputs`, `next_output`,
-//! `propose_output`, retry-on-failure, and graceful shutdown).
-//!
 //! # Lifecycle control
 //!
 //! The [`Driver`] itself runs a single polling loop via [`Driver::run`].
@@ -232,10 +229,7 @@ where
             };
 
         // Generate proofs for blocks in the range.
-        if let Err(e) = self
-            .generate_outputs(starting_block_number, starting_root)
-            .await
-        {
+        if let Err(e) = self.generate_outputs(starting_block_number).await {
             warn!(error = %e, "Error generating outputs");
             return Err(e);
         }
@@ -256,16 +250,10 @@ where
     }
 
     /// Generates single-block proofs, filling the pending queue.
-    async fn generate_outputs(
-        &mut self,
-        starting_block_number: u64,
-        _starting_root: B256,
-    ) -> Result<(), ProposerError> {
+    async fn generate_outputs(&mut self, starting_block_number: u64) -> Result<(), ProposerError> {
         // Clear pending if not contiguous with starting point.
         if let Some(front) = self.pending.front() {
-            if front.from.number.saturating_sub(1) != starting_block_number
-                && !self.pending.is_empty()
-            {
+            if front.from.number.saturating_sub(1) != starting_block_number {
                 warn!(
                     starting = starting_block_number,
                     pending_from = front.from.number.saturating_sub(1),
@@ -410,6 +398,30 @@ where
         // Verify the aggregated proposal reaches the target block.
         if proposal.to.number < target {
             return Ok(None);
+        }
+
+        // Reorg detection: verify the proposal's block hash matches the canonical chain.
+        match self
+            .l2_client
+            .header_by_number(Some(proposal.to.number))
+            .await
+        {
+            Ok(canonical_header) => {
+                if proposal.to.hash != canonical_header.hash {
+                    warn!(
+                        proposal_hash = ?proposal.to.hash,
+                        canonical_hash = ?canonical_header.hash,
+                        block_number = proposal.to.number,
+                        "Proposal block hash does not match canonical chain, possible reorg"
+                    );
+                    self.pending.clear();
+                    return Ok(None);
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to fetch canonical header for reorg check");
+                return Ok(None);
+            }
         }
 
         // Don't re-propose for a block we've already submitted.
@@ -686,5 +698,424 @@ where
 
     fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use alloy_primitives::{B256, Bytes};
+    use async_trait::async_trait;
+    use op_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use op_enclave_core::Proposal;
+    use op_enclave_core::types::config::RollupConfig;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::enclave::EnclaveClientTrait;
+    use crate::prover::Prover;
+    use crate::prover::types::test_helpers::test_proposal;
+    use crate::rpc::SyncStatus;
+    use crate::test_utils::{
+        MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
+        MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,
+    };
+
+    /// Mock enclave whose methods are never called in most tests.
+    struct MockEnclave;
+
+    #[async_trait]
+    impl EnclaveClientTrait for MockEnclave {
+        async fn execute_stateless(
+            &self,
+            _: ExecuteStatelessRequest,
+        ) -> Result<Proposal, ClientError> {
+            unimplemented!()
+        }
+        async fn aggregate(
+            &self,
+            _: B256,
+            _: B256,
+            _: u64,
+            _: Vec<Proposal>,
+            _: alloy_primitives::Address,
+            _: B256,
+        ) -> Result<Proposal, ClientError> {
+            unimplemented!()
+        }
+    }
+
+    /// Mock enclave that returns a valid aggregated `Proposal`.
+    struct MockEnclaveForAggregation;
+
+    #[async_trait]
+    impl EnclaveClientTrait for MockEnclaveForAggregation {
+        async fn execute_stateless(
+            &self,
+            _: ExecuteStatelessRequest,
+        ) -> Result<Proposal, ClientError> {
+            unimplemented!()
+        }
+        async fn aggregate(
+            &self,
+            _: B256,
+            _: B256,
+            _: u64,
+            proposals: Vec<Proposal>,
+            _: alloy_primitives::Address,
+            _: B256,
+        ) -> Result<Proposal, ClientError> {
+            let last = proposals.last().unwrap();
+            Ok(Proposal {
+                output_root: last.output_root,
+                signature: Bytes::from(vec![0xab; 65]),
+                l1_origin_hash: last.l1_origin_hash,
+                l1_origin_number: last.l1_origin_number,
+                l2_block_number: last.l2_block_number,
+                prev_output_root: last.prev_output_root,
+                config_hash: last.config_hash,
+            })
+        }
+    }
+
+    /// Generic driver constructor that accepts a custom enclave, config, and mocks.
+    fn test_driver_custom<E: EnclaveClientTrait + 'static>(
+        enclave: E,
+        driver_config: DriverConfig,
+        l1_block_number: u64,
+        sync_status: SyncStatus,
+        canonical_hash: Option<B256>,
+        output_proposer: Arc<dyn OutputProposer>,
+        cancel: CancellationToken,
+    ) -> Driver<MockL1, MockL2, E, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
+    {
+        let l1 = Arc::new(MockL1 {
+            latest_block_number: l1_block_number,
+        });
+        let l2 = Arc::new(MockL2 {
+            block_not_found: true,
+            canonical_hash,
+        });
+        let prover = Arc::new(Prover::new(
+            test_per_chain_config(),
+            RollupConfig::default(),
+            Arc::clone(&l1),
+            Arc::clone(&l2),
+            enclave,
+            alloy_primitives::Address::ZERO,
+            B256::ZERO,
+        ));
+        let rollup = Arc::new(MockRollupClient { sync_status });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(0),
+        });
+        let factory = Arc::new(MockDisputeGameFactory { game_count: 1 });
+
+        Driver::new(
+            driver_config,
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            output_proposer,
+            cancel,
+        )
+    }
+
+    /// Convenience wrapper with sensible defaults.
+    fn test_driver(
+        l1_block_number: u64,
+        sync_status: SyncStatus,
+        canonical_hash: Option<B256>,
+    ) -> Driver<
+        MockL1,
+        MockL2,
+        MockEnclave,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
+        test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                block_interval: 10,
+                ..Default::default()
+            },
+            l1_block_number,
+            sync_status,
+            canonical_hash,
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
+        )
+    }
+
+    // ---- Tests ----
+
+    #[tokio::test]
+    async fn test_generate_outputs_clears_on_gap() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver(1000, sync_status, None);
+
+        // Pre-populate with blocks 15..=17 (gap: starting=10 -> front.from=15)
+        for n in 15..=17 {
+            driver.pending.push_back(test_proposal(n, n, false));
+        }
+        assert_eq!(driver.pending.len(), 3);
+
+        // generate_outputs(10): front.from(15) - 1 = 14 != 10, so queue is cleared
+        let result = driver.generate_outputs(10).await;
+        assert!(result.is_ok());
+        assert_eq!(driver.pending.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_generate_outputs_preserves_contiguous() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver(1000, sync_status, None);
+
+        // Pre-populate: starting=10, front.from=11 => 11-1=10 == starting, contiguous
+        driver.pending.push_back(test_proposal(11, 11, false));
+        driver.pending.push_back(test_proposal(12, 12, false));
+        assert_eq!(driver.pending.len(), 2);
+
+        let result = driver.generate_outputs(10).await;
+        assert!(result.is_ok());
+        // Queue preserved (contiguous), no new blocks generated (MockL2 returns BlockNotFound)
+        assert_eq!(driver.pending.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_next_output_returns_none_when_empty() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver(1000, sync_status, None);
+
+        // starting_block_number=100, target=110, empty pending
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_next_output_returns_none_when_target_not_reached() {
+        // target = 100 + 10 = 110, safe=200, but pending only goes up to 105
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+
+        driver.pending.push_back(test_proposal(101, 105, false));
+
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_next_output_returns_none_when_target_not_safe() {
+        // target = 100 + 10 = 110, but safe_number = 105 (not safe yet)
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(105, canonical_hash);
+        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+
+        driver.pending.push_back(test_proposal(101, 110, false));
+
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_next_output_reorg_detection() {
+        // Proposal has to.hash = 0x30, but canonical hash is 0xBB => mismatch
+        let canonical_hash = B256::repeat_byte(0xBB);
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+
+        // test_proposal sets to.hash = B256::repeat_byte(0x30) which != 0xBB
+        driver.pending.push_back(test_proposal(101, 110, false));
+        assert_eq!(driver.pending.len(), 1);
+
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+        // Queue should be cleared due to reorg detection
+        assert_eq!(driver.pending.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_next_output_blockhash_window() {
+        // l1_latest=10000, proposal l1origin.number = 1000
+        // Threshold = 10000 - (8191-100) = 10000 - 8091 = 1909
+        // 1000 <= 1909 → rejected (L1 origin too old)
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+        let mut driver = test_driver(10000, sync_status, Some(canonical_hash));
+
+        let mut proposal = test_proposal(101, 110, false);
+        proposal.to.l1origin.number = 1000;
+        driver.pending.push_back(proposal);
+
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+        // Queue NOT cleared — blockhash window gating doesn't clear the queue
+        assert_eq!(driver.pending.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_next_output_already_proposed() {
+        // Proposal for block 110, but we already proposed for that block
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+
+        driver.pending.push_back(test_proposal(101, 110, false));
+        driver.last_proposed_block = 110;
+
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_next_output_happy_path() {
+        // target = 100 + 10 = 110, safe = 200, l1_latest = 1000
+        // test_proposal sets l1origin.number = 100 + to_number = 210, well within BLOCKHASH window
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+
+        driver.pending.push_back(test_proposal(101, 110, false));
+        assert_eq!(driver.pending.len(), 1);
+
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        let proposal = result.unwrap();
+        assert!(proposal.is_some(), "expected Some(proposal)");
+        let proposal = proposal.unwrap();
+        assert_eq!(proposal.from.number, 101);
+        assert_eq!(proposal.to.number, 110);
+        // Pending still has the item (next_output clones, doesn't pop)
+        assert_eq!(driver.pending.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_next_output_with_aggregation() {
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(103, canonical_hash);
+        let cancel = CancellationToken::new();
+
+        let mut driver = test_driver_custom(
+            MockEnclaveForAggregation,
+            DriverConfig {
+                block_interval: 3,
+                ..Default::default()
+            },
+            400,
+            sync_status,
+            Some(canonical_hash),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        // Pre-populate 3 single-block proposals: blocks 101, 102, 103
+        driver.pending.push_back(test_proposal(101, 101, false));
+        driver.pending.push_back(test_proposal(102, 102, false));
+        driver.pending.push_back(test_proposal(103, 103, true));
+        assert_eq!(driver.pending.len(), 3);
+
+        // target = 100 + 3 = 103, safe = 103, all gates pass
+        let result = driver.next_output(100, B256::ZERO).await;
+        assert!(result.is_ok());
+        let proposal = result.unwrap();
+        assert!(
+            proposal.is_some(),
+            "expected Some(proposal) after aggregation"
+        );
+        let proposal = proposal.unwrap();
+        assert_eq!(proposal.from.number, 101);
+        assert_eq!(proposal.to.number, 103);
+        // Pending should have 1 aggregated item
+        assert_eq!(driver.pending.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_step_calls_output_proposer() {
+        struct TrackingOutputProposer {
+            called: AtomicBool,
+        }
+
+        #[async_trait]
+        impl OutputProposer for TrackingOutputProposer {
+            async fn propose_output(
+                &self,
+                _proposal: &ProverProposal,
+                _parent_index: u32,
+            ) -> Result<(), ProposerError> {
+                self.called.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+        let tracking = Arc::new(TrackingOutputProposer {
+            called: AtomicBool::new(false),
+        });
+
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                block_interval: 10,
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            Some(canonical_hash),
+            Arc::clone(&tracking) as Arc<dyn OutputProposer>,
+            CancellationToken::new(),
+        );
+
+        // Set parent game state so step() uses it as starting point
+        driver.set_parent_game_state(0, B256::ZERO, 100);
+        driver.pending.push_back(test_proposal(101, 110, false));
+
+        let result = driver.step().await;
+        assert!(result.is_ok(), "step() should succeed, got: {result:?}");
+        assert!(
+            tracking.called.load(Ordering::SeqCst),
+            "OutputProposer::propose_output should have been called"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_run_cancellation() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let cancel = CancellationToken::new();
+
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                poll_interval: Duration::from_secs(3600),
+                block_interval: 10,
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            None,
+            Arc::new(MockOutputProposer),
+            cancel.clone(),
+        );
+
+        let handle = tokio::spawn(async move { driver.run().await });
+
+        cancel.cancel();
+
+        let result = handle.await.expect("task should not panic");
+        assert!(result.is_ok(), "run() should return Ok on cancellation");
     }
 }
