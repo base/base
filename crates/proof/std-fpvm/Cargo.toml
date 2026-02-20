@@ -1,0 +1,30 @@
+[package]
+name = "kona-std-fpvm"
+description = "Platform specific APIs for interacting with Fault Proof VM kernels."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+kona-preimage.workspace = true
+
+# External
+cfg-if.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+buddy_system_allocator.workspace = true
+
+# `tracing` feature dependencies
+tracing = { workspace = true, optional = true }
+
+[package.metadata.cargo-udeps.ignore]
+normal = ["buddy_system_allocator"]
+
+[features]
+tracing = ["dep:tracing"]
