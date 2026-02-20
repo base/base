@@ -63,11 +63,12 @@ impl Registry {
                 broadcast_result = receiver.recv() => {
                     match broadcast_result {
                         Ok(msg) => {
+                            let is_data_message = matches!(&msg, Message::Binary(_) | Message::Text(_));
                             let msg_bytes = match &msg {
                                 Message::Binary(data) => data.as_ref(),
                                 _ => &[],
                             };
-                            if filter.matches(msg_bytes, compressed) {
+                            if !is_data_message || filter.matches(msg_bytes, compressed) {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
 
                                 let send_start = Instant::now();
