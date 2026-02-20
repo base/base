@@ -14,8 +14,8 @@ use jsonrpsee::{
 };
 use kona_genesis::RollupConfig;
 use kona_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
-// Re-export apis defined in upstream `op-alloy-rpc-jsonrpsee`
-pub use op_alloy_rpc_jsonrpsee::traits::{MinerApiExtServer, OpAdminApiServer};
+// Re-export apis defined in `base-alloy-rpc-jsonrpsee`
+pub use base_alloy_rpc_jsonrpsee::{MinerApiExtServer, OpAdminApiServer};
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use rollup_boost::{GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse};
 

@@ -2811,6 +2811,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "backon",
+ "base-alloy-rpc-jsonrpsee",
  "base-protocol",
  "getrandom 0.3.4",
  "ipnet",
@@ -2821,7 +2822,6 @@ dependencies = [
  "kona-macros",
  "libp2p",
  "metrics",
- "op-alloy-rpc-jsonrpsee",
  "op-alloy-rpc-types-engine",
  "rollup-boost",
  "serde",
@@ -9880,15 +9880,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "op-alloy-rpc-jsonrpsee"
-version = "0.23.1"
-source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
-dependencies = [
- "alloy-primitives",
- "jsonrpsee",
-]
-
-[[package]]
 name = "op-alloy-rpc-types"
 version = "0.23.1"
 source = "git+https://github.com/ethereum-optimism/optimism?rev=a46ffeef01ec07de31594c07859b64bbbb9e5d37#a46ffeef01ec07de31594c07859b64bbbb9e5d37"
@@ -13680,6 +13671,7 @@ dependencies = [
  "alloy-transport",
  "alloy-transport-http",
  "async-trait",
+ "base-alloy-rpc-jsonrpsee",
  "derive_more",
  "eyre",
  "futures",
@@ -13689,7 +13681,6 @@ dependencies = [
  "metrics",
  "op-alloy-consensus",
  "op-alloy-network",
- "op-alloy-rpc-jsonrpsee",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
  "op-revm",
