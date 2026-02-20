@@ -50,7 +50,11 @@ pub trait OpEngineApi<N, T> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/03911ffc053b8b806123f1fc237184b0092a485a/src/engine/prague.md#engine_newpayloadv4>
     ///
-    /// OP modifications: TODO
+    /// OP modifications:
+    /// - expected versioned hashes MUST be an empty array.
+    /// - parent beacon block root MUST be the parent beacon block root from the L1 origin block of
+    ///   the L2 block.
+    /// - execution requests MUST be an empty array.
     async fn new_payload_v4(
         &self,
         payload: OpExecutionPayloadV4,
