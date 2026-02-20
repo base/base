@@ -52,10 +52,10 @@ serde_json = { workspace = true, features = ["std"] }
 default = []
 reqwest = [ "client" ]
 client = [
+	"base-alloy-rpc-jsonrpsee/client",
 	"jsonrpsee/async-client",
 	"jsonrpsee/client",
 	"jsonrpsee/http-client",
-	"base-alloy-rpc-jsonrpsee/client",
 ]
 metrics = [
 	"dep:metrics",

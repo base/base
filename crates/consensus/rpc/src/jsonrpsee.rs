@@ -4,6 +4,8 @@ use core::net::IpAddr;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
+// Re-export apis defined in `base-alloy-rpc-jsonrpsee`
+pub use base_alloy_rpc_jsonrpsee::{MinerApiExtServer, OpAdminApiServer};
 use base_protocol::SyncStatus;
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
@@ -14,8 +16,6 @@ use jsonrpsee::{
 };
 use kona_genesis::RollupConfig;
 use kona_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
-// Re-export apis defined in `base-alloy-rpc-jsonrpsee`
-pub use base_alloy_rpc_jsonrpsee::{MinerApiExtServer, OpAdminApiServer};
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use rollup_boost::{GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse};
 
