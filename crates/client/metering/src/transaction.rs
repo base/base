@@ -39,7 +39,7 @@ pub enum TxValidationError {
 /// - The transaction's L1 gas cost is less than the account's balance
 ///   
 /// Note: We don't need to check for EIP-4844 because bundle transactions are Recovered<OpTxEnvelope>
-/// which only Legacy, Eip2930, Eip1559, Eip7702, and Deposit.
+/// which only includes Legacy, Eip2930, Eip1559, Eip7702, and Deposit.
 pub fn validate_tx<T: Transaction + Encodable2718>(
     account: Account,
     sender_code: Option<&Bytecode>,
@@ -49,8 +49,8 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     let data = txn.encoded_2718();
 
     // from: https://github.com/paradigmxyz/reth/blob/3b0d98f3464b504d96154b787a860b2488a61b3e/crates/optimism/txpool/src/supervisor/client.rs#L76-L84
-    // it returns `None` if a tx is not cross chain, which is when `inbox_entries` is empty in the snippet above.
-    // we can do something similar where if the inbox_entries is non-empty then it is a cross chain tx and it's something we don't support
+    // It returns `None` if a tx is not cross chain, which is when `inbox_entries` is empty in the snippet above.
+    // We can do something similar where if the inbox_entries is non-empty then it is a cross chain tx and it's something we don't support
     if let Some(access_list) = txn.access_list() {
         let inbox_entries =
             access_list.iter().filter(|entry| entry.address == CROSS_L2_INBOX_ADDRESS);
@@ -73,7 +73,7 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
         return Err(TxValidationError::AuthorizationListIsEmpty);
     }
 
-    // error if tx nonce is not equal to or greater than the latest on chain
+    // Return error if tx nonce is not equal to or greater than the latest on chain
     // https://github.com/paradigmxyz/reth/blob/a047a055ab996f85a399f5cfb2fe15e350356546/crates/transaction-pool/src/validate/eth.rs#L611
     if txn.nonce() < account.nonce {
         return Err(TxValidationError::TransactionNonceTooLow(txn.nonce(), account.nonce));
@@ -83,7 +83,7 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     let max_fee = txn.max_fee_per_gas().saturating_mul(txn.gas_limit() as u128);
     let txn_cost = txn.value().saturating_add(U256::from(max_fee));
 
-    // error if execution cost costs more than balance
+    // Return error if execution cost exceeds balance
     if txn_cost > account.balance {
         warn!(message = "Insufficient funds for transfer");
         return Err(TxValidationError::InsufficientFundsForTransfer(txn_cost, account.balance));
