@@ -5,10 +5,11 @@
 //! maintaining safe head state, and computing output roots for the execution results.
 
 use alloc::boxed::Box;
+use core::error::Error;
+
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use core::error::Error;
 use kona_executor::BlockBuildingOutcome;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 

@@ -49,8 +49,9 @@ pub fn block_on<T>(f: impl Future<Output = T>) -> T {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::future::ready;
+
+    use super::*;
 
     #[test]
     fn test_block_on() {

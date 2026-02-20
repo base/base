@@ -1,8 +1,8 @@
 //! This module contains an implementation of an in-memory Trie DB for [`revm`], that allows for
 //! incremental updates through fetching node preimages on the fly during execution.
 
-use crate::errors::{TrieDBError, TrieDBResult};
 use alloc::{string::ToString, vec::Vec};
+
 use alloy_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
@@ -14,6 +14,8 @@ use revm::{
     primitives::{BLOCK_HASH_HISTORY, HashMap},
     state::{AccountInfo, Bytecode},
 };
+
+use crate::errors::{TrieDBError, TrieDBResult};
 
 mod traits;
 pub use traits::{NoopTrieDBProvider, TrieDBProvider};
@@ -336,8 +338,8 @@ where
         let mut header = self.parent_block_header.inner().clone();
 
         // Check if the block number is in range. If not, we can fail early.
-        if block_number > header.number ||
-            header.number.saturating_sub(block_number) > BLOCK_HASH_HISTORY
+        if block_number > header.number
+            || header.number.saturating_sub(block_number) > BLOCK_HASH_HISTORY
         {
             return Ok(B256::default());
         }
@@ -356,10 +358,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::Sealable;
     use alloy_primitives::b256;
     use kona_mpt::NoopTrieHinter;
+
+    use super::*;
 
     fn new_test_db() -> TrieDB<NoopTrieDBProvider, NoopTrieHinter> {
         TrieDB::new(Header::default().seal_slow(), NoopTrieDBProvider, NoopTrieHinter)

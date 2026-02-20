@@ -1,7 +1,8 @@
 //! This module contains the `ClientIO` struct, which is a system call interface for the kernel.
 
-use crate::{BasicKernelInterface, FileDescriptor, errors::IOResult};
 use cfg_if::cfg_if;
+
+use crate::{BasicKernelInterface, FileDescriptor, errors::IOResult};
 
 cfg_if! {
     if #[cfg(target_arch = "mips64")] {

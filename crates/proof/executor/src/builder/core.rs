@@ -4,8 +4,9 @@
 //! for OP Stack L2 chains that operates in a stateless manner, pulling required state
 //! data from a [`TrieDB`] during execution rather than maintaining full state.
 
-use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 use alloc::{string::ToString, vec::Vec};
+use core::fmt::Debug;
+
 use alloy_consensus::{Header, Sealed, crypto::RecoveryError};
 use alloy_evm::{
     EvmFactory, FromRecoveredTx, FromTxWithEncoded,
@@ -15,7 +16,6 @@ use alloy_op_evm::{
     OpBlockExecutionCtx, OpBlockExecutorFactory,
     block::{OpAlloyReceiptBuilder, OpTxEnv},
 };
-use core::fmt::Debug;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
 use op_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
@@ -25,6 +25,8 @@ use revm::{
     context::BlockEnv,
     database::{State, states::bundle_state::BundleRetention},
 };
+
+use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 
 /// Stateless OP Stack L2 block builder that derives state from trie proofs during execution.
 ///
@@ -207,9 +209,11 @@ impl From<(Sealed<Header>, BlockExecutionResult<OpReceiptEnvelope>)> for BlockBu
 
 #[cfg(all(test, feature = "test-utils"))]
 mod test {
-    use crate::test_utils::run_test_fixture;
-    use rstest::rstest;
     use std::path::PathBuf;
+
+    use rstest::rstest;
+
+    use crate::test_utils::run_test_fixture;
 
     #[rstest]
     #[tokio::test]

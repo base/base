@@ -1,7 +1,8 @@
 //! Contains the concrete implementation of the [`BlobProvider`] trait for the client program.
 
-use crate::{HintType, errors::OracleProviderError};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use core::str::FromStr;
+
 use alloy_consensus::Blob;
 use alloy_eips::eip4844::{FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash};
 use alloy_primitives::{B256, keccak256};
@@ -9,10 +10,11 @@ use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, BigInteger256, Field, PrimeField};
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
-use core::str::FromStr;
 use kona_derive::BlobProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use spin::Lazy;
+
+use crate::{HintType, errors::OracleProviderError};
 
 /// An oracle-backed blob provider.
 #[derive(Debug, Clone)]
@@ -157,12 +159,13 @@ fn generate_roots_of_unity() -> [Fr; FIELD_ELEMENTS_PER_BLOB as usize] {
 
 #[cfg(test)]
 mod test {
-    use super::ROOTS_OF_UNITY;
     use alloy_eips::eip4844::{FIELD_ELEMENTS_PER_BLOB, env_settings::EnvKzgSettings};
     use ark_ff::{BigInteger, PrimeField};
     use c_kzg::{BYTES_PER_BLOB, Blob, Bytes32, Bytes48};
     use rand::Rng;
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+    use super::ROOTS_OF_UNITY;
 
     #[test]
     fn test_roots_of_unity() {

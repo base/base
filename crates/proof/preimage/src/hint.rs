@@ -1,10 +1,12 @@
+use alloc::{boxed::Box, format, string::String, vec};
+
+use async_trait::async_trait;
+
 use crate::{
     Channel, HintReaderServer,
     errors::{PreimageOracleError, PreimageOracleResult},
     traits::{HintRouter, HintWriterClient},
 };
-use alloc::{boxed::Box, format, string::String, vec};
-use async_trait::async_trait;
 
 /// A [`HintWriter`] is a high-level interface to the hint channel. It provides a way to write hints
 /// to the host.
@@ -115,10 +117,12 @@ where
 
 #[cfg(all(test, feature = "std"))]
 mod test {
+    use alloc::{sync::Arc, vec::Vec};
+
+    use tokio::sync::Mutex;
+
     use super::*;
     use crate::native_channel::BidirectionalChannel;
-    use alloc::{sync::Arc, vec::Vec};
-    use tokio::sync::Mutex;
 
     struct TestRouter {
         incoming_hints: Arc<Mutex<Vec<String>>>,

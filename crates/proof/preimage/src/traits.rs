@@ -1,9 +1,11 @@
+use alloc::{boxed::Box, string::String, vec::Vec};
+
+use async_trait::async_trait;
+
 use crate::{
     PreimageKey,
     errors::{ChannelResult, PreimageOracleResult},
 };
-use alloc::{boxed::Box, string::String, vec::Vec};
-use async_trait::async_trait;
 
 /// A [`PreimageOracleClient`] is a high-level interface to read data from the host, keyed by a
 /// [`PreimageKey`].

@@ -1,7 +1,7 @@
 //! Contains driver-related error types.
 
-use kona_derive::PipelineErrorKind;
 use base_protocol::FromBlockError;
+use kona_derive::PipelineErrorKind;
 use thiserror::Error;
 
 /// A [`Result`] type for the [`DriverError`].

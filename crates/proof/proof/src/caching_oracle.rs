@@ -3,8 +3,9 @@
 //! that stores a configurable number of responses in an [`LruCache`] for quick retrieval.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use async_trait::async_trait;
 use core::num::NonZeroUsize;
+
+use async_trait::async_trait;
 use kona_preimage::{
     HintWriterClient, PreimageKey, PreimageOracleClient, errors::PreimageOracleResult,
 };

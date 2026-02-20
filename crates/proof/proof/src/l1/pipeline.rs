@@ -1,10 +1,10 @@
 //! Contains an oracle-backed pipeline.
 
-use crate::FlushableCache;
 use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
 use async_trait::async_trait;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
-use core::fmt::Debug;
 use kona_derive::{
     ChainProvider, DataAvailabilityProvider, DerivationPipeline, L2ChainProvider, OriginProvider,
     Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage,
@@ -14,6 +14,8 @@ use kona_driver::{DriverPipeline, PipelineCursor};
 use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use kona_preimage::CommsClient;
 use spin::RwLock;
+
+use crate::FlushableCache;
 
 /// An oracle-backed derivation pipeline.
 pub type ProviderDerivationPipeline<L1, L2, DA> = DerivationPipeline<

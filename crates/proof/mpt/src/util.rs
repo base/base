@@ -1,6 +1,7 @@
 //! Utilities for `kona-mpt`
 
 use alloc::vec::Vec;
+
 use alloy_rlp::{Buf, BufMut, Encodable, Header};
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 

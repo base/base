@@ -5,6 +5,7 @@
 //! database operation errors.
 
 use alloc::string::String;
+
 use alloy_evm::block::BlockExecutionError;
 use kona_mpt::TrieNodeError;
 use op_alloy_consensus::EIP1559ParamError;

@@ -25,10 +25,9 @@ mod noop;
 pub use noop::{NoopTrieHinter, NoopTrieProvider};
 
 mod util;
-pub use util::ordered_trie_with_encoder;
-
 // Re-export [alloy_trie::Nibbles].
 pub use alloy_trie::Nibbles;
+pub use util::ordered_trie_with_encoder;
 
 #[cfg(test)]
 mod test_util;

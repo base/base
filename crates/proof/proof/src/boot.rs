@@ -1,12 +1,13 @@
 //! This module contains the prologue phase of the client program, pulling in the boot information
 //! through the `PreimageOracle` ABI as local keys.
 
-use crate::errors::OracleProviderError;
 use alloy_primitives::{B256, U256};
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_preimage::{PreimageKey, PreimageOracleClient};
 use kona_registry::{L1_CONFIGS, ROLLUP_CONFIGS};
 use serde::{Deserialize, Serialize};
+
+use crate::errors::OracleProviderError;
 
 /// The local key identifier for the L1 head hash.
 ///

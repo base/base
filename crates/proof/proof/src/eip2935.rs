@@ -1,7 +1,7 @@
 //! EIP-2935 history lookup utilities.
 
-use crate::errors::OracleProviderError;
 use alloc::string::ToString;
+
 use alloy_consensus::Header;
 use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_primitives::{B256, U256, b256, keccak256};
@@ -9,6 +9,8 @@ use alloy_rlp::Decodable;
 use alloy_trie::TrieAccount;
 use kona_mpt::{Nibbles, TrieHinter, TrieNode, TrieNodeError, TrieProvider};
 use kona_preimage::errors::PreimageOracleError;
+
+use crate::errors::OracleProviderError;
 
 /// The [`keccak256`] hash of the address of the EIP-2935 history storage contract.
 const HASHED_HISTORY_STORAGE_ADDRESS: B256 =
@@ -62,14 +64,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::{vec, vec::Vec};
+
     use alloy_primitives::Bytes;
     use alloy_rlp::Encodable;
     use alloy_trie::{HashBuilder, proof::ProofRetainer};
     use kona_mpt::NoopTrieHinter;
     use kona_registry::HashMap;
     use rstest::rstest;
+
+    use super::*;
 
     // Mock TrieProvider implementation for testing EIP-2935 history lookup
     #[derive(Default, Clone)]

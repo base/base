@@ -1,15 +1,17 @@
 //! This module contains the [`TrieNode`] type, which represents a node within a standard Merkle
 //! Patricia Trie.
 
+use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
+
+use alloy_primitives::{B256, Bytes, keccak256};
+use alloy_rlp::{Buf, Decodable, EMPTY_STRING_CODE, Encodable, Header, length_of_length};
+use alloy_trie::{EMPTY_ROOT_HASH, Nibbles};
+
 use crate::{
     TrieHinter, TrieNodeError, TrieProvider,
     errors::TrieNodeResult,
     util::{rlp_list_element_length, unpack_path_to_nibbles},
 };
-use alloc::{boxed::Box, string::ToString, vec, vec::Vec};
-use alloy_primitives::{B256, Bytes, keccak256};
-use alloy_rlp::{Buf, Decodable, EMPTY_STRING_CODE, Encodable, Header, length_of_length};
-use alloy_trie::{EMPTY_ROOT_HASH, Nibbles};
 
 /// The length of the branch list when RLP encoded
 const BRANCH_LIST_LENGTH: usize = 17;
@@ -617,16 +619,18 @@ impl Decodable for TrieNode {
 
 #[cfg(test)]
 mod test {
+    use alloc::{collections::BTreeMap, vec, vec::Vec};
+
+    use alloy_primitives::{b256, bytes, hex, keccak256};
+    use alloy_rlp::{Decodable, EMPTY_STRING_CODE, Encodable};
+    use alloy_trie::{HashBuilder, Nibbles};
+    use rand::prelude::IteratorRandom;
+
     use super::*;
     use crate::{
         NoopTrieHinter, NoopTrieProvider, TrieNode, ordered_trie_with_encoder,
         test_util::TrieNodeProvider,
     };
-    use alloc::{collections::BTreeMap, vec, vec::Vec};
-    use alloy_primitives::{b256, bytes, hex, keccak256};
-    use alloy_rlp::{Decodable, EMPTY_STRING_CODE, Encodable};
-    use alloy_trie::{HashBuilder, Nibbles};
-    use rand::prelude::IteratorRandom;
 
     #[test]
     fn test_empty_blinded() {

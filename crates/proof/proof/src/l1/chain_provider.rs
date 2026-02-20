@@ -1,7 +1,7 @@
 //! Contains the concrete implementation of the [`ChainProvider`] trait for the proof.
 
-use crate::{HintType, errors::OracleProviderError};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+
 use alloy_consensus::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::B256;
@@ -11,6 +11,8 @@ use base_protocol::BlockInfo;
 use kona_derive::ChainProvider;
 use kona_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
+
+use crate::{HintType, errors::OracleProviderError};
 
 /// The oracle-backed L1 chain provider for the client program.
 #[derive(Debug, Clone)]

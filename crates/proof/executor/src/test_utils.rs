@@ -1,6 +1,7 @@
 //! Test utilities for the executor.
 
-use crate::{StatelessL2Builder, TrieDBProvider};
+use std::{path::PathBuf, sync::Arc};
+
 use alloy_consensus::Header;
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{B256, Bytes, Sealable};
@@ -15,8 +16,9 @@ use kona_registry::ROLLUP_CONFIGS;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use rocksdb::{DB, Options};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
 use tokio::{fs, runtime::Handle, sync::Mutex};
+
+use crate::{StatelessL2Builder, TrieDBProvider};
 
 /// Executes a [`ExecutorTestFixture`] stored at the passed `fixture_path` and asserts that the
 /// produced block hash matches the expected block hash.

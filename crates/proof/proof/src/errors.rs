@@ -5,6 +5,7 @@
 //! context about failures during proof generation and data retrieval.
 
 use alloc::string::{String, ToString};
+
 use base_protocol::{FromBlockError, OpBlockConversionError};
 use kona_derive::{PipelineError, PipelineErrorKind};
 use kona_mpt::{OrderedListWalkerError, TrieNodeError};

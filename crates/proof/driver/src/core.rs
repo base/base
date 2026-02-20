@@ -1,17 +1,19 @@
 //! The driver of the kona derivation pipeline.
 
-use crate::{DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor};
 use alloc::{sync::Arc, vec::Vec};
+use core::fmt::Debug;
+
 use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
 use base_protocol::L2BlockInfo;
-use core::fmt::Debug;
 use kona_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use kona_executor::BlockBuildingOutcome;
 use kona_genesis::RollupConfig;
 use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
 use spin::RwLock;
+
+use crate::{DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor};
 
 /// The Rollup Driver entrypoint.
 #[derive(Debug)]
@@ -65,8 +67,8 @@ where
             // Check if we have reached the target block number.
             let pipeline_cursor = self.cursor.read();
             let tip_cursor = pipeline_cursor.tip();
-            if let Some(tb) = target &&
-                tip_cursor.l2_safe_head.block_info.number >= tb
+            if let Some(tb) = target
+                && tip_cursor.l2_safe_head.block_info.number >= tb
             {
                 info!(target: "client", "Derivation complete, reached L2 safe head.");
                 return Ok((tip_cursor.l2_safe_head, tip_cursor.l2_safe_head_output_root));

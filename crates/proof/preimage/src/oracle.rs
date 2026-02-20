@@ -1,9 +1,10 @@
+use alloc::{boxed::Box, vec::Vec};
+
 use crate::{
     PreimageKey, PreimageOracleClient, PreimageOracleServer,
     errors::{PreimageOracleError, PreimageOracleResult},
     traits::{Channel, PreimageFetcher},
 };
-use alloc::{boxed::Box, vec::Vec};
 
 /// An [`OracleReader`] is a high-level interface to the preimage oracle channel.
 #[derive(Debug, Clone, Copy)]
@@ -137,12 +138,14 @@ where
 
 #[cfg(all(test, feature = "std"))]
 mod test {
+    use alloc::sync::Arc;
+    use std::collections::HashMap;
+
+    use alloy_primitives::keccak256;
+    use tokio::sync::Mutex;
+
     use super::*;
     use crate::{PreimageKeyType, native_channel::BidirectionalChannel};
-    use alloc::sync::Arc;
-    use alloy_primitives::keccak256;
-    use std::collections::HashMap;
-    use tokio::sync::Mutex;
 
     struct TestFetcher {
         preimages: Arc<Mutex<HashMap<PreimageKey, Vec<u8>>>>,

@@ -1,15 +1,17 @@
 //! Sync Start
 
-use crate::errors::OracleProviderError;
 use alloc::sync::Arc;
+use core::fmt::Debug;
+
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
 use base_protocol::BatchValidationProvider;
-use core::fmt::Debug;
 use kona_derive::ChainProvider;
 use kona_driver::{PipelineCursor, TipCursor};
 use kona_registry::RollupConfig;
 use spin::RwLock;
+
+use crate::errors::OracleProviderError;
 
 /// Constructs a [`PipelineCursor`] from the caching oracle, boot info, and providers.
 pub async fn new_oracle_pipeline_cursor<L1, L2>(

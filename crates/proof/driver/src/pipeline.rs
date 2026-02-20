@@ -5,9 +5,9 @@
 //! for deriving L2 blocks from L1 data and producing payload attributes for execution.
 
 use alloc::boxed::Box;
+
 use async_trait::async_trait;
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
-
 use kona_derive::{
     ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal,
     SignalReceiver, StepResult,

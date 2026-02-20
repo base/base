@@ -1,13 +1,15 @@
 //! This module contains the [`HintType`] enum.
 
-use crate::errors::{HintParsingError, OracleProviderError};
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use alloy_primitives::{Bytes, hex};
 use core::{fmt::Display, str::FromStr};
+
+use alloy_primitives::{Bytes, hex};
 use kona_preimage::HintWriterClient;
+
+use crate::errors::{HintParsingError, OracleProviderError};
 
 /// A [Hint] is parsed in the format `<hint_type> <hint_data>`, where `<hint_type>` is a string that
 /// represents the type of hint, and `<hint_data>` is the data associated with the hint (bytes

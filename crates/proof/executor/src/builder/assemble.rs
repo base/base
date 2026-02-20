@@ -1,11 +1,7 @@
 //! [Header] assembly logic for the [`StatelessL2Builder`].
 
-use super::StatelessL2Builder;
-use crate::{
-    ExecutorError, ExecutorResult, TrieDBError, TrieDBProvider,
-    util::{encode_holocene_eip_1559_params, encode_jovian_eip_1559_params},
-};
 use alloc::vec::Vec;
+
 use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, Header, Sealed};
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_evm::{EvmFactory, block::BlockExecutionResult};
@@ -17,6 +13,12 @@ use kona_mpt::{TrieHinter, ordered_trie_with_encoder};
 use op_alloy_consensus::OpReceiptEnvelope;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use revm::{context::BlockEnv, database::BundleState};
+
+use super::StatelessL2Builder;
+use crate::{
+    ExecutorError, ExecutorResult, TrieDBError, TrieDBProvider,
+    util::{encode_holocene_eip_1559_params, encode_jovian_eip_1559_params},
+};
 
 impl<P, H, Evm> StatelessL2Builder<'_, P, H, Evm>
 where

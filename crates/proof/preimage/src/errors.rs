@@ -1,6 +1,7 @@
 //! Errors for the `kona-preimage` crate.
 
 use alloc::string::String;
+
 use thiserror::Error;
 
 /// A [`PreimageOracleError`] is an enum that differentiates pipe-related errors from other errors

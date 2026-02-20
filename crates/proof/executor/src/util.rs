@@ -1,6 +1,5 @@
 //! Contains utilities for the L2 executor.
 
-use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
@@ -10,6 +9,8 @@ use op_alloy_consensus::{
     encode_holocene_extra_data, encode_jovian_extra_data,
 };
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
+use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 
 /// Parse Holocene [Header] extra data from the block header.
 ///
@@ -101,15 +102,16 @@ pub(crate) fn encode_jovian_eip_1559_params(
 
 #[cfg(all(test, feature = "test-utils"))]
 mod test {
-    use super::decode_holocene_eip_1559_params_block_header;
-    use crate::util::{
-        decode_jovian_eip_1559_params_block_header, encode_holocene_eip_1559_params,
-    };
     use alloy_consensus::Header;
     use alloy_primitives::{B64, b64, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
     use kona_genesis::{BaseFeeConfig, RollupConfig};
     use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
+    use super::decode_holocene_eip_1559_params_block_header;
+    use crate::util::{
+        decode_jovian_eip_1559_params_block_header, encode_holocene_eip_1559_params,
+    };
 
     fn mock_payload(eip_1559_params: Option<B64>) -> OpPayloadAttributes {
         OpPayloadAttributes {

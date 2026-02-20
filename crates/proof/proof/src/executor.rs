@@ -1,12 +1,13 @@
 //! An executor constructor.
 
 use alloc::boxed::Box;
+use core::fmt::Debug;
+
 use alloy_consensus::{Header, Sealed};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_op_evm::block::OpTxEnv;
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use core::fmt::Debug;
 use kona_driver::Executor;
 use kona_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
 use kona_genesis::RollupConfig;

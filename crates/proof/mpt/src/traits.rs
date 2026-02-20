@@ -1,10 +1,12 @@
 //! Contains the [`TrieProvider`] trait for fetching trie node preimages, contract bytecode, and
 //! headers.
 
-use crate::TrieNode;
-use alloy_primitives::{Address, B256, U256};
 use core::fmt::Display;
+
+use alloy_primitives::{Address, B256, U256};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
+use crate::TrieNode;
 
 /// The [`TrieProvider`] trait defines the synchronous interface for fetching trie node preimages.
 pub trait TrieProvider {

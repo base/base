@@ -1,7 +1,7 @@
 //! Contains the concrete implementation of the [`L2ChainProvider`] trait for the client program.
 
-use crate::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+
 use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes};
@@ -16,6 +16,8 @@ use kona_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use spin::RwLock;
+
+use crate::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
 
 /// The oracle-backed L2 chain provider for the client program.
 #[derive(Debug, Clone)]

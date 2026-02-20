@@ -1,14 +1,16 @@
 //! This module contains the [`OrderedListWalker`] struct, which allows for traversing an MPT root
 //! of a derivable ordered list.
 
+use alloc::{collections::VecDeque, string::ToString, vec};
+use core::marker::PhantomData;
+
+use alloy_primitives::{B256, Bytes};
+use alloy_rlp::EMPTY_STRING_CODE;
+
 use crate::{
     TrieNode, TrieNodeError, TrieProvider,
     errors::{OrderedListWalkerError, OrderedListWalkerResult},
 };
-use alloc::{collections::VecDeque, string::ToString, vec};
-use alloy_primitives::{B256, Bytes};
-use alloy_rlp::EMPTY_STRING_CODE;
-use core::marker::PhantomData;
 
 /// A [`OrderedListWalker`] allows for traversing over a Merkle Patricia Trie containing a derivable
 /// ordered list.
@@ -161,6 +163,13 @@ where
 
 #[cfg(test)]
 mod test {
+    use alloc::{collections::BTreeMap, string::String, vec::Vec};
+
+    use alloy_consensus::{ReceiptEnvelope, TxEnvelope};
+    use alloy_primitives::keccak256;
+    use alloy_provider::network::eip2718::Decodable2718;
+    use alloy_rlp::{Decodable, Encodable};
+
     use super::*;
     use crate::{
         NoopTrieProvider, ordered_trie_with_encoder,
@@ -169,11 +178,6 @@ mod test {
             get_live_derivable_transactions_list,
         },
     };
-    use alloc::{collections::BTreeMap, string::String, vec::Vec};
-    use alloy_consensus::{ReceiptEnvelope, TxEnvelope};
-    use alloy_primitives::keccak256;
-    use alloy_provider::network::eip2718::Decodable2718;
-    use alloy_rlp::{Decodable, Encodable};
 
     #[tokio::test]
     async fn test_online_list_walker_receipts() {

@@ -148,8 +148,9 @@ impl core::fmt::Display for PreimageKey {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloc::string::ToString;
+
+    use super::*;
 
     #[test]
     fn test_preimage_key_from_u8() {

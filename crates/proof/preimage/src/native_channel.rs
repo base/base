@@ -1,13 +1,15 @@
 //! Native implementation of the [Channel] trait, backed by [`async_channel`]'s unbounded
 //! channel primitives.
 
+use std::io::Result;
+
+use async_channel::{Receiver, Sender, unbounded};
+use async_trait::async_trait;
+
 use crate::{
     Channel,
     errors::{ChannelError, ChannelResult},
 };
-use async_channel::{Receiver, Sender, unbounded};
-use async_trait::async_trait;
-use std::io::Result;
 
 /// A bidirectional channel, allowing for synchronized communication between two parties.
 #[derive(Debug, Clone)]

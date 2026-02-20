@@ -1,12 +1,5 @@
 //! Environment utility functions for [`StatelessL2Builder`].
 
-use super::StatelessL2Builder;
-use crate::{
-    ExecutorError, ExecutorResult, TrieDBProvider,
-    util::{
-        decode_holocene_eip_1559_params_block_header, decode_jovian_eip_1559_params_block_header,
-    },
-};
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::{EvmEnv, EvmFactory};
@@ -20,6 +13,14 @@ use revm::{
     context_interface::block::BlobExcessGasAndPrice,
     primitives::eip4844::{
         BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
+    },
+};
+
+use super::StatelessL2Builder;
+use crate::{
+    ExecutorError, ExecutorResult, TrieDBProvider,
+    util::{
+        decode_holocene_eip_1559_params_block_header, decode_jovian_eip_1559_params_block_header,
     },
 };
 

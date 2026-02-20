@@ -1,16 +1,18 @@
 //! This module contains the FPVM tracing subscriber.
 
-use crate::io;
 use alloc::{
     format,
     string::{String, ToString},
     vec::Vec,
 };
+
 use tracing::{
     Event, Level, Metadata, Subscriber,
     field::{Field, Visit},
     span::{Attributes, Id, Record},
 };
+
+use crate::io;
 
 /// Custom [`Subscriber`] implementation that uses [`crate::io`] to write log entries to
 /// [`crate::FileDescriptor::StdOut`].

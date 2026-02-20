@@ -4,6 +4,7 @@
 //! pipeline including L1 origins, L2 safe heads, and caching for efficient reorg handling.
 
 use alloc::collections::{btree_map::BTreeMap, vec_deque::VecDeque};
+
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::{B256, map::HashMap};
 use base_protocol::{BlockInfo, L2BlockInfo};
