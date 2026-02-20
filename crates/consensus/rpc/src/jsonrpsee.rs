@@ -17,12 +17,8 @@ use kona_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 // Re-export apis defined in upstream `op-alloy-rpc-jsonrpsee`
 pub use op_alloy_rpc_jsonrpsee::traits::{MinerApiExtServer, OpAdminApiServer};
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use rollup_boost::{GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse};
 
-use crate::{
-    OutputResponse, SafeHeadResponse,
-    health::{HealthzResponse, RollupBoostHealthzResponse},
-};
+use crate::{OutputResponse, SafeHeadResponse, health::HealthzResponse};
 
 /// Optimism specified rpc interface.
 ///
@@ -206,17 +202,6 @@ pub trait AdminApi {
     /// Resets the derivation pipeline.
     #[method(name = "resetDerivationPipeline")]
     async fn admin_reset_derivation_pipeline(&self) -> RpcResult<()>;
-
-    /// Sets the rollup boost execution mode.
-    #[method(name = "setExecutionMode")]
-    async fn set_execution_mode(
-        &self,
-        request: SetExecutionModeRequest,
-    ) -> RpcResult<SetExecutionModeResponse>;
-
-    /// Gets the rollup boost execution mode.
-    #[method(name = "getExecutionMode")]
-    async fn get_execution_mode(&self) -> RpcResult<GetExecutionModeResponse>;
 }
 
 /// The admin namespace for the consensus node.
@@ -228,11 +213,3 @@ pub trait HealthzApi {
     async fn healthz(&self) -> RpcResult<HealthzResponse>;
 }
 
-/// The rollup boost health namespace.
-#[cfg_attr(not(feature = "client"), rpc(server, namespace = "kona-rollup-boost"))]
-#[cfg_attr(feature = "client", rpc(server, client, namespace = "kona-rollup-boost"))]
-pub trait RollupBoostHealthzApi {
-    /// Gets the rollup boost health.
-    #[method(name = "healthz")]
-    async fn rollup_boost_healthz(&self) -> RpcResult<RollupBoostHealthzResponse>;
-}

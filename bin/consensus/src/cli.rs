@@ -1,6 +1,6 @@
 //! Contains the CLI entry point for the Base consensus binary.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
@@ -8,12 +8,9 @@ use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
 use clap::Parser;
-use kona_engine::RollupBoostServerArgs;
 use kona_node_service::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
-use rollup_boost::ExecutionMode;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
-use url::Url;
 
 use crate::metrics::init_rollup_config_metrics;
 
@@ -134,26 +131,12 @@ impl Cli {
             .await?;
         let rpc_config = self.rpc_flags.clone().into();
 
-        // TODO: Remove hardcoded builder and rollup_boost config once we have our own
-        // RollupNodeBuilder implementation. These are required by kona's EngineConfig
-        // but are effectively disabled (execution_mode = Disabled, flashblocks = None).
         let engine_config = EngineConfig {
             config: Arc::new(cfg.clone()),
-            builder_url: Url::parse("http://localhost:8552").expect("valid url"),
-            builder_jwt_secret: JwtSecret::random(),
-            builder_timeout: Duration::from_millis(30),
             l2_url: self.l2_client_args.l2_engine_rpc.clone(),
             l2_jwt_secret: jwt_secret,
-            l2_timeout: Duration::from_millis(self.l2_client_args.l2_engine_timeout),
             l1_url: self.l1_rpc_args.l1_eth_rpc.clone(),
             mode: self.node_mode,
-            rollup_boost: RollupBoostServerArgs {
-                initial_execution_mode: ExecutionMode::Disabled,
-                block_selection_policy: None,
-                external_state_root: false,
-                ignore_unhealthy_builders: false,
-                flashblocks: None,
-            },
         };
 
         RollupNodeBuilder::new(

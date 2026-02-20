@@ -7,7 +7,6 @@ use base_protocol::{L2BlockInfo, OutputRoot};
 use jsonrpsee::core::RpcResult;
 use kona_engine::EngineState;
 use kona_genesis::RollupConfig;
-use rollup_boost::{GetExecutionModeResponse, SetExecutionModeRequest, SetExecutionModeResponse};
 use thiserror::Error;
 use tokio::sync::watch;
 
@@ -34,19 +33,6 @@ pub trait EngineRpcClient: Debug + Send + Sync + Clone {
     /// Development API: Subscribes to engine state updates managed by the returned
     /// [`watch::Receiver`].
     async fn dev_subscribe_to_engine_state(&self) -> RpcResult<watch::Receiver<EngineState>>;
-}
-
-/// Client trait wrapping RPC implementation for the rollup boost admin endpoints.
-#[async_trait]
-pub trait RollupBoostAdminClient: Send + Sync + Debug {
-    /// Sets the execution mode for the rollup boost server.
-    async fn set_execution_mode(
-        &self,
-        request: SetExecutionModeRequest,
-    ) -> RpcResult<SetExecutionModeResponse>;
-
-    /// Gets the current execution mode from the rollup boost server.
-    async fn get_execution_mode(&self) -> RpcResult<GetExecutionModeResponse>;
 }
 
 /// Client trait wrapping RPC implementation for the Sequencer admin endpoints.

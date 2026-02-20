@@ -17,7 +17,6 @@ base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
 # kona
-rollup-boost.workspace = true
 kona-genesis.workspace = true
 kona-derive = { workspace = true, features = ["metrics"] }
 kona-disc = { workspace = true, features = ["metrics"] }
@@ -30,7 +29,6 @@ kona-providers-alloy = { workspace = true, features = ["metrics"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # cli
-url.workspace = true
 strum.workspace = true
 clap.workspace = true
 
