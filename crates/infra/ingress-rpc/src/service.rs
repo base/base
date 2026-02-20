@@ -82,6 +82,7 @@ pub struct IngressService<Q: MessageQueue> {
     builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
     max_backrun_txs: usize,
     max_backrun_gas_limit: u64,
+    bundle_max_timestamp_window_seconds: u64,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
 }
@@ -130,6 +131,7 @@ impl<Q: MessageQueue> IngressService<Q> {
             builder_backrun_tx,
             max_backrun_txs: config.max_backrun_txs,
             max_backrun_gas_limit: config.max_backrun_gas_limit,
+            bundle_max_timestamp_window_seconds: config.bundle_max_timestamp_window_seconds,
             bundle_cache,
             send_to_builder: config.send_to_builder,
         }
@@ -383,7 +385,7 @@ impl<Q: MessageQueue> IngressService<Q> {
             total_gas = total_gas.saturating_add(transaction.gas_limit());
             tx_hashes.push(transaction.tx_hash());
         }
-        validate_bundle(bundle, total_gas, tx_hashes, 3600)?;
+        validate_bundle(bundle, total_gas, tx_hashes, self.bundle_max_timestamp_window_seconds)?;
 
         self.metrics.validate_bundle_duration.record(start.elapsed().as_secs_f64());
         Ok(())
@@ -520,6 +522,7 @@ mod tests {
             chain_id: 11,
             max_backrun_txs: 5,
             max_backrun_gas_limit: 5000000,
+            bundle_max_timestamp_window_seconds: 3600,
             bundle_cache_ttl: 20,
             send_to_builder: false,
         }

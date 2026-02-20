@@ -167,6 +167,10 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_RAW_TX_FORWARD_RPC")]
     pub raw_tx_forward_rpc: Option<Url>,
 
+    /// Maximum time window (in seconds) into the future that a bundle's max_timestamp is allowed
+    #[arg(long, env = "TIPS_INGRESS_BUNDLE_MAX_TIMESTAMP_WINDOW_SECONDS", default_value = "3600")]
+    pub bundle_max_timestamp_window_seconds: u64,
+
     /// TTL for bundle cache in seconds
     #[arg(long, env = "TIPS_INGRESS_BUNDLE_CACHE_TTL", default_value = "20")]
     pub bundle_cache_ttl: u64,

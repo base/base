@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
@@ -96,7 +96,7 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
 }
 
 /// Helper function to validate properties of a bundle. A bundle is valid if it satisfies the following criteria:
-/// - The bundle's `max_timestamp` is not more than 1 hour in the future
+/// - The bundle's `max_timestamp` is not more than `max_timestamp_window_secs` seconds in the future
 /// - The bundle's gas limit is not greater than the maximum allowed gas limit
 /// - The bundle can only contain 3 transactions at once
 /// - Partial transaction dropping is not supported, `dropping_tx_hashes` must be empty
@@ -113,9 +113,9 @@ pub fn validate_bundle(
     if let Some(max_timestamp) = bundle.max_timestamp
         && max_timestamp > valid_timestamp_window
     {
-        return Err(EthApiError::InvalidParams(
-            "Bundle cannot be more than 1 hour in the future".into(),
-        )
+        return Err(EthApiError::InvalidParams(format!(
+            "Bundle cannot be more than {max_timestamp_window_secs} seconds in the future",
+        ))
         .into_rpc_err());
     }
 
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(
             validate_bundle(&bundle, 0, vec![], 3600),
             Err(EthApiError::InvalidParams(
-                "Bundle cannot be more than 1 hour in the future".into()
+                "Bundle cannot be more than 3600 seconds in the future".into()
             )
             .into_rpc_err())
         );
