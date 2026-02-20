@@ -610,7 +610,7 @@ mod test {
             ..Default::default()
         };
 
-        let op_hardforks = OpChainHardforks::op_mainnet();
+        let op_hardforks = OpChainHardforks::base_mainnet();
 
         let receipt = OpReceiptFieldsBuilder::new(BASE_MAINNET_JOVIAN_TIMESTAMP, u64::MAX)
             .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
@@ -645,7 +645,7 @@ mod test {
             ..Default::default()
         };
 
-        let op_hardforks = OpChainHardforks::op_mainnet();
+        let op_hardforks = OpChainHardforks::base_mainnet();
 
         let op_receipt = OpReceiptBuilder::new(
             &op_hardforks,
@@ -699,7 +699,7 @@ mod test {
             ..Default::default()
         };
 
-        let op_hardforks = OpChainHardforks::op_mainnet();
+        let op_hardforks = OpChainHardforks::base_mainnet();
 
         let op_receipt = OpReceiptBuilder::new(
             &op_hardforks,
