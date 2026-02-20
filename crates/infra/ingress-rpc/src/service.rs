@@ -383,7 +383,7 @@ impl<Q: MessageQueue> IngressService<Q> {
             total_gas = total_gas.saturating_add(transaction.gas_limit());
             tx_hashes.push(transaction.tx_hash());
         }
-        validate_bundle(bundle, total_gas, tx_hashes)?;
+        validate_bundle(bundle, total_gas, tx_hashes, 3600)?;
 
         self.metrics.validate_bundle_duration.record(start.elapsed().as_secs_f64());
         Ok(())

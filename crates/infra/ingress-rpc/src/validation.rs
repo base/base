@@ -101,11 +101,15 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
 /// - The bundle can only contain 3 transactions at once
 /// - Partial transaction dropping is not supported, `dropping_tx_hashes` must be empty
 /// - revert protection is not supported, all transaction hashes must be in `reverting_tx_hashes`
-pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -> RpcResult<()> {
-    // Don't allow bundles to be submitted over 1 hour into the future
-    // TODO: make the window configurable
+pub fn validate_bundle(
+    bundle: &Bundle,
+    bundle_gas: u64,
+    tx_hashes: Vec<B256>,
+    max_timestamp_window_secs: u64,
+) -> RpcResult<()> {
+    // Don't allow bundles to be submitted too far into the future
     let valid_timestamp_window = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
-        + Duration::from_secs(3600).as_secs();
+        + max_timestamp_window_secs;
     if let Some(max_timestamp) = bundle.max_timestamp
         && max_timestamp > valid_timestamp_window
     {
@@ -171,7 +175,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            validate_bundle(&bundle, 0, vec![]),
+            validate_bundle(&bundle, 0, vec![], 3600),
             Err(EthApiError::InvalidParams(
                 "Bundle cannot be more than 1 hour in the future".into()
             )
@@ -224,7 +228,7 @@ mod tests {
         };
 
         // Test should fail due to exceeding gas limit
-        let result = validate_bundle(&bundle, total_gas, tx_hashes);
+        let result = validate_bundle(&bundle, total_gas, tx_hashes, 3600);
         assert!(result.is_err());
         if let Err(e) = result {
             let error_message = format!("{e:?}");
@@ -275,7 +279,7 @@ mod tests {
         };
 
         // Test should fail due to exceeding gas limit
-        let result = validate_bundle(&bundle, total_gas, tx_hashes);
+        let result = validate_bundle(&bundle, total_gas, tx_hashes, 3600);
         assert!(result.is_err());
         if let Err(e) = result {
             let error_message = format!("{e:?}");
@@ -288,7 +292,7 @@ mod tests {
         let bundle =
             Bundle { txs: vec![], dropping_tx_hashes: vec![B256::random()], ..Default::default() };
         assert_eq!(
-            validate_bundle(&bundle, 0, vec![]),
+            validate_bundle(&bundle, 0, vec![], 3600),
             Err(EthApiError::InvalidParams("Partial transaction dropping is not supported".into())
                 .into_rpc_err())
         );
@@ -337,7 +341,7 @@ mod tests {
         };
 
         // Test should fail due to exceeding gas limit
-        let result = validate_bundle(&bundle, total_gas, tx_hashes);
+        let result = validate_bundle(&bundle, total_gas, tx_hashes, 3600);
         assert!(result.is_err());
         if let Err(e) = result {
             let error_message = format!("{e:?}");
