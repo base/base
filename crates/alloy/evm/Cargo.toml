@@ -34,6 +34,7 @@ auto_impl.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 alloy-hardforks.workspace = true
 
 [features]
