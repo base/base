@@ -32,8 +32,7 @@ pub use eip1559::{
 mod source;
 pub use source::*;
 
-// TODO: re-enable once alloy-consensus exports `InMemorySize`
-// mod size;
+mod size;
 
 mod block;
 pub use block::OpBlock;
