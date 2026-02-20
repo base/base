@@ -93,6 +93,7 @@ serde = [
 	"alloy-rpc-types-eth/serde",
 	"dep:serde",
 	"kona-genesis/serde",
+	"miniz_oxide/serde",
 	"op-alloy-consensus/serde",
 	"op-alloy-rpc-types-engine/serde",
 	"tracing-subscriber?/serde",

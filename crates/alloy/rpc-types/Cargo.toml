@@ -55,14 +55,24 @@ std = [
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
 	"base-alloy-consensus/std",
+	"derive_more/std",
 ]
 arbitrary = [
+	"alloy-consensus/arbitrary",
+	"alloy-eips/arbitrary",
 	"alloy-primitives/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
+	"alloy-serde/arbitrary",
 	"base-alloy-consensus/arbitrary",
 	"dep:arbitrary",
 	"std",
 ]
 k256 = [ "alloy-rpc-types-eth/k256", "base-alloy-consensus/k256" ]
-serde = [ "base-alloy-consensus/serde" ]
+serde = [
+	"alloy-consensus/serde",
+	"alloy-eips/serde",
+	"alloy-network-primitives/serde",
+	"alloy-primitives/serde",
+	"base-alloy-consensus/serde",
+]
 jsonrpsee = [ "dep:jsonrpsee" ]

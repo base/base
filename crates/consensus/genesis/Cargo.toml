@@ -62,6 +62,7 @@ std = [
 	"derive_more/std",
 	"op-revm?/std",
 	"serde?/std",
+	"tabled?/std",
 	"thiserror/std",
 ]
 arbitrary = [
