@@ -21,7 +21,6 @@ members = [
     "crates/execution/*",
     "devnet",
 ]
-exclude = ["crates/execution/tests"]
 default-members = [
     "bin/based",
     "bin/node",
