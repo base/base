@@ -136,7 +136,7 @@ pub struct OpPayloadBuilderCtx {
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
-    // Gas limit configuration for the payload builder
+    /// Gas limit configuration for the payload builder
     pub gas_limit_config: OpGasLimitConfig,
     /// The chainspec
     pub chain_spec: Arc<OpChainSpec>,
