@@ -724,6 +724,8 @@ mod tests {
         MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,
     };
 
+    // ---- Mock infrastructure ----
+
     /// Mock enclave whose methods are never called in most tests.
     struct MockEnclave;
 
@@ -768,6 +770,7 @@ mod tests {
             _: alloy_primitives::Address,
             _: B256,
         ) -> Result<Proposal, ClientError> {
+            // Return a proposal based on the last input proposal's fields.
             let last = proposals.last().unwrap();
             Ok(Proposal {
                 output_root: last.output_root,
@@ -780,6 +783,8 @@ mod tests {
             })
         }
     }
+
+    // ---- Helpers ----
 
     /// Generic driver constructor that accepts a custom enclave, config, and mocks.
     fn test_driver_custom<E: EnclaveClientTrait + 'static>(
@@ -1113,9 +1118,131 @@ mod tests {
 
         let handle = tokio::spawn(async move { driver.run().await });
 
+        // Cancel immediately — with start_paused, tokio time is virtual
         cancel.cancel();
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok(), "run() should return Ok on cancellation");
+    }
+
+    // ---- DriverHandle tests ----
+
+    /// Helper that builds a `DriverHandle` using mock components.
+    fn test_driver_handle(
+        global_cancel: CancellationToken,
+    ) -> DriverHandle<
+        MockL1,
+        MockL2,
+        MockEnclave,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                poll_interval: Duration::from_secs(3600), // long interval; won't tick in tests
+                block_interval: 10,
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            None,
+            Arc::new(MockOutputProposer),
+            global_cancel.child_token(),
+        );
+        DriverHandle::new(driver, global_cancel)
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_start_stop() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        assert!(!handle.is_running());
+
+        // Start
+        let result = handle.start_proposer().await;
+        assert!(result.is_ok());
+        assert!(handle.is_running());
+
+        // Stop
+        let result = handle.stop_proposer().await;
+        assert!(result.is_ok());
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_double_start_errors() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        // Second start should fail
+        let result = handle.start_proposer().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already running"));
+
+        handle.stop_proposer().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_stop_when_not_running() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        let result = handle.stop_proposer().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not running"));
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_restart() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        // Start, stop, start again
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        handle.stop_proposer().await.unwrap();
+        assert!(!handle.is_running());
+
+        // Should be able to restart
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        handle.stop_proposer().await.unwrap();
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_global_cancel_stops_driver() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel.clone());
+
+        handle.start_proposer().await.unwrap();
+        assert!(handle.is_running());
+
+        // Global cancel (simulating SIGTERM) should stop the driver
+        cancel.cancel();
+
+        // Give the spawned task a moment to observe the cancellation
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(!handle.is_running(), "driver should stop on global cancel");
+    }
+
+    #[tokio::test]
+    async fn test_driver_handle_debug() {
+        let cancel = CancellationToken::new();
+        let handle = test_driver_handle(cancel);
+
+        let debug = format!("{handle:?}");
+        assert!(debug.contains("DriverHandle"));
+        assert!(debug.contains("running"));
     }
 }
