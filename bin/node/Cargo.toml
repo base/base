@@ -29,6 +29,7 @@ reth-optimism-cli = { workspace = true, features = ["otlp"] }
 
 # cli
 clap.workspace = true
+url.workspace = true
 
 [features]
 default = [ "jemalloc" ]

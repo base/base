@@ -3115,6 +3115,7 @@ dependencies = [
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
+ "url",
 ]
 
 [[package]]
@@ -13520,44 +13521,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-optimism-flashblocks"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "brotli",
- "derive_more",
- "eyre",
- "futures-util",
- "metrics",
- "op-alloy-consensus",
- "op-alloy-rpc-types-engine",
- "reth-chain-state",
- "reth-engine-primitives",
- "reth-errors",
- "reth-evm",
- "reth-execution-types",
- "reth-metrics",
- "reth-optimism-payload-builder",
- "reth-optimism-primitives",
- "reth-payload-primitives",
- "reth-primitives-traits",
- "reth-revm",
- "reth-rpc-eth-types",
- "reth-storage-api",
- "reth-tasks",
- "ringbuffer",
- "serde_json",
- "test-case",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "reth-optimism-forks"
 version = "0.0.0"
 dependencies = [
@@ -13631,7 +13594,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -13741,7 +13703,6 @@ dependencies = [
  "reth-node-builder",
  "reth-optimism-chainspec",
  "reth-optimism-evm",
- "reth-optimism-flashblocks",
  "reth-optimism-forks",
  "reth-optimism-payload-builder",
  "reth-optimism-primitives",
@@ -13766,7 +13727,6 @@ dependencies = [
  "strum",
  "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
  "tower 0.5.3",
  "tracing",
 ]

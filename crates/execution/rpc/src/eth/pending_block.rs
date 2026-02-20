@@ -1,8 +1,6 @@
 //! Loads OP pending block for a RPC response.
 
-use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
-use reth_chain_state::BlockState;
 use reth_rpc_eth_api::{
     FromEvmError, RpcConvert, RpcNodeCore, RpcNodeCoreExt,
     helpers::{LoadPendingBlock, SpawnBlocking, pending_block::PendingEnvBuilder},
@@ -11,7 +9,7 @@ use reth_rpc_eth_types::{
     EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
     error::FromEthApiError,
 };
-use reth_storage_api::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
+use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
 use crate::{OpEthApi, OpEthApiError};
 
@@ -41,28 +39,13 @@ where
     where
         Self: SpawnBlocking,
     {
-        let Ok(Some(pending_block)) = self.pending_flashblock().await else {
-            return Ok(None);
-        };
-
-        let latest_historical = self
-            .provider()
-            .history_by_block_hash(pending_block.block().parent_hash())
-            .map_err(Self::Error::from_eth_err)?;
-
-        let state = BlockState::from(pending_block);
-
-        Ok(Some(Box::new(state.state_provider(latest_historical)) as StateProviderBox))
+        Ok(None)
     }
 
     /// Returns the locally built pending block
     async fn local_pending_block(
         &self,
     ) -> Result<Option<BlockAndReceipts<Self::Primitives>>, Self::Error> {
-        if let Ok(Some(pending)) = self.pending_flashblock().await {
-            return Ok(Some(pending.into_block_and_receipts()));
-        }
-
         // See: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/miner/worker.go#L367-L375>
         let latest = self
             .provider()

@@ -278,7 +278,6 @@ reth-optimism-storage = { path = "crates/execution/storage" }
 reth-optimism-consensus = { path = "crates/execution/consensus" }
 reth-optimism-chainspec = { path = "crates/execution/chainspec" }
 reth-optimism-primitives = { path = "crates/execution/primitives" }
-reth-optimism-flashblocks = { path = "crates/execution/flashblocks" }
 reth-optimism-payload-builder = { path = "crates/execution/payload" }
 
 # revm

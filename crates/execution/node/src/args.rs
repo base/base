@@ -7,7 +7,6 @@ use std::{path::PathBuf, time::Duration};
 use clap::builder::ArgPredicate;
 use op_alloy_consensus::interop::SafetyLevel;
 use reth_optimism_txpool::supervisor::DEFAULT_SUPERVISOR_URL;
-use url::Url;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -70,21 +69,6 @@ pub struct RollupArgs {
     /// Minimum suggested priority fee (tip) in wei, default `1_000_000`
     #[arg(long, default_value_t = 1_000_000)]
     pub min_suggested_priority_fee: u64,
-
-    /// A URL pointing to a secure websocket subscription that streams out flashblocks.
-    ///
-    /// If given, the flashblocks are received to build pending block. All request with "pending"
-    /// block tag will use the pending state based on flashblocks.
-    #[arg(long, alias = "websocket-url")]
-    pub flashblocks_url: Option<Url>,
-
-    /// Enable flashblock consensus client to drive the chain forward
-    ///
-    /// When enabled, the flashblock consensus client will process flashblock sequences and submit
-    /// them to the engine API to advance the chain.
-    /// Requires `flashblocks_url` to be set.
-    #[arg(long, default_value_t = false, requires = "flashblocks_url")]
-    pub flashblock_consensus: bool,
 
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
@@ -160,8 +144,6 @@ impl Default for RollupArgs {
             sequencer_headers: Vec::new(),
             historical_rpc: None,
             min_suggested_priority_fee: 1_000_000,
-            flashblocks_url: None,
-            flashblock_consensus: false,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_window: 1_296_000,
