@@ -76,7 +76,7 @@ pub struct RollupNodeBuilder {
 
 impl RollupNodeBuilder {
     /// Creates a new [`RollupNodeBuilder`] with the given [`RollupConfig`].
-    pub fn new(
+    pub const fn new(
         config: RollupConfig,
         l1_config_builder: L1ConfigBuilder,
         l2_trust_rpc: bool,
