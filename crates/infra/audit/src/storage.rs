@@ -411,7 +411,8 @@ impl BundleEventS3Reader for S3EventReaderWriter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::TxHash;
-    use base_primitives::{BundleExtensions, create_bundle_from_txn_data};
+    use base_bundles::BundleExtensions;
+    use base_primitives::create_bundle_from_txn_data;
     use uuid::Uuid;
 
     use super::*;

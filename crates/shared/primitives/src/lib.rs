@@ -16,8 +16,6 @@ pub use bundles::{
     AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
     TransactionResult,
 };
-pub use base_bundles::{BundleExtensions, BundleTxs};
-
 mod flashblocks;
 pub use flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, FlashblockDecodeError,
