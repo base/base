@@ -321,19 +321,19 @@ mod tests {
 
     #[test]
     #[cfg(feature = "serde")]
-    fn test_deserialize_block_info_with_hex() {
+    fn test_deserialize_block_info_with_different_values() {
         let block_info = BlockInfo {
-            hash: B256::from([1; 32]),
-            number: 1,
-            parent_hash: B256::from([2; 32]),
-            timestamp: 1,
+            hash: B256::from([0xaa; 32]),
+            number: 999,
+            parent_hash: B256::from([0xbb; 32]),
+            timestamp: 1_700_000_000,
         };
 
         let json = r#"{
-            "hash": "0x0101010101010101010101010101010101010101010101010101010101010101",
-            "number": 1,
-            "parentHash": "0x0202020202020202020202020202020202020202020202020202020202020202",
-            "timestamp": 1
+            "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "number": 999,
+            "parentHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "timestamp": 1700000000
         }"#;
 
         let deserialized: BlockInfo = serde_json::from_str(json).unwrap();
