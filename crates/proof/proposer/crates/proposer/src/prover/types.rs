@@ -34,6 +34,7 @@ pub(crate) mod test_helpers {
                 output_root: B256::repeat_byte(0x01),
                 signature: Bytes::from(vec![0xab; 65]),
                 l1_origin_hash: B256::repeat_byte(0x02),
+                l1_origin_number: U256::from(100 + to_number),
                 l2_block_number: U256::from(to_number),
                 prev_output_root: B256::repeat_byte(0x03),
                 config_hash: B256::repeat_byte(0x04),

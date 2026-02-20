@@ -76,10 +76,13 @@ impl RethL2Client {
             state.insert(hex_key, hex_value);
         }
 
+        // Convert RPC headers to consensus headers (extract inner from RPC wrapper).
+        let headers = reth_witness.headers.into_iter().map(|h| h.inner).collect();
+
         ExecutionWitness {
             state,
             codes,
-            headers: Vec::new(), // Will be populated separately
+            headers,
         }
     }
 
@@ -110,23 +113,40 @@ impl RethL2Client {
         Ok(())
     }
 
-    /// Populates block headers for BLOCKHASH opcode support.
+    /// Populates block headers for BLOCKHASH opcode support if not already present.
     ///
-    /// Reth doesn't return required headers, so we eagerly fetch up to 256 parent
-    /// headers (the EVM BLOCKHASH window) in parallel using block numbers.
+    /// If the witness already has headers (from geth's `debug_executionWitness`
+    /// response), they are used as-is. Otherwise, we fetch up to 256 parent
+    /// headers (the EVM BLOCKHASH window) in parallel.
     async fn populate_headers(
         &self,
         block_number: u64,
         mut witness: ExecutionWitness,
     ) -> RpcResult<ExecutionWitness> {
-        // Calculate how many parent headers we need (up to 256)
+        // If the witness already has headers from the node, use them.
+        if !witness.headers.is_empty() {
+            tracing::debug!(
+                block_number,
+                header_count = witness.headers.len(),
+                "Using headers from witness response"
+            );
+            return Ok(witness);
+        }
+
+        // Otherwise, fetch up to 256 parent headers (for reth nodes that
+        // don't include headers in the witness response).
         let history = std::cmp::min(256, block_number) as usize;
 
         if history == 0 {
             return Ok(witness);
         }
 
-        // Generate block numbers to fetch: (block_number - 1) down to (block_number - history)
+        tracing::debug!(
+            block_number,
+            history,
+            "Fetching parent headers for BLOCKHASH support"
+        );
+
         let block_numbers: Vec<u64> = (1..=history as u64)
             .map(|offset| block_number - offset)
             .collect();
@@ -203,10 +223,18 @@ impl L2Client for RethL2Client {
         })
         .await?;
 
+        tracing::info!(
+            block_number,
+            witness_headers = reth_witness.headers.len(),
+            witness_state = reth_witness.state.len(),
+            witness_codes = reth_witness.codes.len(),
+            "Received execution witness from node"
+        );
+
         // Convert to standard format
         let witness = Self::convert_reth_witness(reth_witness);
 
-        // Populate headers for BLOCKHASH support
+        // Populate headers for BLOCKHASH support (skips if already present)
         self.populate_headers(block_number, witness).await
     }
 
@@ -291,6 +319,7 @@ mod tests {
         let expected_hash = keccak256(&code);
 
         let reth_witness = RethExecutionWitness {
+            headers: vec![],
             codes: vec![code.clone()],
             state: vec![],
             keys: vec![],
@@ -313,6 +342,7 @@ mod tests {
         let expected_hash = keccak256(&state_entry);
 
         let reth_witness = RethExecutionWitness {
+            headers: vec![],
             codes: vec![],
             state: vec![state_entry.clone()],
             keys: vec![],
@@ -332,6 +362,7 @@ mod tests {
     #[test]
     fn test_convert_reth_witness_empty() {
         let reth_witness = RethExecutionWitness {
+            headers: vec![],
             codes: vec![],
             state: vec![],
             keys: vec![],

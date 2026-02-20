@@ -32,8 +32,9 @@ pub use cli::Cli;
 pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig, SigningConfig};
 pub use constants::*;
 pub use contracts::{
-    OnchainVerifierClient, OnchainVerifierContractClient, OutputProposal, OutputProposer,
-    create_output_proposer,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
+    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    OutputProposer, create_output_proposer,
 };
 pub use driver::{DriverHandle, ProposerDriverControl};
 pub use error::*;

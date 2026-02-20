@@ -98,12 +98,19 @@ pub struct SyncStatus {
     pub pending_safe_l2: Option<L2BlockRef>,
 }
 
-/// Reth-specific execution witness format.
+/// Execution witness format returned by geth/reth `debug_executionWitness`.
 ///
-/// Reth returns arrays instead of maps for codes and state.
+/// Both geth and reth return arrays (not maps) for codes and state.
 /// This needs to be converted to the standard [`ExecutionWitness`] format.
+/// The `headers` field preserves the block headers included by the node,
+/// which are needed for BLOCKHASH opcode support in the enclave.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RethExecutionWitness {
+    /// Block headers needed for BLOCKHASH opcode support.
+    /// Geth includes exactly the headers referenced by this block.
+    /// These are in RPC format (camelCase, with `hash` field).
+    #[serde(default)]
+    pub headers: Vec<alloy_rpc_types_eth::Header>,
     /// State trie node preimages.
     #[serde(default, deserialize_with = "deserialize_null_vec")]
     pub state: Vec<Bytes>,
