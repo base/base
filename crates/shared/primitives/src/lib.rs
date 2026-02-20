@@ -13,10 +13,9 @@ pub use engine::{
 
 mod bundles;
 pub use bundles::{
-    AcceptedBundle, Bundle, BundleExtensions, BundleHash, BundleTxs, CancelBundle,
-    MeterBundleResponse, ParsedBundle, TransactionResult,
+    AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
+    TransactionResult,
 };
-
 mod flashblocks;
 pub use flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, FlashblockDecodeError,

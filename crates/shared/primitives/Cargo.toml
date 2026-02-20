@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# workspace
+base-bundles.workspace = true
+
 # kona
 kona-genesis = { workspace = true, optional = true }
 
@@ -31,7 +34,6 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 
 # op-alloy
-op-alloy-flz.workspace = true
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }

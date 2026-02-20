@@ -100,9 +100,8 @@ impl<Q: MessageQueue> BundleQueuePublisher<Q> {
 
 #[cfg(test)]
 mod tests {
-    use base_primitives::{
-        AcceptedBundle, Bundle, BundleExtensions, create_test_meter_bundle_response,
-    };
+    use base_bundles::BundleExtensions;
+    use base_primitives::{AcceptedBundle, Bundle, create_test_meter_bundle_response};
     use rdkafka::config::ClientConfig;
     use tokio::time::{Duration, Instant};
 

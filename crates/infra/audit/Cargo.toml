@@ -29,6 +29,7 @@ rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
+base-bundles.workspace = true
 base-primitives = { workspace = true, features = ["test-utils"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers = { workspace = true, features = ["blocking"] }

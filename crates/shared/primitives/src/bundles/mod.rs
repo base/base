@@ -1,11 +1,8 @@
-use alloy_consensus::{
-    Transaction,
-    transaction::{Recovered, SignerRecoverable},
-};
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{Address, B256, Bytes, TxHash, U256, keccak256};
+use alloy_consensus::transaction::{Recovered, SignerRecoverable};
+use alloy_eips::eip2718::Decodable2718;
+use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
+use base_bundles::{BundleExtensions, BundleTxs};
 use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -222,53 +219,6 @@ pub struct AcceptedBundle {
     pub meter_bundle_response: MeterBundleResponse,
 }
 
-/// Provides access to the recovered transactions within a bundle.
-pub trait BundleTxs {
-    /// Returns a reference to the bundle's recovered transactions.
-    fn transactions(&self) -> &Vec<Recovered<OpTxEnvelope>>;
-}
-
-/// Derived properties computed from a bundle's transactions.
-pub trait BundleExtensions {
-    /// Computes the bundle hash as the keccak-256 of the concatenated transaction hashes.
-    fn bundle_hash(&self) -> B256;
-    /// Returns the transaction hashes of all transactions in the bundle.
-    fn txn_hashes(&self) -> Vec<TxHash>;
-    /// Returns the recovered sender address of each transaction in the bundle.
-    fn senders(&self) -> Vec<Address>;
-    /// Returns the total gas limit across all transactions in the bundle.
-    fn gas_limit(&self) -> u64;
-    /// Returns the estimated total data-availability size (Fjord encoding) across all transactions.
-    fn da_size(&self) -> u64;
-}
-
-impl<T: BundleTxs> BundleExtensions for T {
-    fn bundle_hash(&self) -> B256 {
-        let parsed = self.transactions();
-        let mut concatenated = Vec::new();
-        for tx in parsed {
-            concatenated.extend_from_slice(tx.tx_hash().as_slice());
-        }
-        keccak256(&concatenated)
-    }
-
-    fn txn_hashes(&self) -> Vec<TxHash> {
-        self.transactions().iter().map(|t| t.tx_hash()).collect()
-    }
-
-    fn senders(&self) -> Vec<Address> {
-        self.transactions().iter().map(|t| t.recover_signer().unwrap()).collect()
-    }
-
-    fn gas_limit(&self) -> u64 {
-        self.transactions().iter().map(|t| t.gas_limit()).sum()
-    }
-
-    fn da_size(&self) -> u64 {
-        self.transactions().iter().map(|t| tx_estimated_size_fjord_bytes(&t.encoded_2718())).sum()
-    }
-}
-
 impl BundleTxs for ParsedBundle {
     fn transactions(&self) -> &Vec<Recovered<OpTxEnvelope>> {
         &self.txs
@@ -370,7 +320,7 @@ pub struct MeterBundleResponse {
 #[cfg(all(test, feature = "test-utils"))]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::Keccak256;
+    use alloy_primitives::{Keccak256, keccak256};
     use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
