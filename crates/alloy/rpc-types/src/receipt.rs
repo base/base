@@ -129,9 +129,11 @@ mod l1_fee_scalar_serde {
     }
 }
 
-impl From<OpTransactionReceiptFields> for OtherFields {
-    fn from(value: OpTransactionReceiptFields) -> Self {
-        serde_json::to_value(value).unwrap().try_into().unwrap()
+impl TryFrom<OpTransactionReceiptFields> for OtherFields {
+    type Error = serde_json::Error;
+
+    fn try_from(value: OpTransactionReceiptFields) -> Result<Self, Self::Error> {
+        serde_json::to_value(value)?.try_into()
     }
 }
 
