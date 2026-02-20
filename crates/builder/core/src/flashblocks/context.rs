@@ -485,7 +485,7 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
-        let mut reverted_gas_used = 0;
+        let mut reverted_gas_used: u64 = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
 
@@ -661,7 +661,7 @@ impl OpPayloadBuilderCtx {
             } else {
                 log_txn(Ok(TxnOutcome::Reverted));
                 num_txs_simulated_fail += 1;
-                reverted_gas_used += gas_used as i32;
+                reverted_gas_used += gas_used;
                 self.metrics.reverted_tx_gas_used.record(gas_used as f64);
             }
 
