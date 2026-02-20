@@ -9,8 +9,7 @@ use alloy_op_hardforks::{
 };
 use alloy_primitives::{address, b256, uint};
 use kona_genesis::{
-    BASE_MAINNET_BASE_FEE_CONFIG, ChainGenesis,
-    HardForkConfig, RollupConfig, SystemConfig,
+    BASE_MAINNET_BASE_FEE_CONFIG, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig,
 };
 
 /// The [`RollupConfig`] for Base Mainnet.

@@ -18,8 +18,8 @@ use tower::ServiceBuilder;
 use url::Url;
 
 use crate::{
-    EngineConfig, NetworkConfig, RollupNode, SequencerConfig,
-    actors::DerivationDelegateClient, service::node::L1Config,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, actors::DerivationDelegateClient,
+    service::node::L1Config,
 };
 
 /// Configuration for Derivation Delegate mode.

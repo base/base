@@ -127,4 +127,3 @@ impl UpgradeDepositSource {
         keccak256(domain_input)
     }
 }
-

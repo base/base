@@ -235,7 +235,6 @@ where
         }
         outcome
     }
-
 }
 
 impl<Client, Tx, Evm> TransactionValidator for OpTransactionValidator<Client, Tx, Evm>
@@ -264,4 +263,3 @@ where
         );
     }
 }
-

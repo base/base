@@ -46,7 +46,6 @@ impl Hardforks {
 
     /// The Jovian hardfork upgrade transactions.
     pub const JOVIAN: Jovian = Jovian;
-
 }
 
 #[cfg(test)]
@@ -69,6 +68,5 @@ mod tests {
 
         let jovian_upgrade_tx = Hardforks::JOVIAN.txs();
         assert_eq!(jovian_upgrade_tx.collect::<Vec<_>>().len(), 5);
-
     }
 }

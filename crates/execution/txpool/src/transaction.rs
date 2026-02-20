@@ -1,5 +1,8 @@
 use core::fmt::Debug;
-use std::{borrow::Cow, sync::Arc, sync::OnceLock};
+use std::{
+    borrow::Cow,
+    sync::{Arc, OnceLock},
+};
 
 use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
 use alloy_eips::{
@@ -17,9 +20,7 @@ use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
 };
 
-use crate::{
-    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
-};
+use crate::{conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized};
 
 /// Pool transaction for OP.
 ///
