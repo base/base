@@ -1,5 +1,7 @@
 //! Command that initializes the node from a genesis file.
 
+use std::{io::BufReader, sync::Arc};
+
 use alloy_consensus::Header;
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -15,7 +17,6 @@ use reth_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
     StaticFileWriter,
 };
-use std::{io::BufReader, sync::Arc};
 use tracing::info;
 
 /// Initializes the database with the genesis block.

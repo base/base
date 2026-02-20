@@ -9,10 +9,13 @@ mod block;
 mod call;
 mod pending_block;
 
-use crate::{
-    OpEthApiError, SequencerClient,
-    eth::{receipt::OpReceiptConverter, transaction::OpTxInfoMapper},
+use std::{
+    fmt::{self, Formatter},
+    marker::PhantomData,
+    sync::Arc,
+    time::Duration,
 };
+
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
@@ -50,15 +53,14 @@ use reth_tasks::{
     TaskSpawner,
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
-use std::{
-    fmt::{self, Formatter},
-    marker::PhantomData,
-    sync::Arc,
-    time::Duration,
-};
 use tokio::{sync::watch, time};
 use tokio_stream::{Stream, wrappers::BroadcastStream};
 use tracing::info;
+
+use crate::{
+    OpEthApiError, SequencerClient,
+    eth::{receipt::OpReceiptConverter, transaction::OpTxInfoMapper},
+};
 
 /// Maximum duration to wait for a fresh flashblock when one is being built.
 const MAX_FLASHBLOCK_WAIT_DURATION: Duration = Duration::from_millis(50);
@@ -83,7 +85,7 @@ pub struct OpEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for OpEthApi<N, Rpc> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self { inner: Arc::clone(&self.inner) }
     }
 }
 

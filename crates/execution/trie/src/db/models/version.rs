@@ -119,9 +119,10 @@ impl<T> ValueWithSubKey for VersionedValue<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use reth_primitives_traits::Account;
     use reth_trie::BranchNodeCompact;
+
+    use super::*;
 
     #[test]
     fn test_maybe_deleted_none() {

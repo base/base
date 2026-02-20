@@ -286,10 +286,11 @@ impl Decodable2718 for OvmTransactionSigned {
 
 #[cfg(test)]
 mod tests {
-    use crate::ovm_file_codec::OvmTransactionSigned;
     use alloy_consensus::Typed2718;
     use alloy_primitives::{TxKind, U256, address, b256, hex};
     use op_alloy_consensus::OpTypedTransaction;
+
+    use crate::ovm_file_codec::OvmTransactionSigned;
     const DEPOSIT_FUNCTION_SELECTOR: [u8; 4] = [0xb6, 0xb5, 0x5f, 0x25];
     use alloy_rlp::Decodable;
 

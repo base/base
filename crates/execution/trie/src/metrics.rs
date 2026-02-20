@@ -1,10 +1,12 @@
 //! Storage wrapper that records metrics for all operations.
 
-use crate::{
-    BlockStateDiff, OpProofsStorageResult, OpProofsStore,
-    api::{InitialStateAnchor, OpProofsInitialStateStore, OperationDurations, WriteCounts},
-    cursor,
+use std::{
+    fmt::Debug,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
 };
+
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
 use derive_more::Constructor;
@@ -17,13 +19,13 @@ use reth_trie::{
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
 use reth_trie_common::{BranchNodeCompact, Nibbles};
-use std::{
-    fmt::Debug,
-    future::Future,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use strum::{EnumCount, EnumIter, IntoEnumIterator};
+
+use crate::{
+    BlockStateDiff, OpProofsStorageResult, OpProofsStore,
+    api::{InitialStateAnchor, OpProofsInitialStateStore, OperationDurations, WriteCounts},
+    cursor,
+};
 
 /// Alias for [`OpProofsStorageWithMetrics`].
 pub type OpProofsStorage<S> = OpProofsStorageWithMetrics<S>;
@@ -190,8 +192,8 @@ impl OperationMetrics {
     }
 
     fn record_duration_per_item(&self, duration: Duration, count_usize: usize) {
-        if count_usize > 0 &&
-            let Some(count) = u32::try_from(count_usize).ok()
+        if count_usize > 0
+            && let Some(count) = u32::try_from(count_usize).ok()
         {
             self.duration_seconds.record_many(duration / count, count as usize);
         }
@@ -393,7 +395,7 @@ where
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         let cursor = self.storage.storage_trie_cursor(hashed_address, max_block_number)?;
-        Ok(OpProofsTrieCursorWithMetrics::new(cursor, self.metrics.clone()))
+        Ok(OpProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
@@ -402,7 +404,7 @@ where
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         let cursor = self.storage.account_trie_cursor(max_block_number)?;
-        Ok(OpProofsTrieCursorWithMetrics::new(cursor, self.metrics.clone()))
+        Ok(OpProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
@@ -412,7 +414,7 @@ where
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::StorageCursor<'tx>> {
         let cursor = self.storage.storage_hashed_cursor(hashed_address, max_block_number)?;
-        Ok(OpProofsHashedCursorWithMetrics::new(cursor, self.metrics.clone()))
+        Ok(OpProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
@@ -421,7 +423,7 @@ where
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let cursor = self.storage.account_hashed_cursor(max_block_number)?;
-        Ok(OpProofsHashedCursorWithMetrics::new(cursor, self.metrics.clone()))
+        Ok(OpProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     // metrics are handled by the live trie collector

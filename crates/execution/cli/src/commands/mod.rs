@@ -1,4 +1,5 @@
-use crate::chainspec::OpChainSpecParser;
+use std::{fmt, sync::Arc};
+
 use clap::Subcommand;
 use import::ImportOpCommand;
 use import_receipts::ImportReceiptsOpCommand;
@@ -9,7 +10,8 @@ use reth_cli_commands::{
     node::{self, NoArgs},
     p2p, prune, re_execute, stage,
 };
-use std::{fmt, sync::Arc};
+
+use crate::chainspec::OpChainSpecParser;
 
 pub mod import;
 pub mod import_receipts;

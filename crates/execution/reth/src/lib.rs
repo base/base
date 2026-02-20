@@ -64,11 +64,9 @@ pub mod chainspec {
 #[cfg(feature = "evm")]
 pub mod evm {
     #[doc(inline)]
-    pub use reth_optimism_evm::*;
-
-    #[doc(inline)]
     pub use reth_evm as primitives;
-
+    #[doc(inline)]
+    pub use reth_optimism_evm::*;
     #[doc(inline)]
     pub use reth_revm as revm;
 }
@@ -98,10 +96,9 @@ pub mod network {
 #[cfg(feature = "provider")]
 pub mod provider {
     #[doc(inline)]
-    pub use reth_provider::*;
-
-    #[doc(inline)]
     pub use reth_db as db;
+    #[doc(inline)]
+    pub use reth_provider::*;
 }
 
 /// Re-exported codec crate
@@ -142,7 +139,6 @@ pub mod engine {
 pub mod trie {
     #[doc(inline)]
     pub use reth_trie::*;
-
     #[cfg(feature = "trie-db")]
     #[doc(inline)]
     pub use reth_trie_db::*;
@@ -155,7 +151,6 @@ pub mod rpc {
     pub use reth_optimism_rpc::*;
     #[doc(inline)]
     pub use reth_rpc::*;
-
     #[doc(inline)]
     pub use reth_rpc_api as api;
     #[doc(inline)]

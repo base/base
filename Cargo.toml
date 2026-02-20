@@ -472,6 +472,7 @@ wiremock = { version = "0.6.2", default-features = false }
 testcontainers-modules = { version = "0.14.0", default-features = false }
 sha2 = "0.10"
 c-kzg = { version = "2.1.5", default-features = false }
+rocksdb = { version = "0.24", default-features = false }
 snap = "1"
 paste = "1.0"
 bincode = "2"
@@ -494,16 +495,13 @@ rand_08 = { package = "rand", version = "0.8" }
 syn = "2.0"
 spin = "0.9"
 toml = "0.8"
-c-kzg = "2.1"
 ipnet = "2.11"
 notify = "8.2"
 openssl = "0.10"
-proptest = "1.9"
 multihash = "0.19"
 serde_repr = "0.1"
 getrandom = "0.3"
 async-stream = "0.3"
-miniz_oxide = "0.8"
 libp2p-stream = "0.4.0-alpha"
 unsigned-varint = "0.8"
 alloc-no-stdlib = "2.0"

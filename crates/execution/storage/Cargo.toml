@@ -24,11 +24,11 @@ reth-prune-types.workspace = true
 reth-stages-types.workspace = true
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-    "reth-storage-api/std",
-    "reth-prune-types/std",
-    "reth-stages-types/std",
-    "alloy-consensus/std",
-    "reth-optimism-primitives/std",
+	"alloy-consensus/std",
+	"reth-optimism-primitives/std",
+	"reth-prune-types/std",
+	"reth-stages-types/std",
+	"reth-storage-api/std",
 ]

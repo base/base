@@ -12,13 +12,16 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
+use core::fmt::Debug;
+
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use alloy_op_evm::block::{OpTxEnv, receipt_builder::OpReceiptBuilder};
-use core::fmt::Debug;
 use op_alloy_consensus::EIP1559ParamError;
 use op_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
+#[cfg(feature = "std")]
+use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
 use reth_evm::{
     ConfigureEvm, EvmEnv, TransactionEnv, eth::NextEvmEnvAttributes, precompiles::PrecompilesMap,
 };
@@ -27,7 +30,6 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 use revm::context::{BlockEnv, TxEnv};
-
 #[allow(unused_imports)]
 use {
     alloy_eips::Decodable2718,
@@ -42,9 +44,6 @@ use {
     },
 };
 
-#[cfg(feature = "std")]
-use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
-
 mod config;
 pub use config::{OpNextBlockEnvAttributes, revm_spec, revm_spec_by_timestamp_after_bedrock};
 mod execute;
@@ -57,9 +56,8 @@ mod build;
 pub use build::OpBlockAssembler;
 
 mod error;
-pub use error::{L1BlockInfoError, OpBlockExecutionError};
-
 pub use alloy_op_evm::{OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
+pub use error::{L1BlockInfoError, OpBlockExecutionError};
 
 /// Optimism-related EVM configuration.
 #[derive(Debug)]
@@ -100,7 +98,7 @@ impl<ChainSpec: OpHardforks, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R> 
     /// Creates a new [`OpEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         Self {
-            block_assembler: OpBlockAssembler::new(chain_spec.clone()),
+            block_assembler: OpBlockAssembler::new(Arc::clone(&chain_spec)),
             executor_factory: OpBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
@@ -288,8 +286,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::collections::BTreeMap;
+    use std::sync::Arc;
+
     use alloy_consensus::{Header, Receipt};
     use alloy_eips::eip7685::Requests;
     use alloy_genesis::Genesis;
@@ -313,7 +312,8 @@ mod tests {
         primitives::Log,
         state::AccountInfo,
     };
-    use std::sync::Arc;
+
+    use super::*;
 
     fn test_evm_config() -> OpEvmConfig {
         OpEvmConfig::optimism(BASE_MAINNET.clone())

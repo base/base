@@ -1,12 +1,14 @@
-use crate::superchain::chain_metadata::{ChainMetadata, to_genesis_chain_config};
 use alloc::{
     format,
     string::{String, ToString},
     vec::Vec,
 };
+
 use alloy_genesis::Genesis;
 use miniz_oxide::inflate::decompress_to_vec_zlib_with_limit;
 use tar_no_std::{CorruptDataError, TarArchiveRef};
+
+use crate::superchain::chain_metadata::{ChainMetadata, to_genesis_chain_config};
 
 /// A genesis file can be up to 100MiB. This is a reasonable limit for the genesis file size.
 const MAX_GENESIS_SIZE: usize = 100 * 1024 * 1024; // 100MiB
@@ -86,8 +88,6 @@ fn read_file(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{SUPPORTED_CHAINS, generated_chain_value_parser, superchain::Superchain};
     use alloy_chains::NamedChain;
     use alloy_op_hardforks::{
         BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
@@ -100,6 +100,9 @@ mod tests {
     };
     use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
     use tar_no_std::TarArchiveRef;
+
+    use super::*;
+    use crate::{SUPPORTED_CHAINS, generated_chain_value_parser, superchain::Superchain};
 
     #[test]
     fn test_read_superchain_genesis() {

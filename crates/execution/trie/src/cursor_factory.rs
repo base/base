@@ -1,13 +1,15 @@
 //! Implements [`TrieCursorFactory`] and [`HashedCursorFactory`] for [`OpProofsStore`] types.
 
+use std::marker::PhantomData;
+
+use alloy_primitives::B256;
+use reth_db::DatabaseError;
+use reth_trie::{hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory};
+
 use crate::{
     OpProofsHashedAccountCursor, OpProofsHashedStorageCursor, OpProofsStorage, OpProofsStore,
     OpProofsTrieCursor,
 };
-use alloy_primitives::B256;
-use reth_db::DatabaseError;
-use reth_trie::{hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory};
-use std::marker::PhantomData;
 
 /// Factory for creating trie cursors for [`OpProofsStore`].
 #[derive(Debug, Clone)]

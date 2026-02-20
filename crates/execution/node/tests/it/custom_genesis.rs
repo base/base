@@ -1,5 +1,7 @@
 //! Tests for custom genesis block number support.
 
+use std::sync::Arc;
+
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
@@ -14,7 +16,6 @@ use reth_optimism_chainspec::OpChainSpecBuilder;
 use reth_optimism_node::{OpNode, utils::optimism_payload_attributes};
 use reth_provider::{HeaderProvider, StageCheckpointReader, providers::BlockchainProvider};
 use reth_stages_types::StageId;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Tests that an OP node can initialize with a custom genesis block number.
@@ -36,7 +37,7 @@ async fn test_op_node_custom_genesis_number() {
     let wallet = Arc::new(Mutex::new(Wallet::default().with_chain_id(chain_spec.chain().into())));
 
     // Configure and launch the node
-    let config = NodeConfig::new(chain_spec.clone()).with_datadir_args(DatadirArgs {
+    let config = NodeConfig::new(Arc::clone(&chain_spec)).with_datadir_args(DatadirArgs {
         datadir: reth_db::test_utils::tempdir_path().into(),
         ..Default::default()
     });
@@ -93,7 +94,7 @@ async fn test_op_node_custom_genesis_number() {
     let block_payloads = node
         .advance(1, |_| {
             Box::pin({
-                let value = wallet.clone();
+                let value = Arc::clone(&wallet);
                 async move {
                     let mut wallet = value.lock().await;
                     let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(

@@ -1,6 +1,7 @@
 //! Client support for optimism historical RPC requests.
 
-use crate::sequencer::Error;
+use std::{future::Future, sync::Arc};
+
 use alloy_eips::BlockId;
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{B256, BlockNumber};
@@ -12,8 +13,9 @@ use jsonrpsee_core::{
 };
 use jsonrpsee_types::{Params, Request};
 use reth_storage_api::{BlockReaderIdExt, TransactionsProvider};
-use std::{future::Future, sync::Arc};
 use tracing::{debug, warn};
+
+use crate::sequencer::Error;
 
 /// A client that can be used to forward RPC requests for historical data to an endpoint.
 ///
@@ -96,7 +98,7 @@ impl<S, P> tower::Layer<S> for HistoricalRpc<P> {
     type Service = HistoricalRpcService<S, P>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        HistoricalRpcService::new(inner, self.inner.clone())
+        HistoricalRpcService::new(inner, Arc::clone(&self.inner))
     }
 }
 
@@ -139,7 +141,7 @@ where
 
     fn call<'a>(&self, req: Request<'a>) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
         let inner_service = self.inner.clone();
-        let historical = self.historical.clone();
+        let historical = Arc::clone(&self.historical);
 
         Box::pin(async move {
             // Check if request should be forwarded to historical endpoint
@@ -157,13 +159,13 @@ where
         mut req: Batch<'a>,
     ) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
         let this = self.clone();
-        let historical = self.historical.clone();
+        let historical = Arc::clone(&self.historical);
 
         async move {
             let mut needs_forwarding = false;
             for entry in req.iter_mut() {
-                if let Ok(BatchEntry::Call(call)) = entry &&
-                    historical.should_forward_request(call)
+                if let Ok(BatchEntry::Call(call)) = entry
+                    && historical.should_forward_request(call)
                 {
                     needs_forwarding = true;
                     break;
@@ -237,10 +239,10 @@ where
     /// Checks if a request should be forwarded to the historical endpoint (synchronous check).
     fn should_forward_request(&self, req: &Request<'_>) -> bool {
         match req.method_name() {
-            "debug_traceTransaction" |
-            "eth_getTransactionByHash" |
-            "eth_getTransactionReceipt" |
-            "eth_getRawTransactionByHash" => self.should_forward_transaction(req),
+            "debug_traceTransaction"
+            | "eth_getTransactionByHash"
+            | "eth_getTransactionReceipt"
+            | "eth_getRawTransactionByHash" => self.should_forward_transaction(req),
             method => self.should_forward_block_request(method, req),
         }
     }
@@ -360,17 +362,17 @@ enum ParseError {
 /// Extracts the block ID from request parameters based on the method name
 fn extract_block_id_for_method(method: &str, params: &Params<'_>) -> Option<BlockId> {
     match method {
-        "eth_getBlockByNumber" |
-        "eth_getBlockByHash" |
-        "debug_traceBlockByNumber" |
-        "debug_traceBlockByHash" => parse_block_id_from_params(params, 0),
-        "eth_getBalance" |
-        "eth_getCode" |
-        "eth_getTransactionCount" |
-        "eth_call" |
-        "eth_estimateGas" |
-        "eth_createAccessList" |
-        "debug_traceCall" => parse_block_id_from_params(params, 1),
+        "eth_getBlockByNumber"
+        | "eth_getBlockByHash"
+        | "debug_traceBlockByNumber"
+        | "debug_traceBlockByHash" => parse_block_id_from_params(params, 0),
+        "eth_getBalance"
+        | "eth_getCode"
+        | "eth_getTransactionCount"
+        | "eth_call"
+        | "eth_estimateGas"
+        | "eth_createAccessList"
+        | "debug_traceCall" => parse_block_id_from_params(params, 1),
         "eth_getStorageAt" | "eth_getProof" => parse_block_id_from_params(params, 2),
         _ => None,
     }
@@ -392,13 +394,14 @@ fn parse_transaction_hash_from_params(params: &Params<'_>) -> Result<B256, Parse
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_eips::{BlockId, BlockNumberOrTag};
     use jsonrpsee::types::Params;
     use jsonrpsee_core::middleware::layer::Either;
     use reth_node_builder::rpc::RethRpcMiddleware;
     use reth_storage_api::noop::NoopProvider;
     use tower::layer::util::Identity;
+
+    use super::*;
 
     #[test]
     fn check_historical_rpc() {

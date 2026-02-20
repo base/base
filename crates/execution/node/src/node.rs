@@ -1,11 +1,7 @@
 //! Optimism Node types config.
 
-use crate::{
-    OpEngineApiBuilder, OpEngineTypes,
-    args::RollupArgs,
-    engine::OpEngineValidator,
-    txpool::{OpTransactionPool, OpTransactionValidator},
-};
+use std::{marker::PhantomData, sync::Arc};
+
 use op_alloy_consensus::{OpPooledTransaction, interop::SafetyLevel};
 use op_alloy_rpc_types_engine::OpExecutionData;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, Hardforks};
@@ -65,8 +61,14 @@ use reth_transaction_pool::{
 };
 use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
-use std::{marker::PhantomData, sync::Arc};
 use url::Url;
+
+use crate::{
+    OpEngineApiBuilder, OpEngineTypes,
+    args::RollupArgs,
+    engine::OpEngineValidator,
+    txpool::{OpTransactionPool, OpTransactionValidator},
+};
 
 /// Marker trait for Optimism node types with standard engine, chain spec, and primitives.
 pub trait OpNodeTypes:
@@ -977,8 +979,8 @@ where
         let Self { pool_config_overrides, .. } = self;
 
         // supervisor used for interop
-        if ctx.chain_spec().is_interop_active_at_timestamp(ctx.head().timestamp) &&
-            self.supervisor_http == DEFAULT_SUPERVISOR_URL
+        if ctx.chain_spec().is_interop_active_at_timestamp(ctx.head().timestamp)
+            && self.supervisor_http == DEFAULT_SUPERVISOR_URL
         {
             info!(target: "reth::cli",
                 url=%DEFAULT_SUPERVISOR_URL,
@@ -1298,7 +1300,7 @@ where
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
         Ok(OpEngineValidator::new::<KeccakKeyHasher>(
-            ctx.config.chain.clone(),
+            Arc::clone(&ctx.config.chain),
             ctx.node.provider().clone(),
         ))
     }

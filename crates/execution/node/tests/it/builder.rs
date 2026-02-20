@@ -1,7 +1,9 @@
 //! Node builder setup tests.
 
-use alloy_primitives::{Bytes, address};
 use core::marker::PhantomData;
+use std::sync::OnceLock;
+
+use alloy_primitives::{Bytes, address};
 use op_revm::{
     OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
     precompiles::OpPrecompiles,
@@ -26,7 +28,6 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
     precompile::{Precompile, PrecompileId, PrecompileOutput, PrecompileResult, Precompiles},
 };
-use std::sync::OnceLock;
 
 #[test]
 fn test_basic_setup() {

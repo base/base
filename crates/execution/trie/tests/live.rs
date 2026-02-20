@@ -1,5 +1,7 @@
 //! End-to-end test of the live trie collector.
 
+use std::sync::Arc;
+
 use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
@@ -23,8 +25,7 @@ use reth_provider::{
     test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_revm::database::StateProviderDatabase;
-use secp256k1::{Keypair, Secp256k1, rand::rng};
-use std::sync::Arc;
+use secp256k1::{Keypair, Secp256k1};
 use tempfile::TempDir;
 
 /// Converts a secp256k1 public key to an Ethereum address.
@@ -163,7 +164,7 @@ where
 {
     let provider = provider_factory.provider()?;
     let db = StateProviderDatabase::new(LatestStateProviderRef::new(&provider));
-    let evm_config = EthEvmConfig::ethereum(chain_spec.clone());
+    let evm_config = EthEvmConfig::ethereum(Arc::clone(chain_spec));
     let block_executor = evm_config.batch_executor(db);
 
     let execution_result = block_executor.execute(block)?;
@@ -258,7 +259,7 @@ where
     }
 
     // Execute blocks after initialization using live collector
-    let evm_config = EthEvmConfig::ethereum(chain_spec.clone());
+    let evm_config = EthEvmConfig::ethereum(Arc::clone(&chain_spec));
 
     for (idx, block_spec) in scenario.blocks_after_initialization.iter().enumerate() {
         let block_number = last_block_number + idx as u64 + 1;
@@ -302,14 +303,14 @@ fn test_execute_and_store_block_updates() {
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut rng());
+    let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     // Create chain spec with the sender address funded in genesis
     let chain_spec = chain_spec_with_address(sender);
 
     // Create test database and provider factory
-    let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+    let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
 
     // Insert genesis state into the database
     init_genesis(&provider_factory).unwrap();
@@ -334,11 +335,11 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut rng());
+    let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
-    let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+    let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
     // No blocks before initialization; initialization only inserts genesis.
@@ -348,7 +349,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
     run_test_scenario(
         scenario,
         provider_factory.clone(),
-        chain_spec.clone(),
+        Arc::clone(&chain_spec),
         key_pair,
         storage.clone(),
     )
@@ -369,8 +370,11 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
     );
 
     let blockchain_db = BlockchainProvider::new(provider_factory).unwrap();
-    let collector =
-        LiveTrieCollector::new(EthEvmConfig::ethereum(chain_spec.clone()), blockchain_db, &storage);
+    let collector = LiveTrieCollector::new(
+        EthEvmConfig::ethereum(Arc::clone(&chain_spec)),
+        blockchain_db,
+        &storage,
+    );
 
     // EXPECT: MissingParentBlock
     let err = collector.execute_and_store_block_updates(&incorrect_block).unwrap_err();
@@ -385,11 +389,11 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut rng());
+    let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
-    let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+    let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
     // Run normal scenario: no blocks before initialization, one block after.
@@ -402,7 +406,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
     run_test_scenario(
         scenario,
         provider_factory.clone(),
-        chain_spec.clone(),
+        Arc::clone(&chain_spec),
         key_pair,
         storage.clone(),
     )
@@ -410,8 +414,11 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 
     // Generate a second block normally
     let blockchain_db = BlockchainProvider::new(provider_factory.clone()).unwrap();
-    let collector =
-        LiveTrieCollector::new(EthEvmConfig::ethereum(chain_spec.clone()), blockchain_db, &storage);
+    let collector = LiveTrieCollector::new(
+        EthEvmConfig::ethereum(Arc::clone(&chain_spec)),
+        blockchain_db,
+        &storage,
+    );
 
     // Create the next block
     let mut nonce_counter = 0;
@@ -446,11 +453,11 @@ fn test_multiple_blocks_before_and_after_initialization() {
     let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut rng());
+    let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
-    let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+    let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
     // Define the test scenario:
@@ -483,11 +490,11 @@ fn test_blocks_with_multiple_transactions() {
     let storage = Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")).into();
 
     let secp = Secp256k1::new();
-    let key_pair = Keypair::new(&secp, &mut rng());
+    let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
     let sender = public_key_to_address(key_pair.public_key());
 
     let chain_spec = chain_spec_with_address(sender);
-    let provider_factory = create_test_provider_factory_with_chain_spec(chain_spec.clone());
+    let provider_factory = create_test_provider_factory_with_chain_spec(Arc::clone(&chain_spec));
     init_genesis(&provider_factory).unwrap();
 
     let recipient1 = Address::repeat_byte(0x42);

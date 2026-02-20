@@ -4,19 +4,20 @@ pub mod canyon;
 pub mod isthmus;
 
 // Re-export the decode_holocene_base_fee function for compatibility
-use reth_execution_types::BlockExecutionResult;
-pub use reth_optimism_chainspec::decode_holocene_base_fee;
-
-use crate::proof::calculate_receipt_root_optimism;
 use alloc::vec::Vec;
+
 use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use reth_consensus::ConsensusError;
+use reth_execution_types::BlockExecutionResult;
+pub use reth_optimism_chainspec::decode_holocene_base_fee;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::DepositReceipt;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
+
+use crate::proof::calculate_receipt_root_optimism;
 
 /// Ensures the block response data matches the header.
 ///
@@ -206,7 +207,8 @@ fn compare_receipts_root_and_logs_bloom(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
     use alloy_consensus::Header;
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, U256, b256, hex};
@@ -215,7 +217,8 @@ mod tests {
     use reth_optimism_chainspec::{BASE_SEPOLIA, OpChainSpec};
     use reth_optimism_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
     use reth_optimism_primitives::OpReceipt;
-    use std::sync::Arc;
+
+    use super::*;
 
     const HOLOCENE_TIMESTAMP: u64 = 1700000000;
     const ISTHMUS_TIMESTAMP: u64 = 1750000000;

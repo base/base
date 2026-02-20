@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use futures::StreamExt;
 use reth_optimism_node::utils::{advance_chain, setup};
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[tokio::test]
@@ -19,7 +20,7 @@ async fn can_sync() -> eyre::Result<()> {
     let reorg_depth = 2;
 
     // On first node, create a chain up to block number 90a
-    let canonical_payload_chain = advance_chain(tip, &mut first_node, wallet.clone()).await?;
+    let canonical_payload_chain = advance_chain(tip, &mut first_node, Arc::clone(&wallet)).await?;
     let canonical_chain =
         canonical_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
@@ -52,7 +53,8 @@ async fn can_sync() -> eyre::Result<()> {
     //  On second node, create a side chain: 88a -> 89b -> 90b
     wallet.lock().await.inner_nonce -= reorg_depth as u64;
     second_node.payload.timestamp = first_node.payload.timestamp - reorg_depth as u64; // TODO: probably want to make it node agnostic
-    let side_payload_chain = advance_chain(reorg_depth, &mut second_node, wallet.clone()).await?;
+    let side_payload_chain =
+        advance_chain(reorg_depth, &mut second_node, Arc::clone(&wallet)).await?;
     let side_chain = side_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
     // Creates fork chain by submitting 89b payload.

@@ -1,4 +1,8 @@
-use crate::{PendingFlashBlock, pending_state::PendingBlockState};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use alloy_eips::{BlockNumberOrTag, eip2718::WithEncoded};
 use alloy_primitives::B256;
 use op_alloy_rpc_types_engine::OpFlashblockPayloadBase;
@@ -15,11 +19,9 @@ use reth_primitives_traits::{
 use reth_revm::{cached::CachedReads, database::StateProviderDatabase, db::State};
 use reth_rpc_eth_types::{EthApiError, PendingBlock};
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory, noop::NoopProvider};
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use tracing::trace;
+
+use crate::{PendingFlashBlock, pending_state::PendingBlockState};
 
 /// The `FlashBlockBuilder` builds [`PendingBlock`] out of a sequence of transactions.
 #[derive(Debug)]
@@ -189,7 +191,7 @@ where
             block.number(),
             args.base.parent_hash,
             canonical_anchor,
-            execution_outcome.clone(),
+            Arc::clone(&execution_outcome),
             request_cache.clone(),
         );
 

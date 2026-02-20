@@ -3,13 +3,6 @@
 //! The `SequenceManager` maintains a ring buffer of recently completed flashblock sequences
 //! and intelligently selects which sequence to build based on the local chain tip.
 
-use crate::{
-    FlashBlock, FlashBlockCompleteSequence, PendingFlashBlock,
-    pending_state::PendingBlockState,
-    sequence::{FlashBlockPendingSequence, SequenceExecutionOutcome},
-    validation::{CanonicalBlockReconciler, ReconciliationStrategy, ReorgDetector},
-    worker::BuildArgs,
-};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::B256;
 use reth_primitives_traits::{
@@ -19,6 +12,14 @@ use reth_revm::cached::CachedReads;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use tokio::sync::broadcast;
 use tracing::*;
+
+use crate::{
+    FlashBlock, FlashBlockCompleteSequence, PendingFlashBlock,
+    pending_state::PendingBlockState,
+    sequence::{FlashBlockPendingSequence, SequenceExecutionOutcome},
+    validation::{CanonicalBlockReconciler, ReconciliationStrategy, ReorgDetector},
+    worker::BuildArgs,
+};
 
 /// Maximum number of cached sequences in the ring buffer.
 const CACHE_SIZE: usize = 3;
@@ -240,9 +241,9 @@ impl<T: SignedTransaction> SequenceManager<T> {
         // chain progression.
         let block_time_ms = (base.timestamp - local_tip_timestamp) * 1000;
         let expected_final_flashblock = block_time_ms / FLASHBLOCK_BLOCK_TIME;
-        let compute_state_root = self.compute_state_root &&
-            last_flashblock.diff.state_root.is_zero() &&
-            last_flashblock.index >= expected_final_flashblock.saturating_sub(1);
+        let compute_state_root = self.compute_state_root
+            && last_flashblock.diff.state_root.is_zero()
+            && last_flashblock.index >= expected_final_flashblock.saturating_sub(1);
 
         trace!(
             target: "flashblocks",
@@ -472,11 +473,12 @@ impl<T: SignedTransaction> SequenceManager<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{test_utils::TestFlashBlockFactory, validation::ReconciliationStrategy};
     use alloy_primitives::B256;
     use op_alloy_consensus::OpTxEnvelope;
     use reth_optimism_primitives::OpPrimitives;
+
+    use super::*;
+    use crate::{test_utils::TestFlashBlockFactory, validation::ReconciliationStrategy};
 
     #[test]
     fn test_sequence_manager_new() {
@@ -840,10 +842,12 @@ mod tests {
 
     #[test]
     fn test_speculative_build_with_pending_parent_state() {
-        use crate::pending_state::PendingBlockState;
+        use std::sync::Arc;
+
         use reth_execution_types::BlockExecutionOutput;
         use reth_revm::cached::CachedReads;
-        use std::sync::Arc;
+
+        use crate::pending_state::PendingBlockState;
 
         let mut manager: SequenceManager<OpTxEnvelope> = SequenceManager::new(true);
         let factory = TestFlashBlockFactory::new();
@@ -882,10 +886,12 @@ mod tests {
 
     #[test]
     fn test_speculative_build_uses_cached_sequence() {
-        use crate::pending_state::PendingBlockState;
+        use std::sync::Arc;
+
         use reth_execution_types::BlockExecutionOutput;
         use reth_revm::cached::CachedReads;
-        use std::sync::Arc;
+
+        use crate::pending_state::PendingBlockState;
 
         let mut manager: SequenceManager<OpTxEnvelope> = SequenceManager::new(true);
         let factory = TestFlashBlockFactory::new();
@@ -927,10 +933,12 @@ mod tests {
 
     #[test]
     fn test_canonical_build_takes_priority_over_speculative() {
-        use crate::pending_state::PendingBlockState;
+        use std::sync::Arc;
+
         use reth_execution_types::BlockExecutionOutput;
         use reth_revm::cached::CachedReads;
-        use std::sync::Arc;
+
+        use crate::pending_state::PendingBlockState;
 
         let mut manager: SequenceManager<OpTxEnvelope> = SequenceManager::new(true);
         let factory = TestFlashBlockFactory::new();

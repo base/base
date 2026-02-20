@@ -86,9 +86,8 @@
 //! }
 //! ```
 
-pub use reth_optimism_rpc::{OpEngineApi, OpEthApi, OpEthApiBuilder};
+use std::sync::Arc;
 
-use crate::OP_NAME_CLIENT;
 use alloy_rpc_types_engine::ClientVersionV1;
 use op_alloy_rpc_types_engine::OpExecutionData;
 use reth_chainspec::EthereumHardforks;
@@ -98,8 +97,11 @@ use reth_node_api::{
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
 use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
+pub use reth_optimism_rpc::{OpEngineApi, OpEthApi, OpEthApiBuilder};
 use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::{EngineApi, EngineCapabilities};
+
+use crate::OP_NAME_CLIENT;
 
 /// Builder for basic [`OpEngineApi`] implementation.
 #[derive(Debug, Default, Clone)]
@@ -138,7 +140,7 @@ where
         };
         let inner = EngineApi::new(
             ctx.node.provider().clone(),
-            ctx.config.chain.clone(),
+            Arc::clone(&ctx.config.chain),
             ctx.beacon_engine_handle.clone(),
             PayloadStore::new(ctx.node.payload_builder_handle().clone()),
             ctx.node.pool().clone(),

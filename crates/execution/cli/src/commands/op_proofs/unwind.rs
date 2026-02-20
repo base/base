@@ -1,5 +1,7 @@
 //! Command that unwinds the OP proofs storage to a specific block number.
 
+use std::{path::PathBuf, sync::Arc};
+
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -8,7 +10,6 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_trie::{OpProofsStorage, OpProofsStore, db::MdbxProofsStorage};
 use reth_provider::{BlockReader, TransactionVariant};
-use std::{path::PathBuf, sync::Arc};
 use tracing::{info, warn};
 
 /// Unwinds the proofs storage to a specific block number.

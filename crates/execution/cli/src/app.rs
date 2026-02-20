@@ -1,4 +1,5 @@
-use crate::{Cli, Commands};
+use std::{fmt, sync::Arc};
+
 use eyre::{Result, eyre};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::Launcher;
@@ -10,8 +11,9 @@ use reth_optimism_consensus::OpBeaconConsensus;
 use reth_optimism_node::{OpExecutorProvider, OpNode};
 use reth_rpc_server_types::RpcModuleValidator;
 use reth_tracing::{FileWorkerGuard, Layers};
-use std::{fmt, sync::Arc};
 use tracing::{info, warn};
+
+use crate::{Cli, Commands};
 
 /// A wrapper around a parsed CLI that handles command execution.
 #[derive(Debug)]
@@ -70,7 +72,10 @@ where
         install_prometheus_recorder();
 
         let components = |spec: Arc<OpChainSpec>| {
-            (OpExecutorProvider::optimism(spec.clone()), Arc::new(OpBeaconConsensus::new(spec)))
+            (
+                OpExecutorProvider::optimism(Arc::clone(&spec)),
+                Arc::new(OpBeaconConsensus::new(spec)),
+            )
         };
 
         match self.cli.command {

@@ -1,11 +1,12 @@
 //! Errors interfacing with [`OpProofsStore`](crate::OpProofsStore) type.
 
+use std::sync::Arc;
+
 use alloy_primitives::B256;
 use reth_db::DatabaseError;
 use reth_execution_errors::BlockExecutionError;
 use reth_provider::ProviderError;
 use reth_trie_common::Nibbles;
-use std::sync::Arc;
 use thiserror::Error;
 
 /// Error type for storage operations
@@ -130,8 +131,8 @@ impl From<OpProofsStorageError> for DatabaseError {
 
 impl From<DatabaseError> for OpProofsStorageError {
     fn from(error: DatabaseError) -> Self {
-        if let DatabaseError::Custom(ref err) = error &&
-            let Some(err) = err.downcast_ref::<Self>()
+        if let DatabaseError::Custom(ref err) = error
+            && let Some(err) = err.downcast_ref::<Self>()
         {
             return err.clone();
         }
@@ -144,8 +145,9 @@ pub type OpProofsStorageResult<T> = Result<T, OpProofsStorageError>;
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use reth_execution_errors::BlockValidationError;
+
+    use super::*;
 
     #[test]
     fn test_op_proofs_store_error_to_db_error() {

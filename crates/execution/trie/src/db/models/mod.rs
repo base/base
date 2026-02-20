@@ -13,10 +13,11 @@ mod storage;
 pub use storage::*;
 mod change_set;
 pub(crate) mod kv;
-pub use change_set::*;
-pub use kv::*;
+use std::fmt;
 
 use alloy_primitives::B256;
+pub use change_set::*;
+pub use kv::*;
 use reth_db::{
     TableSet, TableType, TableViewer,
     table::{DupSort, TableInfo},
@@ -24,7 +25,6 @@ use reth_db::{
 };
 use reth_primitives_traits::Account;
 use reth_trie_common::{BranchNodeCompact, StoredNibbles};
-use std::fmt;
 
 tables! {
     /// Stores historical branch nodes for the account state trie.

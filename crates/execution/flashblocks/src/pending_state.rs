@@ -4,11 +4,12 @@
 //! enabling speculative building of subsequent blocks before their parent canonical
 //! block arrives via P2P.
 
+use std::sync::Arc;
+
 use alloy_primitives::B256;
 use reth_execution_types::BlockExecutionOutput;
 use reth_primitives_traits::NodePrimitives;
 use reth_revm::cached::CachedReads;
-use std::sync::Arc;
 
 /// Tracks the execution state from building a pending block.
 ///
@@ -101,8 +102,9 @@ impl<N: NodePrimitives> PendingStateRegistry<N> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use reth_optimism_primitives::OpPrimitives;
+
+    use super::*;
 
     type TestRegistry = PendingStateRegistry<OpPrimitives>;
 

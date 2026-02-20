@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use alloy_primitives::{Address, B64, B256};
 use eyre::Result;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -8,7 +10,6 @@ use reth_e2e_test_utils::testsuite::{
 };
 use reth_optimism_chainspec::{OP_MAINNET, OpChainSpecBuilder};
 use reth_optimism_node::{OpEngineTypes, OpNode};
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_testsuite_op_assert_mine_block() -> Result<()> {

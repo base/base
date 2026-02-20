@@ -1,5 +1,6 @@
-use alloy_json_rpc::RpcError;
 use core::error;
+
+use alloy_json_rpc::RpcError;
 use op_alloy_rpc_types::SuperchainDAError;
 
 /// Failures occurring during validation of inbox entries.

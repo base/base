@@ -1,6 +1,7 @@
 //! Validates execution payload wrt Optimism consensus rules
 
 use alloc::sync::Arc;
+
 use alloy_consensus::Block;
 use alloy_rpc_types_engine::PayloadError;
 use derive_more::{Constructor, Deref};

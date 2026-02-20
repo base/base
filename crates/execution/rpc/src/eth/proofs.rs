@@ -1,6 +1,7 @@
 //! Historical proofs RPC server implementation.
 
-use crate::{metrics::EthApiExtMetrics, state::OpStateProviderFactory};
+use std::time::Instant;
+
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
@@ -12,7 +13,8 @@ use jsonrpsee_types::error::ErrorObject;
 use reth_optimism_trie::{OpProofsStorage, OpProofsStore};
 use reth_provider::StateProofProvider;
 use reth_rpc_api::eth::helpers::FullEthApi;
-use std::time::Instant;
+
+use crate::{metrics::EthApiExtMetrics, state::OpStateProviderFactory};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -29,7 +31,7 @@ pub trait EthApiOverride {
 }
 
 #[derive(Debug)]
-/// Overrides applied to the `eth_` namespace of the RPC API for historical proofs ExEx.
+/// Overrides applied to the `eth_` namespace of the RPC API for historical proofs `ExEx`.
 pub struct EthApiExt<Eth, P> {
     state_provider_factory: OpStateProviderFactory<Eth, P>,
     metrics: EthApiExtMetrics,

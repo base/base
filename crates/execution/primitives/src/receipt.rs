@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+
 use alloy_consensus::{
     Eip658Value, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom, RlpDecodableReceipt,
     RlpEncodableReceipt, TxReceipt, Typed2718,
@@ -121,11 +122,12 @@ pub(super) mod serde_bincode_compat {
 
     #[cfg(test)]
     mod tests {
-        use crate::{OpReceipt, receipt::serde_bincode_compat};
         use arbitrary::Arbitrary;
         use rand::Rng;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
+
+        use crate::{OpReceipt, receipt::serde_bincode_compat};
 
         #[test]
         fn test_tx_bincode_roundtrip() {
@@ -156,11 +158,12 @@ pub(super) mod serde_bincode_compat {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
     use alloy_rlp::Encodable;
     use reth_codecs::Compact;
+
+    use super::*;
 
     #[test]
     fn test_decode_receipt() {

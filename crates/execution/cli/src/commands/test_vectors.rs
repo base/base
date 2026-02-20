@@ -1,5 +1,7 @@
 //! Command for generating test vectors.
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use op_alloy_consensus::TxDeposit;
 use proptest::test_runner::TestRunner;
@@ -15,7 +17,6 @@ use reth_cli_commands::{
         tables,
     },
 };
-use std::sync::Arc;
 
 /// Generate test-vectors for different data types.
 #[derive(Debug, Parser)]

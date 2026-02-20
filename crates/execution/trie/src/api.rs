@@ -1,9 +1,7 @@
 //! Storage API for external storage of intermediary trie nodes.
 
-use crate::{
-    OpProofsStorageResult,
-    db::{HashedStorageKey, StorageTrieKey},
-};
+use std::{fmt::Debug, time::Duration};
+
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use auto_impl::auto_impl;
@@ -16,7 +14,11 @@ use reth_trie::{
 use reth_trie_common::{
     BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
-use std::{fmt::Debug, time::Duration};
+
+use crate::{
+    OpProofsStorageResult,
+    db::{HashedStorageKey, StorageTrieKey},
+};
 
 /// Diff of trie updates and post state for a block.
 #[derive(Debug, Clone, Default)]

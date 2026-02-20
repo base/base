@@ -46,18 +46,15 @@ tempfile.workspace = true
 
 [features]
 test-utils = [
-    "reth-db/test-utils",
-    "reth-trie/test-utils",
-    "reth-node-builder/test-utils",
-    "reth-optimism-node/test-utils",
-    "reth-provider/test-utils",
-    "reth-ethereum-primitives/test-utils",
-    "reth-primitives-traits/test-utils",
+	"reth-db/test-utils",
+	"reth-ethereum-primitives/test-utils",
+	"reth-node-builder/test-utils",
+	"reth-optimism-node/test-utils",
+	"reth-primitives-traits/test-utils",
+	"reth-provider/test-utils",
+	"reth-trie/test-utils",
 ]
-metrics = [
-	"reth-optimism-trie/metrics",
-	"reth-trie/metrics"
-]
+metrics = [ "reth-optimism-trie/metrics", "reth-trie/metrics" ]
 
 [package.metadata.cargo-udeps.ignore]
 development = [

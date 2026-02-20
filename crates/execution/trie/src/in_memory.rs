@@ -1,10 +1,7 @@
 //! In-memory implementation of [`OpProofsStore`] for testing purposes
 
-use crate::{
-    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
-    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
-    db::{HashedStorageKey, StorageTrieKey},
-};
+use std::{collections::BTreeMap, sync::Arc};
+
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use parking_lot::RwLock;
@@ -17,7 +14,12 @@ use reth_trie::{
 use reth_trie_common::{
     BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
 };
-use std::{collections::BTreeMap, sync::Arc};
+
+use crate::{
+    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
+    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
+    db::{HashedStorageKey, StorageTrieKey},
+};
 
 /// In-memory implementation of [`OpProofsStore`] for testing purposes
 #[derive(Debug, Clone)]
@@ -553,14 +555,14 @@ impl OpProofsStore for InMemoryProofsStorage {
         hashed_address: B256,
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::StorageTrieCursor<'tx>> {
-        Ok(InMemoryTrieCursor::new(self.inner.clone(), Some(hashed_address), max_block_number))
+        Ok(InMemoryTrieCursor::new(Arc::clone(&self.inner), Some(hashed_address), max_block_number))
     }
 
     fn account_trie_cursor<'tx>(
         &self,
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::AccountTrieCursor<'tx>> {
-        Ok(InMemoryTrieCursor::new(self.inner.clone(), None, max_block_number))
+        Ok(InMemoryTrieCursor::new(Arc::clone(&self.inner), None, max_block_number))
     }
 
     fn storage_hashed_cursor<'tx>(
@@ -568,7 +570,7 @@ impl OpProofsStore for InMemoryProofsStorage {
         hashed_address: B256,
         max_block_number: u64,
     ) -> OpProofsStorageResult<Self::StorageCursor<'tx>> {
-        Ok(InMemoryStorageCursor::new(self.inner.clone(), hashed_address, max_block_number))
+        Ok(InMemoryStorageCursor::new(Arc::clone(&self.inner), hashed_address, max_block_number))
     }
 
     fn account_hashed_cursor<'tx>(
@@ -831,11 +833,12 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::OpProofsStorageError;
     use alloy_eips::NumHash;
     use alloy_primitives::U256;
     use reth_primitives_traits::Account;
+
+    use super::*;
+    use crate::OpProofsStorageError;
 
     #[test]
     fn test_in_memory_storage_basic_operations() -> Result<(), OpProofsStorageError> {

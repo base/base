@@ -43,35 +43,33 @@ mod op_sepolia;
 
 #[cfg(feature = "superchain-configs")]
 mod superchain;
-#[cfg(feature = "superchain-configs")]
-pub use superchain::*;
-
-pub use base::BASE_MAINNET;
-pub use base_sepolia::BASE_SEPOLIA;
-pub use basefee::*;
-pub use dev::OP_DEV;
-pub use op::OP_MAINNET;
-pub use op_sepolia::OP_SEPOLIA;
-
-/// Re-export for convenience
-pub use reth_optimism_forks::*;
-
 use alloc::{boxed::Box, vec, vec::Vec};
+
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
+pub use base::BASE_MAINNET;
+pub use base_sepolia::BASE_SEPOLIA;
+pub use basefee::*;
 use derive_more::{Constructor, Deref, From, Into};
+pub use dev::OP_DEV;
+pub use op::OP_MAINNET;
+pub use op_sepolia::OP_SEPOLIA;
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, ChainSpecBuilder, DepositContract,
     DisplayHardforks, EthChainSpec, EthereumHardforks, ForkFilter, ForkId, Hardforks, Head,
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::NodeRecord;
+/// Re-export for convenience
+pub use reth_optimism_forks::*;
 use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
+#[cfg(feature = "superchain-configs")]
+pub use superchain::*;
 
 /// Chain spec builder for a OP stack chain.
 #[derive(Debug, Default, From)]
@@ -459,8 +457,8 @@ impl OpGenesisInfo {
             .unwrap_or_default(),
             ..Default::default()
         };
-        if let Some(optimism_base_fee_info) = &info.optimism_chain_info.base_fee_info &&
-            let (Some(elasticity), Some(denominator)) = (
+        if let Some(optimism_base_fee_info) = &info.optimism_chain_info.base_fee_info
+            && let (Some(elasticity), Some(denominator)) = (
                 optimism_base_fee_info.eip1559_elasticity,
                 optimism_base_fee_info.eip1559_denominator,
             )
@@ -497,9 +495,9 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
 
     // If Isthmus is active, overwrite the withdrawals root with the storage root of predeploy
     // `L2ToL1MessagePasser.sol`
-    if hardforks.fork(OpHardfork::Isthmus).active_at_timestamp(header.timestamp) &&
-        let Some(predeploy) = genesis.alloc.get(&L2_TO_L1_MESSAGE_PASSER_ADDRESS) &&
-        let Some(storage) = &predeploy.storage
+    if hardforks.fork(OpHardfork::Isthmus).active_at_timestamp(header.timestamp)
+        && let Some(predeploy) = genesis.alloc.get(&L2_TO_L1_MESSAGE_PASSER_ADDRESS)
+        && let Some(storage) = &predeploy.storage
     {
         header.withdrawals_root = Some(storage_root_unhashed(storage.iter().filter_map(
             |(k, v)| {
@@ -514,6 +512,7 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
 #[cfg(test)]
 mod tests {
     use alloc::string::{String, ToString};
+
     use alloy_genesis::{ChainConfig, Genesis};
     use alloy_op_hardforks::{
         BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP, OP_MAINNET_JOVIAN_TIMESTAMP,
@@ -528,8 +527,9 @@ mod tests {
 
     #[test]
     fn test_storage_root_consistency() {
-        use alloy_primitives::{B256, U256};
         use core::str::FromStr;
+
+        use alloy_primitives::{B256, U256};
 
         let k1 =
             B256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")

@@ -84,8 +84,8 @@ impl FlashblockSequenceValidator {
         incoming_index: u64,
     ) -> SequenceValidationResult {
         // Next flashblock within the current block
-        if incoming_block_number == latest_block_number &&
-            incoming_index == latest_flashblock_index + 1
+        if incoming_block_number == latest_block_number
+            && incoming_index == latest_flashblock_index + 1
         {
             SequenceValidationResult::NextInSequence
         // First flashblock of the next block

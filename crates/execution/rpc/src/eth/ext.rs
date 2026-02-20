@@ -1,6 +1,7 @@
 //! Eth API extension.
 
-use crate::{OpEthApiError, SequencerClient, error::TxConditionalErr};
+use std::sync::Arc;
+
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, Bytes, StorageKey, U256};
@@ -13,8 +14,9 @@ use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
 };
-use std::sync::Arc;
 use tokio::sync::Semaphore;
+
+use crate::{OpEthApiError, SequencerClient, error::TxConditionalErr};
 
 /// Maximum execution const for conditional transactions.
 const MAX_CONDITIONAL_EXECUTION_COST: u64 = 5000;
@@ -140,8 +142,8 @@ where
             .ok_or_else(header_not_found)?;
 
         // Ensure that the condition can still be met by checking the max bounds
-        if condition.has_exceeded_block_number(header.header().number()) ||
-            condition.has_exceeded_timestamp(header.header().timestamp())
+        if condition.has_exceeded_block_number(header.header().number())
+            || condition.has_exceeded_timestamp(header.header().timestamp())
         {
             return Err(TxConditionalErr::InvalidCondition.into());
         }

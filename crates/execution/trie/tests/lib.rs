@@ -1,5 +1,7 @@
 //! Common test suite for [`OpProofsStore`] implementations.
 
+use std::sync::Arc;
+
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use reth_optimism_trie::{
@@ -14,7 +16,6 @@ use reth_trie::{
     updates::{TrieUpdates, TrieUpdatesSorted},
 };
 use serial_test::serial;
-use std::sync::Arc;
 use tempfile::TempDir;
 use test_case::test_case;
 

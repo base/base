@@ -1,13 +1,13 @@
-use crate::{FlashBlock, ws::FlashBlockDecoder};
-use futures_util::{
-    FutureExt, Sink, Stream, StreamExt,
-    stream::{SplitSink, SplitStream},
-};
 use std::{
     fmt::{Debug, Formatter},
     future::Future,
     pin::Pin,
     task::{Context, Poll, ready},
+};
+
+use futures_util::{
+    FutureExt, Sink, Stream, StreamExt,
+    stream::{SplitSink, SplitStream},
 };
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
@@ -16,6 +16,8 @@ use tokio_tungstenite::{
 };
 use tracing::debug;
 use url::Url;
+
+use crate::{FlashBlock, ws::FlashBlockDecoder};
 
 /// An asynchronous stream of [`FlashBlock`] from a websocket connection.
 ///
@@ -239,14 +241,16 @@ impl WsConnect for WsConnector {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{future, iter};
+
     use alloy_primitives::bytes::Bytes;
     use brotli::enc::BrotliEncoderParams;
-    use std::{future, iter};
     use tokio_tungstenite::tungstenite::{
         Error,
         protocol::frame::{Frame, coding::CloseCode},
     };
+
+    use super::*;
 
     /// A `FakeConnector` creates [`FakeStream`].
     ///

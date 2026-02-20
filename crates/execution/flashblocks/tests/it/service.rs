@@ -6,6 +6,8 @@
 //! - Canonical block reconciliation
 //! - Build job scheduling
 
+use std::sync::Arc;
+
 use alloy_primitives::B256;
 use reth_execution_types::BlockExecutionOutput;
 use reth_optimism_flashblocks::{
@@ -14,7 +16,6 @@ use reth_optimism_flashblocks::{
 };
 use reth_optimism_primitives::OpPrimitives;
 use reth_revm::cached::CachedReads;
-use std::sync::Arc;
 
 use crate::harness::{FlashBlockServiceTestHarness, TestFlashBlockFactory};
 

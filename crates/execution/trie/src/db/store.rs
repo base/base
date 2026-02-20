@@ -1,19 +1,5 @@
-use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
-use crate::{
-    BlockStateDiff, OpProofsStorageError,
-    OpProofsStorageError::NoBlocksFound,
-    OpProofsStorageResult, OpProofsStore,
-    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
-    db::{
-        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
-        cursor::Dup,
-        models::{
-            AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
-            HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory,
-            StorageTrieKey, StorageValue, VersionedValue, kv::IntoKV,
-        },
-    },
-};
+use std::{ops::RangeBounds, path::Path};
+
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
 #[cfg(feature = "metrics")]
@@ -31,7 +17,23 @@ use reth_trie_common::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
     updates::{StorageTrieUpdates, TrieUpdates},
 };
-use std::{ops::RangeBounds, path::Path};
+
+use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
+use crate::{
+    BlockStateDiff, OpProofsStorageError,
+    OpProofsStorageError::NoBlocksFound,
+    OpProofsStorageResult, OpProofsStore,
+    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
+    db::{
+        MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+        cursor::Dup,
+        models::{
+            AccountTrieHistory, BlockChangeSet, ChangeSet, HashedAccountHistory,
+            HashedStorageHistory, HashedStorageKey, MaybeDeleted, StorageTrieHistory,
+            StorageTrieKey, StorageValue, VersionedValue, kv::IntoKV,
+        },
+    },
+};
 
 /// MDBX implementation of [`OpProofsStore`].
 #[derive(Debug)]
@@ -200,8 +202,8 @@ impl MdbxProofsStorage {
             let mut del_cur = tx.cursor_dup_write::<T>()?;
             for (k, _) in &pairs {
                 // Seek to (Key, Block 0)
-                if let Some(vv) = del_cur.seek_by_key_subkey(k.clone(), 0)? &&
-                    vv.block_number == 0
+                if let Some(vv) = del_cur.seek_by_key_subkey(k.clone(), 0)?
+                    && vv.block_number == 0
                 {
                     del_cur.delete_current()?;
                 }
@@ -1160,11 +1162,6 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::db::{
-        StorageTrieKey,
-        models::{AccountTrieHistory, StorageTrieHistory},
-    };
     use alloy_eips::NumHash;
     use alloy_primitives::B256;
     use reth_db::{
@@ -1177,6 +1174,12 @@ mod tests {
         updates::{StorageTrieUpdates, TrieUpdatesSorted},
     };
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::db::{
+        StorageTrieKey,
+        models::{AccountTrieHistory, StorageTrieHistory},
+    };
 
     const B0: u64 = 0;
 

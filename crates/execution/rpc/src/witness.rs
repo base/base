@@ -1,5 +1,7 @@
 //! Support for optimism specific witness RPCs.
 
+use std::{fmt::Debug, sync::Arc};
+
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use jsonrpsee_core::{RpcResult, async_trait};
@@ -18,7 +20,6 @@ use reth_storage_api::{
 };
 use reth_tasks::TaskSpawner;
 use reth_transaction_pool::TransactionPool;
-use std::{fmt::Debug, sync::Arc};
 use tokio::sync::{Semaphore, oneshot};
 
 /// An extension to the `debug_` namespace of the RPC API.

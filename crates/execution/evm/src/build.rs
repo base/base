@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+
 use alloy_consensus::{
     Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt, constants::EMPTY_WITHDRAWALS,
     proofs,
@@ -130,7 +131,7 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
 
 impl<ChainSpec> Clone for OpBlockAssembler<ChainSpec> {
     fn clone(&self) -> Self {
-        Self { chain_spec: self.chain_spec.clone() }
+        Self { chain_spec: Arc::clone(&self.chain_spec) }
     }
 }
 

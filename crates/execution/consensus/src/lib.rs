@@ -12,11 +12,12 @@
 extern crate alloc;
 
 use alloc::{format, sync::Arc};
+use core::fmt::Debug;
+
 use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use alloy_primitives::B64;
-use core::fmt::Debug;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
@@ -210,8 +211,8 @@ where
             let blob_gas_used = header.blob_gas_used().ok_or(ConsensusError::BlobGasUsedMissing)?;
 
             // Before Jovian and after ecotone, the blob gas used should be 0.
-            if !self.chain_spec.is_jovian_active_at_timestamp(header.timestamp()) &&
-                blob_gas_used != 0
+            if !self.chain_spec.is_jovian_active_at_timestamp(header.timestamp())
+                && blob_gas_used != 0
             {
                 return Err(ConsensusError::BlobGasUsedDiff(GotExpected {
                     got: blob_gas_used,

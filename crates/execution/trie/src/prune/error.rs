@@ -1,12 +1,14 @@
-use crate::{OpProofsStorageError, api::WriteCounts};
-use reth_provider::ProviderError;
 use std::{
     fmt,
     fmt::{Display, Formatter},
     time::Duration,
 };
+
+use reth_provider::ProviderError;
 use strum::Display;
 use thiserror::Error;
+
+use crate::{OpProofsStorageError, api::WriteCounts};
 
 /// Result of [`OpProofStoragePruner::run`](crate::OpProofStoragePruner::run) execution.
 pub type OpProofStoragePrunerResult = Result<PrunerOutput, PrunerError>;
@@ -27,10 +29,10 @@ pub struct PrunerOutput {
 impl Display for PrunerOutput {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let blocks = self.end_block.saturating_sub(self.start_block);
-        let total_entries = self.write_counts.hashed_accounts_written_total +
-            self.write_counts.hashed_storages_written_total +
-            self.write_counts.account_trie_updates_written_total +
-            self.write_counts.storage_trie_updates_written_total;
+        let total_entries = self.write_counts.hashed_accounts_written_total
+            + self.write_counts.hashed_storages_written_total
+            + self.write_counts.account_trie_updates_written_total
+            + self.write_counts.storage_trie_updates_written_total;
         write!(
             f,
             "Pruned {}→{} ({} blocks), entries={}, elapsed={:.3}s",
@@ -77,9 +79,10 @@ pub enum PrunerError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::PrunerOutput;
     use crate::api::WriteCounts;
-    use std::time::Duration;
 
     #[test]
     fn test_pruner_output_display() {

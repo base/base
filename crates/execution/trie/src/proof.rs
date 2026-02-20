@@ -1,8 +1,5 @@
 //! Provides proof operation implementations for [`OpProofsStorage`].
 
-use crate::{
-    OpProofsHashedAccountCursorFactory, OpProofsStorage, OpProofsStore, OpProofsTrieCursorFactory,
-};
 use alloy_primitives::{
     Address, B256, Bytes, keccak256,
     map::{B256Map, HashMap},
@@ -19,6 +16,10 @@ use reth_trie::{
 use reth_trie_common::{
     AccountProof, HashedPostState, HashedPostStateSorted, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
+};
+
+use crate::{
+    OpProofsHashedAccountCursorFactory, OpProofsStorage, OpProofsStore, OpProofsTrieCursorFactory,
 };
 
 /// Extends [`Proof`] with operations specific for working with [`OpProofsStorage`].

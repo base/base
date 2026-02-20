@@ -1,6 +1,7 @@
 //! Helper function for Receipt root calculation for Optimism hardforks.
 
 use alloc::vec::Vec;
+
 use alloy_consensus::ReceiptWithBloom;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
@@ -19,8 +20,8 @@ pub(crate) fn calculate_receipt_root_optimism<R: DepositReceipt>(
     // encoding. In the Regolith Hardfork, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
     // hardfork.
-    if chain_spec.is_regolith_active_at_timestamp(timestamp) &&
-        !chain_spec.is_canyon_active_at_timestamp(timestamp)
+    if chain_spec.is_regolith_active_at_timestamp(timestamp)
+        && !chain_spec.is_canyon_active_at_timestamp(timestamp)
     {
         let receipts = receipts
             .iter()
@@ -52,8 +53,8 @@ pub fn calculate_receipt_root_no_memo_optimism<R: DepositReceipt>(
     // encoding. In the Regolith Hardfork, we must strip the deposit nonce from the
     // receipts before calculating the receipt root. This was corrected in the Canyon
     // hardfork.
-    if chain_spec.is_regolith_active_at_timestamp(timestamp) &&
-        !chain_spec.is_canyon_active_at_timestamp(timestamp)
+    if chain_spec.is_regolith_active_at_timestamp(timestamp)
+        && !chain_spec.is_canyon_active_at_timestamp(timestamp)
     {
         let receipts = receipts
             .iter()
@@ -78,12 +79,13 @@ pub fn calculate_receipt_root_no_memo_optimism<R: DepositReceipt>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
     use alloy_primitives::{Address, Bytes, Log, LogData, b256, bloom, hex};
     use op_alloy_consensus::OpDepositReceipt;
     use reth_optimism_chainspec::BASE_SEPOLIA;
     use reth_optimism_primitives::OpReceipt;
+
+    use super::*;
 
     /// Tests that the receipt root is computed correctly for the regolith block.
     /// This was implemented due to a minor bug in op-geth and op-erigon where in

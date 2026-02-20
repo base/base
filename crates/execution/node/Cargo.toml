@@ -105,50 +105,50 @@ futures.workspace = true
 op-alloy-network.workspace = true
 
 [features]
-default = ["reth-codec"]
+default = [ "reth-codec" ]
 asm-keccak = [
-  "alloy-primitives/asm-keccak",
-  "reth-optimism-node/asm-keccak",
-  "reth-node-core/asm-keccak",
-  "revm/asm-keccak",
+	"alloy-primitives/asm-keccak",
+	"reth-node-core/asm-keccak",
+	"reth-optimism-node/asm-keccak",
+	"revm/asm-keccak",
 ]
 keccak-cache-global = [
-  "alloy-primitives/keccak-cache-global",
-  "reth-node-core/keccak-cache-global",
-  "reth-optimism-node/keccak-cache-global",
+	"alloy-primitives/keccak-cache-global",
+	"reth-node-core/keccak-cache-global",
+	"reth-optimism-node/keccak-cache-global",
 ]
 js-tracer = [
-  "reth-node-builder/js-tracer",
-  "reth-optimism-node/js-tracer",
-  "reth-rpc/js-tracer",
-  "reth-rpc-eth-types/js-tracer",
+	"reth-node-builder/js-tracer",
+	"reth-optimism-node/js-tracer",
+	"reth-rpc-eth-types/js-tracer",
+	"reth-rpc/js-tracer",
 ]
 test-utils = [
-	"reth-codec",
-	"reth-e2e-test-utils",
 	"alloy-genesis",
-	"serde_json",
-	"reth-node-builder/test-utils",
 	"reth-chainspec/test-utils",
+	"reth-codec",
 	"reth-consensus/test-utils",
+	"reth-db-api/test-utils",
+	"reth-db/test-utils",
+	"reth-e2e-test-utils",
 	"reth-evm/test-utils",
 	"reth-network/test-utils",
-	"reth-payload-builder/test-utils",
-	"reth-revm/test-utils",
-	"reth-db/test-utils",
-	"reth-provider/test-utils",
-	"reth-transaction-pool/test-utils",
+	"reth-node-builder/test-utils",
+	"reth-optimism-exex/test-utils",
 	"reth-optimism-node/test-utils",
 	"reth-optimism-primitives/arbitrary",
+	"reth-payload-builder/test-utils",
 	"reth-primitives-traits/test-utils",
+	"reth-provider/test-utils",
+	"reth-revm/test-utils",
+	"reth-stages-types/test-utils",
+	"reth-tasks/test-utils",
+	"reth-transaction-pool/test-utils",
 	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",
-	"reth-stages-types/test-utils",
-	"reth-db-api/test-utils",
-	"reth-tasks/test-utils",
-	"reth-optimism-exex/test-utils"
+	"serde_json",
 ]
-reth-codec = ["reth-optimism-primitives/reth-codec"]
+reth-codec = [ "reth-optimism-primitives/reth-codec" ]
 
 [[test]]
 name = "e2e_testsuite"

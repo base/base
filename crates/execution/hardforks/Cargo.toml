@@ -23,14 +23,10 @@ alloy-primitives.workspace = true
 once_cell.workspace = true
 
 [features]
-default = ["std"]
-std = [
-    "alloy-primitives/std",
-    "once_cell/std",
-    "reth-ethereum-forks/std",
-]
+default = [ "std" ]
+std = [ "alloy-primitives/std", "once_cell/std", "reth-ethereum-forks/std" ]
 serde = [
-    "alloy-primitives/serde",
-    "reth-ethereum-forks/serde",
-    "alloy-op-hardforks/serde",
+	"alloy-op-hardforks/serde",
+	"alloy-primitives/serde",
+	"reth-ethereum-forks/serde",
 ]

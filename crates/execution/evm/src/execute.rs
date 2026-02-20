@@ -5,8 +5,9 @@ pub type OpExecutorProvider = crate::OpEvmConfig;
 
 #[cfg(test)]
 mod tests {
-    use crate::{OpEvmConfig, OpRethReceiptBuilder};
     use alloc::sync::Arc;
+    use std::{collections::HashMap, str::FromStr};
+
     use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, b256};
     use op_alloy_consensus::TxDeposit;
@@ -17,7 +18,8 @@ mod tests {
     use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, RecoveredBlock};
     use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
-    use std::{collections::HashMap, str::FromStr};
+
+    use crate::{OpEvmConfig, OpRethReceiptBuilder};
 
     fn create_op_state_provider() -> StateProviderTest {
         let mut db = StateProviderTest::default();

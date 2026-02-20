@@ -1,4 +1,5 @@
-use crate::{OpBuiltPayload, OpNode as OtherOpNode, OpPayloadBuilderAttributes};
+use std::sync::Arc;
+
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -9,8 +10,9 @@ use reth_node_api::NodeTypesWithDBAdapter;
 use reth_optimism_chainspec::OpChainSpecBuilder;
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
-use std::sync::Arc;
 use tokio::sync::Mutex;
+
+use crate::{OpBuiltPayload, OpNode as OtherOpNode, OpPayloadBuilderAttributes};
 
 /// Optimism Node Helper type
 pub(crate) type OpNode =
@@ -37,7 +39,7 @@ pub async fn advance_chain(
     wallet: Arc<Mutex<Wallet>>,
 ) -> eyre::Result<Vec<OpBuiltPayload>> {
     node.advance(length as u64, |_| {
-        let wallet = wallet.clone();
+        let wallet = Arc::clone(&wallet);
         Box::pin(async move {
             let mut wallet = wallet.lock().await;
             let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(

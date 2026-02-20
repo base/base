@@ -1,12 +1,14 @@
 //! Optimism supervisor metrics
 
-use crate::supervisor::InteropTxValidatorError;
+use std::time::Duration;
+
 use op_alloy_rpc_types::SuperchainDAError;
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Histogram},
 };
-use std::time::Duration;
+
+use crate::supervisor::InteropTxValidatorError;
 
 /// Optimism supervisor metrics
 #[derive(Metrics, Clone)]

@@ -13,12 +13,15 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV3, PayloadId,
 };
 use op_alloy_consensus::{EIP1559ParamError, encode_holocene_extra_data, encode_jovian_extra_data};
+/// Re-export for use in downstream arguments.
+pub use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
 };
 use reth_chainspec::EthChainSpec;
 use reth_optimism_evm::OpNextBlockEnvAttributes;
 use reth_optimism_forks::OpHardforks;
+use reth_optimism_primitives::OpPrimitives;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_primitives::{
     BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock, PayloadBuilderAttributes,
@@ -26,10 +29,6 @@ use reth_payload_primitives::{
 use reth_primitives_traits::{
     NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
 };
-
-/// Re-export for use in downstream arguments.
-pub use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth_optimism_primitives::OpPrimitives;
 
 /// Optimism Payload Builder Attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,13 +442,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::OpPayloadAttributes;
+    use std::str::FromStr;
+
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_payload_primitives::EngineApiMessageVersion;
-    use std::str::FromStr;
+
+    use super::*;
+    use crate::OpPayloadAttributes;
 
     #[test]
     fn test_payload_id_parity_op_geth() {

@@ -1,6 +1,8 @@
-use crate::FlashBlock;
-use alloy_primitives::bytes::Bytes;
 use std::io;
+
+use alloy_primitives::bytes::Bytes;
+
+use crate::FlashBlock;
 
 /// A trait for decoding flashblocks from bytes.
 pub trait FlashBlockDecoder: Send + 'static {

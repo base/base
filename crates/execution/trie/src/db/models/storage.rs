@@ -158,8 +158,9 @@ impl Decode for ProofWindowKey {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use reth_trie::Nibbles;
+
+    use super::*;
 
     #[test]
     fn test_storage_branch_subkey_encode_decode() {

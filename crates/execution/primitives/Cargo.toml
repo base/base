@@ -46,52 +46,49 @@ rand_08.workspace = true
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-    "reth-primitives-traits/std",
-    "alloy-consensus/std",
-    "alloy-primitives/std",
-    "serde?/std",
-    "alloy-rlp/std",
-    "op-alloy-consensus/std",
-    "serde_json/std",
-    "serde_with?/std",
-    "alloy-eips/std",
-    "secp256k1/std",
-    "bytes/std",
-    "reth-zstd-compressors/std",
+	"alloy-consensus/std",
+	"alloy-eips/std",
+	"alloy-primitives/std",
+	"alloy-rlp/std",
+	"bytes/std",
+	"op-alloy-consensus/std",
+	"reth-primitives-traits/std",
+	"reth-zstd-compressors/std",
+	"secp256k1/std",
+	"serde?/std",
+	"serde_json/std",
+	"serde_with?/std",
 ]
-alloy-compat = ["op-alloy-consensus/alloy-compat"]
-reth-codec = [
-    "std",
-    "reth-primitives-traits/reth-codec",
-]
+alloy-compat = [ "op-alloy-consensus/alloy-compat" ]
+reth-codec = [ "reth-primitives-traits/reth-codec", "std" ]
 serde = [
-    "dep:serde",
-    "reth-primitives-traits/serde",
-    "alloy-primitives/serde",
-    "alloy-consensus/serde",
-    "op-alloy-consensus/serde",
-    "alloy-eips/serde",
-    "rand/serde",
-    "rand_08/serde",
-    "bytes/serde",
-    "reth-codecs/serde",
+	"alloy-consensus/serde",
+	"alloy-eips/serde",
+	"alloy-primitives/serde",
+	"bytes/serde",
+	"dep:serde",
+	"op-alloy-consensus/serde",
+	"rand/serde",
+	"rand_08/serde",
+	"reth-codecs/serde",
+	"reth-primitives-traits/serde",
 ]
 serde-bincode-compat = [
-    "serde",
-    "serde_with",
-    "alloy-consensus/serde-bincode-compat",
-    "op-alloy-consensus/serde-bincode-compat",
-    "reth-primitives-traits/serde-bincode-compat",
-    "alloy-eips/serde-bincode-compat",
+	"alloy-consensus/serde-bincode-compat",
+	"alloy-eips/serde-bincode-compat",
+	"op-alloy-consensus/serde-bincode-compat",
+	"reth-primitives-traits/serde-bincode-compat",
+	"serde",
+	"serde_with",
 ]
 arbitrary = [
-    "std",
-    "reth-primitives-traits/arbitrary",
-    "op-alloy-consensus/arbitrary",
-    "alloy-consensus/arbitrary",
-    "alloy-primitives/arbitrary",
-    "alloy-eips/arbitrary",
-    "reth-codecs/arbitrary",
+	"alloy-consensus/arbitrary",
+	"alloy-eips/arbitrary",
+	"alloy-primitives/arbitrary",
+	"op-alloy-consensus/arbitrary",
+	"reth-codecs/arbitrary",
+	"reth-primitives-traits/arbitrary",
+	"std",
 ]

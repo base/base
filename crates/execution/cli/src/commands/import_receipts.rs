@@ -1,7 +1,11 @@
 //! Command that imports OP mainnet receipts from Bedrock datadir, exported via
 //! <https://github.com/testinprod-io/op-geth/pull/1>.
 
-use crate::receipt_file_codec::OpGethReceiptFileCodec;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -23,11 +27,9 @@ use reth_provider::{
 };
 use reth_stages::{StageCheckpoint, StageId};
 use reth_static_file_types::StaticFileSegment;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
 use tracing::{debug, info, trace, warn};
+
+use crate::receipt_file_codec::OpGethReceiptFileCodec;
 
 /// Initializes the database with the genesis block.
 #[derive(Debug, Parser)]
@@ -141,8 +143,8 @@ where
 
     // Ensure that receipts hasn't been initialized apart from `init_genesis`.
     if let Some(num_receipts) =
-        static_file_provider.get_highest_static_file_tx(StaticFileSegment::Receipts) &&
-        num_receipts > 0
+        static_file_provider.get_highest_static_file_tx(StaticFileSegment::Receipts)
+        && num_receipts > 0
     {
         eyre::bail!("Expected no receipts in storage, but found {num_receipts}.");
     }
@@ -285,11 +287,10 @@ mod test {
         io::{AsyncSeekExt, AsyncWriteExt, SeekFrom},
     };
 
+    use super::*;
     use crate::receipt_file_codec::test::{
         HACK_RECEIPT_ENCODED_BLOCK_1, HACK_RECEIPT_ENCODED_BLOCK_2, HACK_RECEIPT_ENCODED_BLOCK_3,
     };
-
-    use super::*;
 
     /// No receipts for genesis block
     const EMPTY_RECEIPTS_GENESIS_BLOCK: &[u8] = &hex!("c0");

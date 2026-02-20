@@ -1,5 +1,7 @@
 //! Command that prunes the OP proofs storage.
 
+use std::{path::PathBuf, sync::Arc};
+
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -9,7 +11,6 @@ use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_trie::{
     OpProofStoragePruner, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
 };
-use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
 /// Prunes the proofs storage by removing old proof history and state updates.

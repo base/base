@@ -2,10 +2,11 @@
 
 //! clap [Args](clap::Args) for optimism rollup configuration
 
+use std::{path::PathBuf, time::Duration};
+
 use clap::builder::ArgPredicate;
 use op_alloy_consensus::interop::SafetyLevel;
 use reth_optimism_txpool::supervisor::DEFAULT_SUPERVISOR_URL;
-use std::{path::PathBuf, time::Duration};
 use url::Url;
 
 /// Parameters for rollup configuration
@@ -172,8 +173,9 @@ impl Default for RollupArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use clap::{Args, Parser};
+
+    use super::*;
 
     /// A helper type to parse Args more easily
     #[derive(Parser)]

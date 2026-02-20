@@ -42,7 +42,7 @@ tokio = { workspace = true, features = ["sync"] }
 # codec
 bytes.workspace = true
 serde.workspace = true
-bincode.workspace = true
+bincode = { workspace = true, features = ["serde"] }
 
 # misc
 parking_lot.workspace = true
@@ -72,6 +72,7 @@ reth-ethereum-primitives.workspace = true
 reth-evm-ethereum.workspace = true
 reth-storage-errors.workspace = true
 secp256k1 = { workspace = true, features = ["rand", "std"] }
+rand_08.workspace = true
 mockall.workspace = true
 eyre.workspace = true
 
@@ -80,19 +81,19 @@ serial_test.workspace = true
 
 [features]
 serde-bincode-compat = [
-	"reth-primitives-traits/serde-bincode-compat",
-	"reth-trie-common/serde-bincode-compat",
 	"alloy-consensus/serde-bincode-compat",
 	"alloy-eips/serde-bincode-compat",
-	"reth-trie/serde-bincode-compat",
 	"dep:reth-ethereum-primitives",
-	"reth-ethereum-primitives?/serde-bincode-compat",
 	"reth-ethereum-primitives?/serde",
+	"reth-ethereum-primitives?/serde-bincode-compat",
+	"reth-primitives-traits/serde-bincode-compat",
+	"reth-trie-common/serde-bincode-compat",
+	"reth-trie/serde-bincode-compat",
 ]
 metrics = [
-	"reth-trie/metrics",
-	"dep:reth-metrics",
-	"dep:metrics",
 	"dep:eyre",
-	"reth-evm/metrics"
+	"dep:metrics",
+	"dep:reth-metrics",
+	"reth-evm/metrics",
+	"reth-trie/metrics",
 ]

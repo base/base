@@ -1,6 +1,7 @@
 //! Loads and formats OP receipt RPC response.
 
-use crate::{OpEthApi, OpEthApiError, eth::RpcNodeCore};
+use std::fmt::Debug;
+
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
@@ -19,7 +20,8 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::{EthApiError, receipt::build_receipt};
 use reth_storage_api::BlockReader;
-use std::fmt::Debug;
+
+use crate::{OpEthApi, OpEthApiError, eth::RpcNodeCore};
 
 impl<N, Rpc> LoadReceipt for OpEthApi<N, Rpc>
 where
@@ -340,7 +342,6 @@ impl OpReceiptBuilder {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
     use alloy_op_hardforks::{
         OP_MAINNET_ISTHMUS_TIMESTAMP, OP_MAINNET_JOVIAN_TIMESTAMP, OpChainHardforks,
@@ -351,6 +352,8 @@ mod test {
     use reth_optimism_chainspec::{BASE_MAINNET, OP_MAINNET};
     use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
+
+    use super::*;
 
     /// OP Mainnet transaction at index 0 in block 124665056.
     ///

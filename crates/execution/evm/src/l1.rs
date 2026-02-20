@@ -1,12 +1,13 @@
 //! Optimism-specific implementation and utilities for the executor
 
-use crate::{OpBlockExecutionError, error::L1BlockInfoError, revm_spec_by_timestamp_after_bedrock};
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
 use op_revm::L1BlockInfo;
 use reth_execution_errors::BlockExecutionError;
 use reth_optimism_forks::OpHardforks;
 use reth_primitives_traits::BlockBody;
+
+use crate::{OpBlockExecutionError, error::L1BlockInfoError, revm_spec_by_timestamp_after_bedrock};
 
 /// The function selector of the "setL1BlockValuesEcotone" function in the `L1Block` contract.
 const L1_BLOCK_ECOTONE_SELECTOR: [u8; 4] = hex!("440a5e20");
@@ -351,13 +352,14 @@ impl RethL1BlockInfo for L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_consensus::{Block, BlockBody};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::keccak256;
     use reth_optimism_chainspec::OP_MAINNET;
     use reth_optimism_forks::OpHardforks;
     use reth_optimism_primitives::OpTransactionSigned;
+
+    use super::*;
 
     #[test]
     fn sanity_l1_block() {

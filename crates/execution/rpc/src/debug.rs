@@ -1,9 +1,7 @@
 //! Historical proofs RPC server implementation for `debug_` namespace.
 
-use crate::{
-    metrics::{DebugApiExtMetrics, DebugApis},
-    state::OpStateProviderFactory,
-};
+use std::{marker::PhantomData, sync::Arc};
+
 use alloy_consensus::BlockHeader;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
@@ -35,8 +33,12 @@ use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_tasks::TaskSpawner;
 use serde::{Deserialize, Serialize};
-use std::{marker::PhantomData, sync::Arc};
 use tokio::sync::{Semaphore, oneshot};
+
+use crate::{
+    metrics::{DebugApiExtMetrics, DebugApis},
+    state::OpStateProviderFactory,
+};
 
 /// Represents the current proofs sync status.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -68,7 +70,7 @@ pub trait DebugApiOverride<Attributes> {
 }
 
 #[derive(Debug)]
-/// Overrides applied to the `debug_` namespace of the RPC API for the OP Proofs ExEx.
+/// Overrides applied to the `debug_` namespace of the RPC API for the OP Proofs `ExEx`.
 pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
     inner: Arc<DebugApiExtInner<Eth, Storage, Provider, EvmConfig, Attrs>>,
 }
@@ -102,7 +104,7 @@ where
 }
 
 #[derive(Debug)]
-/// Overrides applied to the `debug_` namespace of the RPC API for historical proofs ExEx.
+/// Overrides applied to the `debug_` namespace of the RPC API for historical proofs `ExEx`.
 pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
     provider: Provider,
     eth_api: Eth,
@@ -200,7 +202,7 @@ where
                 let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
                 let (tx, rx) = oneshot::channel();
-                let this = self.inner.clone();
+                let this = Arc::clone(&self.inner);
                 self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
                     let result = async {
                         let parent_hash = parent_header.hash();
@@ -259,7 +261,7 @@ where
                     .await?
                     .ok_or(EthApiError::HeaderNotFound(block_id.into()))?;
 
-                let this = self.inner.clone();
+                let this = Arc::clone(&self.inner);
                 let block_number = block.header().number();
 
                 let state_provider = this

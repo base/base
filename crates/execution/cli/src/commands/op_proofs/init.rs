@@ -1,5 +1,7 @@
 //! Command that initializes the OP proofs storage with the current state of the chain.
 
+use std::{path::PathBuf, sync::Arc};
+
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
@@ -11,7 +13,6 @@ use reth_optimism_trie::{
     InitializationJob, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
 };
 use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
-use std::{path::PathBuf, sync::Arc};
 use tracing::info;
 
 /// Initializes the proofs storage with the current state of the chain.

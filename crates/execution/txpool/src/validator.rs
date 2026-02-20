@@ -1,4 +1,8 @@
-use crate::{InvalidCrossTx, OpPooledTx, supervisor::SupervisorClient};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
+
 use alloy_consensus::{BlockHeader, Transaction};
 use op_revm::L1BlockInfo;
 use parking_lot::RwLock;
@@ -15,10 +19,8 @@ use reth_transaction_pool::{
     EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidator, error::InvalidPoolTransactionError,
 };
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
-};
+
+use crate::{InvalidCrossTx, OpPooledTx, supervisor::SupervisorClient};
 
 /// The interval for which we check transaction against supervisor, 1 hour.
 const TRANSACTION_VALIDITY_WINDOW_SECS: u64 = 3600;

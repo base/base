@@ -1,6 +1,5 @@
 //! Loads OP pending block for a RPC response.
 
-use crate::{OpEthApi, OpEthApiError};
 use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumberOrTag;
 use reth_chain_state::BlockState;
@@ -13,6 +12,8 @@ use reth_rpc_eth_types::{
     error::FromEthApiError,
 };
 use reth_storage_api::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
+
+use crate::{OpEthApi, OpEthApiError};
 
 impl<N, Rpc> LoadPendingBlock for OpEthApi<N, Rpc>
 where

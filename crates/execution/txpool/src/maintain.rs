@@ -7,11 +7,8 @@ const OFFSET_TIME: u64 = 60;
 /// Maximum number of supervisor requests at the same time
 const MAX_SUPERVISOR_QUERIES: usize = 10;
 
-use crate::{
-    conditional::MaybeConditionalTransaction,
-    interop::{MaybeInteropTransaction, is_stale_interop, is_valid_interop},
-    supervisor::SupervisorClient,
-};
+use std::time::Instant;
+
 use alloy_consensus::{BlockHeader, conditional::BlockConditionalAttributes};
 use futures_util::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use metrics::{Gauge, Histogram};
@@ -19,8 +16,13 @@ use reth_chain_state::CanonStateNotification;
 use reth_metrics::{Metrics, metrics::Counter};
 use reth_primitives_traits::NodePrimitives;
 use reth_transaction_pool::{PoolTransaction, TransactionPool, error::PoolTransactionError};
-use std::time::Instant;
 use tracing::warn;
+
+use crate::{
+    conditional::MaybeConditionalTransaction,
+    interop::{MaybeInteropTransaction, is_stale_interop, is_valid_interop},
+    supervisor::SupervisorClient,
+};
 
 /// Transaction pool maintenance metrics
 #[derive(Metrics)]

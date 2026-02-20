@@ -1,9 +1,7 @@
 //! Live trie collector for external proofs storage.
 
-use crate::{
-    BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore, api::OperationDurations,
-    provider::OpProofsStateProviderRef,
-};
+use std::{sync::Arc, time::Instant};
+
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use derive_more::Constructor;
 use reth_evm::{ConfigureEvm, execute::Executor};
@@ -14,8 +12,12 @@ use reth_provider::{
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
-use std::{sync::Arc, time::Instant};
 use tracing::info;
+
+use crate::{
+    BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore, api::OperationDurations,
+    provider::OpProofsStateProviderRef,
+};
 
 /// Live trie collector for external proofs storage.
 #[derive(Debug, Constructor)]
@@ -105,9 +107,9 @@ where
         )?;
 
         operation_durations.total_duration_seconds = start.elapsed();
-        operation_durations.write_duration_seconds = operation_durations.total_duration_seconds -
-            operation_durations.state_root_duration_seconds -
-            operation_durations.execution_duration_seconds;
+        operation_durations.write_duration_seconds = operation_durations.total_duration_seconds
+            - operation_durations.state_root_duration_seconds
+            - operation_durations.execution_duration_seconds;
 
         #[cfg(feature = "metrics")]
         {

@@ -1,11 +1,12 @@
 //! OP Proofs management commands
 
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::CliNodeTypes;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpPrimitives;
-use std::sync::Arc;
 
 pub mod init;
 pub mod prune;

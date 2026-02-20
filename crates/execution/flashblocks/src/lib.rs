@@ -8,11 +8,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use reth_primitives_traits::NodePrimitives;
 use std::sync::Arc;
 
 // Included to enable serde feature for OpReceipt type used transitively
 use reth_optimism_primitives as _;
+use reth_primitives_traits::NodePrimitives;
 
 mod consensus;
 pub use consensus::FlashBlockConsensusClient;

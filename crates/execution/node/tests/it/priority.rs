@@ -1,5 +1,7 @@
 //! Node builder test that customizes priority of transactions in the block.
 
+use std::sync::Arc;
+
 use alloy_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::Recovered};
 use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
@@ -34,7 +36,6 @@ use reth_payload_util::{
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::Runtime;
 use reth_transaction_pool::PoolTransaction;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
@@ -156,7 +157,7 @@ async fn test_custom_block_priority_config() {
         .await
         .unwrap()
         .advance(1, |_| {
-            let wallet = wallet.clone();
+            let wallet = Arc::clone(&wallet);
             Box::pin(async move {
                 let mut wallet = wallet.lock().await;
                 let tx_fut = TransactionTestContext::optimism_l1_block_info_tx(

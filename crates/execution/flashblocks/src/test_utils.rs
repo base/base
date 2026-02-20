@@ -48,12 +48,13 @@
 //!     .build();
 //! ```
 
-use crate::FlashBlock;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
 use alloy_rpc_types_engine::PayloadId;
 use op_alloy_rpc_types_engine::{
     OpFlashblockPayloadBase, OpFlashblockPayloadDelta, OpFlashblockPayloadMetadata,
 };
+
+use crate::FlashBlock;
 
 /// Factory for creating test flashblocks with automatic timestamp management.
 ///

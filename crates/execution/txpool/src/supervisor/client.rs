@@ -1,12 +1,12 @@
 //! This is our custom implementation of validator struct
 
-use crate::{
-    InvalidCrossTx,
-    supervisor::{
-        ExecutingDescriptor, InteropTxValidatorError, metrics::SupervisorMetrics,
-        parse_access_list_items_to_inbox_entries,
-    },
+use std::{
+    borrow::Cow,
+    future::IntoFuture,
+    sync::Arc,
+    time::{Duration, Instant},
 };
+
 use alloy_consensus::Transaction;
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{B256, TxHash};
@@ -18,13 +18,15 @@ use futures_util::{
 };
 use op_alloy_consensus::interop::SafetyLevel;
 use reth_transaction_pool::PoolTransaction;
-use std::{
-    borrow::Cow,
-    future::IntoFuture,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use tracing::trace;
+
+use crate::{
+    InvalidCrossTx,
+    supervisor::{
+        ExecutingDescriptor, InteropTxValidatorError, metrics::SupervisorMetrics,
+        parse_access_list_items_to_inbox_entries,
+    },
+};
 
 /// Supervisor hosted by op-labs
 // TODO: This should be changed to actual supervisor url

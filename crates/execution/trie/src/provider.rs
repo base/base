@@ -1,12 +1,7 @@
 //! Provider for external proofs storage
 
-use crate::{
-    OpProofsStorage, OpProofsStorageError, OpProofsStore,
-    proof::{
-        DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
-        DatabaseTrieWitness,
-    },
-};
+use std::fmt::Debug;
+
 use alloy_primitives::keccak256;
 use derive_more::Constructor;
 use reth_primitives_traits::{Account, Bytecode};
@@ -28,7 +23,14 @@ use reth_trie_common::{
     AccountProof, HashedPostState, HashedStorage, KeccakKeyHasher, MultiProof, MultiProofTargets,
     StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
-use std::fmt::Debug;
+
+use crate::{
+    OpProofsStorage, OpProofsStorageError, OpProofsStore,
+    proof::{
+        DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
+        DatabaseTrieWitness,
+    },
+};
 
 /// State provider for external proofs storage.
 #[derive(Constructor)]
@@ -222,9 +224,10 @@ impl<'a, Storage: OpProofsStore> BytecodeReader for OpProofsStateProviderRef<'a,
 
 #[cfg(all(test, not(feature = "metrics")))]
 mod tests {
+    use reth_provider::noop::NoopProvider;
+
     use super::*;
     use crate::InMemoryProofsStorage;
-    use reth_provider::noop::NoopProvider;
 
     #[test]
     fn test_op_proofs_state_provider_ref_debug() {

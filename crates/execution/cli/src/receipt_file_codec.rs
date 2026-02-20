@@ -7,10 +7,9 @@ use alloy_primitives::{
 };
 use alloy_rlp::{Decodable, RlpDecodable};
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
+use reth_downloaders::{file_client::FileClientError, receipt_file_client::ReceiptWithBlockNumber};
 use reth_optimism_primitives::OpReceipt;
 use tokio_util::codec::Decoder;
-
-use reth_downloaders::{file_client::FileClientError, receipt_file_client::ReceiptWithBlockNumber};
 
 /// Codec for reading raw receipts from a file.
 ///

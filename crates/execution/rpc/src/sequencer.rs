@@ -1,14 +1,16 @@
 //! Helpers for optimism specific RPC implementations.
 
-use crate::{SequencerClientError, SequencerMetrics};
+use std::{str::FromStr, sync::Arc, time::Instant};
+
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_primitives::{B256, hex};
 use alloy_rpc_client::{BuiltInConnectionString, ClientBuilder, RpcClient as Client};
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use alloy_transport_http::{Http, reqwest as alloy_reqwest};
-use std::{str::FromStr, sync::Arc, time::Instant};
 use thiserror::Error;
 use tracing::warn;
+
+use crate::{SequencerClientError, SequencerMetrics};
 
 /// Sequencer client error
 #[derive(Error, Debug)]
@@ -204,8 +206,9 @@ struct SequencerClientInner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::U64;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_http_body_str() {

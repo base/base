@@ -1,4 +1,4 @@
-//! State provider factory for OP Proofs ExEx.
+//! State provider factory for OP Proofs `ExEx`.
 
 use alloy_eips::BlockId;
 use derive_more::Constructor;

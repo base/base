@@ -15,7 +15,6 @@ pub use chain::OpStorage;
 #[cfg(test)]
 mod tests {
     use reth_codecs::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
-
     use reth_prune_types::{PruneCheckpoint, PruneMode, PruneSegment};
 
     #[test]

@@ -56,8 +56,9 @@ impl BlockNumberHash {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::B256;
+
+    use super::*;
 
     #[test]
     fn test_block_number_hash_roundtrip() {

@@ -1,4 +1,3 @@
-use crate::{FlashBlockCompleteSequence, FlashBlockCompleteSequenceRx};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use op_alloy_rpc_types_engine::OpExecutionData;
@@ -6,6 +5,8 @@ use reth_engine_primitives::ConsensusEngineHandle;
 use reth_optimism_payload_builder::OpPayloadTypes;
 use reth_payload_primitives::{EngineApiMessageVersion, ExecutionPayload, PayloadTypes};
 use tracing::*;
+
+use crate::{FlashBlockCompleteSequence, FlashBlockCompleteSequenceRx};
 
 /// Consensus client that sends FCUs and new payloads using blocks from a [`FlashBlockService`].
 ///
@@ -288,8 +289,9 @@ mod tests {
     }
 
     mod consensus_client_creation {
-        use super::*;
         use tokio::sync::broadcast;
+
+        use super::*;
 
         #[test]
         fn test_new_creates_client() {

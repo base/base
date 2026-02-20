@@ -1,11 +1,8 @@
 //! Initialization job for proofs storage. Handles storing the existing state into the proofs
 //! storage.
 
-use crate::{
-    OpProofsStorageError, OpProofsStore,
-    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore},
-    db::{HashedStorageKey, StorageTrieKey},
-};
+use std::{collections::HashMap, time::Instant};
+
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256};
 use derive_more::Constructor;
@@ -19,8 +16,13 @@ use reth_primitives_traits::{Account, StorageEntry};
 use reth_trie_common::{
     BranchNodeCompact, Nibbles, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
 };
-use std::{collections::HashMap, time::Instant};
 use tracing::{debug, info};
+
+use crate::{
+    OpProofsStorageError, OpProofsStore,
+    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore},
+    db::{HashedStorageKey, StorageTrieKey},
+};
 
 /// Batch size threshold for storing entries during initialization
 const INITIALIZE_STORAGE_THRESHOLD: usize = 100000;
@@ -461,8 +463,8 @@ impl<C> InitTable for StoragesTrieInit<C> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::MdbxProofsStorage;
+    use std::sync::Arc;
+
     use alloy_primitives::{Address, U256, keccak256};
     use reth_db::{
         Database, cursor::DbCursorRW, test_utils::create_test_rw_db, transaction::DbTxMut,
@@ -472,8 +474,10 @@ mod tests {
         BranchNodeCompact, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey, TrieMask,
         hashed_cursor::HashedCursor, trie_cursor::TrieCursor,
     };
-    use std::sync::Arc;
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::MdbxProofsStorage;
 
     /// Helper function to create a key
     fn k(b: u8) -> B256 {
@@ -533,7 +537,7 @@ mod tests {
 
         // Run initialization
         let tx = db.tx().unwrap();
-        let job = InitializationJob::new(storage.clone(), tx);
+        let job = InitializationJob::new(Arc::clone(&storage), tx);
         job.initialize_hashed_accounts(None).unwrap();
 
         // Verify data was stored (will be in sorted order)
@@ -584,7 +588,7 @@ mod tests {
 
         // Run initialization
         let tx = db.tx().unwrap();
-        let job = InitializationJob::new(storage.clone(), tx);
+        let job = InitializationJob::new(Arc::clone(&storage), tx);
         job.initialize_hashed_storages(None).unwrap();
 
         // Verify data was stored for addr1
@@ -632,7 +636,7 @@ mod tests {
 
         // Run initialization
         let tx = db.tx().unwrap();
-        let job = InitializationJob::new(storage.clone(), tx);
+        let job = InitializationJob::new(Arc::clone(&storage), tx);
         job.initialize_accounts_trie(None).unwrap();
 
         // Verify data was stored
@@ -691,7 +695,7 @@ mod tests {
 
         // Run initialization
         let tx = db.tx().unwrap();
-        let job = InitializationJob::new(storage.clone(), tx);
+        let job = InitializationJob::new(Arc::clone(&storage), tx);
         job.initialize_storages_trie(None).unwrap();
 
         // Verify data was stored for addr1
@@ -768,7 +772,7 @@ mod tests {
 
         // Run full initialization
         let tx = db.tx().unwrap();
-        let job = InitializationJob::new(storage.clone(), tx);
+        let job = InitializationJob::new(Arc::clone(&storage), tx);
         let best_number = 100;
         let best_hash = B256::repeat_byte(0x42);
 
@@ -808,7 +812,7 @@ mod tests {
         storage.commit_initial_state().expect("commit anchor");
 
         let tx = db.tx().unwrap();
-        let job = InitializationJob::new(storage.clone(), tx);
+        let job = InitializationJob::new(Arc::clone(&storage), tx);
 
         // Run initialization - should skip
         job.run(100, B256::repeat_byte(0x42)).unwrap();
@@ -852,7 +856,7 @@ mod tests {
         // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_hashed_accounts(None).unwrap();
         }
 
@@ -878,7 +882,7 @@ mod tests {
         // Initialization #2 (restart)
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_hashed_accounts(Some(k2)).unwrap();
         }
 
@@ -939,7 +943,7 @@ mod tests {
         // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_hashed_storages(None).unwrap();
         }
 
@@ -963,7 +967,7 @@ mod tests {
         // Initialization #2
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_hashed_storages(Some(HashedStorageKey::new(a2, s21))).unwrap();
         }
 
@@ -1024,7 +1028,7 @@ mod tests {
         // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_accounts_trie(None).unwrap();
         }
 
@@ -1045,7 +1049,7 @@ mod tests {
         // Initialization #2
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_accounts_trie(Some(p2.clone())).unwrap();
         }
 
@@ -1102,7 +1106,7 @@ mod tests {
         // Initialization #1
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_storages_trie(None).unwrap();
         }
 
@@ -1127,7 +1131,7 @@ mod tests {
         // Initialization #2
         {
             let tx = db.tx().unwrap();
-            let job = InitializationJob::new(store.clone(), tx);
+            let job = InitializationJob::new(Arc::clone(&store), tx);
             job.initialize_storages_trie(Some(StorageTrieKey::new(a2, StoredNibbles::from(n2.0))))
                 .unwrap();
         }

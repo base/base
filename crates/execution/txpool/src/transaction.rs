@@ -1,7 +1,12 @@
-use crate::{
-    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
-    interop::MaybeInteropTransaction,
+use core::fmt::Debug;
+use std::{
+    borrow::Cow,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+
 use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
@@ -12,18 +17,15 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use c_kzg::KzgSettings;
-use core::fmt::Debug;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
 };
-use std::{
-    borrow::Cow,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
-    },
+
+use crate::{
+    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
+    interop::MaybeInteropTransaction,
 };
 
 /// Marker for no-interop transactions
@@ -310,7 +312,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{OpPooledTransaction, OpTransactionValidator};
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
@@ -323,6 +324,8 @@ mod tests {
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
         validate::EthTransactionValidatorBuilder,
     };
+
+    use crate::{OpPooledTransaction, OpTransactionValidator};
     #[tokio::test]
     async fn validate_optimism_transaction() {
         let client = MockEthProvider::<OpPrimitives>::new()

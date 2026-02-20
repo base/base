@@ -1,6 +1,8 @@
-use crate::supervisor::InteropTxValidatorError;
-use reth_transaction_pool::error::PoolTransactionError;
 use std::any::Any;
+
+use reth_transaction_pool::error::PoolTransactionError;
+
+use crate::supervisor::InteropTxValidatorError;
 
 /// Wrapper for [`InteropTxValidatorError`] to implement [`PoolTransactionError`] for it.
 #[derive(thiserror::Error, Debug)]

@@ -1,14 +1,16 @@
+use std::cmp;
+
+use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
+use reth_provider::BlockHashReader;
+use tokio::time::Instant;
+use tracing::{error, info, trace};
+
 #[cfg(feature = "metrics")]
 use crate::prune::metrics::Metrics;
 use crate::{
     OpProofsStorage, OpProofsStore,
     prune::error::{OpProofStoragePrunerResult, PrunerError, PrunerOutput},
 };
-use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
-use reth_provider::BlockHashReader;
-use std::cmp;
-use tokio::time::Instant;
-use tracing::{error, info, trace};
 
 /// Prunes the proof storage by calling `prune_earliest_state` on the storage provider.
 #[derive(Debug)]
@@ -177,8 +179,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{BlockStateDiff, db::MdbxProofsStorage};
+    use std::sync::Arc;
+
     use alloy_eips::{BlockHashOrNumber, NumHash};
     use alloy_primitives::{B256, BlockNumber, U256};
     use mockall::mock;
@@ -190,8 +192,10 @@ mod tests {
         trie_cursor::TrieCursor,
         updates::{StorageTrieUpdates, TrieUpdates, TrieUpdatesSorted},
     };
-    use std::sync::Arc;
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::{BlockStateDiff, db::MdbxProofsStorage};
 
     mock! (
         #[derive(Debug)]

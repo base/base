@@ -1,8 +1,9 @@
-use crate::PrunerOutput;
 use reth_metrics::{
     Metrics,
     metrics::{Gauge, Histogram},
 };
+
+use crate::PrunerOutput;
 
 #[derive(Metrics)]
 #[metrics(scope = "optimism_trie.pruner")]

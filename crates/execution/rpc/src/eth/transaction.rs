@@ -1,6 +1,11 @@
 //! Loads and formats OP transaction RPC response.
 
-use crate::{OpEthApi, OpEthApiError, SequencerClient};
+use std::{
+    fmt::{Debug, Formatter},
+    future::Future,
+    time::Duration,
+};
+
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use futures::StreamExt;
@@ -21,12 +26,9 @@ use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
-use std::{
-    fmt::{Debug, Formatter},
-    future::Future,
-    time::Duration,
-};
 use tokio_stream::wrappers::WatchStream;
+
+use crate::{OpEthApi, OpEthApiError, SequencerClient};
 
 impl<N, Rpc> EthTransactions for OpEthApi<N, Rpc>
 where
@@ -171,9 +173,9 @@ where
 
             if tx_receipt.is_none() {
                 // if flashblocks are supported, attempt to find id from the pending block
-                if let Ok(Some(pending_block)) = this.pending_flashblock().await &&
-                    let Some(Ok(receipt)) = pending_block
-                        .find_and_convert_transaction_receipt(hash, this.converter())
+                if let Ok(Some(pending_block)) = this.pending_flashblock().await
+                    && let Some(Ok(receipt)) =
+                        pending_block.find_and_convert_transaction_receipt(hash, this.converter())
                 {
                     return Ok(Some(receipt));
                 }
@@ -217,8 +219,8 @@ where
         }
 
         // 2. check flashblocks (sequencer preconfirmations)
-        if let Ok(Some(pending_block)) = self.pending_flashblock().await &&
-            let Some(indexed_tx) = pending_block.block().find_indexed(hash)
+        if let Ok(Some(pending_block)) = self.pending_flashblock().await
+            && let Some(indexed_tx) = pending_block.block().find_indexed(hash)
         {
             let meta = indexed_tx.meta();
             return Ok(Some(TransactionSource::Block {

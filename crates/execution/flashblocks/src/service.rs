@@ -1,11 +1,8 @@
-use crate::{
-    FlashBlock, FlashBlockCompleteSequence, FlashBlockCompleteSequenceRx, InProgressFlashBlockRx,
-    PendingFlashBlock,
-    cache::SequenceManager,
-    pending_state::PendingStateRegistry,
-    validation::ReconciliationStrategy,
-    worker::{BuildResult, FlashBlockBuilder},
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
 };
+
 use alloy_primitives::B256;
 use futures_util::{FutureExt, Stream, StreamExt};
 use metrics::{Counter, Gauge, Histogram};
@@ -15,15 +12,20 @@ use reth_metrics::Metrics;
 use reth_primitives_traits::{AlloyBlockHeader, BlockTy, HeaderTy, NodePrimitives, ReceiptTy};
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_tasks::TaskExecutor;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::sleep,
 };
 use tracing::*;
+
+use crate::{
+    FlashBlock, FlashBlockCompleteSequence, FlashBlockCompleteSequenceRx, InProgressFlashBlockRx,
+    PendingFlashBlock,
+    cache::SequenceManager,
+    pending_state::PendingStateRegistry,
+    validation::ReconciliationStrategy,
+    worker::{BuildResult, FlashBlockBuilder},
+};
 
 const CONNECTION_BACKOUT_PERIOD: Duration = Duration::from_secs(5);
 
@@ -278,9 +280,9 @@ where
         // Clear pending states for strategies that invalidate speculative state
         if matches!(
             strategy,
-            ReconciliationStrategy::HandleReorg |
-                ReconciliationStrategy::CatchUp |
-                ReconciliationStrategy::DepthLimitExceeded { .. }
+            ReconciliationStrategy::HandleReorg
+                | ReconciliationStrategy::CatchUp
+                | ReconciliationStrategy::DepthLimitExceeded { .. }
         ) {
             self.pending_states.clear();
         }

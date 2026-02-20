@@ -1,12 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::{
-    OpProofsStorageResult,
-    db::{
-        AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey,
-        MaybeDeleted, StorageTrieHistory, StorageTrieKey, VersionedValue,
-    },
-};
 use alloy_primitives::{B256, U256};
 use reth_db::{
     Database, DatabaseEnv, DatabaseError,
@@ -20,6 +13,14 @@ use reth_trie::{
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
 use reth_trie_common::{BranchNodeCompact, Nibbles, StoredNibbles};
+
+use crate::{
+    OpProofsStorageResult,
+    db::{
+        AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey,
+        MaybeDeleted, StorageTrieHistory, StorageTrieKey, VersionedValue,
+    },
+};
 
 /// Generic alias for dup cursor for T
 pub(crate) type Dup<'tx, T> = <<DatabaseEnv as Database>::TX as DbTx>::DupCursor<T>;
@@ -86,8 +87,8 @@ where
 
     /// Returns a non-deleted latest version for exactly `key`, if any.
     fn seek_exact(&mut self, key: T::Key) -> OpProofsStorageResult<Option<(T::Key, V)>> {
-        if let Some((latest_key, latest_value)) = self.latest_version_for_key(key)? &&
-            let MaybeDeleted(Some(v)) = latest_value.value
+        if let Some((latest_key, latest_value)) = self.latest_version_for_key(key)?
+            && let MaybeDeleted(Some(v)) = latest_value.value
         {
             return Ok(Some((latest_key, v)));
         }
@@ -312,8 +313,8 @@ where
             })
         })?;
 
-        if let Some((_, v)) = result &&
-            v.is_zero()
+        if let Some((_, v)) = result
+            && v.is_zero()
         {
             return self.next();
         }
@@ -341,8 +342,8 @@ where
 
             // hashed storage values can be zero, which means the storage slot is deleted, so we
             // should skip those
-            if let Some((_, v)) = result &&
-                v.is_zero()
+            if let Some((_, v)) = result
+                && v.is_zero()
             {
                 continue;
             }
@@ -403,8 +404,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::db::{StorageValue, models};
     use reth_db::{
         DatabaseEnv,
         mdbx::{DatabaseArguments, init_db_for},
@@ -416,6 +415,9 @@ mod tests {
     };
     use reth_trie::{BranchNodeCompact, Nibbles, StoredNibbles};
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::db::{StorageValue, models};
 
     fn setup_db() -> DatabaseEnv {
         let tmp = TempDir::new().expect("create tmpdir");

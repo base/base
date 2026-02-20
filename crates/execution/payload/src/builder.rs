@@ -1,8 +1,6 @@
 //! Optimism payload builder implementation.
-use crate::{
-    OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::OpBuilderConfig,
-    error::OpPayloadBuilderError, payload::OpBuiltPayload,
-};
+use std::{marker::PhantomData, sync::Arc};
+
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
 use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
@@ -39,8 +37,12 @@ use reth_revm::{
 use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
 use revm::context::{Block, BlockEnv};
-use std::{marker::PhantomData, sync::Arc};
 use tracing::{debug, trace, warn};
+
+use crate::{
+    OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::OpBuilderConfig,
+    error::OpPayloadBuilderError, payload::OpBuiltPayload,
+};
 
 /// Optimism's payload builder
 #[derive(Debug)]
@@ -724,8 +726,8 @@ where
 
             // We skip invalid cross chain txs, they would be removed on the next block update in
             // the maintenance job
-            if let Some(interop) = interop &&
-                !is_valid_interop(interop, self.config.attributes.timestamp())
+            if let Some(interop) = interop
+                && !is_valid_interop(interop, self.config.attributes.timestamp())
             {
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;

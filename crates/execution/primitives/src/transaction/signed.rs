@@ -1,8 +1,13 @@
 //! This file contains the legacy reth `OpTransactionSigned` type that has been replaced with
 //! op-alloy's OpTransactionSigned To test for consistency this is kept
 
-use crate::transaction::OpTransaction;
 use alloc::vec::Vec;
+use core::{
+    hash::{Hash, Hasher},
+    mem,
+    ops::Deref,
+};
+
 use alloy_consensus::{
     Sealed, SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy,
     Typed2718,
@@ -15,11 +20,6 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, Uint, keccak256};
 use alloy_rlp::Header;
-use core::{
-    hash::{Hash, Hasher},
-    mem,
-    ops::Deref,
-};
 use op_alloy_consensus::{OpPooledTransaction, OpTxEnvelope, OpTypedTransaction, TxDeposit};
 #[cfg(any(test, feature = "reth-codec"))]
 use reth_primitives_traits::{
@@ -28,6 +28,8 @@ use reth_primitives_traits::{
     sync::OnceLock,
     transaction::{error::TransactionConversionError, signed::RecoveryError},
 };
+
+use crate::transaction::OpTransaction;
 
 /// Signed transaction.
 #[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(rlp))]
@@ -401,9 +403,9 @@ impl Typed2718 for OpTransactionSigned {
 
 impl PartialEq for OpTransactionSigned {
     fn eq(&self, other: &Self) -> bool {
-        self.signature == other.signature &&
-            self.transaction == other.transaction &&
-            self.tx_hash() == other.tx_hash()
+        self.signature == other.signature
+            && self.transaction == other.transaction
+            && self.tx_hash() == other.tx_hash()
     }
 }
 
@@ -481,7 +483,7 @@ impl<'a> arbitrary::Arbitrary<'a> for OpTransactionSigned {
         let mut transaction = OpTypedTransaction::arbitrary(u)?;
 
         let secp = secp256k1::Secp256k1::new();
-        let key_pair = secp256k1::Keypair::new(&secp, &mut rand::rng());
+        let key_pair = secp256k1::Keypair::new(&secp, &mut rand_08::thread_rng());
         let signature = reth_primitives_traits::crypto::secp256k1::sign_message(
             B256::from_slice(&key_pair.secret_bytes()[..]),
             signature_hash(&transaction),
@@ -507,10 +509,11 @@ fn signature_hash(tx: &OpTypedTransaction) -> B256 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use proptest::proptest;
     use proptest_arbitrary_interop::arb;
     use reth_codecs::Compact;
+
+    use super::*;
 
     proptest! {
         #[test]

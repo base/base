@@ -1,10 +1,11 @@
 //! RPC metrics unique for OP-stack.
 
-use alloy_primitives::map::HashMap;
 use core::time::Duration;
+use std::time::Instant;
+
+use alloy_primitives::map::HashMap;
 use metrics::{Counter, Histogram};
 use reth_metrics::Metrics;
-use std::time::Instant;
 use strum::{EnumCount, EnumIter, IntoEnumIterator};
 
 /// Optimism sequencer metrics

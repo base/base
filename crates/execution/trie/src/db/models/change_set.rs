@@ -1,4 +1,3 @@
-use crate::db::{HashedStorageKey, StorageTrieKey};
 use alloy_primitives::B256;
 use reth_db::{
     DatabaseError,
@@ -6,6 +5,8 @@ use reth_db::{
 };
 use reth_trie_common::StoredNibbles;
 use serde::{Deserialize, Serialize};
+
+use crate::db::{HashedStorageKey, StorageTrieKey};
 
 /// The keys of the entries in the history tables.
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -54,9 +55,10 @@ impl table::Decompress for ChangeSet {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::B256;
     use reth_db::table::{Compress, Decompress};
+
+    use super::*;
 
     #[test]
     fn test_encode_decode_empty_change_set() {
