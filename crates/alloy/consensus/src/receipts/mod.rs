@@ -15,8 +15,7 @@ pub use receipt::OpReceipt;
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
     pub use super::{
-        deposit::serde_bincode_compat::OpDepositReceipt,
-        receipt::serde_bincode_compat::OpReceipt,
+        deposit::serde_bincode_compat::OpDepositReceipt, receipt::serde_bincode_compat::OpReceipt,
     };
 }
 
