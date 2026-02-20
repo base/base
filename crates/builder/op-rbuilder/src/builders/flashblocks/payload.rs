@@ -849,7 +849,6 @@ where
         ctx.metrics
             .block_uncompressed_size
             .record(info.cumulative_uncompressed_bytes as f64);
-
         info!(
             target: "payload_builder",
             message = message,
