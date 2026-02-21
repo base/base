@@ -5,7 +5,7 @@
 //! efficient retrieval of inputs to proof computation for duration of OP fault proof window.
 
 #![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
+    html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
     issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
 )]
