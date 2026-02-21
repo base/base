@@ -7,10 +7,10 @@ use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HA
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use derive_more::Display;
-use kona_genesis::ChainGenesis;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
+use derive_more::Display;
+use kona_genesis::ChainGenesis;
 
 use crate::{DecodeError, L1BlockInfoTx};
 

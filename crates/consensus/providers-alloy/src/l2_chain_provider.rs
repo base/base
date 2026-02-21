@@ -13,13 +13,13 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
+use base_alloy_consensus::OpBlock;
+use base_alloy_network::Base;
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
 use kona_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
 use kona_genesis::{RollupConfig, SystemConfig};
 use lru::LruCache;
-use base_alloy_consensus::OpBlock;
-use base_alloy_network::Base;
 use tower::ServiceBuilder;
 
 #[cfg(feature = "metrics")]

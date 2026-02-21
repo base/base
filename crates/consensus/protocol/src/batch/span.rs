@@ -9,8 +9,8 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::FixedBytes;
-use kona_genesis::RollupConfig;
 use base_alloy_consensus::OpTxType;
+use kona_genesis::RollupConfig;
 use tracing::{info, warn};
 
 use crate::{
@@ -754,8 +754,8 @@ mod tests {
     use alloy_consensus::{Header, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, b256};
-    use kona_genesis::{ChainGenesis, HardForkConfig};
     use base_alloy_consensus::OpBlock;
+    use kona_genesis::{ChainGenesis, HardForkConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 

@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
+use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use kona_genesis::RollupConfig;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
-use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use tokio::sync::watch::Receiver;
 
 use crate::HandlerEncodeError;

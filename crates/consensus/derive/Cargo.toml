@@ -60,11 +60,11 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
+	"base-alloy-consensus/serde",
+	"base-alloy-rpc-types-engine/serde",
 	"base-protocol/serde",
 	"dep:serde",
 	"kona-genesis/serde",
-	"base-alloy-consensus/serde",
-	"base-alloy-rpc-types-engine/serde",
 	"tracing-subscriber?/serde",
 ]
 test-utils = [

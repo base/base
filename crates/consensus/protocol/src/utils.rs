@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 use alloy_consensus::{Transaction, TxType, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
-use kona_genesis::{RollupConfig, SystemConfig};
 use base_alloy_consensus::{OpBlock, decode_holocene_extra_data, decode_jovian_extra_data};
+use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _, L1BlockInfoTx,

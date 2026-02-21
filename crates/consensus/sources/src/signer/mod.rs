@@ -9,8 +9,8 @@ use std::fmt::Debug;
 
 use alloy_primitives::{Address, ChainId};
 use alloy_signer::{Signature, SignerSync};
-use derive_more::From;
 use base_alloy_rpc_types_engine::PayloadHash;
+use derive_more::From;
 
 mod remote;
 pub use remote::{
