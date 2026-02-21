@@ -6,7 +6,7 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use kona_genesis::RollupConfig;
-use op_alloy_consensus::OpTxType;
+use base_alloy_consensus::OpTxType;
 use tracing::warn;
 
 use crate::{BatchDropReason, BatchValidity, BlockInfo, L2BlockInfo};
@@ -193,7 +193,7 @@ mod tests {
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Address, Sealed, Signature, TxKind, U256};
     use kona_genesis::HardForkConfig;
-    use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
+    use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 

@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, ChainId, SignatureError};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::Signature;
 use notify::RecommendedWatcher;
-use op_alloy_rpc_types_engine::PayloadHash;
+use base_alloy_rpc_types_engine::PayloadHash;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;

@@ -472,7 +472,7 @@ mod tests {
     use alloy_rlp::{BytesMut, Encodable};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use kona_genesis::{ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD};
-    use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
+    use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 

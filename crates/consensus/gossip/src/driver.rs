@@ -19,7 +19,7 @@ use libp2p::{
 };
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
-use op_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
+use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use tokio::sync::Mutex;
 
 use crate::{

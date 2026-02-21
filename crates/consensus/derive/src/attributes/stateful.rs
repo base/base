@@ -13,7 +13,7 @@ use base_protocol::{
 };
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_hardforks::{Hardfork, Hardforks};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,

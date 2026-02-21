@@ -5,7 +5,7 @@ use alloc::{boxed::Box, vec::Vec};
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 
 use crate::{
     errors::{PipelineError, PipelineErrorKind},
