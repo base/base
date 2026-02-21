@@ -67,4 +67,8 @@ pub struct Metrics {
     /// Number of bundles that exceeded the metering time.
     #[metric(describe = "Number of bundles that exceeded the metering time")]
     pub bundles_exceeded_metering_time: Counter,
+
+    /// Number of bundles cancelled via `eth_cancelBundle`.
+    #[metric(describe = "Number of bundles cancelled via eth_cancelBundle")]
+    pub bundles_cancelled: Counter,
 }
