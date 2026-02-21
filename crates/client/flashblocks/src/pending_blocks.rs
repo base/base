@@ -18,6 +18,8 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::state::EvmState;
 
+use alloy_rpc_types_engine::PayloadId;
+
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
 /// Builder for [`PendingBlocks`].
@@ -191,6 +193,12 @@ impl PendingBlocks {
     #[inline]
     pub fn earliest_block_number(&self) -> BlockNumber {
         self.earliest_header.number
+    }
+
+    /// Returns the payload ID for the current build attempt.
+    #[inline]
+    pub fn payload_id(&self) -> PayloadId {
+        self.flashblocks.first().map(|fb| fb.payload_id).unwrap_or_default()
     }
 
     /// Returns the index of the latest flashblock.

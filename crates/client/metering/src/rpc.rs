@@ -151,10 +151,11 @@ where
             let temp_state = PendingState { bundle_state: bundle_state.clone(), trie_input: None };
 
             // Ensure the pending trie input is cached for reuse across bundle simulations
+            let payload_id = pb.payload_id();
             let fb_index = state_flashblock_index.unwrap();
             let trie_input = self
                 .pending_trie_cache
-                .ensure_cached(header.number, fb_index, &temp_state, &*state_provider)
+                .ensure_cached(payload_id, fb_index, &temp_state, &*state_provider)
                 .map_err(|e| {
                     error!(error = %e, "Failed to cache pending trie input");
                     jsonrpsee::types::ErrorObjectOwned::owned(
