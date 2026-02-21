@@ -54,9 +54,9 @@ install-nextest:
 test: install-nextest build-contracts
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet
 
-# Runs tests with ci profile for minimal disk usage (pass extra args like --partition count:1/2)
-test-ci *args: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci {{ args }}
+# Runs tests with ci profile for minimal disk usage
+test-ci: install-nextest build-contracts
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
 
 # Runs devnet tests (requires Docker)
 devnet-tests: install-nextest build-contracts
