@@ -13,7 +13,7 @@
 //! - [`P2pRpcRequest`]: RPC interface for network administration
 //! - [`Metrics`]: Metrics collection for monitoring and observability
 
-#![doc(html_logo_url = "https://raw.githubusercontent.com/op-rs/kona/main/assets/kona-logo.png")]
+#![doc(html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4")]
 #![doc(issue_tracker_base_url = "https://github.com/op-rs/kona/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
