@@ -50,6 +50,9 @@ std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
+	"alloy-rpc-types-eth?/std",
+	"alloy-serde?/std",
+	"serde?/std",
 	"thiserror/std",
 ]
 alloy-compat = [ "dep:alloy-network", "dep:alloy-rpc-types-eth", "serde" ]
@@ -69,6 +72,7 @@ serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
+	"alloy-rpc-types-eth?/serde",
 	"dep:alloy-serde",
 	"dep:serde",
 ]

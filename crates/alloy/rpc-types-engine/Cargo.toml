@@ -57,11 +57,13 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/ssz",
 	"alloy-rpc-types-engine/std",
+	"alloy-serde?/std",
 	"base-alloy-consensus/std",
 	"dep:ethereum_ssz",
 	"dep:ethereum_ssz_derive",
 	"dep:snap",
 	"derive_more/std",
+	"serde?/std",
 	"sha2/std",
 	"thiserror/std",
 ]

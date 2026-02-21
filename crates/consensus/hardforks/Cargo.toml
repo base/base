@@ -34,8 +34,8 @@ default = []
 std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
-	"base-protocol/std",
 	"base-alloy-consensus/std",
+	"base-protocol/std",
 ]
 k256 = [ "alloy-primitives/k256", "base-alloy-consensus/k256" ]
 kzg = [ "alloy-eips/kzg", "base-alloy-consensus/kzg", "std" ]
