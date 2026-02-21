@@ -24,6 +24,7 @@ use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
@@ -277,6 +278,14 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
+        // FIX for issue #781: Early return if no flashblocks to process.
+        // Prevents panic when retain() filters out all flashblocks during reorg
+        // or depth limit exceeded.
+        if flashblocks.is_empty() {
+            warn!(target: "flashblocks", "empty flashblocks after retain, returning None");
+            return Ok(None);
+        }
+
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
@@ -286,7 +295,9 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
+        // Safe: flashblocks non-empty checked above
+        let earliest_block_number = *flashblocks_per_block.keys().min().unwrap();
+
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
             .client
