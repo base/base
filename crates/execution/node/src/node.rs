@@ -29,7 +29,7 @@ use reth_node_builder::{
         RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
-use reth_optimism_chainspec::{OpChainSpec, OpHardfork};
+use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::OpBeaconConsensus;
 use reth_optimism_evm::{OpEvmConfig, OpRethReceiptBuilder};
 use reth_optimism_forks::OpHardforks;
@@ -41,7 +41,6 @@ use reth_optimism_payload_builder::{
 use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
 use reth_optimism_rpc::{
     eth::OpEthApiBuilder,
-    historical::{HistoricalRpc, HistoricalRpcClient},
     miner::{MinerApiExtServer, OpMinerExtApi},
     witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
 };
@@ -181,7 +180,6 @@ impl OpNode {
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
-            .with_historical_rpc(self.args.historical_rpc.clone())
     }
 
     /// Instantiates the [`ProviderFactoryBuilder`] for an opstack node.
@@ -303,10 +301,6 @@ pub struct OpAddOns<
     pub sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     pub sequencer_headers: Vec<String>,
-    /// RPC endpoint for historical data.
-    ///
-    /// This can be used to forward pre-bedrock rpc requests (op-mainnet).
-    pub historical_rpc: Option<String>,
     min_suggested_priority_fee: u64,
 }
 
@@ -323,7 +317,6 @@ where
         gas_limit_config: OpGasLimitConfig,
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
-        historical_rpc: Option<String>,
         min_suggested_priority_fee: u64,
     ) -> Self {
         Self {
@@ -332,7 +325,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             min_suggested_priority_fee,
         }
     }
@@ -382,7 +374,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             min_suggested_priority_fee,
             ..
         } = self;
@@ -392,7 +383,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             min_suggested_priority_fee,
         )
     }
@@ -409,7 +399,6 @@ where
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
-            historical_rpc,
             ..
         } = self;
         OpAddOns::new(
@@ -418,7 +407,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             min_suggested_priority_fee,
         )
     }
@@ -438,7 +426,6 @@ where
             sequencer_url,
             sequencer_headers,
             min_suggested_priority_fee,
-            historical_rpc,
             ..
         } = self;
         OpAddOns::new(
@@ -447,7 +434,6 @@ where
             gas_limit_config,
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             min_suggested_priority_fee,
         )
     }
@@ -504,29 +490,7 @@ where
         self,
         ctx: reth_node_api::AddOnsContext<'_, N>,
     ) -> eyre::Result<Self::Handle> {
-        let Self { rpc_add_ons, da_config, gas_limit_config, historical_rpc, .. } = self;
-
-        let maybe_pre_bedrock_historical_rpc = historical_rpc
-            .and_then(|historical_rpc| {
-                ctx.node
-                    .provider()
-                    .chain_spec()
-                    .op_fork_activation(OpHardfork::Bedrock)
-                    .block_number()
-                    .filter(|activation| *activation > 0)
-                    .map(|bedrock_block| (historical_rpc, bedrock_block))
-            })
-            .map(|(historical_rpc, bedrock_block)| -> eyre::Result<_> {
-                info!(target: "reth::cli", %bedrock_block, ?historical_rpc, "Using historical RPC endpoint pre bedrock");
-                let provider = ctx.node.provider().clone();
-                let client = HistoricalRpcClient::new(&historical_rpc)?;
-                let layer = HistoricalRpc::new(provider, client, bedrock_block);
-                Ok(layer)
-            })
-            .transpose()?
-            ;
-
-        let rpc_add_ons = rpc_add_ons.option_layer_rpc_middleware(maybe_pre_bedrock_historical_rpc);
+        let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
 
         let builder = reth_optimism_payload_builder::OpPayloadBuilder::new(
             ctx.node.pool().clone(),
@@ -631,8 +595,6 @@ pub struct OpAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
-    /// RPC endpoint for historical data.
-    historical_rpc: Option<String>,
     /// Data availability configuration for the OP builder.
     da_config: Option<OpDAConfig>,
     /// Gas limit configuration for the OP builder.
@@ -652,7 +614,6 @@ impl<NetworkT> Default for OpAddOnsBuilder<NetworkT> {
         Self {
             sequencer_url: None,
             sequencer_headers: Vec::new(),
-            historical_rpc: None,
             da_config: None,
             gas_limit_config: None,
             min_suggested_priority_fee: 1_000_000,
@@ -694,12 +655,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configures the endpoint for historical RPC forwarding.
-    pub fn with_historical_rpc(mut self, historical_rpc: Option<String>) -> Self {
-        self.historical_rpc = historical_rpc;
-        self
-    }
-
     /// Configures a custom tokio runtime for the RPC server.
     ///
     /// Caution: This runtime must not be created from within asynchronous context.
@@ -713,7 +668,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
         let Self {
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
@@ -724,7 +678,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
         OpAddOnsBuilder {
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
@@ -753,7 +706,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config,
             gas_limit_config,
             min_suggested_priority_fee,
-            historical_rpc,
             rpc_middleware,
             tokio_runtime,
             ..
@@ -775,7 +727,6 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             gas_limit_config.unwrap_or_default(),
             sequencer_url,
             sequencer_headers,
-            historical_rpc,
             min_suggested_priority_fee,
         )
     }

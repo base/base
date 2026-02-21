@@ -67,15 +67,12 @@ op-revm.workspace = true
 serde.workspace = true
 tokio.workspace = true
 futures.workspace = true
-reqwest.workspace = true
 async-trait.workspace = true
-tower.workspace = true
 
 # rpc
 jsonrpsee-core.workspace = true
 jsonrpsee-types.workspace = true
 jsonrpsee.workspace = true
-serde_json.workspace = true
 
 # misc
 eyre.workspace = true
