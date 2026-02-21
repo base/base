@@ -185,9 +185,9 @@ where
         + HeaderProvider<Header = N::BlockHeader>
         + Clone
         + 'static,
-    op_alloy_consensus::OpPooledTransaction:
+    base_alloy_consensus::OpPooledTransaction:
         TryFrom<<N as OpPayloadPrimitives>::_TX, Error: core::error::Error>,
-    <N as OpPayloadPrimitives>::_TX: From<op_alloy_consensus::OpPooledTransaction>,
+    <N as OpPayloadPrimitives>::_TX: From<base_alloy_consensus::OpPooledTransaction>,
 {
     async fn execute_payload(
         &self,
@@ -230,7 +230,7 @@ where
                             NoopPayloadTransactions::<
                                 OpPooledTx2<
                                     <N as OpPayloadPrimitives>::_TX,
-                                    op_alloy_consensus::OpPooledTransaction,
+                                    base_alloy_consensus::OpPooledTransaction,
                                 >,
                             >::default()
                         });

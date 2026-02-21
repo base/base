@@ -1,10 +1,10 @@
 //! Integration tests that stress Flashblocks state handling.
 
 use alloy_primitives::U256;
+use base_alloy_network::BlockResponse;
 use base_client_node::test_utils::Account;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
-use op_alloy_network::BlockResponse;
 use reth_provider::{AccountReader, StateProviderFactory};
 
 #[tokio::test]
@@ -521,7 +521,7 @@ async fn test_eth_call_sees_flashblock_state_changes() {
     use alloy_eips::BlockNumberOrTag;
     use alloy_provider::Provider;
     use alloy_rpc_types_eth::TransactionInput;
-    use op_alloy_rpc_types::OpTransactionRequest;
+    use base_alloy_rpc_types::OpTransactionRequest;
 
     let test = FlashblocksBuilderTestHarness::new().await;
     let provider = test.node.provider();

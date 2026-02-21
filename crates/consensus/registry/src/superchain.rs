@@ -109,11 +109,11 @@ impl Registry {
 mod tests {
     use alloc::string::{String, ToString};
 
-    use alloy_op_hardforks::{
+    use alloy_primitives::address;
+    use base_alloy_hardforks::{
         BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP,
         BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
     };
-    use alloy_primitives::address;
     use kona_genesis::{AddressList, BASE_MAINNET_BASE_FEE_CONFIG, Roles, SuperchainLevel};
 
     use super::*;

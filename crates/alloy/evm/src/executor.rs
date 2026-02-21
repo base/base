@@ -13,8 +13,8 @@ use alloy_evm::{
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
 use alloy_primitives::Address;
+use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_hardforks::OpHardforks;
-use op_alloy_consensus::OpDepositReceipt;
 use op_revm::{
     L1BlockInfo, constants::L1_BLOCK_CONTRACT, estimate_tx_compressed_size,
     transaction::deposit::DEPOSIT_TRANSACTION_TYPE,
@@ -358,8 +358,8 @@ mod tests {
     use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
+    use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
-    use op_alloy_consensus::OpTxEnvelope;
     use op_revm::{
         DefaultOp, L1BlockInfo, OpBuilder, OpSpecId,
         constants::{

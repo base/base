@@ -22,5 +22,5 @@ alloy-provider.workspace = true
 base-cli-utils.workspace = true
 base-primitives.workspace = true
 ingress-rpc-lib.workspace = true
-op-alloy-network.workspace = true
+base-alloy-network.workspace = true
 audit-archiver-lib.workspace = true

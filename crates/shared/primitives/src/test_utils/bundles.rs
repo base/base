@@ -2,9 +2,9 @@ use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
 use alloy_signer_local::PrivateKeySigner;
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_network::TxSignerSync;
-use op_alloy_rpc_types::OpTransactionRequest;
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_network::TxSignerSync;
+use base_alloy_rpc_types::OpTransactionRequest;
 
 use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
 

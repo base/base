@@ -18,6 +18,7 @@ use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
+use base_alloy_consensus::OpDepositReceipt;
 use base_client_node::{
     BaseNodeExtension, NodeHooks,
     test_utils::{
@@ -35,7 +36,6 @@ use base_primitives::{
 };
 use derive_more::Deref;
 use eyre::Result;
-use op_alloy_consensus::OpDepositReceipt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::EthChainSpec;
 use reth_optimism_chainspec::OpChainSpec;

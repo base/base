@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
+use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use kona_genesis::RollupConfig;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
-use op_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use tokio::sync::watch::Receiver;
 
 use crate::HandlerEncodeError;
@@ -142,7 +142,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{B256, Signature};
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
-    use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
+    use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
 
     use super::*;
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};

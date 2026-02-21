@@ -251,9 +251,9 @@ mod test {
     use alloy_consensus::{BlockBody, Header};
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
+    use base_alloy_consensus::OpBlock;
     use base_protocol::{SingleBatch, SpanBatchElement};
     use kona_genesis::{ChainGenesis, HardForkConfig};
-    use op_alloy_consensus::OpBlock;
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use super::*;

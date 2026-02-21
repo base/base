@@ -14,7 +14,8 @@ workspace = true
 reth-cli.workspace = true
 reth-cli-commands.workspace = true
 reth-rpc-server-types.workspace = true
-reth-db = { workspace = true, features = ["mdbx", "op"] }
+reth-db = { workspace = true, features = ["mdbx"] }
+reth-provider.workspace = true
 reth-node-core.workspace = true
 reth-optimism-node.workspace = true
 
@@ -29,9 +30,8 @@ reth-optimism-trie.workspace = true
 
 reth-chainspec.workspace = true
 reth-cli-runner.workspace = true
-reth-node-builder = { workspace = true, features = ["op"] }
+reth-node-builder.workspace = true
 reth-tracing.workspace = true
-reth-provider.workspace = true
 
 # misc
 futures-util.workspace = true
@@ -42,7 +42,6 @@ eyre.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
-op-alloy-consensus = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -71,14 +70,9 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
-dev = [
-	"dep:op-alloy-consensus",
-	"dep:proptest",
-	"reth-cli-commands/arbitrary",
-]
+dev = [ "dep:proptest", "reth-cli-commands/arbitrary" ]
 
 serde = [
-	"op-alloy-consensus?/serde",
 	"reth-optimism-chainspec/serde",
 	"reth-optimism-primitives/serde",
 ]

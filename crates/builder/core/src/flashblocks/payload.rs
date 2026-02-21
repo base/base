@@ -156,7 +156,7 @@ where
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
-            OpPayloadBuilderAttributes<op_alloy_consensus::OpTxEnvelope>,
+            OpPayloadBuilderAttributes<base_alloy_consensus::OpTxEnvelope>,
         >,
         cancel: CancellationToken,
         extra: FlashblocksExtraCtx,

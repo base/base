@@ -35,6 +35,20 @@ serde_with = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
+# evm
+revm = { workspace = true, optional = true }
+op-revm = { workspace = true, optional = true }
+alloy-evm = { workspace = true, optional = true, features = ["op"] }
+
+# reth
+bytes = { workspace = true, optional = true }
+reth-codecs = { workspace = true, optional = true }
+reth-db-api = { workspace = true, optional = true }
+modular-bitfield = { workspace = true, optional = true }
+reth-zstd-compressors = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true, features = ["serde-bincode-compat"] }
+reth-ethereum-primitives = { workspace = true, optional = true, features = ["serde-bincode-compat"] }
+
 [dev-dependencies]
 rand.workspace = true
 bincode = { workspace = true, features = ["serde"] }
@@ -48,10 +62,14 @@ default = [ "std" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
+	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-rpc-types-eth?/std",
 	"alloy-serde?/std",
+	"op-revm?/std",
+	"reth-zstd-compressors?/std",
+	"revm?/std",
 	"serde?/std",
 	"thiserror/std",
 ]
@@ -66,6 +84,11 @@ arbitrary = [
 	"alloy-rpc-types-eth?/arbitrary",
 	"alloy-serde?/arbitrary",
 	"dep:arbitrary",
+	"reth-codecs?/arbitrary",
+	"reth-db-api?/arbitrary",
+	"reth-ethereum-primitives?/arbitrary",
+	"reth-primitives-traits?/arbitrary",
+	"revm?/arbitrary",
 	"std",
 ]
 serde = [
@@ -73,7 +96,27 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth?/serde",
+	"bytes?/serde",
 	"dep:alloy-serde",
 	"dep:serde",
+	"op-revm?/serde",
+	"reth-codecs?/serde",
+	"reth-ethereum-primitives?/serde",
+	"reth-primitives-traits?/serde",
+	"revm?/serde",
 ]
 serde-bincode-compat = [ "alloy-consensus/serde-bincode-compat", "serde_with" ]
+evm = [ "dep:alloy-evm", "dep:op-revm", "dep:revm" ]
+reth = [
+	"dep:bytes",
+	"dep:modular-bitfield",
+	"dep:reth-codecs",
+	"dep:reth-db-api",
+	"dep:reth-ethereum-primitives",
+	"dep:reth-primitives-traits",
+	"dep:reth-zstd-compressors",
+	"k256",
+	"serde",
+	"serde-bincode-compat",
+	"std",
+]

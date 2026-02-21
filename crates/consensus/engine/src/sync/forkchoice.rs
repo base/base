@@ -5,9 +5,9 @@ use std::fmt::Display;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_provider::Network;
 use alloy_transport::TransportResult;
+use base_alloy_network::Base;
 use base_protocol::L2BlockInfo;
 use kona_genesis::RollupConfig;
-use op_alloy_network::Optimism;
 
 use crate::{EngineClient, SyncStartError};
 
@@ -62,12 +62,16 @@ impl L2ForkchoiceState {
                 }
                 .into_consensus();
 
-            L2BlockInfo::from_block_and_genesis(&rpc_block, &cfg.genesis)?
+            L2BlockInfo::from_block_and_genesis(
+                &rpc_block.map_transactions(|tx| tx.inner.inner.into_inner()),
+                &cfg.genesis,
+            )?
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
-            Ok(Some(block)) => {
-                L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &cfg.genesis)?
-            }
+            Ok(Some(block)) => L2BlockInfo::from_block_and_genesis(
+                &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                &cfg.genesis,
+            )?,
             Ok(None) => finalized,
             Err(e) => return Err(e.into()),
         };
@@ -75,7 +79,10 @@ impl L2ForkchoiceState {
             let rpc_block = get_block_compat(engine_client, BlockNumberOrTag::Latest.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-            L2BlockInfo::from_block_and_genesis(&rpc_block.into_consensus(), &cfg.genesis)?
+            L2BlockInfo::from_block_and_genesis(
+                &rpc_block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                &cfg.genesis,
+            )?
         };
 
         Ok(Self { un_safe, safe, finalized })
@@ -89,7 +96,7 @@ impl L2ForkchoiceState {
 async fn get_block_compat<EngineClient_: EngineClient>(
     engine_client: &EngineClient_,
     block_id: BlockId,
-) -> TransportResult<Option<<Optimism as Network>::BlockResponse>> {
+) -> TransportResult<Option<<Base as Network>::BlockResponse>> {
     match engine_client.get_l2_block(block_id).full().await {
         Err(e) => {
             let err_str = e.to_string();

@@ -10,12 +10,12 @@ use alloy_rpc_types_engine::{
 };
 /// Response type for EIP-1186 account proofs.
 pub use alloy_rpc_types_eth::EIP1186AccountProofResponse;
-use kona_genesis::RollupConfig;
-use op_alloy_network::Optimism;
-use op_alloy_rpc_types_engine::{
+use base_alloy_network::Base;
+use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes,
 };
+use kona_genesis::RollupConfig;
 use thiserror::Error;
 
 /// A storage key for proof queries.
@@ -63,7 +63,7 @@ pub trait BlockProvider {
     fn get_l1_block(&self, block: BlockId) -> EthGetBlock<<Ethereum as Network>::BlockResponse>;
 
     /// Fetches the L2 block with the provided [`BlockId`].
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Optimism as Network>::BlockResponse>;
+    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse>;
 }
 
 // ============================================================================

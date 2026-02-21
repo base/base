@@ -4,11 +4,11 @@ use std::{sync::Arc, time::Instant};
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
-use op_alloy_consensus::{OpDepositReceipt, OpTxType};
+use base_alloy_consensus::{OpDepositReceipt, OpTxType};
+use base_alloy_evm::OpReceiptBuilder;
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -420,7 +420,7 @@ impl OpPayloadBuilderCtx {
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
-                info.cumulative_da_bytes_used += op_alloy_flz::tx_estimated_size_fjord_bytes(
+                info.cumulative_da_bytes_used += base_alloy_flz::tx_estimated_size_fjord_bytes(
                     sequencer_tx.encoded_2718().as_slice(),
                 );
             }

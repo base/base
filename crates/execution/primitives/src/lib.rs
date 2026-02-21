@@ -11,14 +11,14 @@
 #![allow(unused)]
 extern crate alloc;
 
-// Re-export predeploys from op-alloy-consensus
-pub use op_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
+// Re-export predeploys
+pub use base_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 
 pub mod transaction;
 pub use transaction::*;
 
 mod receipt;
-pub use op_alloy_consensus::OpReceipt;
+pub use base_alloy_consensus::OpReceipt;
 pub use receipt::DepositReceipt;
 
 /// Optimism-specific block type.
@@ -43,7 +43,7 @@ impl reth_primitives_traits::NodePrimitives for OpPrimitives {
 /// Bincode-compatible serde implementations.
 #[cfg(feature = "serde-bincode-compat")]
 pub mod serde_bincode_compat {
-    pub use op_alloy_consensus::serde_bincode_compat::OpReceipt;
+    pub use base_alloy_consensus::serde_bincode_compat::OpReceipt;
 
     pub use super::receipt::serde_bincode_compat::OpReceipt as LocalOpReceipt;
 }

@@ -4,6 +4,7 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_signer::k256;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use discv5::{ConfigBuilder, Enr, ListenConfig};
 use kona_disc::LocalNode;
 use kona_genesis::RollupConfig;
@@ -13,7 +14,6 @@ use kona_node_service::{
 use kona_peers::BootNode;
 use kona_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use rand::RngCore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

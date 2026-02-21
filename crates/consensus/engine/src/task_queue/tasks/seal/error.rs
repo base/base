@@ -1,8 +1,8 @@
 //! Contains error types for the [`crate::SynchronizeTask`].
 
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_protocol::FromBlockError;
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -29,7 +29,7 @@ pub enum SealTaskError {
     HoloceneInvalidFlush,
     /// Failed to convert a [`OpExecutionPayload`] to a [`L2BlockInfo`].
     ///
-    /// [`OpExecutionPayload`]: op_alloy_rpc_types_engine::OpExecutionPayload
+    /// [`OpExecutionPayload`]: base_alloy_rpc_types_engine::OpExecutionPayload
     /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),

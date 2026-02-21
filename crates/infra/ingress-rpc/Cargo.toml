@@ -19,7 +19,7 @@ base-cli-utils.workspace = true
 metrics-derive.workspace = true
 base-bundles.workspace = true
 base-primitives.workspace = true
-op-alloy-network.workspace = true
+base-alloy-network.workspace = true
 audit-archiver-lib.workspace = true
 alloy-signer-local.workspace = true
 base-reth-rpc-types.workspace = true
@@ -36,7 +36,7 @@ clap = { workspace = true, features = ["std", "derive", "env"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 
 [dev-dependencies]

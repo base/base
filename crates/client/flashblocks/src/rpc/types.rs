@@ -1,8 +1,8 @@
 //! Subscription types for the `eth_` `PubSub` RPC extension
 
 use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
+use base_alloy_rpc_types::Transaction;
 use derive_more::From;
-use op_alloy_rpc_types::Transaction;
 use serde::{Deserialize, Serialize};
 
 /// A full transaction object with its associated logs.

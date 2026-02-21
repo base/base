@@ -8,13 +8,13 @@ use alloy_primitives::{Address, TxHash, U256, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result, bail};
 use audit_archiver_lib::BundleEvent;
+use base_alloy_network::Base;
 use base_bundles::BundleExtensions;
 use base_primitives::Bundle;
 use common::kafka::wait_for_audit_event_by_hash;
-use op_alloy_network::Optimism;
 use serial_test::serial;
 use system_tests::{
-    TipsRpcClient, create_funded_signer, create_optimism_provider, create_signed_transaction,
+    TipsRpcClient, create_base_provider, create_funded_signer, create_signed_transaction,
 };
 use tokio::time::{Duration, Instant, sleep};
 
@@ -29,7 +29,7 @@ fn get_sequencer_url() -> String {
 }
 
 async fn wait_for_transaction_seen(
-    provider: &RootProvider<Optimism>,
+    provider: &RootProvider<Base>,
     tx_hash: TxHash,
     timeout_secs: u64,
 ) -> Result<()> {
@@ -57,7 +57,7 @@ async fn test_client_can_connect_to_tips() -> Result<()> {
     }
 
     let url = get_integration_test_url();
-    let provider = create_optimism_provider(&url)?;
+    let provider = create_base_provider(&url)?;
     let _client = TipsRpcClient::new(provider);
     Ok(())
 }
@@ -73,12 +73,12 @@ async fn test_send_raw_transaction_accepted() -> Result<()> {
     }
 
     let url = get_integration_test_url();
-    let provider = create_optimism_provider(&url)?;
+    let provider = create_base_provider(&url)?;
     let client = TipsRpcClient::new(provider);
     let signer = create_funded_signer();
 
     let sequencer_url = get_sequencer_url();
-    let sequencer_provider = create_optimism_provider(&sequencer_url)?;
+    let sequencer_provider = create_base_provider(&sequencer_url)?;
     let nonce = sequencer_provider.get_transaction_count(signer.address()).await?;
 
     let to = Address::from([0x11; 20]);
@@ -124,12 +124,12 @@ async fn test_send_bundle_accepted() -> Result<()> {
     }
 
     let url = get_integration_test_url();
-    let provider = create_optimism_provider(&url)?;
+    let provider = create_base_provider(&url)?;
     let client = TipsRpcClient::new(provider);
     let signer = create_funded_signer();
 
     let sequencer_url = get_sequencer_url();
-    let sequencer_provider = create_optimism_provider(&sequencer_url)?;
+    let sequencer_provider = create_base_provider(&sequencer_url)?;
     let nonce = sequencer_provider.get_transaction_count(signer.address()).await?;
 
     let to = Address::from([0x11; 20]);
@@ -222,12 +222,12 @@ async fn test_send_bundle_with_two_transactions() -> Result<()> {
     }
 
     let url = get_integration_test_url();
-    let provider = create_optimism_provider(&url)?;
+    let provider = create_base_provider(&url)?;
     let client = TipsRpcClient::new(provider);
     let signer = create_funded_signer();
 
     let sequencer_url = get_sequencer_url();
-    let sequencer_provider = create_optimism_provider(&sequencer_url)?;
+    let sequencer_provider = create_base_provider(&sequencer_url)?;
     let nonce = sequencer_provider.get_transaction_count(signer.address()).await?;
 
     // Create two transactions

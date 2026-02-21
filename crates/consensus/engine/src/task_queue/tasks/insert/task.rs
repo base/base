@@ -7,12 +7,12 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
 };
 use async_trait::async_trait;
-use base_protocol::L2BlockInfo;
-use kona_genesis::RollupConfig;
-use op_alloy_consensus::OpBlock;
-use op_alloy_rpc_types_engine::{
+use base_alloy_consensus::OpBlock;
+use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadSidecar,
 };
+use base_protocol::L2BlockInfo;
+use kona_genesis::RollupConfig;
 
 use crate::{
     EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,

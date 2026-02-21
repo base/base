@@ -20,7 +20,7 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-hardforks.workspace = true
-alloy-op-hardforks.workspace = true
+base-alloy-hardforks.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 
@@ -80,8 +80,8 @@ serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
-	"alloy-op-hardforks/serde",
 	"alloy-primitives/serde",
+	"base-alloy-hardforks/serde",
 	"dep:serde",
 	"dep:serde_repr",
 	"op-revm?/serde",

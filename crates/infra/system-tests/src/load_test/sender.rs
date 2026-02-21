@@ -7,7 +7,7 @@ use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use anyhow::{Context, Result};
-use op_alloy_network::Optimism;
+use base_alloy_network::Base;
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 use tokio::time::sleep;
@@ -23,7 +23,7 @@ const INITIAL_BACKOFF_MS: u64 = 100;
 pub(crate) struct SenderTask<N: Network> {
     wallet: Wallet,
     client: TipsRpcClient<N>,
-    sequencer: RootProvider<Optimism>,
+    sequencer: RootProvider<Base>,
     rate_per_wallet: f64,
     duration: Duration,
     tracker: Arc<TransactionTracker>,
@@ -35,7 +35,7 @@ impl<N: Network> SenderTask<N> {
     pub(crate) const fn new(
         wallet: Wallet,
         client: TipsRpcClient<N>,
-        sequencer: RootProvider<Optimism>,
+        sequencer: RootProvider<Base>,
         rate_per_wallet: f64,
         duration: Duration,
         tracker: Arc<TransactionTracker>,

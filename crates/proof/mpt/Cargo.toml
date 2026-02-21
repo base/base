@@ -20,8 +20,8 @@ alloy-rlp.workspace = true
 alloy-trie.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# Op-alloy
-op-alloy-rpc-types-engine.workspace = true
+# Base Alloy
+base-alloy-rpc-types-engine.workspace = true
 
 [dev-dependencies]
 # Alloy
@@ -41,6 +41,6 @@ default = [ "serde" ]
 serde = [
 	"alloy-primitives/serde",
 	"alloy-trie/serde",
+	"base-alloy-rpc-types-engine/serde",
 	"dep:serde",
-	"op-alloy-rpc-types-engine/serde",
 ]

@@ -37,10 +37,10 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-transport.workspace = true
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
 
-# op-alloy
-op-alloy-network.workspace = true
-op-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-op-alloy-provider.workspace = true
+# base-alloy
+base-alloy-network.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+base-alloy-provider.workspace = true
 
 # general
 url.workspace = true
@@ -76,7 +76,7 @@ mockall.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
-op-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
+base-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 kona-derive = {workspace = true, features = ["test-utils"]}
 
 [features]

@@ -43,11 +43,13 @@ alloy-primitives.workspace = true
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
-# op-alloy
-op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+# base-alloy
+base-alloy-rpc-types-engine.workspace = true
+
+# base-alloy
+base-alloy-consensus.workspace = true
+base-alloy-network.workspace = true
+base-alloy-rpc-types.workspace = true
 
 # tokio
 tokio.workspace = true

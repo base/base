@@ -93,9 +93,9 @@ mod tests {
     };
     use alloy_eips::eip7702::Authorization;
     use alloy_primitives::{Address, Bytes, U256, bytes};
+    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_network::TxSignerSync;
     use base_client_node::test_utils::{Account as BaseAccount, SignerSync};
-    use op_alloy_consensus::OpTxEnvelope;
-    use op_alloy_network::TxSignerSync;
     use revm_bytecode::eip7702::Eip7702Bytecode;
 
     use super::*;

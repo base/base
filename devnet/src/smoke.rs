@@ -6,8 +6,8 @@ use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
+use base_alloy_network::Base;
 use eyre::{Result, WrapErr};
-use op_alloy_network::Optimism;
 use tempfile::TempDir;
 use url::Url;
 
@@ -94,18 +94,18 @@ impl Devnet {
         Ok(RootProvider::<Ethereum>::new(client))
     }
 
-    /// Returns an L2 builder provider with Optimism network.
-    pub fn l2_builder_provider(&self) -> Result<RootProvider<Optimism>> {
+    /// Returns an L2 builder provider with Base network.
+    pub fn l2_builder_provider(&self) -> Result<RootProvider<Base>> {
         let url = self.l2_rpc_url()?;
         let client = RpcClient::builder().http(url);
-        Ok(RootProvider::<Optimism>::new(client))
+        Ok(RootProvider::<Base>::new(client))
     }
 
-    /// Returns an L2 client provider with Optimism network.
-    pub fn l2_client_provider(&self) -> Result<RootProvider<Optimism>> {
+    /// Returns an L2 client provider with Base network.
+    pub fn l2_client_provider(&self) -> Result<RootProvider<Base>> {
         let url = self.l2_client_rpc_url()?;
         let client = RpcClient::builder().http(url);
-        Ok(RootProvider::<Optimism>::new(client))
+        Ok(RootProvider::<Base>::new(client))
     }
 
     /// Returns all RPC URLs for this devnet instance.

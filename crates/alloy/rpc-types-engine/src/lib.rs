@@ -39,3 +39,6 @@ pub use flashblock::{
     OpFlashblockError, OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
+
+#[cfg(feature = "reth")]
+mod reth;

@@ -4,7 +4,9 @@ use core::cmp::max;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
-use op_alloy_consensus::{EIP1559ParamError, decode_holocene_extra_data, decode_jovian_extra_data};
+use base_alloy_consensus::{
+    EIP1559ParamError, decode_holocene_extra_data, decode_jovian_extra_data,
+};
 use reth_chainspec::{BaseFeeParams, EthChainSpec};
 use reth_optimism_forks::OpHardforks;
 
@@ -78,7 +80,7 @@ where
 mod tests {
     use alloc::sync::Arc;
 
-    use op_alloy_consensus::encode_jovian_extra_data;
+    use base_alloy_consensus::encode_jovian_extra_data;
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
     use reth_optimism_forks::OpHardfork;
 

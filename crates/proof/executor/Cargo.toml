@@ -23,17 +23,16 @@ alloy-trie.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# Op Alloy
-op-alloy-consensus.workspace = true
-alloy-op-hardforks.workspace = true
-op-alloy-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
+# Base Alloy
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 
 # revm
 revm.workspace = true
 op-revm.workspace = true
 
 # alloy-evm
-alloy-op-evm.workspace = true
+base-alloy-evm.workspace = true
 alloy-evm = { workspace = true, features = ["op"] }
 
 # General

@@ -58,9 +58,8 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
-# op-alloy
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
+# base-alloy
+base-alloy-consensus.workspace = true
 
 # misc
 eyre.workspace = true

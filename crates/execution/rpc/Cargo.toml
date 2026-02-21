@@ -55,11 +55,11 @@ alloy-transport.workspace = true
 alloy-transport-http.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-engine.workspace = true
-op-alloy-network.workspace = true
-op-alloy-rpc-types.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+base-alloy-network = { workspace = true, features = ["reth"] }
+base-alloy-rpc-types = { workspace = true, features = ["reth"] }
+base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 base-alloy-rpc-jsonrpsee.workspace = true
-op-alloy-consensus.workspace = true
+base-alloy-consensus.workspace = true
 revm.workspace = true
 op-revm.workspace = true
 
@@ -89,7 +89,7 @@ strum.workspace = true
 
 [dev-dependencies]
 reth-optimism-chainspec.workspace = true
-alloy-op-hardforks.workspace = true
+base-alloy-hardforks.workspace = true
 
 [features]
 client = [

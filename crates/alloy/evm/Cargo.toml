@@ -20,11 +20,11 @@ alloy-primitives.workspace = true
 alloy-evm = { workspace = true, features = ["op"] }
 
 # base
+base-alloy-consensus = { workspace = true, features = ["evm"] }
 base-alloy-hardforks.workspace = true
 
 # op
 op-revm.workspace = true
-op-alloy-consensus.workspace = true
 
 # revm
 revm.workspace = true
@@ -32,6 +32,9 @@ revm.workspace = true
 # misc
 auto_impl.workspace = true
 thiserror.workspace = true
+
+# reth (optional)
+reth-evm = { workspace = true, optional = true, features = ["op"] }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -44,8 +47,9 @@ std = [
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
-	"op-alloy-consensus/std",
+	"base-alloy-consensus/std",
 	"op-revm/std",
 	"revm/std",
 	"thiserror/std",
 ]
+reth = [ "base-alloy-consensus/reth", "dep:reth-evm", "std" ]

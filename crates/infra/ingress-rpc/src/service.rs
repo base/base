@@ -10,6 +10,8 @@ use alloy_consensus::{
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use audit_archiver_lib::BundleEvent;
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_network::Base;
 use base_bundles::BundleExtensions;
 use base_primitives::{
     AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
@@ -20,8 +22,6 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use moka::future::Cache;
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_network::Optimism;
 use tokio::{
     sync::{broadcast, mpsc},
     time::{Duration, Instant, timeout},
@@ -39,11 +39,11 @@ use crate::{
 #[derive(Debug)]
 pub struct Providers {
     /// Provider for sending transactions to the mempool.
-    pub mempool: RootProvider<Optimism>,
+    pub mempool: RootProvider<Base>,
     /// Provider for simulating bundles.
-    pub simulation: RootProvider<Optimism>,
+    pub simulation: RootProvider<Base>,
     /// Optional provider for forwarding raw transactions.
-    pub raw_tx_forward: Option<RootProvider<Optimism>>,
+    pub raw_tx_forward: Option<RootProvider<Base>>,
 }
 
 #[rpc(server, namespace = "eth")]
@@ -67,9 +67,9 @@ pub trait IngressApi {
 
 /// Core ingress RPC service that handles bundle and transaction submission.
 pub struct IngressService<Q: MessageQueue> {
-    mempool_provider: Arc<RootProvider<Optimism>>,
-    simulation_provider: Arc<RootProvider<Optimism>>,
-    raw_tx_forward_provider: Option<Arc<RootProvider<Optimism>>>,
+    mempool_provider: Arc<RootProvider<Base>>,
+    simulation_provider: Arc<RootProvider<Base>>,
+    raw_tx_forward_provider: Option<Arc<RootProvider<Base>>>,
     tx_submission_method: TxSubmissionMethod,
     bundle_queue_publisher: BundleQueuePublisher<Q>,
     audit_channel: mpsc::UnboundedSender<BundleEvent>,
@@ -590,7 +590,7 @@ mod tests {
 
         let config = create_test_config(&mock_server);
 
-        let provider: RootProvider<Optimism> =
+        let provider: RootProvider<Base> =
             RootProvider::new_http(mock_server.uri().parse().unwrap());
 
         let providers = Providers {

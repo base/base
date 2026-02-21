@@ -20,10 +20,10 @@ extern crate alloc;
 
 use alloc::vec;
 
-use alloy_op_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
-// Re-export alloy-op-hardforks types.
-pub use alloy_op_hardforks::{OpHardfork, OpHardforks};
 use alloy_primitives::U256;
+use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
+// Re-export base-alloy-hardforks types.
+pub use base_alloy_hardforks::{OpHardfork, OpHardforks};
 use once_cell::sync::Lazy as LazyLock;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 

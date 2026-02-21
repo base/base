@@ -258,9 +258,9 @@ impl EthChainSpec for OpChainSpec {
     }
 
     fn next_block_base_fee(&self, parent: &Header, target_timestamp: u64) -> Option<u64> {
-        if self.is_jovian_active_at_timestamp(parent.timestamp()) {
+        if OpHardforks::is_jovian_active_at_timestamp(self, parent.timestamp()) {
             compute_jovian_base_fee(self, parent, target_timestamp).ok()
-        } else if self.is_holocene_active_at_timestamp(parent.timestamp()) {
+        } else if OpHardforks::is_holocene_active_at_timestamp(self, parent.timestamp()) {
             decode_holocene_base_fee(self, parent, target_timestamp).ok()
         } else {
             self.inner.next_block_base_fee(parent, target_timestamp)
@@ -410,14 +410,14 @@ impl From<ChainSpec> for OpChainSpec {
 
 #[derive(Default, Debug)]
 struct OpGenesisInfo {
-    optimism_chain_info: op_alloy_rpc_types::OpChainInfo,
+    optimism_chain_info: base_alloy_rpc_types::OpChainInfo,
     base_fee_params: BaseFeeParamsKind,
 }
 
 impl OpGenesisInfo {
     fn extract_from(genesis: &Genesis) -> Self {
         let mut info = Self {
-            optimism_chain_info: op_alloy_rpc_types::OpChainInfo::extract_from(
+            optimism_chain_info: base_alloy_rpc_types::OpChainInfo::extract_from(
                 &genesis.config.extra_fields,
             )
             .unwrap_or_default(),
@@ -480,8 +480,8 @@ mod tests {
     use alloc::string::{String, ToString};
 
     use alloy_genesis::{ChainConfig, Genesis};
-    use alloy_op_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
     use alloy_primitives::{b256, hex};
+    use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
     use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, test_fork_ids};
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
     use reth_optimism_forks::{OpHardfork, OpHardforks};
@@ -853,7 +853,7 @@ mod tests {
 
     #[test]
     fn parse_genesis_optimism_with_variable_base_fee_params() {
-        use op_alloy_rpc_types::OpBaseFeeInfo;
+        use base_alloy_rpc_types::OpBaseFeeInfo;
 
         let geth_genesis = r#"
     {
@@ -1066,7 +1066,7 @@ mod tests {
 
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
         let chainspec = OpChainSpec::from_genesis(genesis);
-        assert!(chainspec.is_holocene_active_at_timestamp(1732633200));
+        assert!(OpHardforks::is_holocene_active_at_timestamp(&chainspec, 1732633200));
     }
 
     #[test]

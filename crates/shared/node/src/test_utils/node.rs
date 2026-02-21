@@ -4,8 +4,8 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
+use base_alloy_network::Base;
 use eyre::Result;
-use op_alloy_network::Optimism;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
@@ -143,10 +143,10 @@ impl LocalNode {
     }
 
     /// Create an HTTP provider pointed at the node's public RPC endpoint.
-    pub fn provider(&self) -> Result<RootProvider<Optimism>> {
+    pub fn provider(&self) -> Result<RootProvider<Base>> {
         let url = format!("http://{}", self.http_api_addr);
         let client = RpcClient::builder().http(url.parse()?);
-        Ok(RootProvider::<Optimism>::new(client))
+        Ok(RootProvider::<Base>::new(client))
     }
 
     /// HTTP RPC address for the local node.

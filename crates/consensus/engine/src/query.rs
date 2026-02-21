@@ -90,12 +90,11 @@ impl EngineQueries {
                 // l2 block info. Querying the `L2BlockInfo` from the client ends up
                 // fetching the full l2 block again.
                 let consensus_block = output_block.clone().into_consensus();
-                let output_block_info =
-                    L2BlockInfo::from_block_and_genesis::<op_alloy_consensus::OpTxEnvelope>(
-                        &consensus_block.map_transactions(|tx| tx.inner.inner.into_inner()),
-                        &rollup_config.genesis,
-                    )
-                    .map_err(|_| EngineQueriesError::NoL2BlockFound(block))?;
+                let output_block_info = L2BlockInfo::from_block_and_genesis(
+                    &consensus_block.map_transactions(|tx| tx.inner.inner.into_inner()),
+                    &rollup_config.genesis,
+                )
+                .map_err(|_| EngineQueriesError::NoL2BlockFound(block))?;
 
                 let state_root = output_block.header.state_root;
 

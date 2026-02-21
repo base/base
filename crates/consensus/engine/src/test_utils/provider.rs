@@ -1,7 +1,7 @@
 use alloy_network::Ethereum;
 use alloy_provider::Provider;
 use async_trait::async_trait;
-use op_alloy_network::Optimism;
+use base_alloy_network::Base;
 
 /// Mock L1 Provider that implements the Provider trait for testing.
 ///
@@ -17,7 +17,7 @@ impl Provider<Ethereum> for MockL1Provider {
     }
 }
 
-/// Mock L2 Provider that implements the Provider trait for Optimism network.
+/// Mock L2 Provider that implements the Provider trait for Base network.
 ///
 /// This is a minimal no-op provider that satisfies the trait bounds required
 /// by [`MockEngineClient`]. All provider methods return empty/default values.
@@ -25,8 +25,8 @@ impl Provider<Ethereum> for MockL1Provider {
 pub struct MockL2Provider;
 
 #[async_trait]
-impl Provider<Optimism> for MockL2Provider {
-    fn root(&self) -> &alloy_provider::RootProvider<Optimism> {
+impl Provider<Base> for MockL2Provider {
+    fn root(&self) -> &alloy_provider::RootProvider<Base> {
         unimplemented!("MockL2Provider does not support root()")
     }
 }

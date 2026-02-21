@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use alloy_consensus::constants::EIP7702_TX_TYPE_ID;
-    use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTxType};
+    use base_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTxType};
     use reth_codecs::{Compact, txtype::*};
     use rstest::rstest;
 

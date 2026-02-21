@@ -6,12 +6,12 @@ use alloy_consensus::Block;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV3, PayloadError};
-use kona_genesis::RollupConfig;
-use libp2p::gossipsub::MessageAcceptance;
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_rpc_types_engine::{
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadV4, OpNetworkPayloadEnvelope, OpPayloadError,
 };
+use kona_genesis::RollupConfig;
+use libp2p::gossipsub::MessageAcceptance;
 
 use super::BlockHandler;
 #[cfg(feature = "metrics")]
@@ -345,9 +345,9 @@ pub(crate) mod tests {
     use alloy_rlp::BufMut;
     use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
     use arbitrary::{Arbitrary, Unstructured};
+    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
     use kona_genesis::RollupConfig;
-    use op_alloy_consensus::OpTxEnvelope;
-    use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
 
     use super::*;
 

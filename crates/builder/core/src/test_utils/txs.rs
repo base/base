@@ -5,10 +5,10 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
+use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
+use base_alloy_network::Base;
 use dashmap::DashMap;
 use futures::StreamExt;
-use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
-use op_alloy_network::Optimism;
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_primitives::Recovered;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
@@ -19,7 +19,7 @@ use super::{PrivateKeySigner, funded_signer, sign_op_tx};
 
 #[derive(Clone, Debug)]
 pub struct TransactionBuilder {
-    provider: RootProvider<Optimism>,
+    provider: RootProvider<Base>,
     signer: Option<PrivateKeySigner>,
     nonce: Option<u64>,
     base_fee: Option<u128>,
@@ -27,7 +27,7 @@ pub struct TransactionBuilder {
 }
 
 impl TransactionBuilder {
-    pub fn new(provider: RootProvider<Optimism>) -> Self {
+    pub fn new(provider: RootProvider<Base>) -> Self {
         Self {
             provider,
             signer: None,
@@ -132,7 +132,7 @@ impl TransactionBuilder {
             .expect("Failed to sign transaction")
     }
 
-    pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+    pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Base>> {
         let provider = self.provider.clone();
         let transaction = self.build().await;
         let transaction_encoded = transaction.encoded_2718();
