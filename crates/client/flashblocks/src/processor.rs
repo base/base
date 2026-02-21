@@ -286,7 +286,9 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
+        let Some(earliest_block_number) = flashblocks_per_block.keys().min().copied() else {
+            return Ok(None);
+        };
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
             .client
