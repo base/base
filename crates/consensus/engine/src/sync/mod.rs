@@ -114,11 +114,11 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
 
 #[cfg(test)]
 mod test {
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, b256};
     use alloy_provider::Network;
     use alloy_rpc_types_eth::Block;
     use base_protocol::L2BlockInfo;
-    use alloy_eips::BlockNumHash;
     use kona_genesis::ChainGenesis;
     use op_alloy_network::Optimism;
 
