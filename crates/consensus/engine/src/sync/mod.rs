@@ -114,13 +114,16 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
 
 #[cfg(test)]
 mod test {
+    use alloy_primitives::{B256, b256};
     use alloy_provider::Network;
     use alloy_rpc_types_eth::Block;
     use base_protocol::L2BlockInfo;
-    use kona_registry::ROLLUP_CONFIGS;
+    use alloy_eips::BlockNumHash;
+    use kona_genesis::ChainGenesis;
     use op_alloy_network::Optimism;
 
-    const OP_SEPOLIA_CHAIN_ID: u64 = 11155420;
+    const OP_SEPOLIA_GENESIS_HASH: B256 =
+        b256!("102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d");
     const OP_SEPOLIA_GENESIS_RPC_RESPONSE: &str = "{\"hash\":\"0x102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d\",\"parentHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",\"miner\":\"0x4200000000000000000000000000000000000011\",\"stateRoot\":\"0x06787a17a3ed87c339a39dbbeeb311578a0c83ed29daa2db95da62b28efce8a9\",\"transactionsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"receiptsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"logsBloom\":\"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\"difficulty\":\"0x0\",\"number\":\"0x0\",\"gasLimit\":\"0x1c9c380\",\"gasUsed\":\"0x0\",\"timestamp\":\"0x64d6dbac\",\"extraData\":\"0x424544524f434b\",\"mixHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"nonce\":\"0x0000000000000000\",\"baseFeePerGas\":\"0x3b9aca00\",\"size\":\"0x209\",\"uncles\":[],\"transactions\":[]}";
 
     /// Sanity regression test - `alloy_rpc_types`' `Block::into_consensus` failed to saturate the
@@ -129,7 +132,10 @@ mod test {
     /// the sake of `L2BlockInfo::from_block_and_genesis`.
     #[tokio::test]
     async fn test_genesis_block_hash() {
-        let rollup_config = ROLLUP_CONFIGS.get(&OP_SEPOLIA_CHAIN_ID).unwrap();
+        let genesis = ChainGenesis {
+            l2: BlockNumHash { number: 0, hash: OP_SEPOLIA_GENESIS_HASH },
+            ..Default::default()
+        };
         let genesis_block: Block<<Optimism as Network>::TransactionResponse> =
             serde_json::from_str(OP_SEPOLIA_GENESIS_RPC_RESPONSE).unwrap();
 
@@ -141,7 +147,7 @@ mod test {
 
         // Convert to `L2BlockInfo` and check the same.
         let l2_block_info =
-            L2BlockInfo::from_block_and_genesis(&consensus_block, &rollup_config.genesis).unwrap();
+            L2BlockInfo::from_block_and_genesis(&consensus_block, &genesis).unwrap();
         assert_eq!(rpc_reported_hash, l2_block_info.block_info.hash);
     }
 }
