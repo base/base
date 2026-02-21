@@ -332,7 +332,7 @@ base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
 base-alloy-consensus = { path = "crates/alloy/consensus", default-features = false }
 base-alloy-hardforks = { path = "crates/alloy/hardforks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
-base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine" }
+base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine", default-features = false }
 
 # op-alloy (external)
 # TODO: remove these once reth and kona no longer depend on upstream op-alloy

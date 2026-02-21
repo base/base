@@ -228,9 +228,9 @@ mod tests {
     use alloc::{string::ToString, sync::Arc};
 
     use alloy_rpc_types_engine::PayloadAttributes;
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_protocol::{L2BlockInfo, OpAttributesWithParent};
     use kona_genesis::{RollupConfig, SystemConfig};
-    use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
     use super::*;
     use crate::{DerivationPipeline, test_utils::*};

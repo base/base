@@ -40,7 +40,7 @@ pub enum HandlerEncodeError {
     /// This error indicates issues with serializing the OP Stack network payload
     /// structure, which contains the consensus data being gossiped.
     #[error("Failed to encode payload: {0}")]
-    PayloadEncodeError(#[from] op_alloy_rpc_types_engine::PayloadEnvelopeEncodeError),
+    PayloadEncodeError(#[from] base_alloy_rpc_types_engine::PayloadEnvelopeEncodeError),
 
     /// Attempted to publish to an unknown or unsubscribed topic.
     ///

@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use core::fmt::Display;
 
 use async_trait::async_trait;
-use op_alloy_consensus::OpBlock;
+use base_alloy_consensus::OpBlock;
 
 use crate::L2BlockInfo;
 

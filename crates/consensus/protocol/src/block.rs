@@ -7,10 +7,10 @@ use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HA
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
+use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
 use derive_more::Display;
 use kona_genesis::ChainGenesis;
-use op_alloy_consensus::{OpBlock, OpTxEnvelope};
-use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
 
 use crate::{DecodeError, L1BlockInfoTx};
 
@@ -244,7 +244,7 @@ mod tests {
 
     use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
-    use op_alloy_consensus::OpBlock;
+    use base_alloy_consensus::OpBlock;
 
     use super::*;
 
@@ -287,8 +287,8 @@ mod tests {
         };
         let tx_env = alloy_rpc_types_eth::Transaction {
             inner: alloy_consensus::transaction::Recovered::new_unchecked(
-                op_alloy_consensus::OpTxEnvelope::Deposit(alloy_primitives::Sealed::new(
-                    op_alloy_consensus::TxDeposit {
+                base_alloy_consensus::OpTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    base_alloy_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
                         ..Default::default()
                     },
@@ -300,7 +300,7 @@ mod tests {
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };
-        let block: alloy_rpc_types_eth::Block<op_alloy_rpc_types::Transaction> =
+        let block: alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction> =
             alloy_rpc_types_eth::Block {
                 header: alloy_rpc_types_eth::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
@@ -315,7 +315,7 @@ mod tests {
                     ..Default::default()
                 },
                 transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
-                    op_alloy_rpc_types::Transaction {
+                    base_alloy_rpc_types::Transaction {
                         inner: tx_env,
                         deposit_nonce: None,
                         deposit_receipt_version: None,

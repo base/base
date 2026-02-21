@@ -5,9 +5,9 @@ use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
+use base_alloy_consensus::OpBlock;
 use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use kona_genesis::{RollupConfig, SystemConfig};
-use op_alloy_consensus::OpBlock;
 use thiserror::Error;
 
 use crate::{

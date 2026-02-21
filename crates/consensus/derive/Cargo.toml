@@ -24,9 +24,9 @@ alloy-rlp = { workspace = true, features = ["derive"] }
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map"] }
 
-# Op Alloy
-op-alloy-rpc-types-engine.workspace = true
-op-alloy-consensus = { workspace = true, features = ["k256"] }
+# Base Alloy
+base-alloy-rpc-types-engine.workspace = true
+base-alloy-consensus = { workspace = true, features = ["k256"] }
 
 # General
 tracing.workspace = true
@@ -50,7 +50,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 tracing = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitrary"] }
-op-alloy-consensus = { workspace = true, features = ["k256"] }
+base-alloy-consensus = { workspace = true, features = ["k256"] }
 
 [features]
 default = []
@@ -60,11 +60,11 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
+	"base-alloy-consensus/serde",
+	"base-alloy-rpc-types-engine/serde",
 	"base-protocol/serde",
 	"dep:serde",
 	"kona-genesis/serde",
-	"op-alloy-consensus/serde",
-	"op-alloy-rpc-types-engine/serde",
 	"tracing-subscriber?/serde",
 ]
 test-utils = [

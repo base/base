@@ -23,9 +23,9 @@ alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
-# op-alloy
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+# base-alloy
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine.workspace = true
 
 # misc
 tracing.workspace = true
@@ -53,8 +53,8 @@ proptest.workspace = true
 serde_json.workspace = true
 alloy-sol-types.workspace = true
 kona-registry.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
@@ -73,12 +73,12 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/std",
 	"alloy-rpc-types-eth/std",
+	"base-alloy-consensus/std",
+	"base-alloy-rpc-types-engine/std",
 	"brotli/std",
 	"derive_more/std",
 	"kona-genesis/std",
 	"miniz_oxide/std",
-	"op-alloy-consensus/std",
-	"op-alloy-rpc-types-engine/std",
 	"serde?/std",
 	"spin?/std",
 	"thiserror/std",
@@ -91,11 +91,11 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
 	"alloy-rpc-types-eth/serde",
+	"base-alloy-consensus/serde",
+	"base-alloy-rpc-types-engine/serde",
 	"dep:serde",
 	"kona-genesis/serde",
 	"miniz_oxide/serde",
-	"op-alloy-consensus/serde",
-	"op-alloy-rpc-types-engine/serde",
 	"tracing-subscriber?/serde",
 ]
 arbitrary = [
@@ -105,9 +105,9 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-engine/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
+	"base-alloy-consensus/arbitrary",
+	"base-alloy-rpc-types-engine/arbitrary",
 	"dep:arbitrary",
 	"kona-genesis/arbitrary",
-	"op-alloy-consensus/arbitrary",
-	"op-alloy-rpc-types-engine/arbitrary",
 	"std",
 ]

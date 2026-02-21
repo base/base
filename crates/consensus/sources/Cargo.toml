@@ -25,8 +25,8 @@ alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustl
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 
-# OP Alloy
-op-alloy-rpc-types-engine.workspace = true
+# Base Alloy
+base-alloy-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
 
 # Misc
 tracing = { workspace = true, features = ["std"] }
