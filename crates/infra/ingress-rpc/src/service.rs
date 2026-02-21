@@ -184,7 +184,8 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
         self.metrics.backrun_bundles_received_total.increment(1);
 
         self.builder_backrun_tx.send(accepted_bundle.clone()).map_err(|e| {
-            EthApiError::InvalidParams(format!("Failed to send backrun bundle: {e}")).into_rpc_err()
+            warn!(message = "Failed to send backrun bundle to builder", error = %e);
+            EthApiError::InternalEthError.into_rpc_err()
         })?;
 
         self.send_audit_event(&accepted_bundle, bundle_hash);
@@ -202,14 +203,15 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
         let meter_bundle_response = accepted_bundle.meter_bundle_response.clone();
 
         // asynchronously send the meter bundle response to the builder
-        self.builder_tx
-            .send(meter_bundle_response)
-            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+        self.builder_tx.send(meter_bundle_response).map_err(|e| {
+            warn!(message = "Failed to send meter bundle response to builder", error = %e);
+            EthApiError::InternalEthError.into_rpc_err()
+        })?;
 
         // publish the bundle to the queue
         if let Err(e) = self.bundle_queue_publisher.publish(&accepted_bundle, &bundle_hash).await {
             warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
-            return Err(EthApiError::InvalidParams("Failed to queue bundle".into()).into_rpc_err());
+            return Err(EthApiError::InternalEthError.into_rpc_err());
         }
 
         info!(
