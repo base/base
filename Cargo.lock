@@ -7912,8 +7912,8 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
+ "base-alloy-consensus",
  "base-protocol",
- "op-alloy-consensus",
  "op-revm",
  "revm",
 ]

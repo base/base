@@ -2,7 +2,7 @@
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, keccak256};
-use op_alloy_consensus::{OpTxType, TxDeposit};
+use base_alloy_consensus::{OpTxType, TxDeposit};
 use op_revm::{DefaultOp, OpSpecId, transaction::deposit::DepositTransactionParts};
 use revm::{
     Context, ExecuteCommitEvm, MainBuilder,
