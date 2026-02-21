@@ -443,7 +443,7 @@ impl<Txs> OpBuilder<'_, Txs> {
     }
 }
 
-/// A type that returns a the [`PayloadTransactions`] that should be included in the pool.
+/// A type that returns the [`PayloadTransactions`] that should be included in the pool.
 pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
@@ -662,7 +662,7 @@ where
 
     /// Executes the given best transactions and updates the execution info.
     ///
-    /// Returns `Ok(Some(())` if the job was cancelled.
+    /// Returns `Ok(Some(()))` if the job was cancelled.
     pub fn execute_best_transactions<Builder>(
         &self,
         info: &mut ExecutionInfo,
