@@ -19,7 +19,8 @@ use revm_primitives::B256;
 
 /// Trait for providers that fetch cached execution results for transactions.
 pub trait CachedExecutionProvider<Result> {
-    /// Gets the cached execution result for a transaction.
+    /// Gets the cached execution result for a transaction. This method is expected to be called in the order of the transactions in the block.
+    /// This allows only checking if the previous transaction matches the expected hash.
     fn get_cached_execution_for_tx(
         &self,
         parent_block_hash: &B256,

@@ -210,7 +210,7 @@ where
                 let receipt = self.receipt_builder.build(
                     &mut self.evm,
                     &transaction,
-                    result.clone(),
+                    &result,
                     self.cumulative_gas_used,
                     self.pending_block.timestamp,
                 )?;
