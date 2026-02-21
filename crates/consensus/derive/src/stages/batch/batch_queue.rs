@@ -28,7 +28,7 @@ use crate::{
 /// block inside that range have been added to the stage by the time that it attempts to advance a
 /// full epoch.
 ///
-/// It is internally responsible for making sure that batches with L1 inclusions block outside it's
+/// It is internally responsible for making sure that batches with L1 inclusions block outside its
 /// working range are not considered or pruned.
 #[derive(Debug)]
 pub struct BatchQueue<P, BF>
