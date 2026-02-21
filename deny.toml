@@ -9,17 +9,9 @@ ignore = [
     # No safe upgrade available
     "RUSTSEC-2025-0119",
 
-    # backoff is unmaintained but comes from rollup-boost -> kona-engine (upstream dependency)
-    # No safe upgrade available
-    "RUSTSEC-2025-0012",
-
     # bincode is unmaintained but comes from reth-nippy-jar (upstream reth dependency)
     # No safe upgrade available
     "RUSTSEC-2025-0141",
-
-    # instant is unmaintained but comes from backoff -> rollup-boost (upstream dependency)
-    # No safe upgrade available
-    "RUSTSEC-2024-0384",
 
     # paste is unmaintained but widely used in ecosystem (alloy, reth, etc.)
     # No safe upgrade available

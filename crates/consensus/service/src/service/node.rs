@@ -23,8 +23,7 @@ use crate::{
     NetworkBuilder, NetworkConfig, NodeActor, NodeMode, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RollupBoostAdminApiClient, RollupBoostHealthRpcClient, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig,
+    RpcActor, RpcContext, SequencerActor, SequencerConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -179,25 +178,19 @@ impl RollupNode {
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
-    ) -> Result<
-        EngineActor<
-            EngineProcessor<
-                OpEngineClient<RootProvider, RootProvider<Optimism>>,
-                QueuedEngineDerivationClient,
-            >,
-            EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Optimism>>>,
+    ) -> EngineActor<
+        EngineProcessor<
+            OpEngineClient<RootProvider, RootProvider<Optimism>>,
+            QueuedEngineDerivationClient,
         >,
-        String,
+        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Optimism>>>,
     > {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
-        let engine_client = Arc::new(self.engine_config().build_engine_client().map_err(|e| {
-            error!(target: "service", error = ?e, "engine client build failed");
-            format!("Engine client build failed: {e:?}")
-        })?);
+        let engine_client = Arc::new(self.engine_config().build_engine_client());
 
         let engine_processor = EngineProcessor::new(
             Arc::clone(&engine_client),
@@ -209,18 +202,17 @@ impl RollupNode {
 
         let engine_rpc_processor = EngineRpcProcessor::new(
             Arc::clone(&engine_client),
-            Arc::clone(&engine_client.rollup_boost),
             Arc::clone(&self.config),
             engine_state_rx,
             engine_queue_length_rx,
         );
 
-        Ok(EngineActor::new(
+        EngineActor::new(
             cancellation_token,
             engine_request_rx,
             engine_processor,
             engine_rpc_processor,
-        ))
+        )
     }
 
     /// Starts the rollup node service.
@@ -256,7 +248,7 @@ impl RollupNode {
             engine_actor_request_rx,
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             unsafe_head_tx,
-        )?;
+        );
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
@@ -382,12 +374,6 @@ impl RollupNode {
             RpcActor::new(
                 b,
                 QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
-                RollupBoostAdminApiClient {
-                    engine_actor_request_tx: engine_actor_request_tx.clone(),
-                },
-                RollupBoostHealthRpcClient {
-                    engine_actor_request_tx: engine_actor_request_tx.clone(),
-                },
                 sequencer_admin_client,
             )
         });

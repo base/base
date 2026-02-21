@@ -63,6 +63,7 @@ engine = [
 	"dep:op-alloy-rpc-types-engine",
 ]
 test-utils = [
+	"base-bundles/test-utils",
 	"dep:alloy-contract",
 	"dep:alloy-genesis",
 	"dep:alloy-signer",

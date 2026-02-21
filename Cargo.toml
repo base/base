@@ -345,10 +345,6 @@ op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", re
 op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
 op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37", default-features = false }
 
-# rollup-boost version that matches kona's dependency (used for consensus binary)
-rollup-boost = "0.7.13"
-
-
 # op-revm
 op-revm = { version = "15.0.0", default-features = false }
 
@@ -503,7 +499,6 @@ libp2p-stream = "0.4.0-alpha"
 unsigned-varint = { version = "0.8", default-features = false }
 alloc-no-stdlib = "2.0"
 async-channel = "2.5"
-rollup-boost-types = "0.1"
 buddy_system_allocator = "0.12"
 tabled = { version = "0.20", default-features = false }
 cfg-if = "1.0"
@@ -514,8 +509,7 @@ ark-bls12-381 = { version = "0.5.0", default-features = false }
 
 # copied from ethereum-optimism/optimism
 [patch.crates-io]
-# Duplicated by: reth-payload-primitives, reth-engine-local (reth git), rollup-boost,
-# rollup-boost-types (crates.io)
+# Duplicated by: reth-payload-primitives, reth-engine-local (reth git)
 op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37" }
 # Duplicated by: reth-codecs, reth-db-api, reth-primitives-traits, reth-rpc-convert (reth git)
 op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", rev = "a46ffeef01ec07de31594c07859b64bbbb9e5d37" }

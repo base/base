@@ -34,7 +34,6 @@ libp2p.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 async-trait.workspace = true
-rollup-boost.workspace = true
 tokio = { workspace = true, features = ["time"] }
 serde = { workspace = true, features = ["std"] }
 
