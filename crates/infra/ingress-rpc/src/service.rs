@@ -223,9 +223,38 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
         Ok(BundleHash { bundle_hash })
     }
 
-    async fn cancel_bundle(&self, _request: CancelBundle) -> RpcResult<()> {
-        warn!(message = "TODO: implement cancel_bundle", method = "cancel_bundle");
-        todo!("implement cancel_bundle")
+    async fn cancel_bundle(&self, request: CancelBundle) -> RpcResult<()> {
+        let uuid: uuid::Uuid = request.replacement_uuid.parse().map_err(|_| {
+            EthApiError::InvalidParams("invalid replacement_uuid".into()).into_rpc_err()
+        })?;
+
+        if let Err(e) = self.bundle_queue_publisher.publish_cancellation(&request).await {
+            warn!(
+                message = "Failed to publish bundle cancellation to queue",
+                replacement_uuid = %request.replacement_uuid,
+                error = %e,
+            );
+            return Err(EthApiError::InvalidParams("Failed to queue bundle cancellation".into())
+                .into_rpc_err());
+        }
+
+        let audit_event = BundleEvent::Cancelled { bundle_id: uuid };
+        if let Err(e) = self.audit_channel.send(audit_event) {
+            warn!(
+                message = "failed to send cancellation audit event",
+                replacement_uuid = %request.replacement_uuid,
+                error = %e,
+            );
+        }
+
+        self.metrics.bundles_cancelled.increment(1);
+
+        info!(
+            message = "cancelled bundle",
+            replacement_uuid = %request.replacement_uuid,
+        );
+
+        Ok(())
     }
 
     async fn send_raw_transaction(&self, data: Bytes) -> RpcResult<B256> {
@@ -689,5 +718,71 @@ mod tests {
         let result = validate_backrun_bundle_limits(2, 6000000, 5, 5000000);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("exceeds max gas limit"));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_bundle_success() {
+        let mock_server = MockServer::start().await;
+        let config = create_test_config(&mock_server);
+
+        let provider: RootProvider<Optimism> =
+            RootProvider::new_http(mock_server.uri().parse().unwrap());
+
+        let providers = Providers {
+            mempool: provider.clone(),
+            simulation: provider.clone(),
+            raw_tx_forward: None,
+        };
+
+        let (audit_tx, mut audit_rx) = mpsc::unbounded_channel();
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        let (backrun_tx, _backrun_rx) = broadcast::channel(1);
+
+        let service =
+            IngressService::new(providers, MockQueue, audit_tx, builder_tx, backrun_tx, config);
+
+        let request =
+            CancelBundle { replacement_uuid: "550e8400-e29b-41d4-a716-446655440000".to_string() };
+
+        let result = service.cancel_bundle(request).await;
+        assert!(result.is_ok());
+
+        // Verify the audit event was emitted
+        let event = audit_rx.try_recv().unwrap();
+        match event {
+            BundleEvent::Cancelled { bundle_id } => {
+                assert_eq!(bundle_id.to_string(), "550e8400-e29b-41d4-a716-446655440000");
+            }
+            _ => panic!("expected BundleEvent::Cancelled"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_bundle_invalid_uuid() {
+        let mock_server = MockServer::start().await;
+        let config = create_test_config(&mock_server);
+
+        let provider: RootProvider<Optimism> =
+            RootProvider::new_http(mock_server.uri().parse().unwrap());
+
+        let providers = Providers {
+            mempool: provider.clone(),
+            simulation: provider.clone(),
+            raw_tx_forward: None,
+        };
+
+        let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        let (backrun_tx, _backrun_rx) = broadcast::channel(1);
+
+        let service =
+            IngressService::new(providers, MockQueue, audit_tx, builder_tx, backrun_tx, config);
+
+        let request = CancelBundle { replacement_uuid: "not-a-valid-uuid".to_string() };
+
+        let result = service.cancel_bundle(request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid replacement_uuid"));
     }
 }

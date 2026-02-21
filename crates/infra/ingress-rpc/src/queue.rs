@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
-use base_primitives::AcceptedBundle;
+use base_primitives::{AcceptedBundle, CancelBundle};
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use tokio::time::Duration;
 use tracing::{error, info};
@@ -94,6 +94,13 @@ impl<Q: MessageQueue> BundleQueuePublisher<Q> {
     pub async fn publish(&self, bundle: &AcceptedBundle, hash: &B256) -> Result<()> {
         let key = hash.to_string();
         let payload = serde_json::to_vec(bundle)?;
+        self.queue.publish(&self.topic, &key, &payload).await
+    }
+
+    /// Publishes a bundle cancellation with the replacement UUID as the message key.
+    pub async fn publish_cancellation(&self, cancel: &CancelBundle) -> Result<()> {
+        let key = cancel.replacement_uuid.clone();
+        let payload = serde_json::to_vec(cancel)?;
         self.queue.publish(&self.topic, &key, &payload).await
     }
 }
