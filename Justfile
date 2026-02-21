@@ -111,6 +111,10 @@ build:
 build-all-targets: build-contracts
     cargo build --workspace --all-targets
 
+# Checks workspace compilation with ci profile (minimal disk usage for CI)
+check-ci: build-contracts
+    cargo check --workspace --all-targets --profile ci
+
 # Builds all targets with ci profile (minimal disk usage for CI)
 build-ci: build-contracts
     cargo build --workspace --all-targets --profile ci

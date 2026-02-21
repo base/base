@@ -1,0 +1,17 @@
+name: 'Setup Native Dependencies'
+description: 'Installs cached native apt packages and sets LIBCLANG_PATH'
+
+runs:
+  using: composite
+  steps:
+    - name: Install native dependencies
+      uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      with:
+        packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
+        version: 1.2
+
+    - name: Set LIBCLANG_PATH
+      shell: bash
+      run: |
+        LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
+        echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
