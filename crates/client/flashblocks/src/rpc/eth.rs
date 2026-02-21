@@ -310,26 +310,24 @@ where
         );
 
         let timeout = Duration::from_millis(timeout_ms);
-        loop {
-            tokio::select! {
-                receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
-                    if let Some(receipt) = receipt {
-                        return Ok(receipt);
-                    }
-                    continue
-                }
-                receipt = self.wait_for_canonical_receipt(tx_hash) => {
-                        if let Some(receipt) = receipt {
-                            return Ok(receipt);
-                        }
-                        continue
-                    }
-                _ = time::sleep(timeout) => {
-                    return Err(EthApiError::TransactionConfirmationTimeout {
-                        hash: tx_hash,
-                        duration: timeout,
-                    }.into());
-                }
+        tokio::select! {
+            receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
+                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
+                    hash: tx_hash,
+                    duration: timeout,
+                }.into())
+            }
+            receipt = self.wait_for_canonical_receipt(tx_hash) => {
+                receipt.ok_or_else(|| EthApiError::TransactionConfirmationTimeout {
+                    hash: tx_hash,
+                    duration: timeout,
+                }.into())
+            }
+            _ = time::sleep(timeout) => {
+                Err(EthApiError::TransactionConfirmationTimeout {
+                    hash: tx_hash,
+                    duration: timeout,
+                }.into())
             }
         }
     }
