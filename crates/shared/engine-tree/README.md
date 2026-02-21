@@ -121,6 +121,6 @@ This crate builds on top of several Reth and OP Stack components:
 
 ## Related Crates
 
-- **`base-client-engine`**: Engine validator builder that constructs `BaseEngineValidator` instances
+- **`base-engine`**: Engine validator builder that constructs `BaseEngineValidator` instances
 - **`base-flashblocks`**: Provides cached execution results that integrate with `CachedExecutor`
 - **`base-client-node`**: Node builder extensions that wire up the full validation pipeline
