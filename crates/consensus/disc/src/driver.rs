@@ -421,6 +421,7 @@ mod tests {
             OP_SEPOLIA_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
+        .with_bootnodes(BootNodes::testnet())
         .build()
         .expect("Failed to build discovery service");
         discovery.bootstore = Some(BootStoreFile::Custom(file));
@@ -511,6 +512,7 @@ mod tests {
             OP_MAINNET_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
+        .with_bootnodes(BootNodes::mainnet())
         .build()
         .expect("Failed to build discovery service");
         discovery.bootstore = Some(BootStoreFile::Custom(file));

@@ -418,8 +418,8 @@ mod tests {
     }
 
     fn default_rollup_config() -> &'static RollupConfig {
-        let opm = 10;
-        ROLLUP_CONFIGS.get(&opm).expect("default rollup config should exist")
+        let base_mainnet = 8453;
+        ROLLUP_CONFIGS.get(&base_mainnet).expect("default rollup config should exist")
     }
 
     #[test]

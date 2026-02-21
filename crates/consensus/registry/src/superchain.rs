@@ -1,9 +1,12 @@
 //! Contains the full superchain data.
 
-use alloy_primitives::map::HashMap;
-use kona_genesis::{ChainConfig, L1ChainConfig, RollupConfig, Superchains};
+use alloc::vec;
 
-use super::ChainList;
+use alloy_primitives::map::HashMap;
+use kona_genesis::{
+    Chain, ChainConfig, ChainList, FaultProofs, RollupConfig, SuperchainConfig, SuperchainParent,
+};
+
 use crate::L1Config;
 
 /// The registry containing all the superchain configurations.
@@ -16,41 +19,83 @@ pub struct Registry {
     /// Map of chain IDs to their rollup configurations.
     pub rollup_configs: HashMap<u64, RollupConfig>,
     /// Map of l1 chain IDs to their l1 configurations.
-    pub l1_configs: HashMap<u64, L1ChainConfig>,
+    pub l1_configs: HashMap<u64, kona_genesis::L1ChainConfig>,
 }
 
 impl Registry {
-    /// Read the chain list.
-    pub fn read_chain_list() -> ChainList {
-        let chain_list = include_str!("../etc/chainList.json");
-        serde_json::from_str(chain_list).expect("Failed to read chain list")
+    /// Builds a [`Chain`] entry from a parsed [`ChainConfig`] and its identifier.
+    pub fn build_chain_entry(identifier: &str, config: &ChainConfig) -> Chain {
+        let parent_chain = identifier.split('/').next().unwrap_or("mainnet");
+        Chain {
+            name: config.name.clone(),
+            identifier: identifier.into(),
+            chain_id: config.chain_id,
+            rpc: vec![config.public_rpc.clone()],
+            explorers: vec![config.explorer.clone()],
+            superchain_level: config.superchain_level as u64,
+            governed_by_optimism: Some(config.governed_by_optimism),
+            data_availability_type: config.data_availability_type.clone(),
+            parent: SuperchainParent { r#type: "L2".into(), chain: parent_chain.into() },
+            gas_paying_token: config
+                .gas_paying_token
+                .map(|t| alloc::string::ToString::to_string(&t)),
+            fault_proofs: Some(FaultProofs { status: "permissionless".into() }),
+        }
     }
 
-    /// Read superchain configs.
-    pub fn read_superchain_configs() -> Superchains {
-        let superchain_configs = include_str!("../etc/configs.json");
-        serde_json::from_str(superchain_configs).expect("Failed to read superchain configs")
-    }
-
-    /// Initialize the superchain configurations from the chain list.
+    /// Initialize the superchain configurations from embedded TOML config files.
     pub fn from_chain_list() -> Self {
-        let chain_list = Self::read_chain_list();
-        let superchains = Self::read_superchain_configs();
+        // Parse superchain configs from TOML.
+        let mainnet_sc: SuperchainConfig =
+            toml::from_str(include_str!("../configs/mainnet/superchain.toml"))
+                .expect("Failed to parse mainnet superchain config");
+        let sepolia_sc: SuperchainConfig =
+            toml::from_str(include_str!("../configs/sepolia/superchain.toml"))
+                .expect("Failed to parse sepolia superchain config");
+        let sepolia_dev_0_sc: SuperchainConfig =
+            toml::from_str(include_str!("../configs/sepolia-dev-0/superchain.toml"))
+                .expect("Failed to parse sepolia-dev-0 superchain config");
+
+        // Parse chain configs from TOML.
+        let base_mainnet: ChainConfig =
+            toml::from_str(include_str!("../configs/mainnet/base.toml"))
+                .expect("Failed to parse mainnet/base config");
+        let base_sepolia: ChainConfig =
+            toml::from_str(include_str!("../configs/sepolia/base.toml"))
+                .expect("Failed to parse sepolia/base config");
+        let base_devnet_0: ChainConfig =
+            toml::from_str(include_str!("../configs/sepolia-dev-0/base-devnet-0.toml"))
+                .expect("Failed to parse sepolia-dev-0/base-devnet-0 config");
+
+        // Build chain list entries.
+        let chain_list = ChainList {
+            chains: vec![
+                Self::build_chain_entry("mainnet/base", &base_mainnet),
+                Self::build_chain_entry("sepolia/base", &base_sepolia),
+                Self::build_chain_entry("sepolia-dev-0/base-devnet-0", &base_devnet_0),
+            ],
+        };
+
+        // Process chain configs with their superchain configs.
+        let superchain_groups = [
+            (&mainnet_sc, vec![base_mainnet]),
+            (&sepolia_sc, vec![base_sepolia]),
+            (&sepolia_dev_0_sc, vec![base_devnet_0]),
+        ];
+
         let mut op_chains = HashMap::default();
         let mut rollup_configs = HashMap::default();
 
-        for superchain in superchains.superchains {
-            for mut chain_config in superchain.chains {
-                chain_config.l1_chain_id = superchain.config.l1.chain_id;
+        for (sc_config, chain_configs) in superchain_groups {
+            for mut chain_config in chain_configs {
+                chain_config.l1_chain_id = sc_config.l1.chain_id;
                 if let Some(a) = &mut chain_config.addresses {
                     a.zero_proof_addresses();
                 }
                 let mut rollup = chain_config.as_rollup_config();
-                rollup.protocol_versions_address = superchain
-                    .config
-                    .protocol_versions_addr
-                    .expect("Missing protocol versions address");
-                rollup.superchain_config_address = superchain.config.superchain_config_addr;
+                rollup.protocol_versions_address =
+                    sc_config.protocol_versions_addr.expect("Missing protocol versions address");
+                rollup.superchain_config_address = sc_config.superchain_config_addr;
                 rollup_configs.insert(chain_config.chain_id, rollup);
                 op_chains.insert(chain_config.chain_id, chain_config);
             }
@@ -67,8 +112,6 @@ mod tests {
     use alloy_op_hardforks::{
         BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP,
         BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
-        OP_MAINNET_ISTHMUS_TIMESTAMP, OP_MAINNET_JOVIAN_TIMESTAMP, OP_SEPOLIA_ISTHMUS_TIMESTAMP,
-        OP_SEPOLIA_JOVIAN_TIMESTAMP,
     };
     use alloy_primitives::address;
     use kona_genesis::{AddressList, OP_MAINNET_BASE_FEE_CONFIG, Roles, SuperchainLevel};
@@ -124,19 +167,14 @@ mod tests {
     fn test_read_rollup_configs() {
         let superchains = Registry::from_chain_list();
         assert_eq!(
-            *superchains.rollup_configs.get(&10).unwrap(),
-            crate::test_utils::OP_MAINNET_CONFIG
+            *superchains.rollup_configs.get(&8453).unwrap(),
+            crate::test_utils::BASE_MAINNET_CONFIG
         );
     }
 
     #[test]
     fn test_isthmus_timestamps() {
         let superchains = Registry::from_chain_list();
-        let op_mainnet_config = superchains.rollup_configs.get(&10).unwrap();
-        assert_eq!(op_mainnet_config.hardforks.isthmus_time, Some(OP_MAINNET_ISTHMUS_TIMESTAMP));
-
-        let op_sepolia_config = superchains.rollup_configs.get(&11155420).unwrap();
-        assert_eq!(op_sepolia_config.hardforks.isthmus_time, Some(OP_SEPOLIA_ISTHMUS_TIMESTAMP));
 
         let base_mainnet_config = superchains.rollup_configs.get(&8453).unwrap();
         assert_eq!(
@@ -154,11 +192,6 @@ mod tests {
     #[test]
     fn test_jovian_timestamps() {
         let superchains = Registry::from_chain_list();
-        let op_mainnet_config = superchains.rollup_configs.get(&10).unwrap();
-        assert_eq!(op_mainnet_config.hardforks.jovian_time, Some(OP_MAINNET_JOVIAN_TIMESTAMP));
-
-        let op_sepolia_config = superchains.rollup_configs.get(&11155420).unwrap();
-        assert_eq!(op_sepolia_config.hardforks.jovian_time, Some(OP_SEPOLIA_JOVIAN_TIMESTAMP));
 
         let base_mainnet_config = superchains.rollup_configs.get(&8453).unwrap();
         assert_eq!(base_mainnet_config.hardforks.jovian_time, Some(BASE_MAINNET_JOVIAN_TIMESTAMP));

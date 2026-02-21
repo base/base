@@ -113,7 +113,7 @@ mod tests {
     use std::str::FromStr;
 
     use discv5::{Enr, enr::EnrPublicKey};
-    use kona_genesis::{BASE_MAINNET_CHAIN_ID, OP_MAINNET_CHAIN_ID, OP_SEPOLIA_CHAIN_ID};
+    use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
 
     use super::*;
 
@@ -136,19 +136,10 @@ mod tests {
 
     #[test]
     fn test_bootnodes_from_chain_id() {
-        let mainnet = BootNodes::from_chain_id(OP_MAINNET_CHAIN_ID);
-        assert_eq!(mainnet.len(), 24);
-
         let mainnet = BootNodes::from_chain_id(BASE_MAINNET_CHAIN_ID);
         assert_eq!(mainnet.len(), 24);
 
-        let mainnet = BootNodes::from_chain_id(130 /* Unichain Mainnet */);
-        assert_eq!(mainnet.len(), 24);
-
-        let testnet = BootNodes::from_chain_id(OP_SEPOLIA_CHAIN_ID);
-        assert_eq!(testnet.len(), 8);
-
-        let testnet = BootNodes::from_chain_id(1301 /* Unichain Sepolia */);
+        let testnet = BootNodes::from_chain_id(BASE_SEPOLIA_CHAIN_ID);
         assert_eq!(testnet.len(), 8);
 
         let unknown = BootNodes::from_chain_id(0);
@@ -182,7 +173,7 @@ mod tests {
         let bootnodes = BootNodes(vec![]);
         assert!(bootnodes.is_empty());
 
-        let bootnodes = BootNodes::from_chain_id(OP_MAINNET_CHAIN_ID);
+        let bootnodes = BootNodes::from_chain_id(BASE_MAINNET_CHAIN_ID);
         assert!(!bootnodes.is_empty());
     }
 }

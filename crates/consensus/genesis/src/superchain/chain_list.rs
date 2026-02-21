@@ -127,8 +127,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_chain_list_file() {
-        let chain_list = include_str!("../../../registry/etc/chainList.json");
+    fn read_chain_list_json() {
+        let chain_list = r#"[
+            {
+                "name": "Base",
+                "identifier": "mainnet/base",
+                "chainId": 8453,
+                "rpc": ["https://mainnet.base.org"],
+                "explorers": ["https://explorer.base.org"],
+                "superchainLevel": 1,
+                "governedByOptimism": false,
+                "dataAvailabilityType": "eth-da",
+                "parent": { "type": "L2", "chain": "mainnet" },
+                "faultProofs": { "status": "permissionless" }
+            }
+        ]"#;
         let chains: Vec<Chain> = serde_json::from_str(chain_list).unwrap();
         let base_chain = chains.iter().find(|c| c.name == "Base").unwrap();
         assert_eq!(base_chain.chain_id, 8453);

@@ -59,22 +59,15 @@ mod tests {
         holesky::{HOLESKY_BPO1_TIMESTAMP, HOLESKY_BPO2_TIMESTAMP},
         sepolia::{SEPOLIA_BPO1_TIMESTAMP, SEPOLIA_BPO2_TIMESTAMP},
     };
-    use alloy_op_hardforks::{
-        BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP, OP_MAINNET_JOVIAN_TIMESTAMP,
-        OP_SEPOLIA_JOVIAN_TIMESTAMP,
-    };
+    use alloy_op_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
 
     use super::*;
 
     #[test]
     fn test_hardcoded_rollup_configs() {
-        let test_cases = [
-            (10, test_utils::OP_MAINNET_CONFIG),
-            (8453, test_utils::BASE_MAINNET_CONFIG),
-            (11155420, test_utils::OP_SEPOLIA_CONFIG),
-            (84532, test_utils::BASE_SEPOLIA_CONFIG),
-        ]
-        .to_vec();
+        let test_cases =
+            [(8453, test_utils::BASE_MAINNET_CONFIG), (84532, test_utils::BASE_SEPOLIA_CONFIG)]
+                .to_vec();
 
         for (chain_id, expected) in test_cases {
             let derived = super::ROLLUP_CONFIGS.get(&chain_id).unwrap();
@@ -119,18 +112,6 @@ mod tests {
             base_sepolia_config_by_ident.hardforks.jovian_time,
             Some(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
         );
-
-        let op_mainnet_config_by_ident = scr_rollup_config_by_ident("mainnet/op").unwrap();
-        assert_eq!(
-            op_mainnet_config_by_ident.hardforks.jovian_time,
-            Some(OP_MAINNET_JOVIAN_TIMESTAMP)
-        );
-
-        let op_sepolia_config_by_ident = scr_rollup_config_by_ident("sepolia/op").unwrap();
-        assert_eq!(
-            op_sepolia_config_by_ident.hardforks.jovian_time,
-            Some(OP_SEPOLIA_JOVIAN_TIMESTAMP)
-        );
     }
 
     #[test]
@@ -142,53 +123,5 @@ mod tests {
         let holesky_config = L1_CONFIGS.get(&17000).unwrap();
         assert_eq!(holesky_config.bpo1_time, Some(HOLESKY_BPO1_TIMESTAMP));
         assert_eq!(holesky_config.bpo2_time, Some(HOLESKY_BPO2_TIMESTAMP));
-    }
-
-    const CUSTOM_CONFIGS_TEST_ENABLED: Option<&str> = option_env!("KONA_CUSTOM_CONFIGS_TEST");
-    const CUSTOM_CONFIGS: Option<&str> = option_env!("KONA_CUSTOM_CONFIGS");
-    const CUSTOM_CONFIGS_DIR: Option<&str> = option_env!("KONA_CUSTOM_CONFIGS_DIR");
-
-    #[test]
-    fn custom_chain_is_loaded_when_enabled() {
-        if CUSTOM_CONFIGS_TEST_ENABLED != Some("true") {
-            return;
-        };
-        if CUSTOM_CONFIGS != Some("true") {
-            panic!("KONA_CUSTOM_CONFIGS is required when KONA_CUSTOM_CONFIGS_TEST is set");
-        }
-        if CUSTOM_CONFIGS_DIR.is_none() {
-            panic!("KONA_CUSTOM_CONFIGS_DIR is required when KONA_CUSTOM_CONFIGS_TEST is set");
-        }
-
-        let test1_chain_id = 123999119;
-        let test2_chain_id = 223999119;
-        let test1_ident = "test1/testnet";
-        let test2_ident = "test2/testnet";
-
-        let chain1 = CHAINS
-            .get_chain_by_ident(test1_ident)
-            .unwrap_or_else(|| panic!("custom chain `{test1_ident}` missing"));
-        assert_eq!(chain1.chain_id, test1_chain_id);
-        let chain2 = CHAINS
-            .get_chain_by_ident(test2_ident)
-            .unwrap_or_else(|| panic!("custom chain `{test2_ident}` missing"));
-        assert_eq!(chain2.chain_id, test2_chain_id);
-
-        assert!(
-            OPCHAINS.contains_key(&test1_chain_id),
-            "chain config missing for {test1_chain_id}"
-        );
-        assert!(
-            ROLLUP_CONFIGS.contains_key(&test1_chain_id),
-            "rollup config missing for {test1_chain_id}"
-        );
-        assert!(
-            OPCHAINS.contains_key(&test2_chain_id),
-            "chain config missing for {test2_chain_id}"
-        );
-        assert!(
-            ROLLUP_CONFIGS.contains_key(&test2_chain_id),
-            "rollup config missing for {test2_chain_id}"
-        );
     }
 }
