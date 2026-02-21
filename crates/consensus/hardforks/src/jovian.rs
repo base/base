@@ -8,8 +8,8 @@ use alloc::{string::String, vec::Vec};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex, keccak256};
+use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::Predeploys;
-use op_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 
 use crate::{Hardfork, upgrade_to_calldata};
 

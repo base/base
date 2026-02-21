@@ -21,8 +21,8 @@ base-protocol.workspace = true
 alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# OP Alloy
-op-alloy-consensus.workspace = true
+# Base Alloy
+base-alloy-consensus.workspace = true
 
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
@@ -34,8 +34,8 @@ default = []
 std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
+	"base-alloy-consensus/std",
 	"base-protocol/std",
-	"op-alloy-consensus/std",
 ]
-k256 = [ "alloy-primitives/k256", "op-alloy-consensus/k256" ]
-kzg = [ "alloy-eips/kzg", "op-alloy-consensus/kzg", "std" ]
+k256 = [ "alloy-primitives/k256", "base-alloy-consensus/k256" ]
+kzg = [ "alloy-eips/kzg", "base-alloy-consensus/kzg", "std" ]
