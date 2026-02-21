@@ -23,7 +23,7 @@ reth-node-metrics.workspace = true
 
 ## optimism
 reth-optimism-primitives.workspace = true
-reth-optimism-chainspec = { workspace = true, features = ["superchain-configs"] }
+reth-optimism-chainspec.workspace = true
 reth-optimism-consensus.workspace = true
 reth-optimism-trie.workspace = true
 
@@ -48,7 +48,7 @@ op-alloy-consensus = { workspace = true, optional = true }
 tempfile.workspace = true
 
 [build-dependencies]
-reth-optimism-chainspec = { workspace = true, features = ["std", "superchain-configs"] }
+reth-optimism-chainspec = { workspace = true, features = ["std"] }
 
 [features]
 default = []

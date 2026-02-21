@@ -381,7 +381,7 @@ mod tests {
         enr::{CombinedKey, CombinedPublicKey},
         handler::NodeContact,
     };
-    use kona_genesis::{OP_MAINNET_CHAIN_ID, OP_SEPOLIA_CHAIN_ID};
+    use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
     use tempfile::tempdir;
 
     use super::*;
@@ -396,13 +396,13 @@ mod tests {
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            OP_SEPOLIA_CHAIN_ID,
+            BASE_SEPOLIA_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
         .build()
         .expect("Failed to build discovery service");
         let (handle, _) = discovery.start();
-        assert_eq!(handle.chain_id, OP_SEPOLIA_CHAIN_ID);
+        assert_eq!(handle.chain_id, BASE_SEPOLIA_CHAIN_ID);
     }
 
     #[tokio::test]
@@ -418,7 +418,7 @@ mod tests {
         };
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            OP_SEPOLIA_CHAIN_ID,
+            BASE_SEPOLIA_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::testnet())
@@ -428,12 +428,12 @@ mod tests {
 
         discovery = discovery.init().await.expect("Failed to initialize discovery service");
 
-        // There are no ENRs for `OP_SEPOLIA_CHAIN_ID` in the bootstore.
+        // There are no ENRs for Base Sepolia in the bootstore.
         // If an ENR is added, this check will fail.
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            OP_SEPOLIA_CHAIN_ID,
+            BASE_SEPOLIA_CHAIN_ID,
             &discovery.disc,
         )
         .await;
@@ -448,7 +448,7 @@ mod tests {
             .iter()
             .filter_map(|node| {
                 if let BootNode::Enr(enr) = node
-                    && EnrValidation::validate(enr, OP_SEPOLIA_CHAIN_ID).is_invalid()
+                    && EnrValidation::validate(enr, BASE_SEPOLIA_CHAIN_ID).is_invalid()
                 {
                     return None;
                 }
@@ -487,7 +487,7 @@ mod tests {
             .iter()
             .filter_map(|node| {
                 if let BootNode::Enr(enr) = node
-                    && EnrValidation::validate(enr, OP_MAINNET_CHAIN_ID).is_invalid()
+                    && EnrValidation::validate(enr, BASE_MAINNET_CHAIN_ID).is_invalid()
                 {
                     return None;
                 }
@@ -509,7 +509,7 @@ mod tests {
 
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            OP_MAINNET_CHAIN_ID,
+            BASE_MAINNET_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::mainnet())
@@ -524,7 +524,7 @@ mod tests {
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            OP_MAINNET_CHAIN_ID,
+            BASE_MAINNET_CHAIN_ID,
             &discovery.disc,
         )
         .await;

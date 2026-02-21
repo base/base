@@ -114,7 +114,7 @@ mod tests {
         BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
     };
     use alloy_primitives::address;
-    use kona_genesis::{AddressList, OP_MAINNET_BASE_FEE_CONFIG, Roles, SuperchainLevel};
+    use kona_genesis::{AddressList, BASE_MAINNET_BASE_FEE_CONFIG, Roles, SuperchainLevel};
 
     use super::*;
 
@@ -138,8 +138,7 @@ mod tests {
             seq_window_size: 3600,
             max_sequencer_drift: 600,
             data_availability_type: "eth-da".to_string(),
-            optimism: Some(OP_MAINNET_BASE_FEE_CONFIG),
-            alt_da: None,
+            optimism: Some(BASE_MAINNET_BASE_FEE_CONFIG),
             genesis: crate::test_utils::BASE_MAINNET_CONFIG.genesis,
             roles: Some(Roles {
                 proxy_admin_owner: Some(

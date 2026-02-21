@@ -5,7 +5,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_op_hardforks::{OpHardfork, OpHardforks};
 use alloy_primitives::Address;
 
-use crate::{AltDAConfig, BaseFeeConfig, ChainGenesis, HardForkConfig, OP_MAINNET_BASE_FEE_CONFIG};
+use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -77,23 +77,17 @@ pub struct RollupConfig {
     /// stored at.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub da_challenge_address: Option<Address>,
-    /// `alt_da_config` is the chain-specific DA config for the rollup.
-    #[cfg_attr(feature = "serde", serde(rename = "alt_da"))]
-    pub alt_da_config: Option<AltDAConfig>,
     /// `chain_op_config` is the chain-specific EIP1559 config for the rollup.
-    #[cfg_attr(feature = "serde", serde(default = "BaseFeeConfig::optimism"))]
+    #[cfg_attr(feature = "serde", serde(default = "BaseFeeConfig::base_mainnet"))]
     pub chain_op_config: BaseFeeConfig,
 }
 
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        use crate::{
-            BASE_SEPOLIA_BASE_FEE_CONFIG, OP_MAINNET_BASE_FEE_CONFIG, OP_SEPOLIA_BASE_FEE_CONFIG,
-        };
-        let chain_op_config = match u32::arbitrary(u)? % 3 {
-            0 => OP_MAINNET_BASE_FEE_CONFIG,
-            1 => OP_SEPOLIA_BASE_FEE_CONFIG,
+        use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BASE_SEPOLIA_BASE_FEE_CONFIG};
+        let chain_op_config = match u32::arbitrary(u)? % 2 {
+            0 => BASE_MAINNET_BASE_FEE_CONFIG,
             _ => BASE_SEPOLIA_BASE_FEE_CONFIG,
         };
 
@@ -115,7 +109,6 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
             da_challenge_address: Option::<Address>::arbitrary(u)?,
             chain_op_config,
-            alt_da_config: Option::<AltDAConfig>::arbitrary(u)?,
         })
     }
 }
@@ -140,8 +133,7 @@ impl Default for RollupConfig {
             superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
             da_challenge_address: None,
-            alt_da_config: None,
-            chain_op_config: OP_MAINNET_BASE_FEE_CONFIG,
+            chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
         }
     }
 }
@@ -293,12 +285,6 @@ impl RollupConfig {
     pub fn is_first_jovian_block(&self, timestamp: u64) -> bool {
         self.is_jovian_active(timestamp)
             && !self.is_jovian_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if a DA Challenge proxy Address is provided in the rollup config and the
-    /// address is not zero.
-    pub fn is_alt_da_enabled(&self) -> bool {
-        self.da_challenge_address.is_some_and(|addr| !addr.is_zero())
     }
 
     /// Returns the max sequencer drift for the given timestamp.
@@ -688,16 +674,6 @@ mod tests {
     }
 
     #[test]
-    fn test_alt_da_enabled() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_alt_da_enabled());
-        config.da_challenge_address = Some(Address::ZERO);
-        assert!(!config.is_alt_da_enabled());
-        config.da_challenge_address = Some(address!("0000000000000000000000000000000000000001"));
-        assert!(config.is_alt_da_enabled());
-    }
-
-    #[test]
     fn test_granite_channel_timeout() {
         let mut config = RollupConfig {
             channel_timeout: 100,
@@ -722,7 +698,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_deserialize_reference_rollup_config() {
-        use crate::{OP_MAINNET_BASE_FEE_CONFIG, SystemConfig};
+        use crate::{BASE_MAINNET_BASE_FEE_CONFIG, SystemConfig};
 
         let raw: &str = r#"
         {
@@ -770,8 +746,7 @@ mod tests {
             "eip1559Elasticity": 6,
             "eip1559Denominator": 50,
             "eip1559DenominatorCanyon": 250
-            },
-          "alt_da": null
+            }
         }
         "#;
 
@@ -823,8 +798,7 @@ mod tests {
             superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
             da_challenge_address: None,
-            chain_op_config: OP_MAINNET_BASE_FEE_CONFIG,
-            alt_da_config: None,
+            chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();
