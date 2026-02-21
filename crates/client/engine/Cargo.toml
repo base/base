@@ -61,3 +61,13 @@ eyre.workspace = true
 rayon.workspace = true
 tracing = { workspace = true, features = ["std"] }
 derive_more.workspace = true
+reth-optimism-node.workspace = true
+alloy-op-evm.workspace = true
+
+reth-optimism-chainspec.workspace = true
+reth-optimism-primitives.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+op-revm.workspace = true
+base-engine-tree.workspace = true
+revm.workspace = true

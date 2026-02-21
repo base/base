@@ -145,6 +145,7 @@ base-client-node = { path = "crates/shared/node" }
 base-flashblocks = { path = "crates/client/flashblocks" }
 base-client-engine = { path = "crates/client/engine" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }
+base-engine-tree = { path = "crates/client/engine-tree" }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }
@@ -483,6 +484,8 @@ modular-bitfield = "0.13.1"
 proptest-arbitrary-interop = "0.1.0"
 tar-no-std = { version = "0.4.2", default-features = false }
 rand_08 = { package = "rand", version = "0.8" }
+crossbeam-channel = "0.5.13"
+
 
 # kona transitive deps
 syn = "2.0"

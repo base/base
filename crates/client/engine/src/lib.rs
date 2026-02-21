@@ -3,4 +3,4 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod validator;
-pub use validator::{BaseEngineValidator, BaseEngineValidatorBuilder};
+pub use validator::{BaseEngineValidatorBuilder, FlashblocksCachedExecutionProvider};
