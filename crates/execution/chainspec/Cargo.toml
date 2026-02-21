@@ -45,7 +45,7 @@ reth-chainspec = { workspace = true, features = ["test-utils"] }
 alloy-op-hardforks.workspace = true
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",

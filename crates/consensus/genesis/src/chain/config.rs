@@ -8,7 +8,8 @@ use alloy_primitives::Address;
 
 use crate::{
     AddressList, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, Roles,
-    RollupConfig, SuperchainLevel, base_fee_params, base_fee_params_canyon, params::base_fee_config,
+    RollupConfig, SuperchainLevel, base_fee_params, base_fee_params_canyon,
+    params::base_fee_config,
 };
 
 /// L1 chain configuration from the `alloy-genesis` crate.

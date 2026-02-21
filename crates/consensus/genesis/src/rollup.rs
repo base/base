@@ -5,7 +5,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_op_hardforks::{OpHardfork, OpHardforks};
 use alloy_primitives::Address;
 
-use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig, BASE_MAINNET_BASE_FEE_CONFIG};
+use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
