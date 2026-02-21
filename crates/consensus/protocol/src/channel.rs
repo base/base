@@ -121,8 +121,12 @@ impl Channel {
             // closing frame.
             if self.last_frame_number < self.highest_frame_number {
                 self.inputs.retain(|id, frame| {
-                    self.estimated_size -= frame.size();
-                    *id < self.last_frame_number
+                    if *id >= self.last_frame_number {
+                        self.estimated_size -= frame.size();
+                        false
+                    } else {
+                        true
+                    }
                 });
                 self.highest_frame_number = self.last_frame_number;
             }
@@ -337,6 +341,23 @@ mod test {
                 should_error: vec![false, false],
                 sizes: vec![207, 411],
                 frame_data: Some(b"seven__".to_vec().into()),
+            },
+            FrameValidityTestCase {
+                name: "out of order close prunes higher frames".to_string(),
+                frames: vec![
+                    // frame 5 arrives first (non-closing, 5 bytes data => size 205)
+                    Frame { id, number: 5, data: b"aaaaa".to_vec(), ..Default::default() },
+                    // frame 0 arrives second (non-closing, 5 bytes data => size 205)
+                    Frame { id, number: 0, data: b"hello".to_vec(), ..Default::default() },
+                    // frame 2 arrives as closing frame (3 bytes data => size 203)
+                    // last_frame_number=2 < highest_frame_number=5, triggers retain
+                    // frame 5 is pruned, frame 0 is kept
+                    Frame { id, number: 2, is_last: true, data: b"end".to_vec() },
+                ],
+                should_error: vec![false, false, false],
+                // after frame 5: 205, after frame 0: 410, after prune+close: 205+203=408
+                sizes: vec![205, 410, 408],
+                frame_data: None,
             },
         ];
 
