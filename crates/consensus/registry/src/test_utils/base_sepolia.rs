@@ -47,7 +47,6 @@ pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
     l1_chain_id: 11155111,
     l2_chain_id: Chain::base_sepolia(),
     chain_op_config: BASE_SEPOLIA_BASE_FEE_CONFIG,
-    alt_da_config: None,
     hardforks: HardForkConfig {
         regolith_time: None,
         canyon_time: Some(BASE_SEPOLIA_CANYON_TIMESTAMP),

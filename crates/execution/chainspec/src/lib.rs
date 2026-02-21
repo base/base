@@ -1,34 +1,13 @@
-//! OP-Reth chain specs.
+//! Base chain specs.
 
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
+    issue_tracker_base_url = "https://github.com/base/base/issues/"
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
-
-// About the provided chain specs from `res/superchain-configs.tar`:
-// The provided `OpChainSpec` structs are built from config files read from
-// `superchain-configs.tar`. This `superchain-configs.tar` file contains the chain configs and
-// genesis files for all chains. It is created by the `fetch_superchain_config.sh` script in
-// the `res` directory. Where all configs are where initial loaded from
-// <https://github.com/ethereum-optimism/superchain-registry>. See the script for more details.
-//
-// The file is a tar archive containing the following files:
-// - `genesis/<environment>/<chain_name>.json.zz`: The genesis file compressed with deflate. It
-//   contains the initial accounts, etc.
-// - `configs/<environment>/<chain_name>.json`: The chain metadata file containing the chain id,
-//   hard forks, etc.
-//
-// For example, for `UNICHAIN_MAINNET`, the `genesis/mainnet/unichain.json.zz` and
-// `configs/mainnet/base.json` is loaded and combined into the `OpChainSpec` struct.
-// See `read_superchain_genesis` in `configs.rs` for more details.
-//
-// To update the chain specs, run the `fetch_superchain_config.sh` script in the `res` directory.
-// This will fetch the latest chain configs from the superchain registry and create a new
-// `superchain-configs.tar` file. See the script for more details.
 
 extern crate alloc;
 
@@ -39,9 +18,7 @@ mod basefee;
 pub mod constants;
 mod dev;
 
-#[cfg(feature = "superchain-configs")]
-mod superchain;
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
 use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Header, proofs::storage_root_unhashed};
@@ -64,8 +41,19 @@ use reth_network_peers::NodeRecord;
 pub use reth_optimism_forks::*;
 use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
-#[cfg(feature = "superchain-configs")]
-pub use superchain::*;
+
+/// All supported chain names for the CLI.
+pub const SUPPORTED_CHAINS: &[&str] = &["base", "base_sepolia", "base-sepolia", "dev"];
+
+/// Parses a chain name into an [`OpChainSpec`], if recognized.
+pub fn generated_chain_value_parser(s: &str) -> Option<Arc<OpChainSpec>> {
+    match s {
+        "dev" => Some(OP_DEV.clone()),
+        "base" => Some(BASE_MAINNET.clone()),
+        "base_sepolia" | "base-sepolia" => Some(BASE_SEPOLIA.clone()),
+        _ => None,
+    }
+}
 
 /// Chain spec builder for a OP stack chain.
 #[derive(Debug, Default, From)]
