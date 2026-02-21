@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope as BaseOpExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
 use kona_derive::{ResetSignal, Signal};
 use kona_engine::{
@@ -7,7 +8,6 @@ use kona_engine::{
     EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, InsertTask, SealTask,
 };
 use kona_genesis::RollupConfig;
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -38,7 +38,7 @@ pub enum EngineProcessingRequest {
     /// Request to process the finalized L2 block with the provided block number.
     ProcessFinalizedL2BlockNumber(Box<u64>),
     /// Request to process a received unsafe L2 block.
-    ProcessUnsafeL2Block(Box<OpExecutionPayloadEnvelope>),
+    ProcessUnsafeL2Block(Box<BaseOpExecutionPayloadEnvelope>),
     /// Request to reset the forkchoice.
     Reset(Box<ResetRequest>),
     /// Request to seal a block.
@@ -279,7 +279,7 @@ where
                         let task = EngineTask::Insert(Box::new(InsertTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
-                            *envelope,
+                            kona_engine::compat::to_upstream_envelope(*envelope),
                             false, /* The payload is not derived in this case. This is an unsafe
                                     * block. */
                         )));

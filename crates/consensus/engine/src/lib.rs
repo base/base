@@ -76,6 +76,8 @@ pub use query::{EngineQueries, EngineQueriesError, EngineQuerySender};
 mod metrics;
 pub use metrics::Metrics;
 
+pub mod compat;
+
 mod sync;
 pub use sync::{L2ForkchoiceState, SyncStartError, find_starting_forkchoice};
 

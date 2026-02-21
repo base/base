@@ -62,12 +62,16 @@ impl L2ForkchoiceState {
                 }
                 .into_consensus();
 
-            L2BlockInfo::from_block_and_genesis(&rpc_block, &cfg.genesis)?
+            L2BlockInfo::from_block_and_genesis(
+                &crate::compat::rpc_block_to_base(rpc_block),
+                &cfg.genesis,
+            )?
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
-            Ok(Some(block)) => {
-                L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &cfg.genesis)?
-            }
+            Ok(Some(block)) => L2BlockInfo::from_block_and_genesis(
+                &crate::compat::rpc_block_to_base(block.into_consensus()),
+                &cfg.genesis,
+            )?,
             Ok(None) => finalized,
             Err(e) => return Err(e.into()),
         };
@@ -75,7 +79,10 @@ impl L2ForkchoiceState {
             let rpc_block = get_block_compat(engine_client, BlockNumberOrTag::Latest.into())
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
-            L2BlockInfo::from_block_and_genesis(&rpc_block.into_consensus(), &cfg.genesis)?
+            L2BlockInfo::from_block_and_genesis(
+                &crate::compat::rpc_block_to_base(rpc_block.into_consensus()),
+                &cfg.genesis,
+            )?
         };
 
         Ok(Self { un_safe, safe, finalized })

@@ -7,11 +7,11 @@ use std::{
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use kona_derive::{AttributesBuilder, PipelineErrorKind};
 use kona_engine::{InsertTaskError, SealTaskError, SynchronizeTaskError};
 use kona_genesis::RollupConfig;
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 

@@ -122,9 +122,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         }
         let insert_duration = insert_time_start.elapsed();
 
-        let new_unsafe_ref =
-            L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
-                .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+        let new_unsafe_ref = L2BlockInfo::from_block_and_genesis(
+            &crate::compat::op_block_to_base(block),
+            &self.rollup_config.genesis,
+        )
+        .map_err(InsertTaskError::L2BlockInfoConstruction)?;
 
         // Send a FCU to canonicalize the imported block.
         SynchronizeTask::new(

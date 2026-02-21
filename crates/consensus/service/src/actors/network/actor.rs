@@ -1,10 +1,10 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::{OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope};
 use base_consensus_rpc::NetworkAdminQuery;
 use kona_gossip::P2pRpcRequest;
 use kona_sources::BlockSignerError;
 use libp2p::TransportError;
-use op_alloy_rpc_types_engine::{OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope};
 use thiserror::Error;
 use tokio::{self, select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};

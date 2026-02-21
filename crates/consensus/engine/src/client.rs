@@ -320,7 +320,10 @@ where
         let Some(block) = block else {
             return Ok(None);
         };
-        Ok(Some(L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &self.cfg.genesis)?))
+        Ok(Some(L2BlockInfo::from_block_and_genesis(
+            &crate::compat::rpc_block_to_base(block.into_consensus()),
+            &self.cfg.genesis,
+        )?))
     }
 }
 

@@ -1,4 +1,5 @@
 use alloy_rpc_types_engine::PayloadId;
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope as BaseOpExecutionPayloadEnvelope;
 use base_consensus_rpc::{RollupBoostAdminQuery, RollupBoostHealthQuery};
 use base_protocol::OpAttributesWithParent;
 use kona_engine::{BuildTaskError, ConsolidateInput, EngineQueries, SealTaskError};
@@ -45,7 +46,7 @@ pub enum EngineActorRequest {
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to insert the provided unsafe block.
-    ProcessUnsafeL2BlockRequest(Box<OpExecutionPayloadEnvelope>),
+    ProcessUnsafeL2BlockRequest(Box<BaseOpExecutionPayloadEnvelope>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
     /// Request for the engine to process the provided RPC request.

@@ -195,7 +195,10 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 block_hash = %block_hash,
                 "Consolidating engine state",
             );
-            match L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &self.cfg.genesis) {
+            match L2BlockInfo::from_block_and_genesis(
+                &crate::compat::rpc_block_to_base(block.into_consensus()),
+                &self.cfg.genesis,
+            ) {
                 // Only issue a forkchoice update if the attributes are the last in the span
                 // batch. This is an optimization to avoid sending a FCU
                 // call for every block in the span batch.

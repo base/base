@@ -3,6 +3,7 @@ use std::{ops::Not as _, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
+use base_alloy_network::Base;
 use base_consensus_rpc::RpcBuilder;
 use base_protocol::L2BlockInfo;
 use kona_derive::StatefulAttributesBuilder;
@@ -54,7 +55,7 @@ pub struct RollupNode {
     /// The L1 configuration.
     pub(crate) l1_config: L1Config,
     /// The L2 EL provider.
-    pub(crate) l2_provider: RootProvider<Optimism>,
+    pub(crate) l2_provider: RootProvider<Base>,
     /// Whether to trust the L2 RPC.
     pub(crate) l2_trust_rpc: bool,
     /// The [`EngineConfig`] for the node.

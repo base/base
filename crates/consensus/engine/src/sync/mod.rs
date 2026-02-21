@@ -66,8 +66,10 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
                     .await?
                     .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
 
-                current_fc.un_safe =
-                    L2BlockInfo::from_block_and_genesis(&l2_parent.into_consensus(), &cfg.genesis)?;
+                current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
+                    &crate::compat::rpc_block_to_base(l2_parent.into_consensus()),
+                    &cfg.genesis,
+                )?;
             }
         }
     }
@@ -105,7 +107,10 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
             .full()
             .await?
             .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
-        safe_cursor = L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &cfg.genesis)?;
+        safe_cursor = L2BlockInfo::from_block_and_genesis(
+            &crate::compat::rpc_block_to_base(block.into_consensus()),
+            &cfg.genesis,
+        )?;
     }
 
     // Leave the finalized block as-is, and return the current forkchoice.

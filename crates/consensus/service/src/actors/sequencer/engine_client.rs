@@ -2,9 +2,10 @@ use std::fmt::Debug;
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
 use derive_more::Constructor;
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use kona_engine::compat::to_base_envelope;
 use tokio::sync::{mpsc, watch};
 
 use crate::{
@@ -111,7 +112,8 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         payload_id: PayloadId,
         attributes: OpAttributesWithParent,
     ) -> EngineClientResult<OpExecutionPayloadEnvelope> {
-        let (result_tx, mut result_rx) = mpsc::channel(1);
+        let (result_tx, mut result_rx) =
+            mpsc::channel::<Result<op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope, _>>(1);
 
         trace!(target: "sequencer", ?attributes, "Sending seal request to engine.");
         self.engine_actor_request_tx
@@ -126,7 +128,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         match result_rx.recv().await {
             Some(Ok(payload)) => {
                 trace!(target: "sequencer", ?payload, "Seal succeeded.");
-                Ok(payload)
+                Ok(to_base_envelope(payload))
             }
             Some(Err(err)) => {
                 info!(target: "sequencer", ?err, "Seal failed.");

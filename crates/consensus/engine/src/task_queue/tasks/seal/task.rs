@@ -202,7 +202,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             .await?;
 
         let new_block_ref = L2BlockInfo::from_payload_and_genesis(
-            new_payload.execution_payload.clone(),
+            crate::compat::to_base_payload(new_payload.execution_payload.clone()),
             self.attributes.attributes().payload_attributes.parent_beacon_block_root,
             &self.cfg.genesis,
         )
