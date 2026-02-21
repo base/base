@@ -41,6 +41,8 @@ test-utils = [
 # workspace
 base-flashblocks.workspace = true
 base-client-node.workspace = true
+base-engine.workspace = true
+
 # reth
 reth-chain-state.workspace = true
 reth-provider = { workspace = true, optional = true }
@@ -48,6 +50,7 @@ reth-chainspec = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 reth-optimism-chainspec = { workspace = true, optional = true }
 reth-optimism-primitives = { workspace = true, optional = true }
+reth-optimism-node = { workspace = true }
 reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
 
 # alloy

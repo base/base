@@ -1,5 +1,5 @@
 [package]
-name = "base-client-engine"
+name = "base-engine"
 description = "Engine validator for Base Node"
 version.workspace = true
 edition.workspace = true
