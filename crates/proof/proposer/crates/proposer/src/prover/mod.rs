@@ -317,6 +317,7 @@ where
     /// * `prev_output_root` - The output root before the first proposal
     /// * `prev_block_number` - The L2 block number before the first proposal
     /// * `proposals` - The proposals to aggregate
+    /// * `intermediate_roots` - Intermediate output roots at checkpoint intervals
     ///
     /// # Errors
     ///
@@ -326,6 +327,7 @@ where
         prev_output_root: B256,
         prev_block_number: u64,
         proposals: Vec<ProverProposal>,
+        intermediate_roots: Vec<B256>,
     ) -> Result<ProverProposal, ProposerError> {
         if proposals.is_empty() {
             return Err(ProposerError::Internal("no proposals to aggregate".into()));
@@ -341,7 +343,12 @@ where
         let to = proposals.last().unwrap().to.clone();
 
         let output = self
-            .aggregate_enclave(prev_output_root, prev_block_number, enclave_proposals)
+            .aggregate_enclave(
+                prev_output_root,
+                prev_block_number,
+                enclave_proposals,
+                intermediate_roots,
+            )
             .await?;
 
         Ok(ProverProposal {
@@ -358,6 +365,7 @@ where
         prev_output_root: B256,
         prev_block_number: u64,
         proposals: Vec<Proposal>,
+        intermediate_roots: Vec<B256>,
     ) -> Result<Proposal, ProposerError> {
         tokio::time::timeout(
             ENCLAVE_TIMEOUT,
@@ -368,6 +376,7 @@ where
                 proposals,
                 self.proposer,
                 self.tee_image_hash,
+                intermediate_roots,
             ),
         )
         .await
@@ -692,6 +701,7 @@ mod tests {
             _proposals: Vec<Proposal>,
             _proposer: alloy_primitives::Address,
             _tee_image_hash: B256,
+            _intermediate_roots: Vec<B256>,
         ) -> Result<Proposal, ClientError> {
             Ok(self.aggregate_result.clone())
         }
@@ -711,7 +721,7 @@ mod tests {
             },
         });
 
-        let result = prover.aggregate(B256::ZERO, 0, vec![]).await;
+        let result = prover.aggregate(B256::ZERO, 0, vec![], vec![]).await;
         assert!(result.is_err());
         assert!(
             result
@@ -736,7 +746,9 @@ mod tests {
         });
 
         let single = test_proposal(5, 5, true);
-        let result = prover.aggregate(B256::ZERO, 0, vec![single.clone()]).await;
+        let result = prover
+            .aggregate(B256::ZERO, 0, vec![single.clone()], vec![])
+            .await;
         let agg = result.unwrap();
 
         // Single proposal is returned as-is
@@ -767,7 +779,10 @@ mod tests {
             test_proposal(21, 25, false),
         ];
 
-        let result = prover.aggregate(B256::ZERO, 0, proposals).await.unwrap();
+        let result = prover
+            .aggregate(B256::ZERO, 0, proposals, vec![])
+            .await
+            .unwrap();
 
         assert_eq!(result.from.number, 10);
         assert_eq!(result.to.number, 25);
@@ -799,6 +814,7 @@ mod tests {
                     test_proposal(2, 2, false),
                     test_proposal(3, 3, false),
                 ],
+                vec![],
             )
             .await
             .unwrap();
@@ -817,6 +833,7 @@ mod tests {
                     test_proposal(2, 2, false),
                     test_proposal(3, 3, false),
                 ],
+                vec![],
             )
             .await
             .unwrap();
@@ -835,6 +852,7 @@ mod tests {
                     test_proposal(2, 2, true),
                     test_proposal(3, 3, false),
                 ],
+                vec![],
             )
             .await
             .unwrap();
@@ -853,6 +871,7 @@ mod tests {
                     test_proposal(2, 2, false),
                     test_proposal(3, 3, true),
                 ],
+                vec![],
             )
             .await
             .unwrap();
@@ -871,6 +890,7 @@ mod tests {
                     test_proposal(2, 2, true),
                     test_proposal(3, 3, true),
                 ],
+                vec![],
             )
             .await
             .unwrap();
@@ -898,6 +918,7 @@ mod tests {
             _: Vec<Proposal>,
             _: alloy_primitives::Address,
             _: B256,
+            _: Vec<B256>,
         ) -> Result<Proposal, ClientError> {
             Err(ClientError::ClientCreation(
                 "enclave aggregate failed".into(),
@@ -914,6 +935,7 @@ mod tests {
                 B256::ZERO,
                 0,
                 vec![test_proposal(1, 1, false), test_proposal(2, 2, false)],
+                vec![],
             )
             .await;
 
@@ -944,6 +966,7 @@ mod tests {
             _: Vec<Proposal>,
             _: alloy_primitives::Address,
             _: B256,
+            _: Vec<B256>,
         ) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
             Ok(Proposal {
@@ -967,6 +990,7 @@ mod tests {
                 B256::ZERO,
                 0,
                 vec![test_proposal(1, 1, false), test_proposal(2, 2, false)],
+                vec![],
             )
             .await;
 

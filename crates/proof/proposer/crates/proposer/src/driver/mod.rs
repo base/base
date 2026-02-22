@@ -43,6 +43,8 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Number of L2 blocks between proposals (read from `AggregateVerifier` at startup).
     pub block_interval: u64,
+    /// Number of L2 blocks between intermediate output root checkpoints.
+    pub intermediate_block_interval: u64,
     /// ETH bond required to create a dispute game.
     pub init_bond: U256,
     /// Game type ID for `AggregateVerifier` dispute games.
@@ -57,6 +59,7 @@ impl Default for DriverConfig {
         Self {
             poll_interval: Duration::from_secs(12),
             block_interval: 512,
+            intermediate_block_interval: 512,
             init_bond: U256::ZERO,
             game_type: 0,
             allow_non_finalized: false,
@@ -101,6 +104,8 @@ where
     cancel: CancellationToken,
     /// Pending single-block proposals awaiting aggregation and submission.
     pending: VecDeque<ProverProposal>,
+    /// Cached intermediate roots for the current proposal (survives retry after failed submission).
+    cached_intermediate_roots: Vec<B256>,
     /// Tracks the most recent dispute game for parent chaining.
     parent_game_state: ParentGameState,
     /// Prevents re-proposing the same block.
@@ -158,6 +163,7 @@ where
             output_proposer,
             cancel,
             pending: VecDeque::new(),
+            cached_intermediate_roots: Vec::new(),
             parent_game_state: ParentGameState::default(),
             last_proposed_block: 0,
         }
@@ -234,10 +240,22 @@ where
             return Err(e);
         }
 
+        // Extract intermediate roots from the per-block pending queue. Once aggregation
+        // drains the queue, we rely on the cached copy for retries.
+        let fresh_roots = self.extract_intermediate_roots(starting_block_number);
+        if !fresh_roots.is_empty() {
+            self.cached_intermediate_roots = fresh_roots;
+        }
+        let intermediate_roots = self.cached_intermediate_roots.clone();
+
         // Check if we have enough proofs to aggregate and propose.
-        match self.next_output(starting_block_number, starting_root).await {
+        match self
+            .next_output(starting_block_number, starting_root, &intermediate_roots)
+            .await
+        {
             Ok(Some(proposal)) => {
-                self.propose_output(&proposal, parent_index).await;
+                self.propose_output(&proposal, parent_index, &intermediate_roots)
+                    .await;
             }
             Ok(None) => {}
             Err(e) => {
@@ -247,6 +265,23 @@ where
         }
 
         Ok(())
+    }
+
+    /// Extracts intermediate output roots from the pending queue.
+    ///
+    /// The intermediate roots are the output roots at every `intermediate_block_interval`
+    /// within the current proposal range. Must be called before aggregation drains the queue.
+    fn extract_intermediate_roots(&self, starting_block_number: u64) -> Vec<B256> {
+        let interval = self.config.intermediate_block_interval;
+        let count = self.config.block_interval / interval;
+        let mut roots = Vec::with_capacity(count as usize);
+        for i in 1..=count {
+            let target_block = starting_block_number + i * interval;
+            if let Some(p) = self.pending.iter().find(|p| p.to.number == target_block) {
+                roots.push(p.output.output_root);
+            }
+        }
+        roots
     }
 
     /// Generates single-block proofs, filling the pending queue.
@@ -326,6 +361,7 @@ where
         &mut self,
         starting_block_number: u64,
         starting_root: B256,
+        intermediate_roots: &[B256],
     ) -> Result<Option<ProverProposal>, ProposerError> {
         let latest_safe = self.latest_safe_block().await?;
         let latest_safe_number = latest_safe.number;
@@ -365,9 +401,17 @@ where
             let batch_length = count.min(AGGREGATE_BATCH_SIZE);
             let batch: Vec<ProverProposal> = self.pending.drain(..batch_length).collect();
 
+            // Only include intermediate roots in the final aggregation round.
+            let is_final_batch = count == batch_length;
+            let batch_roots = if is_final_batch {
+                intermediate_roots.to_vec()
+            } else {
+                vec![]
+            };
+
             match self
                 .prover
-                .aggregate(starting_root, prev_block_number, batch)
+                .aggregate(starting_root, prev_block_number, batch, batch_roots)
                 .await
             {
                 Ok(aggregated) => {
@@ -467,7 +511,12 @@ where
     }
 
     /// Submits a proposal by creating a dispute game via the factory.
-    async fn propose_output(&mut self, proposal: &ProverProposal, parent_index: u32) {
+    async fn propose_output(
+        &mut self,
+        proposal: &ProverProposal,
+        parent_index: u32,
+        intermediate_roots: &[B256],
+    ) {
         info!(
             l2_block_number = proposal.to.number,
             l1_origin_number = proposal.to.l1origin.number,
@@ -477,12 +526,14 @@ where
             from = proposal.from.number,
             to = proposal.to.number,
             parent_index,
+            intermediate_roots_count = intermediate_roots.len(),
             "Proposing output (creating dispute game)"
         );
 
         match tokio::time::timeout(
             PROPOSAL_TIMEOUT,
-            self.output_proposer.propose_output(proposal, parent_index),
+            self.output_proposer
+                .propose_output(proposal, parent_index, intermediate_roots),
         )
         .await
         {
@@ -509,6 +560,7 @@ where
                         };
                         self.last_proposed_block = proposal.to.number;
                         self.pending.clear();
+                        self.cached_intermediate_roots.clear();
 
                         info!(
                             new_game_index = new_index,
@@ -537,6 +589,7 @@ where
                     // The game was created (likely by a previous run). Try to
                     // recover the parent state so we continue the chain.
                     self.pending.clear();
+                    self.cached_intermediate_roots.clear();
                     self.parent_game_state.initialized = false;
                 } else {
                     warn!(
@@ -752,6 +805,7 @@ mod tests {
             _: Vec<Proposal>,
             _: alloy_primitives::Address,
             _: B256,
+            _: Vec<B256>,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
@@ -777,8 +831,8 @@ mod tests {
             proposals: Vec<Proposal>,
             _: alloy_primitives::Address,
             _: B256,
+            _: Vec<B256>,
         ) -> Result<Proposal, ClientError> {
-            // Return a proposal based on the last input proposal's fields.
             let last = proposals.last().unwrap();
             Ok(Proposal {
                 output_root: last.output_root,
@@ -908,7 +962,7 @@ mod tests {
         let mut driver = test_driver(1000, sync_status, None);
 
         // Empty pending queue
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -922,7 +976,7 @@ mod tests {
 
         driver.pending.push_back(test_proposal(101, 105, false));
 
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -936,7 +990,7 @@ mod tests {
 
         driver.pending.push_back(test_proposal(101, 110, false));
 
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -952,7 +1006,7 @@ mod tests {
         driver.pending.push_back(test_proposal(101, 110, false));
         assert_eq!(driver.pending.len(), 1);
 
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
         // Queue should be cleared due to reorg detection
@@ -972,7 +1026,7 @@ mod tests {
         proposal.to.l1origin.number = 1000;
         driver.pending.push_back(proposal);
 
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
         // Queue NOT cleared — blockhash window gating doesn't clear the queue
@@ -989,7 +1043,7 @@ mod tests {
         driver.pending.push_back(test_proposal(101, 110, false));
         driver.last_proposed_block = 110;
 
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1005,7 +1059,7 @@ mod tests {
         driver.pending.push_back(test_proposal(101, 110, false));
         assert_eq!(driver.pending.len(), 1);
 
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         let proposal = result.unwrap();
         assert!(proposal.is_some(), "expected Some(proposal)");
@@ -1042,7 +1096,7 @@ mod tests {
         assert_eq!(driver.pending.len(), 3);
 
         // target = 100 + 3 = 103, safe = 103, all gates pass
-        let result = driver.next_output(100, B256::ZERO).await;
+        let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         let proposal = result.unwrap();
         assert!(
@@ -1068,6 +1122,7 @@ mod tests {
                 &self,
                 _proposal: &ProverProposal,
                 _parent_index: u32,
+                _intermediate_roots: &[B256],
             ) -> Result<(), ProposerError> {
                 self.called.store(true, Ordering::SeqCst);
                 Ok(())

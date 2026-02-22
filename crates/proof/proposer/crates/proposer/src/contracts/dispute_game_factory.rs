@@ -146,17 +146,22 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
 
 /// Encodes the `extraData` for `DisputeGameFactory.create()`.
 ///
-/// Format: `l2BlockNumber(32 bytes) + parentIndex(4 bytes)` = 36 bytes.
-pub fn encode_extra_data(l2_block_number: u64, parent_index: u32) -> Bytes {
-    let mut data = vec![0u8; 36];
-    // l2BlockNumber as 32-byte big-endian uint256
+/// Format: `l2BlockNumber(32) + parentIndex(4) + intermediateRoots(32 * N)`.
+pub fn encode_extra_data(
+    l2_block_number: u64,
+    parent_index: u32,
+    intermediate_roots: &[B256],
+) -> Bytes {
+    let mut data = vec![0u8; 36 + 32 * intermediate_roots.len()];
     U256::from(l2_block_number)
         .to_be_bytes::<32>()
         .iter()
         .enumerate()
         .for_each(|(i, b)| data[i] = *b);
-    // parentIndex as 4-byte big-endian uint32
     data[32..36].copy_from_slice(&parent_index.to_be_bytes());
+    for (i, root) in intermediate_roots.iter().enumerate() {
+        data[36 + i * 32..36 + (i + 1) * 32].copy_from_slice(root.as_slice());
+    }
     Bytes::from(data)
 }
 
@@ -182,20 +187,29 @@ mod tests {
 
     #[test]
     fn test_encode_extra_data() {
-        let data = encode_extra_data(1000, 42);
+        let data = encode_extra_data(1000, 42, &[]);
         assert_eq!(data.len(), 36);
 
-        // Last 8 bytes of the first 32 should be the block number in big-endian
         assert_eq!(&data[24..32], &1000u64.to_be_bytes());
-
-        // Last 4 bytes should be the parent index in big-endian
         assert_eq!(&data[32..36], &42u32.to_be_bytes());
     }
 
     #[test]
     fn test_encode_extra_data_no_parent() {
-        let data = encode_extra_data(500, 0xFFFFFFFF);
+        let data = encode_extra_data(500, 0xFFFFFFFF, &[]);
         assert_eq!(&data[32..36], &[0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_encode_extra_data_with_intermediate_roots() {
+        let roots = vec![B256::repeat_byte(0xAA), B256::repeat_byte(0xBB)];
+        let data = encode_extra_data(1000, 42, &roots);
+        assert_eq!(data.len(), 36 + 64);
+
+        assert_eq!(&data[24..32], &1000u64.to_be_bytes());
+        assert_eq!(&data[32..36], &42u32.to_be_bytes());
+        assert_eq!(&data[36..68], roots[0].as_slice());
+        assert_eq!(&data[68..100], roots[1].as_slice());
     }
 
     #[test]
