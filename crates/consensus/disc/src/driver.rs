@@ -381,7 +381,7 @@ mod tests {
         enr::{CombinedKey, CombinedPublicKey},
         handler::NodeContact,
     };
-    use kona_genesis::{OP_MAINNET_CHAIN_ID, OP_SEPOLIA_CHAIN_ID};
+    use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
     use tempfile::tempdir;
 
     use super::*;
@@ -396,13 +396,13 @@ mod tests {
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            OP_SEPOLIA_CHAIN_ID,
+            BASE_SEPOLIA_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
         .build()
         .expect("Failed to build discovery service");
         let (handle, _) = discovery.start();
-        assert_eq!(handle.chain_id, OP_SEPOLIA_CHAIN_ID);
+        assert_eq!(handle.chain_id, BASE_SEPOLIA_CHAIN_ID);
     }
 
     #[tokio::test]
@@ -418,7 +418,7 @@ mod tests {
         };
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            OP_SEPOLIA_CHAIN_ID,
+            BASE_SEPOLIA_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::testnet())
@@ -428,12 +428,12 @@ mod tests {
 
         discovery = discovery.init().await.expect("Failed to initialize discovery service");
 
-        // There are no ENRs for `OP_SEPOLIA_CHAIN_ID` in the bootstore.
+        // There are no ENRs for Base Sepolia in the bootstore.
         // If an ENR is added, this check will fail.
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            OP_SEPOLIA_CHAIN_ID,
+            BASE_SEPOLIA_CHAIN_ID,
             &discovery.disc,
         )
         .await;
@@ -446,20 +446,22 @@ mod tests {
         let testnet = BootNodes::testnet();
         let testnet: Vec<CombinedPublicKey> = testnet
             .iter()
-            .filter_map(|node| {
-                if let BootNode::Enr(enr) = node
-                    && EnrValidation::validate(enr, OP_SEPOLIA_CHAIN_ID).is_invalid()
-                {
-                    return None;
+            .filter_map(|node| match node {
+                BootNode::Enr(enr) => {
+                    if EnrValidation::validate(enr, BASE_SEPOLIA_CHAIN_ID).is_invalid() {
+                        return None;
+                    }
+                    Some(enr.public_key())
                 }
-                let node_contact =
-                    NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
-
-                Some(node_contact.public_key())
+                BootNode::Enode(_) => {
+                    let node_contact =
+                        NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
+                    Some(node_contact.public_key())
+                }
             })
             .collect();
 
-        // There should be 8 valid ENRs for the testnet.
+        // There should be 8 valid boot nodes for the testnet (all enodes).
         assert_eq!(testnet.len(), 8);
 
         // Those ENRs should be in the testnet bootnodes.
@@ -485,21 +487,24 @@ mod tests {
         let mainnet = BootNodes::mainnet();
         let mainnet: Vec<CombinedPublicKey> = mainnet
             .iter()
-            .filter_map(|node| {
-                if let BootNode::Enr(enr) = node
-                    && EnrValidation::validate(enr, OP_MAINNET_CHAIN_ID).is_invalid()
-                {
-                    return None;
+            .filter_map(|node| match node {
+                BootNode::Enr(enr) => {
+                    if EnrValidation::validate(enr, BASE_MAINNET_CHAIN_ID).is_invalid() {
+                        return None;
+                    }
+                    Some(enr.public_key())
                 }
-                let node_contact =
-                    NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
-
-                Some(node_contact.public_key())
+                BootNode::Enode(_) => {
+                    let node_contact =
+                        NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
+                    Some(node_contact.public_key())
+                }
             })
             .collect();
 
-        // There should be 16 valid ENRs for the mainnet.
-        assert_eq!(mainnet.len(), 16);
+        // There should be 21 valid boot nodes for the mainnet:
+        // 5 Base Mainnet ENRs + 16 enodes.
+        assert_eq!(mainnet.len(), 21);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
@@ -509,7 +514,7 @@ mod tests {
 
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            OP_MAINNET_CHAIN_ID,
+            BASE_MAINNET_CHAIN_ID,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::mainnet())
@@ -524,7 +529,7 @@ mod tests {
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            OP_MAINNET_CHAIN_ID,
+            BASE_MAINNET_CHAIN_ID,
             &discovery.disc,
         )
         .await;

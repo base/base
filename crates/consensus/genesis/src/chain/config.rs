@@ -7,8 +7,8 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
 
 use crate::{
-    AddressList, AltDAConfig, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig,
-    Roles, RollupConfig, SuperchainLevel, base_fee_params, base_fee_params_canyon,
+    AddressList, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, Roles,
+    RollupConfig, SuperchainLevel, base_fee_params, base_fee_params_canyon,
     params::base_fee_config,
 };
 
@@ -96,9 +96,6 @@ pub struct ChainConfig {
     /// Optimism configuration
     #[cfg_attr(feature = "serde", serde(rename = "optimism"))]
     pub optimism: Option<BaseFeeConfig>,
-    /// Alternative DA configuration
-    #[cfg_attr(feature = "serde", serde(rename = "alt_da"))]
-    pub alt_da: Option<AltDAConfig>,
     /// Chain-specific genesis information
     pub genesis: ChainGenesis,
     /// Roles
@@ -165,20 +162,10 @@ impl ChainConfig {
                 .unwrap_or_default(),
             superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
-            da_challenge_address: self
-                .alt_da
-                .as_ref()
-                .and_then(|alt_da| alt_da.da_challenge_address),
-
-            // The below chain parameters can be different per OP-Stack chain,
-            // but since none of the superchain chains differ, it's not represented in the
-            // superchain-registry yet. This restriction on superchain-chains may change in the
-            // future. Test/Alt configurations can still load custom rollup-configs when
-            // necessary.
+            da_challenge_address: None,
             channel_timeout: 300,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
             chain_op_config: self.base_fee_config(),
-            alt_da_config: self.alt_da.clone(),
         }
     }
 }
@@ -219,7 +206,7 @@ mod tests {
                 "eip1559Denominator": 50,
                 "eip1559DenominatorCanyon": 250
             },
-            "alt_da": null,
+
             "genesis": {
                 "l1": {
                   "number": 17481768,
@@ -302,7 +289,7 @@ mod tests {
             "eip1559Denominator": "0x32",
             "eip1559DenominatorCanyon": "0xfa"
             },
-            "alt_da": null,
+
             "genesis": {
                 "l1": {
                   "number": 17481768,

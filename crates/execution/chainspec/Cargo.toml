@@ -36,14 +36,8 @@ op-alloy-rpc-types.workspace = true
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 
-# io
-tar-no-std = { workspace = true, optional = true }
-miniz_oxide = { workspace = true, features = ["with-alloc"], optional = true }
-
 # misc
 derive_more.workspace = true
-paste = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
 op-alloy-consensus.workspace = true
 
 [dev-dependencies]
@@ -52,13 +46,6 @@ alloy-op-hardforks.workspace = true
 
 [features]
 default = [ "std" ]
-superchain-configs = [
-	"dep:serde",
-	"miniz_oxide",
-	"paste",
-	"tar-no-std",
-	"thiserror",
-]
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
@@ -66,7 +53,6 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"derive_more/std",
-	"miniz_oxide?/std",
 	"op-alloy-consensus/std",
 	"op-alloy-rpc-types/std",
 	"reth-chainspec/std",
@@ -77,7 +63,6 @@ std = [
 	"reth-primitives-traits/std",
 	"serde?/std",
 	"serde_json/std",
-	"thiserror?/std",
 ]
 serde = [
 	"alloy-chains/serde",
@@ -86,7 +71,6 @@ serde = [
 	"alloy-hardforks/serde",
 	"alloy-op-hardforks/serde",
 	"alloy-primitives/serde",
-	"miniz_oxide?/serde",
 	"op-alloy-consensus/serde",
 	"op-alloy-rpc-types/serde",
 	"reth-ethereum-forks/serde",

@@ -65,6 +65,5 @@ pub const BASE_MAINNET_CONFIG: RollupConfig = RollupConfig {
     superchain_config_address: Some(address!("95703e0982140D16f8ebA6d158FccEde42f04a4C")),
     da_challenge_address: None,
     blobs_enabled_l1_timestamp: None,
-    alt_da_config: None,
     chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
 };
