@@ -446,20 +446,22 @@ mod tests {
         let testnet = BootNodes::testnet();
         let testnet: Vec<CombinedPublicKey> = testnet
             .iter()
-            .filter_map(|node| {
-                if let BootNode::Enr(enr) = node
-                    && EnrValidation::validate(enr, BASE_SEPOLIA_CHAIN_ID).is_invalid()
-                {
-                    return None;
+            .filter_map(|node| match node {
+                BootNode::Enr(enr) => {
+                    if EnrValidation::validate(enr, BASE_SEPOLIA_CHAIN_ID).is_invalid() {
+                        return None;
+                    }
+                    Some(enr.public_key())
                 }
-                let node_contact =
-                    NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
-
-                Some(node_contact.public_key())
+                BootNode::Enode(_) => {
+                    let node_contact =
+                        NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
+                    Some(node_contact.public_key())
+                }
             })
             .collect();
 
-        // There should be 8 valid ENRs for the testnet.
+        // There should be 8 valid boot nodes for the testnet (all enodes).
         assert_eq!(testnet.len(), 8);
 
         // Those ENRs should be in the testnet bootnodes.
@@ -485,21 +487,24 @@ mod tests {
         let mainnet = BootNodes::mainnet();
         let mainnet: Vec<CombinedPublicKey> = mainnet
             .iter()
-            .filter_map(|node| {
-                if let BootNode::Enr(enr) = node
-                    && EnrValidation::validate(enr, BASE_MAINNET_CHAIN_ID).is_invalid()
-                {
-                    return None;
+            .filter_map(|node| match node {
+                BootNode::Enr(enr) => {
+                    if EnrValidation::validate(enr, BASE_MAINNET_CHAIN_ID).is_invalid() {
+                        return None;
+                    }
+                    Some(enr.public_key())
                 }
-                let node_contact =
-                    NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
-
-                Some(node_contact.public_key())
+                BootNode::Enode(_) => {
+                    let node_contact =
+                        NodeContact::try_from_multiaddr(node.to_multiaddr().unwrap()).unwrap();
+                    Some(node_contact.public_key())
+                }
             })
             .collect();
 
-        // There should be 16 valid ENRs for the mainnet.
-        assert_eq!(mainnet.len(), 16);
+        // There should be 21 valid boot nodes for the mainnet:
+        // 5 Base Mainnet ENRs + 16 enodes.
+        assert_eq!(mainnet.len(), 21);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
