@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sends consistent transactions every 100-200ms to fill gaps between contender bursts
 
-RPC_URL="${RPC_URL:-http://localhost:7545}"
+RPC_URL="${RPC_URL:-${L2_BUILDER_RPC_URL:-http://localhost:7545}}"
 PRIVATE_KEY="${PRIVATE_KEY:-0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6}"
 TO_ADDRESS="${TO_ADDRESS:-0x0000000000000000000000000000000000000001}"
 

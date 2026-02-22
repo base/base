@@ -1,0 +1,131 @@
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "${KAFKA_PORT}:9092"
+    environment:
+      # KRaft mode (no ZooKeeper)
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # Listeners: PLAINTEXT for container-to-container, EXTERNAL for host access
+      - KAFKA_LISTENERS=PLAINTEXT://:29092,CONTROLLER://:9093,EXTERNAL://:9092
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:29092,EXTERNAL://localhost:${KAFKA_PORT}
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      # Auto-create topics
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/tips &&
+      echo 'Bucket tips created'
+      "
+
+  ingress-rpc:
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.ingress-rpc
+      args:
+        - PROFILE=dev
+    container_name: ingress-rpc
+    depends_on:
+      base-builder:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "${L2_INGRESS_HTTP_PORT}:${L2_INGRESS_HTTP_PORT}"
+      - "${L2_INGRESS_HEALTH_PORT}:${L2_INGRESS_HEALTH_PORT}"
+      - "${L2_INGRESS_METRICS_PORT}:${L2_INGRESS_METRICS_PORT}"
+    volumes:
+      - ./kafka:/kafka-config:ro
+    environment:
+      - TIPS_INGRESS_PORT=${L2_INGRESS_HTTP_PORT}
+      - TIPS_INGRESS_HEALTH_CHECK_ADDR=0.0.0.0:${L2_INGRESS_HEALTH_PORT}
+      - TIPS_INGRESS_METRICS_ADDR=0.0.0.0:${L2_INGRESS_METRICS_PORT}
+      - TIPS_INGRESS_RPC_MEMPOOL=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - TIPS_INGRESS_RPC_SIMULATION=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      # NOTE: Production uses "none" — ingress never forwards transactions to the
+      # sequencer mempool. Transactions reach the sequencer through a separate path
+      # (e.g. proxyd). We use "mempool" here as a devnet convenience so that
+      # transactions sent to ingress-rpc also land on-chain without extra infra.
+      - TIPS_INGRESS_TX_SUBMISSION_METHOD=mempool
+      - TIPS_INGRESS_SEND_TO_BUILDER=true
+      - TIPS_INGRESS_CHAIN_ID=${L2_CHAIN_ID}
+      - TIPS_INGRESS_BLOCK_TIME_MILLISECONDS=2000
+      - TIPS_INGRESS_KAFKA_INGRESS_PROPERTIES_FILE=/kafka-config/ingress.properties
+      - TIPS_INGRESS_KAFKA_INGRESS_TOPIC=tips-ingress
+      - TIPS_INGRESS_KAFKA_AUDIT_PROPERTIES_FILE=/kafka-config/ingress.properties
+      - TIPS_INGRESS_KAFKA_AUDIT_TOPIC=tips-audit
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${L2_INGRESS_HEALTH_PORT}/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  audit-archiver:
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.audit-archiver
+      args:
+        - PROFILE=dev
+    container_name: audit-archiver
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "${AUDIT_METRICS_PORT}:${AUDIT_METRICS_PORT}"
+    volumes:
+      - ./kafka:/kafka-config:ro
+    environment:
+      - TIPS_AUDIT_METRICS_ADDR=0.0.0.0:${AUDIT_METRICS_PORT}
+      - TIPS_AUDIT_KAFKA_PROPERTIES_FILE=/kafka-config/audit.properties
+      - TIPS_AUDIT_KAFKA_TOPIC=tips-audit
+      - TIPS_AUDIT_S3_BUCKET=tips
+      - TIPS_AUDIT_S3_CONFIG_TYPE=manual
+      - TIPS_AUDIT_S3_ENDPOINT=http://minio:9000
+      - TIPS_AUDIT_S3_REGION=us-east-1
+      - TIPS_AUDIT_S3_ACCESS_KEY_ID=minioadmin
+      - TIPS_AUDIT_S3_SECRET_ACCESS_KEY=minioadmin
+    restart: unless-stopped
