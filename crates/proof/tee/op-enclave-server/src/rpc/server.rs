@@ -114,6 +114,7 @@ impl EnclaveApiServer for RpcServerImpl {
                 &request.proposals,
                 request.proposer,
                 request.tee_image_hash,
+                &request.intermediate_roots,
             )
             .map_err(to_rpc_error)
     }

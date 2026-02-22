@@ -75,6 +75,8 @@ struct AggregateRequest {
     proposals: Vec<Proposal>,
     proposer: Address,
     tee_image_hash: B256,
+    #[serde(default)]
+    intermediate_roots: Vec<B256>,
 }
 
 /// Client for the enclave RPC server.
@@ -268,6 +270,7 @@ impl EnclaveClient {
     /// * `proposals` - The proposals to aggregate
     /// * `proposer` - The proposer address for the signed journal
     /// * `tee_image_hash` - The TEE image hash for the signed journal
+    /// * `intermediate_roots` - Intermediate output roots at every `intermediate_block_interval`
     ///
     /// # Errors
     ///
@@ -280,6 +283,7 @@ impl EnclaveClient {
         proposals: Vec<Proposal>,
         proposer: Address,
         tee_image_hash: B256,
+        intermediate_roots: Vec<B256>,
     ) -> Result<Proposal, ClientError> {
         let request = AggregateRequest {
             config_hash,
@@ -288,6 +292,7 @@ impl EnclaveClient {
             proposals,
             proposer,
             tee_image_hash,
+            intermediate_roots,
         };
 
         self.inner

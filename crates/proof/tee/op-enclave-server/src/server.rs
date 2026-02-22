@@ -283,7 +283,8 @@ impl Server {
         let starting_l2_block = U256::from(previous_header.number);
         let ending_l2_block = U256::from(block_header.number);
 
-        // Build signing data matching the AggregateVerifier contract's journal
+        // Build signing data matching the AggregateVerifier contract's journal.
+        // Individual block proofs have no intermediate roots.
         let signing_data = build_signing_data(
             proposer,
             l1_origin_hash,
@@ -292,6 +293,7 @@ impl Server {
             starting_l2_block,
             output_root,
             ending_l2_block,
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -374,6 +376,7 @@ impl Server {
         proposals: &[Proposal],
         proposer: Address,
         tee_image_hash: B256,
+        intermediate_roots: &[B256],
     ) -> Result<Proposal, ServerError> {
         if proposals.is_empty() {
             return Err(ProposalError::EmptyProposals.into());
@@ -399,6 +402,7 @@ impl Server {
             l1_origin_number = proposal.l1_origin_number;
             l2_block_number = proposal.l2_block_number;
 
+            // Input proposals were signed without intermediate roots.
             let signing_data = build_signing_data(
                 proposer,
                 l1_origin_hash,
@@ -407,6 +411,7 @@ impl Server {
                 prev_l2_block,
                 proposal.output_root,
                 l2_block_number,
+                &[],
                 config_hash,
                 tee_image_hash,
             );
@@ -422,7 +427,38 @@ impl Server {
             prev_l2_block = l2_block_number;
         }
 
-        // Create the aggregated proposal
+        // Validate intermediate roots against the individual proposals' output roots.
+        // Each intermediate root must match the output_root of the proposal at the
+        // corresponding block boundary, preventing a compromised proposer from
+        // submitting fake intermediate checkpoints.
+        if !intermediate_roots.is_empty() && proposals.len() > 1 {
+            let total_blocks =
+                proposals.last().unwrap().l2_block_number.to::<u64>() - prev_block_number;
+            let interval = total_blocks / intermediate_roots.len() as u64;
+
+            for (i, expected_root) in intermediate_roots.iter().enumerate() {
+                let target_block = U256::from(prev_block_number + (i as u64 + 1) * interval);
+                match proposals.iter().find(|p| p.l2_block_number == target_block) {
+                    Some(p) if p.output_root == *expected_root => {}
+                    Some(p) => {
+                        return Err(ProposalError::InvalidIntermediateRoot {
+                            index: i,
+                            expected: format!("{:?}", p.output_root),
+                            actual: format!("{expected_root:?}"),
+                        }
+                        .into());
+                    }
+                    None => {
+                        return Err(ProposalError::ExecutionFailed(format!(
+                            "no proposal found for intermediate root at block {target_block}"
+                        ))
+                        .into());
+                    }
+                }
+            }
+        }
+
+        // Create the aggregated proposal with intermediate roots in the journal.
         let final_output_root = output_root;
         let starting_l2_block = U256::from(prev_block_number);
 
@@ -434,6 +470,7 @@ impl Server {
             starting_l2_block,
             final_output_root,
             l2_block_number,
+            intermediate_roots,
             config_hash,
             tee_image_hash,
         );
@@ -534,6 +571,7 @@ mod tests {
             &[],
             Address::ZERO,
             B256::ZERO,
+            &[],
         );
 
         assert!(matches!(
@@ -564,6 +602,7 @@ mod tests {
             U256::from(prev_block_number),
             output_root,
             l2_block_number,
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -589,6 +628,7 @@ mod tests {
             &[proposal.clone()],
             proposer,
             tee_image_hash,
+            &[],
         );
 
         assert!(result.is_ok());
@@ -620,6 +660,7 @@ mod tests {
             U256::from(prev_block_number),
             output_root_1,
             U256::from(100),
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -648,6 +689,7 @@ mod tests {
             U256::from(100),
             output_root_2,
             U256::from(101),
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -674,6 +716,7 @@ mod tests {
             &[proposal_1, proposal_2],
             proposer,
             tee_image_hash,
+            &[],
         );
 
         assert!(result.is_ok());
@@ -710,6 +753,7 @@ mod tests {
             U256::from(prev_block_number),
             output_root_1,
             U256::from(100),
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -749,6 +793,7 @@ mod tests {
             &[proposal_1, proposal_2],
             proposer,
             tee_image_hash,
+            &[],
         );
 
         // The second proposal (index 1) should fail signature verification
