@@ -9,7 +9,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::providers::{Provider, RootProvider};
 use alloy::signers::local::PrivateKeySigner;
 use alloy_eips::Encodable2718;
@@ -178,6 +178,7 @@ pub trait OutputProposer: Send + Sync {
         &self,
         proposal: &ProverProposal,
         parent_index: u32,
+        intermediate_roots: &[B256],
     ) -> Result<(), ProposerError>;
 }
 
@@ -232,9 +233,10 @@ impl OutputProposer for LocalOutputProposer {
         &self,
         proposal: &ProverProposal,
         parent_index: u32,
+        intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         let proof_data = build_proof_data(proposal)?;
-        let extra_data = encode_extra_data(proposal.to.number, parent_index);
+        let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
         let calldata = encode_create_calldata(
             self.game_type,
             proposal.output.output_root,
@@ -340,12 +342,13 @@ impl OutputProposer for RemoteOutputProposer {
         &self,
         proposal: &ProverProposal,
         parent_index: u32,
+        intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         use jsonrpsee::core::client::ClientT;
         use jsonrpsee::core::params::ArrayParams;
 
         let proof_data = build_proof_data(proposal)?;
-        let extra_data = encode_extra_data(proposal.to.number, parent_index);
+        let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
         let calldata = encode_create_calldata(
             self.game_type,
             proposal.output.output_root,

@@ -242,6 +242,7 @@ impl OutputProposer for MockOutputProposer {
         &self,
         _proposal: &ProverProposal,
         _parent_index: u32,
+        _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         Ok(())
     }
