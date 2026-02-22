@@ -126,8 +126,7 @@ mod tests {
     async fn ensure_cached_misses_on_different_payload_id() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
         let latest = harness.latest_block();
-        let state_provider =
-            harness.blockchain_provider().state_by_block_hash(latest.hash())?;
+        let state_provider = harness.blockchain_provider().state_by_block_hash(latest.hash())?;
 
         let alice = Account::Alice.address();
         let flashblock_index = 0;

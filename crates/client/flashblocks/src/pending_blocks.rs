@@ -8,6 +8,7 @@ use alloy_primitives::{
 };
 use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
+use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_primitives::Flashblock;
@@ -17,8 +18,6 @@ use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::state::EvmState;
-
-use alloy_rpc_types_engine::PayloadId;
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
