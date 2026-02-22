@@ -31,4 +31,10 @@ pub struct AggregateRequest {
 
     /// The keccak256 hash of the TEE image PCR0.
     pub tee_image_hash: B256,
+
+    /// Intermediate output roots at every `intermediate_block_interval` blocks.
+    ///
+    /// Empty for individual block proofs; populated for aggregated proposals.
+    #[serde(default)]
+    pub intermediate_roots: Vec<B256>,
 }

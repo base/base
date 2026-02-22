@@ -469,6 +469,7 @@ fn test_signing_data_format() {
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
         U256::from(L2_BLOCK_NUMBER),
+        &[],
         CONFIG_HASH,
         TEE_IMAGE_HASH,
     );
@@ -533,6 +534,7 @@ fn test_verify_go_signature() {
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
         U256::from(L2_BLOCK_NUMBER),
+        &[],
         CONFIG_HASH,
         TEE_IMAGE_HASH,
     );
@@ -564,6 +566,7 @@ fn test_rust_signature_verifiable() {
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
         U256::from(L2_BLOCK_NUMBER),
+        &[],
         CONFIG_HASH,
         TEE_IMAGE_HASH,
     );
@@ -594,6 +597,7 @@ fn test_signature_format() {
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
         U256::from(L2_BLOCK_NUMBER),
+        &[],
         CONFIG_HASH,
         TEE_IMAGE_HASH,
     );
