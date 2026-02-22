@@ -275,6 +275,7 @@ impl EnclaveClient {
     /// # Errors
     ///
     /// Returns an error if the RPC call fails or signature verification fails.
+    #[allow(clippy::too_many_arguments)]
     pub async fn aggregate(
         &self,
         config_hash: B256,

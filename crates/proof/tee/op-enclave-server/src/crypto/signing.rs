@@ -28,7 +28,7 @@ pub const SIGNING_DATA_BASE_LENGTH: usize = 276;
 /// ```
 ///
 /// For individual block proofs, `intermediate_roots` is empty.
-/// For aggregated proofs, it contains N roots where N = block_interval / intermediate_block_interval.
+/// For aggregated proofs, it contains N roots where N = `block_interval` / `intermediate_block_interval`.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn build_signing_data(
