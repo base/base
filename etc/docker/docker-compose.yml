@@ -208,6 +208,9 @@ services:
       - --flashblocks.compute-state-root-on-finalize
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
+      - --txpool.nolocals
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
       - --color=never
       - -vvv
     healthcheck:
@@ -359,9 +362,13 @@ services:
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
+      - --txpool.nolocals
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --enable-metering
       - --color=never
       - -vvv
     healthcheck:

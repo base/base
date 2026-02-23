@@ -201,6 +201,19 @@ devnet-flashblocks:
 devnet-logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
 
+# Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
+devnet-ingress: devnet-ingress-down
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml up -d --build --scale contender=0
+
+# Stops devnet+ingress and deletes all data
+devnet-ingress-down:
+    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml down
+    rm -rf .devnet
+
+# Stream logs from devnet+ingress containers (optionally specify container names)
+devnet-ingress-logs *containers:
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
+
 # Run basectl with specified config (mainnet, sepolia, devnet, or path)
 basectl config="mainnet":
     cargo run -p basectl --release -- -c {{config}}
