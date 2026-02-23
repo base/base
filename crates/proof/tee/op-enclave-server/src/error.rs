@@ -149,6 +149,12 @@ pub enum ProposalError {
         /// The intermediate root provided by the caller.
         actual: String,
     },
+    /// No proposal found for an intermediate root at the given block.
+    #[error("no proposal found for intermediate root at block {block}")]
+    MissingIntermediateProposal {
+        /// The block number where a proposal was expected.
+        block: u64,
+    },
     /// Core execution failed.
     #[error("execution failed: {0}")]
     ExecutionFailed(String),
