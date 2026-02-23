@@ -692,10 +692,7 @@ mod tests {
             unimplemented!("not needed for aggregate tests")
         }
 
-        async fn aggregate(
-            &self,
-            _request: AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
+        async fn aggregate(&self, _request: AggregateRequest) -> Result<Proposal, ClientError> {
             Ok(self.aggregate_result.clone())
         }
     }
@@ -903,10 +900,7 @@ mod tests {
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-        async fn aggregate(
-            &self,
-            _: AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
+        async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
             Err(ClientError::ClientCreation(
                 "enclave aggregate failed".into(),
             ))
@@ -945,10 +939,7 @@ mod tests {
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-        async fn aggregate(
-            &self,
-            _: AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
+        async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
             Ok(Proposal {
                 output_root: B256::ZERO,
