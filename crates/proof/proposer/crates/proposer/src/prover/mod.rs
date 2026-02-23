@@ -19,7 +19,8 @@ use op_alloy_rpc_types::Transaction as OpTransaction;
 use op_enclave_client::ExecuteStatelessRequest;
 use op_enclave_core::types::config::RollupConfig;
 use op_enclave_core::{
-    ChainConfig, L2_TO_L1_MESSAGE_PASSER, Proposal, l2_block_to_block_info, output_root_v0,
+    AggregateRequest, ChainConfig, L2_TO_L1_MESSAGE_PASSER, Proposal, l2_block_to_block_info,
+    output_root_v0,
 };
 
 use crate::{
@@ -367,21 +368,19 @@ where
         proposals: Vec<Proposal>,
         intermediate_roots: Vec<B256>,
     ) -> Result<Proposal, ProposerError> {
-        tokio::time::timeout(
-            ENCLAVE_TIMEOUT,
-            self.enclave_client.aggregate(
-                self.config_hash,
-                prev_output_root,
-                prev_block_number,
-                proposals,
-                self.proposer,
-                self.tee_image_hash,
-                intermediate_roots,
-            ),
-        )
-        .await
-        .map_err(|_| ProposerError::Enclave("enclave aggregation timed out".into()))?
-        .map_err(|e| ProposerError::Enclave(e.to_string()))
+        let request = AggregateRequest {
+            config_hash: self.config_hash,
+            prev_output_root,
+            prev_block_number,
+            proposals,
+            proposer: self.proposer,
+            tee_image_hash: self.tee_image_hash,
+            intermediate_roots,
+        };
+        tokio::time::timeout(ENCLAVE_TIMEOUT, self.enclave_client.aggregate(request))
+            .await
+            .map_err(|_| ProposerError::Enclave("enclave aggregation timed out".into()))?
+            .map_err(|e| ProposerError::Enclave(e.to_string()))
     }
 }
 
@@ -695,13 +694,7 @@ mod tests {
 
         async fn aggregate(
             &self,
-            _config_hash: B256,
-            _prev_output_root: B256,
-            _prev_block_number: u64,
-            _proposals: Vec<Proposal>,
-            _proposer: alloy_primitives::Address,
-            _tee_image_hash: B256,
-            _intermediate_roots: Vec<B256>,
+            _request: AggregateRequest,
         ) -> Result<Proposal, ClientError> {
             Ok(self.aggregate_result.clone())
         }
@@ -912,13 +905,7 @@ mod tests {
         }
         async fn aggregate(
             &self,
-            _: B256,
-            _: B256,
-            _: u64,
-            _: Vec<Proposal>,
-            _: alloy_primitives::Address,
-            _: B256,
-            _: Vec<B256>,
+            _: AggregateRequest,
         ) -> Result<Proposal, ClientError> {
             Err(ClientError::ClientCreation(
                 "enclave aggregate failed".into(),
@@ -960,13 +947,7 @@ mod tests {
         }
         async fn aggregate(
             &self,
-            _: B256,
-            _: B256,
-            _: u64,
-            _: Vec<Proposal>,
-            _: alloy_primitives::Address,
-            _: B256,
-            _: Vec<B256>,
+            _: AggregateRequest,
         ) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
             Ok(Proposal {
