@@ -31,7 +31,7 @@ pub struct BlockHandler {
     pub rollup_config: RollupConfig,
     /// A [`Receiver`] to monitor changes to the unsafe block signer.
     pub signer_recv: Receiver<Address>,
-    /// The libp2p topic for pre Canyon/Shangai blocks.
+    /// The libp2p topic for pre Canyon/Shanghai blocks.
     pub blocks_v1_topic: IdentTopic,
     /// The libp2p topic for Canyon/Delta blocks.
     pub blocks_v2_topic: IdentTopic,
