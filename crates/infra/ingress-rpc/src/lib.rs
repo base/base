@@ -25,10 +25,10 @@ use std::{
 
 use alloy_primitives::TxHash;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use base_alloy_network::Base;
 use base_cli_utils::{LogFormat, LogLevel};
 use base_primitives::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
-use op_alloy_network::Optimism;
 use tokio::sync::broadcast;
 use tracing::{error, warn};
 use url::Url;
@@ -182,9 +182,9 @@ pub fn connect_ingress_to_builder(
     backrun_rx: broadcast::Receiver<AcceptedBundle>,
     builder_rpc: Url,
 ) {
-    let builder: RootProvider<Optimism> = ProviderBuilder::new()
+    let builder: RootProvider<Base> = ProviderBuilder::new()
         .disable_recommended_fillers()
-        .network::<Optimism>()
+        .network::<Base>()
         .connect_http(builder_rpc);
 
     let metering_builder = builder.clone();

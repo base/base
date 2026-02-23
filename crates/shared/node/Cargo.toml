@@ -22,11 +22,11 @@ test-utils = [
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
 	"dep:alloy-signer",
+	"dep:base-alloy-network",
+	"dep:base-alloy-rpc-types-engine",
 	"dep:base-primitives",
 	"dep:chrono",
 	"dep:jsonrpsee",
-	"dep:op-alloy-network",
-	"dep:op-alloy-rpc-types-engine",
 	"dep:reth-chainspec",
 	"dep:reth-ipc",
 	"dep:reth-node-core",
@@ -70,7 +70,7 @@ reth-transaction-pool.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-payload-builder.workspace = true
-reth-db = { workspace = true, features = ["op"] }
+reth-db.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-tasks = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
@@ -88,9 +88,9 @@ alloy-primitives = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, optional = true }
 alloy-rpc-types-engine = { workspace = true, optional = true, features = ["std"] }
 
-# op-alloy
-op-alloy-network = { workspace = true, optional = true }
-op-alloy-rpc-types-engine = { workspace = true, optional = true }
+# base-alloy
+base-alloy-network = { workspace = true, optional = true }
+base-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # tokio
 tokio.workspace = true

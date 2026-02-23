@@ -10,11 +10,11 @@ use std::sync::{Arc, LazyLock};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use base_alloy_network::Base;
 use base_client_node::BaseNode;
 use base_primitives::FlashblocksPayloadV1;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
-use op_alloy_network::Optimism;
 use parking_lot::Mutex;
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_node_core::{
@@ -204,8 +204,8 @@ impl LocalInstance {
         ChainDriver::<Ipc>::local(self).await
     }
 
-    pub async fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {
-        ProviderBuilder::<Identity, Identity, Optimism>::default()
+    pub async fn provider(&self) -> eyre::Result<RootProvider<Base>> {
+        ProviderBuilder::<Identity, Identity, Base>::default()
             .connect_ipc(self.rpc_ipc().to_string().into())
             .await
             .map_err(|e| eyre::eyre!("Failed to connect to provider: {e}"))

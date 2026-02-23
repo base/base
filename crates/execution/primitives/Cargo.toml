@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # reth
-reth-primitives-traits = { workspace = true, features = ["op"] }
+reth-primitives-traits.workspace = true
 
 # ethereum
 alloy-primitives.workspace = true
@@ -21,15 +21,15 @@ alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-rlp.workspace = true
 
-# op
-op-alloy-consensus.workspace = true
+# base
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 
 # codec
 serde = { workspace = true, optional = true }
 serde_with = { workspace = true, optional = true }
 
 [dev-dependencies]
-reth-codecs = { workspace = true, features = ["test-utils", "op"] }
+reth-codecs = { workspace = true, features = ["test-utils"] }
 
 bytes.workspace = true
 modular-bitfield.workspace = true
@@ -52,8 +52,8 @@ std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
+	"base-alloy-consensus/std",
 	"bytes/std",
-	"op-alloy-consensus/std",
 	"reth-primitives-traits/std",
 	"reth-zstd-compressors/std",
 	"secp256k1/std",
@@ -61,15 +61,15 @@ std = [
 	"serde_json/std",
 	"serde_with?/std",
 ]
-alloy-compat = [ "op-alloy-consensus/alloy-compat" ]
+alloy-compat = [ "base-alloy-consensus/alloy-compat" ]
 reth-codec = [ "reth-primitives-traits/reth-codec", "std" ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
+	"base-alloy-consensus/serde",
 	"bytes/serde",
 	"dep:serde",
-	"op-alloy-consensus/serde",
 	"rand/serde",
 	"rand_08/serde",
 	"reth-codecs/serde",
@@ -78,7 +78,7 @@ serde = [
 serde-bincode-compat = [
 	"alloy-consensus/serde-bincode-compat",
 	"alloy-eips/serde-bincode-compat",
-	"op-alloy-consensus/serde-bincode-compat",
+	"base-alloy-consensus/serde-bincode-compat",
 	"reth-primitives-traits/serde-bincode-compat",
 	"serde",
 	"serde_with",
@@ -87,7 +87,7 @@ arbitrary = [
 	"alloy-consensus/arbitrary",
 	"alloy-eips/arbitrary",
 	"alloy-primitives/arbitrary",
-	"op-alloy-consensus/arbitrary",
+	"base-alloy-consensus/arbitrary",
 	"reth-codecs/arbitrary",
 	"reth-primitives-traits/arbitrary",
 	"std",

@@ -22,16 +22,16 @@ use alloy_transport_http::{
     },
 };
 use async_trait::async_trait;
-use base_protocol::{FromBlockError, L2BlockInfo};
-use http_body_util::Full;
-use kona_genesis::RollupConfig;
-use op_alloy_network::Optimism;
-use op_alloy_provider::ext::engine::OpEngineApi;
-use op_alloy_rpc_types::Transaction;
-use op_alloy_rpc_types_engine::{
+use base_alloy_network::Base;
+use base_alloy_provider::OpEngineApi;
+use base_alloy_rpc_types::Transaction;
+use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion,
 };
+use base_protocol::{FromBlockError, L2BlockInfo};
+use http_body_util::Full;
+use kona_genesis::RollupConfig;
 use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;
@@ -56,7 +56,7 @@ pub type HyperAuthClient<B = Full<Bytes>> = HyperClient<B, AuthService<Client<Ht
 /// `EngineClient` trait that is very coupled to its only implementation.
 /// The main reason this exists is for mocking/unit testing.
 #[async_trait]
-pub trait EngineClient: OpEngineApi<Optimism, Http<HyperAuthClient>> + Send + Sync {
+pub trait EngineClient: OpEngineApi<Base, Http<HyperAuthClient>> + Send + Sync {
     /// Returns a reference to the inner [`RollupConfig`].
     fn cfg(&self) -> &RollupConfig;
 
@@ -64,7 +64,7 @@ pub trait EngineClient: OpEngineApi<Optimism, Http<HyperAuthClient>> + Send + Sy
     fn get_l1_block(&self, block: BlockId) -> EthGetBlock<<Ethereum as Network>::BlockResponse>;
 
     /// Fetches the L2 block with the provided `BlockId`.
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Optimism as Network>::BlockResponse>;
+    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse>;
 
     /// Get the account and storage values of the specified account including the merkle proofs.
     /// This call can be used to verify that the data has not been tampered with.
@@ -99,7 +99,7 @@ pub trait EngineClient: OpEngineApi<Optimism, Http<HyperAuthClient>> + Send + Sy
 pub struct OpEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
-    L2Provider: Provider<Optimism>,
+    L2Provider: Provider<Base>,
 {
     /// The L2 engine provider for Engine API calls.
     engine: L2Provider,
@@ -112,7 +112,7 @@ where
 impl<L1Provider, L2Provider> OpEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
-    L2Provider: Provider<Optimism>,
+    L2Provider: Provider<Base>,
 {
     /// Creates a new RPC client for the given address and JWT secret.
     pub fn rpc_client<N: Network>(addr: Url, jwt: JwtSecret) -> RootProvider<N> {
@@ -144,8 +144,8 @@ impl EngineClientBuilder {
     ///
     /// Sets up JWT-authenticated connections to the Engine API endpoint along with an
     /// unauthenticated connection to the L1 chain.
-    pub fn build(self) -> OpEngineClient<RootProvider, RootProvider<Optimism>> {
-        let engine = OpEngineClient::<RootProvider, RootProvider<Optimism>>::rpc_client::<Optimism>(
+    pub fn build(self) -> OpEngineClient<RootProvider, RootProvider<Base>> {
+        let engine = OpEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
             self.l2,
             self.l2_jwt,
         );
@@ -160,7 +160,7 @@ impl EngineClientBuilder {
 impl<L1Provider, L2Provider> EngineClient for OpEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
-    L2Provider: Provider<Optimism>,
+    L2Provider: Provider<Base>,
 {
     fn cfg(&self) -> &RollupConfig {
         self.cfg.as_ref()
@@ -170,7 +170,7 @@ where
         self.l1_provider.get_block(block)
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Optimism as Network>::BlockResponse> {
+    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
         self.engine.get_block(block)
     }
 
@@ -206,17 +206,17 @@ where
 }
 
 #[async_trait::async_trait]
-impl<L1Provider, L2Provider> OpEngineApi<Optimism, Http<HyperAuthClient>>
+impl<L1Provider, L2Provider> OpEngineApi<Base, Http<HyperAuthClient>>
     for OpEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
-    L2Provider: Provider<Optimism>,
+    L2Provider: Provider<Base>,
 {
     async fn new_payload_v2(
         &self,
         payload: ExecutionPayloadInputV2,
     ) -> TransportResult<PayloadStatus> {
-        let call = <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::new_payload_v2(
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::new_payload_v2(
             &self.engine,
             payload,
         );
@@ -229,7 +229,7 @@ where
         payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        let call = <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::new_payload_v3(
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::new_payload_v3(
             &self.engine,
             payload,
             parent_beacon_block_root,
@@ -243,7 +243,7 @@ where
         payload: OpExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        let call = <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::new_payload_v4(
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::new_payload_v4(
             &self.engine,
             payload,
             parent_beacon_block_root,
@@ -257,12 +257,11 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let call =
-            <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::fork_choice_updated_v2(
-                &self.engine,
-                fork_choice_state,
-                payload_attributes,
-            );
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::fork_choice_updated_v2(
+            &self.engine,
+            fork_choice_state,
+            payload_attributes,
+        );
 
         record_call_time(call, Metrics::FORKCHOICE_UPDATE_METHOD).await
     }
@@ -272,12 +271,11 @@ where
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<OpPayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let call =
-            <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::fork_choice_updated_v3(
-                &self.engine,
-                fork_choice_state,
-                payload_attributes,
-            );
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::fork_choice_updated_v3(
+            &self.engine,
+            fork_choice_state,
+            payload_attributes,
+        );
 
         record_call_time(call, Metrics::FORKCHOICE_UPDATE_METHOD).await
     }
@@ -286,7 +284,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
-        let call = <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::get_payload_v2(
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_v2(
             &self.engine,
             payload_id,
         );
@@ -298,7 +296,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV3> {
-        let call = <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::get_payload_v3(
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_v3(
             &self.engine,
             payload_id,
         );
@@ -310,7 +308,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
-        let call = <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::get_payload_v4(
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_v4(
             &self.engine,
             payload_id,
         );
@@ -322,7 +320,7 @@ where
         &self,
         block_hashes: Vec<BlockHash>,
     ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::get_payload_bodies_by_hash_v1(
+        <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_bodies_by_hash_v1(
             &self.engine,
             block_hashes,
         )
@@ -334,17 +332,19 @@ where
         start: u64,
         count: u64,
     ) -> TransportResult<ExecutionPayloadBodiesV1> {
-        <L2Provider as OpEngineApi<
-            Optimism,
-            Http<HyperAuthClient>,
-        >>::get_payload_bodies_by_range_v1(&self.engine, start, count).await
+        <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_bodies_by_range_v1(
+            &self.engine,
+            start,
+            count,
+        )
+        .await
     }
 
     async fn get_client_version_v1(
         &self,
         client_version: ClientVersionV1,
     ) -> TransportResult<Vec<ClientVersionV1>> {
-        <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::get_client_version_v1(
+        <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_client_version_v1(
             &self.engine,
             client_version,
         )
@@ -356,7 +356,7 @@ where
         recommended: ProtocolVersion,
         required: ProtocolVersion,
     ) -> TransportResult<ProtocolVersion> {
-        <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::signal_superchain_v1(
+        <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::signal_superchain_v1(
             &self.engine,
             recommended,
             required,
@@ -368,7 +368,7 @@ where
         &self,
         capabilities: Vec<String>,
     ) -> TransportResult<Vec<String>> {
-        <L2Provider as OpEngineApi<Optimism, Http<HyperAuthClient>>>::exchange_capabilities(
+        <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::exchange_capabilities(
             &self.engine,
             capabilities,
         )

@@ -13,13 +13,13 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
+use base_alloy_network::Base;
+use base_alloy_rpc_types::OpTransactionRequest;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use op_alloy_network::Optimism;
-use op_alloy_rpc_types::OpTransactionRequest;
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
@@ -46,14 +46,12 @@ pub trait EthApiOverride {
         &self,
         number: BlockNumberOrTag,
         full: bool,
-    ) -> RpcResult<Option<RpcBlock<Optimism>>>;
+    ) -> RpcResult<Option<RpcBlock<Base>>>;
 
     /// Returns transaction receipt, checking flashblocks first.
     #[method(name = "getTransactionReceipt")]
-    async fn get_transaction_receipt(
-        &self,
-        tx_hash: TxHash,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
+    async fn get_transaction_receipt(&self, tx_hash: TxHash)
+    -> RpcResult<Option<RpcReceipt<Base>>>;
 
     /// Returns account balance, with flashblock support for pending state.
     #[method(name = "getBalance")]
@@ -70,10 +68,8 @@ pub trait EthApiOverride {
 
     /// Returns transaction by hash, checking flashblocks first.
     #[method(name = "getTransactionByHash")]
-    async fn transaction_by_hash(
-        &self,
-        tx_hash: TxHash,
-    ) -> RpcResult<Option<RpcTransaction<Optimism>>>;
+    async fn transaction_by_hash(&self, tx_hash: TxHash)
+    -> RpcResult<Option<RpcTransaction<Base>>>;
 
     /// Sends a raw transaction and waits for inclusion in a flashblock.
     #[method(name = "sendRawTransactionSync")]
@@ -81,7 +77,7 @@ pub trait EthApiOverride {
         &self,
         transaction: alloy_primitives::Bytes,
         timeout_ms: Option<u64>,
-    ) -> RpcResult<RpcReceipt<Optimism>>;
+    ) -> RpcResult<RpcReceipt<Base>>;
 
     /// Executes a call with flashblock state support.
     #[method(name = "call")]
@@ -108,7 +104,7 @@ pub trait EthApiOverride {
         &self,
         opts: SimulatePayload<OpTransactionRequest>,
         block_number: Option<BlockId>,
-    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Optimism>>>>;
+    ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Base>>>>;
 
     /// Returns logs matching the filter, including pending flashblock logs.
     #[method(name = "getLogs")]
@@ -141,7 +137,7 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -149,7 +145,7 @@ where
         &self,
         number: BlockNumberOrTag,
         full: bool,
-    ) -> RpcResult<Option<RpcBlock<Optimism>>> {
+    ) -> RpcResult<Option<RpcBlock<Base>>> {
         debug!(
             message = "rpc::block_by_number",
             block_number = ?number
@@ -173,7 +169,7 @@ where
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
+    ) -> RpcResult<Option<RpcReceipt<Base>>> {
         debug!(
             message = "rpc::get_transaction_receipt",
             tx_hash = %tx_hash
@@ -249,7 +245,7 @@ where
     async fn transaction_by_hash(
         &self,
         tx_hash: TxHash,
-    ) -> RpcResult<Option<RpcTransaction<Optimism>>> {
+    ) -> RpcResult<Option<RpcTransaction<Base>>> {
         debug!(
             message = "rpc::transaction_by_hash",
             tx_hash = %tx_hash
@@ -280,7 +276,7 @@ where
         &self,
         transaction: alloy_primitives::Bytes,
         timeout_ms: Option<u64>,
-    ) -> RpcResult<RpcReceipt<Optimism>> {
+    ) -> RpcResult<RpcReceipt<Base>> {
         debug!(message = "rpc::send_raw_transaction_sync");
 
         let timeout_ms = match timeout_ms {
@@ -541,10 +537,10 @@ where
 
 impl<Eth, FB> EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+    async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
 
         loop {
@@ -567,7 +563,7 @@ where
         }
     }
 
-    async fn wait_for_canonical_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+    async fn wait_for_canonical_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>> {
         let mut stream =
             BroadcastStream::new(self.eth_api.provider().subscribe_to_canonical_state());
 

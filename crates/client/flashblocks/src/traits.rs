@@ -6,8 +6,8 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types_eth::{Filter, Log, state::StateOverride};
 use arc_swap::Guard;
+use base_alloy_network::Base;
 use base_primitives::Flashblock;
-use op_alloy_network::Optimism;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use tokio::sync::broadcast;
@@ -38,13 +38,13 @@ pub trait PendingBlocksAPI {
     fn get_transaction_count(&self, address: Address) -> U256;
 
     /// Retrieves the current block. If `full` is true, includes full transaction details.
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>>;
+    fn get_block(&self, full: bool) -> Option<RpcBlock<Base>>;
 
     /// Gets transaction receipt by hash.
-    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>>;
+    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>>;
 
     /// Gets transaction details by hash.
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>>;
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Base>>;
 
     /// Gets balance for an address. Returns None if address not updated in flashblocks.
     fn get_balance(&self, address: Address) -> Option<U256>;

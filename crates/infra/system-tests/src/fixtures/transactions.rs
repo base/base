@@ -3,16 +3,16 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{ProviderBuilder, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Result;
-use op_alloy_network::{Optimism, TxSignerSync, eip2718::Encodable2718};
+use base_alloy_network::{Base, TxSignerSync, eip2718::Encodable2718};
 
-/// Create an Optimism RPC provider from a URL string
+/// Create a Base RPC provider from a URL string
 ///
 /// This is a convenience function to avoid repeating the provider setup
 /// pattern across tests and runner code.
-pub fn create_optimism_provider(url: &str) -> Result<RootProvider<Optimism>> {
+pub fn create_base_provider(url: &str) -> Result<RootProvider<Base>> {
     Ok(ProviderBuilder::new()
         .disable_recommended_fillers()
-        .network::<Optimism>()
+        .network::<Base>()
         .connect_http(url.parse()?))
 }
 
@@ -54,7 +54,7 @@ pub fn create_signed_transaction(
 
     let signature = signer.sign_transaction_sync(&mut tx)?;
 
-    let envelope = op_alloy_consensus::OpTxEnvelope::Eip1559(tx.into_signed(signature));
+    let envelope = base_alloy_consensus::OpTxEnvelope::Eip1559(tx.into_signed(signature));
 
     let mut buf = Vec::new();
     envelope.encode_2718(&mut buf);

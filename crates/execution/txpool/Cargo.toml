@@ -28,8 +28,8 @@ reth-transaction-pool.workspace = true
 op-revm.workspace = true
 
 # optimism
-op-alloy-consensus.workspace = true
-op-alloy-flz.workspace = true
+base-alloy-flz.workspace = true
+base-alloy-consensus.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-forks.workspace = true
 reth-optimism-primitives.workspace = true

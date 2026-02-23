@@ -1,7 +1,7 @@
 //! Error types for protocol conversions.
 
 use alloy_primitives::B256;
-use op_alloy_consensus::EIP1559ParamError;
+use base_alloy_consensus::EIP1559ParamError;
 
 use crate::DecodeError;
 

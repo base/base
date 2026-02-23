@@ -6,13 +6,13 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use derive_more::Constructor;
-use jsonrpsee::proc_macros::rpc;
-use jsonrpsee_core::{RpcResult, server::RpcModule};
-use op_alloy_rpc_types_engine::{
+use base_alloy_rpc_types_engine::{
     OpExecutionData, OpExecutionPayloadV4, ProtocolVersion, ProtocolVersionFormatV0,
     SuperchainSignal,
 };
+use derive_more::Constructor;
+use jsonrpsee::proc_macros::rpc;
+use jsonrpsee_core::{RpcResult, server::RpcModule};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{EngineApiValidator, EngineTypes};
 use reth_rpc_api::IntoEngineApiRpcModule;

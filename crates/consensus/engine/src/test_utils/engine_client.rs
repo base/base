@@ -15,15 +15,15 @@ use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as Eth
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use alloy_transport_http::Http;
 use async_trait::async_trait;
-use base_protocol::L2BlockInfo;
-use kona_genesis::RollupConfig;
-use op_alloy_network::Optimism;
-use op_alloy_provider::ext::engine::OpEngineApi;
-use op_alloy_rpc_types::Transaction as OpTransaction;
-use op_alloy_rpc_types_engine::{
+use base_alloy_network::Base;
+use base_alloy_provider::OpEngineApi;
+use base_alloy_rpc_types::Transaction as OpTransaction;
+use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion,
 };
+use base_protocol::L2BlockInfo;
+use kona_genesis::RollupConfig;
 use tokio::sync::RwLock;
 
 use crate::{EngineClient, EngineClientError, HyperAuthClient};
@@ -438,7 +438,7 @@ impl EngineClient for MockEngineClient {
         )
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Optimism as Network>::BlockResponse> {
+    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
         let storage = Arc::clone(&self.storage);
         let block_key = block_id_to_key(&block);
 
@@ -510,7 +510,7 @@ impl EngineClient for MockEngineClient {
 }
 
 #[async_trait]
-impl OpEngineApi<Optimism, Http<HyperAuthClient>> for MockEngineClient {
+impl OpEngineApi<Base, Http<HyperAuthClient>> for MockEngineClient {
     async fn new_payload_v2(
         &self,
         _payload: ExecutionPayloadInputV2,

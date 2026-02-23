@@ -3,6 +3,7 @@ use std::{ops::Not as _, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
+use base_alloy_network::Base;
 use base_consensus_rpc::RpcBuilder;
 use base_protocol::L2BlockInfo;
 use kona_derive::StatefulAttributesBuilder;
@@ -12,7 +13,6 @@ use kona_providers_alloy::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
 };
-use op_alloy_network::Optimism;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -53,7 +53,7 @@ pub struct RollupNode {
     /// The L1 configuration.
     pub(crate) l1_config: L1Config,
     /// The L2 EL provider.
-    pub(crate) l2_provider: RootProvider<Optimism>,
+    pub(crate) l2_provider: RootProvider<Base>,
     /// Whether to trust the L2 RPC.
     pub(crate) l2_trust_rpc: bool,
     /// The [`EngineConfig`] for the node.
@@ -180,10 +180,10 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
     ) -> EngineActor<
         EngineProcessor<
-            OpEngineClient<RootProvider, RootProvider<Optimism>>,
+            OpEngineClient<RootProvider, RootProvider<Base>>,
             QueuedEngineDerivationClient,
         >,
-        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Optimism>>>,
+        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
     > {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);

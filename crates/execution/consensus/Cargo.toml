@@ -47,7 +47,7 @@ reth-optimism-node.workspace = true
 
 alloy-chains.workspace = true
 
-op-alloy-consensus.workspace = true
+base-alloy-consensus.workspace = true
 
 [features]
 default = [ "std" ]
@@ -57,7 +57,7 @@ std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
 	"alloy-trie/std",
-	"op-alloy-consensus/std",
+	"base-alloy-consensus/std",
 	"reth-chainspec/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",

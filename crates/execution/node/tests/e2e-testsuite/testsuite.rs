@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use eyre::Result;
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
     actions::AssertMineBlock,

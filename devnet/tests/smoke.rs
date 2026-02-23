@@ -9,10 +9,10 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_alloy_network::{Base, TransactionBuilder};
+use base_alloy_rpc_types::OpTransactionRequest;
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};
-use op_alloy_network::{Optimism, TransactionBuilder};
-use op_alloy_rpc_types::OpTransactionRequest;
 use tokio::time::{sleep, timeout};
 
 const L1_CHAIN_ID: u64 = 1337;
@@ -59,7 +59,7 @@ async fn verify_l1_block_production(provider: &RootProvider<Ethereum>) -> Result
     Ok(())
 }
 
-async fn verify_l2_block_production(provider: &RootProvider<Optimism>) -> Result<()> {
+async fn verify_l2_block_production(provider: &RootProvider<Base>) -> Result<()> {
     let initial_block = provider.get_block_number().await?;
 
     let result = timeout(BLOCK_PRODUCTION_TIMEOUT, async {
@@ -79,8 +79,8 @@ async fn verify_l2_block_production(provider: &RootProvider<Optimism>) -> Result
 }
 
 async fn send_l2_transaction_via_client(
-    client_provider: &RootProvider<Optimism>,
-    builder_provider: &RootProvider<Optimism>,
+    client_provider: &RootProvider<Base>,
+    builder_provider: &RootProvider<Base>,
 ) -> Result<()> {
     let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
     let signer: PrivateKeySigner = private_key_hex.parse()?;
@@ -249,7 +249,7 @@ async fn smoke_test_client_pending_state_via_flashblocks() -> Result<()> {
     );
 }
 
-async fn get_pending_block_number(provider: &RootProvider<Optimism>) -> Result<u64> {
+async fn get_pending_block_number(provider: &RootProvider<Base>) -> Result<u64> {
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Pending)
         .await

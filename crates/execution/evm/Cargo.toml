@@ -25,9 +25,9 @@ reth-rpc-eth-api = { workspace = true, optional = true }
 alloy-eips.workspace = true
 alloy-evm.workspace = true
 alloy-primitives.workspace = true
-alloy-op-evm.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+base-alloy-evm = { workspace = true, features = ["reth"] }
+base-alloy-consensus = { workspace = true, features = ["evm"] }
+base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 alloy-consensus.workspace = true
 
 # Optimism
@@ -56,10 +56,10 @@ std = [
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-genesis/std",
-	"alloy-op-evm/std",
 	"alloy-primitives/std",
-	"op-alloy-consensus/std",
-	"op-alloy-rpc-types-engine/std",
+	"base-alloy-consensus/std",
+	"base-alloy-evm/std",
+	"base-alloy-rpc-types-engine/std",
 	"op-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",

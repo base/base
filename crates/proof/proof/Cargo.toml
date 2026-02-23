@@ -28,13 +28,13 @@ alloy-trie.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
-# Op Alloy
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+# Base Alloy
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine.workspace = true
 
 # Execution
 op-revm.workspace = true
-alloy-op-evm.workspace = true
+base-alloy-evm.workspace = true
 alloy-evm = { workspace = true, features = ["op"] }
 
 # General
@@ -67,19 +67,19 @@ std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
 	"alloy-evm/std",
-	"alloy-op-evm/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-trie/std",
 	"ark-bls12-381/std",
 	"ark-ff/std",
+	"base-alloy-consensus/std",
+	"base-alloy-evm/std",
+	"base-alloy-rpc-types-engine/std",
 	"base-protocol/std",
 	"dep:tokio",
 	"kona-genesis/std",
 	"kona-preimage/std",
 	"kona-registry/std",
-	"op-alloy-consensus/std",
-	"op-alloy-rpc-types-engine/std",
 	"op-revm/std",
 	"serde/std",
 	"serde_json/std",

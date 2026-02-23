@@ -13,13 +13,13 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
+use base_alloy_consensus::OpBlock;
+use base_alloy_network::Base;
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
 use kona_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
 use kona_genesis::{RollupConfig, SystemConfig};
 use lru::LruCache;
-use op_alloy_consensus::OpBlock;
-use op_alloy_network::Optimism;
 use tower::ServiceBuilder;
 
 #[cfg(feature = "metrics")]
@@ -30,7 +30,7 @@ use crate::Metrics;
 #[derive(Debug, Clone)]
 pub struct AlloyL2ChainProvider {
     /// The inner Ethereum JSON-RPC provider.
-    inner: RootProvider<Optimism>,
+    inner: RootProvider<Base>,
     /// Whether to trust the RPC without verification.
     trust_rpc: bool,
     /// The rollup configuration.
@@ -45,7 +45,7 @@ impl AlloyL2ChainProvider {
     /// ## Panics
     /// - Panics if `cache_size` is zero.
     pub fn new(
-        inner: RootProvider<Optimism>,
+        inner: RootProvider<Base>,
         rollup_config: Arc<RollupConfig>,
         cache_size: usize,
     ) -> Self {
@@ -58,7 +58,7 @@ impl AlloyL2ChainProvider {
     /// ## Panics
     /// - Panics if `cache_size` is zero.
     pub fn new_with_trust(
-        inner: RootProvider<Optimism>,
+        inner: RootProvider<Base>,
         rollup_config: Arc<RollupConfig>,
         cache_size: usize,
         trust_rpc: bool,
@@ -174,7 +174,7 @@ impl AlloyL2ChainProvider {
         let http_hyper = Http::with_client(layer_transport, url);
         let rpc_client = RpcClient::new(http_hyper, false);
 
-        let rpc = RootProvider::<Optimism>::new(rpc_client);
+        let rpc = RootProvider::<Base>::new(rpc_client);
         Self::new(rpc, rollup_config, cache_size)
     }
 }

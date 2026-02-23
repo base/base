@@ -4,11 +4,11 @@ use core::fmt::Debug;
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 
 use crate::{AdminApiServer, SequencerAdminAPIClient};
 

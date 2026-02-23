@@ -23,8 +23,8 @@ alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 
-# op-alloy
-op-alloy-rpc-types-engine.workspace = true
+# base-alloy
+base-alloy-rpc-types-engine.workspace = true
 
 # misc
 tracing.workspace = true

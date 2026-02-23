@@ -4,9 +4,9 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_eth::Block;
 use async_trait::async_trait;
+use base_alloy_rpc_types::Transaction;
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
 use kona_genesis::RollupConfig;
-use op_alloy_rpc_types::Transaction;
 
 use crate::{
     ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, SynchronizeTask,
@@ -195,7 +195,10 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 block_hash = %block_hash,
                 "Consolidating engine state",
             );
-            match L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &self.cfg.genesis) {
+            match L2BlockInfo::from_block_and_genesis(
+                &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                &self.cfg.genesis,
+            ) {
                 // Only issue a forkchoice update if the attributes are the last in the span
                 // batch. This is an optimization to avoid sending a FCU
                 // call for every block in the span batch.

@@ -29,10 +29,9 @@ reth-tasks.workspace = true
 reth-trie-common.workspace = true
 reth-node-core.workspace = true
 reth-rpc-engine-api.workspace = true
-reth-engine-local = { workspace = true, features = ["op"] }
 reth-rpc-api.workspace = true
-reth-db = { workspace = true, features = ["op"] }
-reth-db-api = { workspace = true, features = ["op"] }
+reth-db.workspace = true
+reth-db-api.workspace = true
 
 # op-reth
 reth-optimism-payload-builder.workspace = true
@@ -63,8 +62,8 @@ op-revm.workspace = true
 
 # ethereum
 alloy-primitives.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
@@ -87,7 +86,7 @@ serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 reth-optimism-node = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["op", "test-utils"] }
+reth-db = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-tasks.workspace = true
@@ -99,9 +98,9 @@ reth-stages-types.workspace = true
 reth-trie-db.workspace = true
 
 alloy-network.workspace = true
-alloy-op-hardforks.workspace = true
+base-alloy-hardforks.workspace = true
+base-alloy-network.workspace = true
 futures.workspace = true
-op-alloy-network.workspace = true
 
 [features]
 default = [ "reth-codec" ]

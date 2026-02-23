@@ -11,9 +11,9 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
+use base_alloy_network::Base;
+use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_primitives::Flashblock;
-use op_alloy_network::Optimism;
-use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
@@ -258,7 +258,7 @@ impl PendingBlocks {
     }
 
     /// Returns the latest block, optionally with full transaction details.
-    pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
+    pub fn get_latest_block(&self, full: bool) -> RpcBlock<Base> {
         let header = self.latest_header();
         let block_number = header.number;
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
@@ -270,7 +270,7 @@ impl PendingBlocks {
             BlockTransactions::Hashes(tx_hashes)
         };
 
-        RpcBlock::<Optimism> {
+        RpcBlock::<Base> {
             header: RPCHeader::from_consensus(header, None, None),
             transactions,
             uncles: Vec::new(),
@@ -422,21 +422,21 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
     }
 
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
+    fn get_block(&self, full: bool) -> Option<RpcBlock<Base>> {
         self.as_ref().map(|pb| pb.get_latest_block(full))
     }
 
     fn get_transaction_receipt(
         &self,
         tx_hash: alloy_primitives::TxHash,
-    ) -> Option<RpcReceipt<Optimism>> {
+    ) -> Option<RpcReceipt<Base>> {
         self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
     }
 
     fn get_transaction_by_hash(
         &self,
         tx_hash: alloy_primitives::TxHash,
-    ) -> Option<RpcTransaction<Optimism>> {
+    ) -> Option<RpcTransaction<Base>> {
         self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
     }
 

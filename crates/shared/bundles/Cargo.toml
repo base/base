@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [features]
-test-utils = [ "dep:alloy-signer-local", "dep:op-alloy-rpc-types" ]
+test-utils = [ "dep:alloy-signer-local", "dep:base-alloy-rpc-types" ]
 
 [dependencies]
 # alloy
@@ -21,9 +21,9 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
 
-# op-alloy
-op-alloy-flz.workspace = true
-op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+# base-alloy
+base-alloy-flz.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 
 # misc
 serde = { workspace = true, features = ["std", "derive"] }
@@ -31,14 +31,14 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 
 # test-utils (optional)
 alloy-signer-local = { workspace = true, optional = true }
-op-alloy-rpc-types = { workspace = true, features = ["std"], optional = true }
+base-alloy-rpc-types = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
 # alloy
 alloy-signer-local.workspace = true
 
-# op-alloy
-op-alloy-rpc-types = { workspace = true, features = ["std"] }
+# base-alloy
+base-alloy-rpc-types = { workspace = true, features = ["std"] }
 
 # misc
 serde_json = { workspace = true, features = ["std"] }

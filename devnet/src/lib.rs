@@ -6,9 +6,9 @@
 use alloy_network as _;
 use alloy_rpc_client as _;
 use alloy_rpc_types as _;
+use base_alloy_network as _;
 use base_primitives as _;
 use futures_util as _;
-use op_alloy_network as _;
 use tokio_tungstenite as _;
 
 mod utils;

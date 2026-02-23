@@ -102,7 +102,7 @@ reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-optimism-payload-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
-reth-db = { workspace = true, features = ["op"] }
+reth-db.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
 reth-optimism-rpc = { workspace = true, features = ["client"] }
 
@@ -130,13 +130,13 @@ alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
-# op-alloy
-alloy-op-evm.workspace = true
-op-alloy-flz.workspace = true
-op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+# base-alloy
+base-alloy-flz.workspace = true
+base-alloy-evm.workspace = true
+base-alloy-network.workspace = true
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types.workspace = true
+base-alloy-rpc-types-engine.workspace = true
 
 # tokio
 tokio.workspace = true

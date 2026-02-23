@@ -2,10 +2,11 @@
 
 use std::{marker::PhantomData, sync::Arc};
 
-use op_alloy_consensus::OpPooledTransaction;
-use op_alloy_rpc_types_engine::OpExecutionData;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, Hardforks};
-use reth_engine_local::LocalPayloadAttributesBuilder;
+use alloy_consensus::BlockHeader;
+use alloy_primitives::{Address, B64, B256};
+use base_alloy_consensus::OpPooledTransaction;
+use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
+use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_network::{
     NetworkConfig, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
@@ -46,6 +47,7 @@ use reth_optimism_rpc::{
 };
 use reth_optimism_storage::OpStorage;
 use reth_optimism_txpool::OpPooledTx;
+use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
@@ -99,6 +101,74 @@ impl<N> OpFullNodeTypes for N where
             Payload: EngineTypes<ExecutionData = OpExecutionData>,
         >
 {
+}
+
+/// Local payload attributes builder for Base.
+///
+/// This mirrors the upstream `LocalPayloadAttributesBuilder` for
+/// `op_alloy_rpc_types_engine::OpPayloadAttributes`, but targets
+/// `base_alloy_rpc_types_engine::OpPayloadAttributes`.
+#[derive(Debug)]
+pub struct BaseLocalPayloadAttributesBuilder {
+    chain_spec: Arc<OpChainSpec>,
+}
+
+impl BaseLocalPayloadAttributesBuilder {
+    /// Creates a new builder.
+    pub const fn new(chain_spec: Arc<OpChainSpec>) -> Self {
+        Self { chain_spec }
+    }
+}
+
+impl PayloadAttributesBuilder<OpPayloadAttributes> for BaseLocalPayloadAttributesBuilder {
+    fn build(&self, parent: &SealedHeader<alloy_consensus::Header>) -> OpPayloadAttributes {
+        /// Dummy system transaction for dev mode.
+        const TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056: [u8; 251] = alloy_primitives::hex!(
+            "7ef8f8a0683079df94aa5b9cf86687d739a60a9b4f0835e520ec4d664e2e415dca17a6df94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
+        );
+
+        let timestamp = std::cmp::max(
+            parent.timestamp().saturating_add(1),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        );
+
+        let default_eip_1559_params = BaseFeeParams::optimism();
+        let denominator = std::env::var("OP_DEV_EIP1559_DENOMINATOR")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(default_eip_1559_params.max_change_denominator as u32);
+        let elasticity = std::env::var("OP_DEV_EIP1559_ELASTICITY")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(default_eip_1559_params.elasticity_multiplier as u32);
+        let gas_limit = std::env::var("OP_DEV_GAS_LIMIT").ok().and_then(|v| v.parse::<u64>().ok());
+
+        let mut eip1559_bytes = [0u8; 8];
+        eip1559_bytes[0..4].copy_from_slice(&denominator.to_be_bytes());
+        eip1559_bytes[4..8].copy_from_slice(&elasticity.to_be_bytes());
+        let eip_1559_params = Some(B64::from(eip1559_bytes));
+
+        OpPayloadAttributes {
+            payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
+                timestamp,
+                prev_randao: B256::random(),
+                suggested_fee_recipient: Address::random(),
+                withdrawals: self
+                    .chain_spec
+                    .is_canyon_active_at_timestamp(timestamp)
+                    .then(Default::default),
+                parent_beacon_block_root: self
+                    .chain_spec
+                    .is_ecotone_active_at_timestamp(timestamp)
+                    .then(B256::random),
+            },
+            transactions: Some(vec![TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056.into()]),
+            no_tx_pool: None,
+            gas_limit,
+            eip_1559_params,
+            min_base_fee: Some(0),
+        }
+    }
 }
 
 /// Type configuration for a regular Optimism node.
@@ -256,7 +326,7 @@ impl<N> DebugNode<N> for OpNode
 where
     N: FullNodeComponents<Types = Self>,
 {
-    type RpcBlock = alloy_rpc_types_eth::Block<op_alloy_consensus::OpTxEnvelope>;
+    type RpcBlock = alloy_rpc_types_eth::Block<base_alloy_consensus::OpTxEnvelope>;
 
     fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_node_api::BlockTy<Self> {
         rpc_block.into_consensus()
@@ -265,7 +335,7 @@ where
     fn local_payload_attributes_builder(
         chain_spec: &Self::ChainSpec,
     ) -> impl PayloadAttributesBuilder<<Self::Payload as PayloadTypes>::PayloadAttributes> {
-        LocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
+        BaseLocalPayloadAttributesBuilder::new(Arc::new(chain_spec.clone()))
     }
 }
 

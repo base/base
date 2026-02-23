@@ -6,8 +6,8 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
-use alloy_op_evm::OpBlockExecutionCtx;
 use alloy_primitives::logs_bloom;
+use base_alloy_evm::OpBlockExecutionCtx;
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -64,28 +64,29 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
 
         let mut requests_hash = None;
 
-        let withdrawals_root = if self.chain_spec.is_isthmus_active_at_timestamp(timestamp) {
-            // always empty requests hash post isthmus
-            requests_hash = Some(EMPTY_REQUESTS_HASH);
+        let withdrawals_root =
+            if OpHardforks::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {
+                // always empty requests hash post isthmus
+                requests_hash = Some(EMPTY_REQUESTS_HASH);
 
-            // withdrawals root field in block header is used for storage root of L2 predeploy
-            // `l2tol1-message-passer`
-            Some(
-                isthmus::withdrawals_root(bundle_state, state_provider)
-                    .map_err(BlockExecutionError::other)?,
-            )
-        } else if self.chain_spec.is_canyon_active_at_timestamp(timestamp) {
-            Some(EMPTY_WITHDRAWALS)
-        } else {
-            None
-        };
+                // withdrawals root field in block header is used for storage root of L2 predeploy
+                // `l2tol1-message-passer`
+                Some(
+                    isthmus::withdrawals_root(bundle_state, state_provider)
+                        .map_err(BlockExecutionError::other)?,
+                )
+            } else if OpHardforks::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {
+                Some(EMPTY_WITHDRAWALS)
+            } else {
+                None
+            };
 
         let (excess_blob_gas, blob_gas_used) =
-            if self.chain_spec.is_jovian_active_at_timestamp(timestamp) {
+            if OpHardforks::is_jovian_active_at_timestamp(&*self.chain_spec, timestamp) {
                 // In jovian, we're using the blob gas used field to store the current da
                 // footprint's value.
                 (Some(0), Some(*blob_gas_used))
-            } else if self.chain_spec.is_ecotone_active_at_timestamp(timestamp) {
+            } else if OpHardforks::is_ecotone_active_at_timestamp(&*self.chain_spec, timestamp) {
                 (Some(0), Some(0))
             } else {
                 (None, None)
@@ -120,10 +121,11 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
             BlockBody {
                 transactions,
                 ommers: Default::default(),
-                withdrawals: self
-                    .chain_spec
-                    .is_canyon_active_at_timestamp(timestamp)
-                    .then(Default::default),
+                withdrawals: OpHardforks::is_canyon_active_at_timestamp(
+                    &*self.chain_spec,
+                    timestamp,
+                )
+                .then(Default::default),
             },
         ))
     }

@@ -24,7 +24,7 @@ bytes = { workspace = true }
 async-trait = { workspace = true }
 audit-archiver-lib = { workspace = true }
 alloy-network = { workspace = true }
-op-alloy-network = { workspace = true }
+base-alloy-network = { workspace = true }
 alloy-signer-local = { workspace = true }
 aws-credential-types = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
@@ -37,7 +37,7 @@ rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
 clap = { workspace = true, features = ["std", "derive", "env"] }
-op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tracing-subscriber = { workspace = true, features = ["std", "fmt", "env-filter", "json"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
+use base_alloy_network::Base;
 use kona_engine::{EngineClientBuilder, OpEngineClient};
 use kona_genesis::RollupConfig;
-use op_alloy_network::Optimism;
 use url::Url;
 
 use crate::NodeMode;
@@ -31,7 +31,7 @@ pub struct EngineConfig {
 
 impl EngineConfig {
     /// Builds and returns the [`OpEngineClient`].
-    pub fn build_engine_client(self) -> OpEngineClient<RootProvider, RootProvider<Optimism>> {
+    pub fn build_engine_client(self) -> OpEngineClient<RootProvider, RootProvider<Base>> {
         EngineClientBuilder {
             l2: self.l2_url.clone(),
             l2_jwt: self.l2_jwt_secret,

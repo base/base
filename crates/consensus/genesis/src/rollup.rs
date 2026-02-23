@@ -2,8 +2,8 @@
 
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_op_hardforks::{OpHardfork, OpHardforks};
 use alloy_primitives::Address;
+use base_alloy_hardforks::{OpHardfork, OpHardforks};
 
 use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
 

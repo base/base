@@ -8,6 +8,7 @@ use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_sol_types::SolCall;
+use base_alloy_network::ReceiptResponse;
 use base_client_node::test_utils::{
     Account, L1_BLOCK_INFO_DEPOSIT_TX, Minimal7702Account, SignerSync,
 };
@@ -16,7 +17,6 @@ use base_primitives::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use eyre::Result;
-use op_alloy_network::ReceiptResponse;
 
 /// Cumulative gas used after the base flashblock (deposit tx + contract deployment)
 /// This value must be used as the starting point for subsequent flashblocks.
@@ -46,7 +46,7 @@ impl TestSetup {
         self.harness.send_flashblock(flashblock).await
     }
 
-    fn provider(&self) -> alloy_provider::RootProvider<op_alloy_network::Optimism> {
+    fn provider(&self) -> alloy_provider::RootProvider<base_alloy_network::Base> {
         self.harness.provider()
     }
 }

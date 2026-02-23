@@ -29,7 +29,7 @@ use crate::estimated_da_size::DataAvailabilitySized;
 #[derive(Debug, Clone, derive_more::Deref)]
 pub struct OpPooledTransaction<
     Cons = OpTransactionSigned,
-    Pooled = op_alloy_consensus::OpPooledTransaction,
+    Pooled = base_alloy_consensus::OpPooledTransaction,
 > {
     #[deref]
     inner: EthPooledTransaction<Cons>,
@@ -60,7 +60,7 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
     pub fn estimated_compressed_size(&self) -> u64 {
         *self
             .estimated_tx_compressed_size
-            .get_or_init(|| op_alloy_flz::tx_estimated_size_fjord_bytes(self.encoded_2718()))
+            .get_or_init(|| base_alloy_flz::tx_estimated_size_fjord_bytes(self.encoded_2718()))
     }
 
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
@@ -265,7 +265,7 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
-    use op_alloy_consensus::TxDeposit;
+    use base_alloy_consensus::TxDeposit;
     use reth_optimism_chainspec::BASE_MAINNET;
     use reth_optimism_evm::OpEvmConfig;
     use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};

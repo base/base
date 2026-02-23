@@ -7,6 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, hex};
+use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use derive_more::Debug;
 use discv5::Enr;
 use futures::{AsyncReadExt, AsyncWriteExt, stream::StreamExt};
@@ -19,7 +20,6 @@ use libp2p::{
 };
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
-use op_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use tokio::sync::Mutex;
 
 use crate::{

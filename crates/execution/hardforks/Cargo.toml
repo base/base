@@ -15,8 +15,10 @@ workspace = true
 # reth
 reth-ethereum-forks.workspace = true
 
+# base
+base-alloy-hardforks.workspace = true
+
 # ethereum
-alloy-op-hardforks.workspace = true
 alloy-primitives.workspace = true
 
 # misc
@@ -26,7 +28,7 @@ once_cell.workspace = true
 default = [ "std" ]
 std = [ "alloy-primitives/std", "once_cell/std", "reth-ethereum-forks/std" ]
 serde = [
-	"alloy-op-hardforks/serde",
 	"alloy-primitives/serde",
+	"base-alloy-hardforks/serde",
 	"reth-ethereum-forks/serde",
 ]

@@ -117,16 +117,13 @@ impl<EngineClient_: EngineClient> BuildTask<EngineClient_> {
             &self.cfg,
             attributes_envelope.attributes.payload_attributes.timestamp,
         );
+        let attrs = attributes_envelope.attributes;
         let update = match forkchoice_version {
             EngineForkchoiceVersion::V3 => {
-                engine_client
-                    .fork_choice_updated_v3(new_forkchoice, Some(attributes_envelope.attributes))
-                    .await
+                engine_client.fork_choice_updated_v3(new_forkchoice, Some(attrs)).await
             }
             EngineForkchoiceVersion::V2 => {
-                engine_client
-                    .fork_choice_updated_v2(new_forkchoice, Some(attributes_envelope.attributes))
-                    .await
+                engine_client.fork_choice_updated_v2(new_forkchoice, Some(attrs)).await
             }
         }
         .map_err(|e| {

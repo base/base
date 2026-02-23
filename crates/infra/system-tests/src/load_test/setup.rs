@@ -2,14 +2,14 @@ use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use anyhow::{Context, Result};
+use base_alloy_network::{TxSignerSync, eip2718::Encodable2718};
 use indicatif::{ProgressBar, ProgressStyle};
-use op_alloy_network::{TxSignerSync, eip2718::Encodable2718};
 
 use super::{
     config::SetupArgs,
     wallet::{Wallet, generate_wallets, save_wallets},
 };
-use crate::fixtures::create_optimism_provider;
+use crate::fixtures::create_base_provider;
 
 const CHAIN_ID: u64 = 13; // builder-playground local chain ID
 
@@ -18,7 +18,7 @@ pub async fn run(args: SetupArgs) -> Result<()> {
     let master_wallet = Wallet::from_private_key(&args.master_key)
         .context("Failed to parse master wallet private key")?;
 
-    let provider = create_optimism_provider(&args.sequencer)?;
+    let provider = create_base_provider(&args.sequencer)?;
 
     let master_balance = provider
         .get_balance(master_wallet.address)
@@ -69,7 +69,7 @@ pub async fn run(args: SetupArgs) -> Result<()> {
         };
 
         let signature = master_wallet.signer.sign_transaction_sync(&mut tx)?;
-        let envelope = op_alloy_consensus::OpTxEnvelope::Eip1559(tx.into_signed(signature));
+        let envelope = base_alloy_consensus::OpTxEnvelope::Eip1559(tx.into_signed(signature));
 
         let mut buf = Vec::new();
         envelope.encode_2718(&mut buf);

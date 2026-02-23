@@ -5,7 +5,13 @@
 
 extern crate alloc;
 
-pub use alloy_evm::op::{spec, spec_by_timestamp_after_bedrock};
+// Re-export reth-evm when the `reth` feature is enabled. The `op` feature on reth-evm provides
+// `TransactionEnv` for `OpTransaction<T>`.
+#[cfg(feature = "reth")]
+pub use reth_evm;
+
+mod spec_id;
+pub use spec_id::{spec, spec_by_timestamp_after_bedrock};
 
 mod evm;
 pub use evm::OpEvm;
