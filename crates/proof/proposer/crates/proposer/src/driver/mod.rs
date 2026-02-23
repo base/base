@@ -279,6 +279,8 @@ where
             let target_block = starting_block_number + i * interval;
             if let Some(p) = self.pending.iter().find(|p| p.to.number == target_block) {
                 roots.push(p.output.output_root);
+            } else {
+                debug!(target_block, "Intermediate root block not yet in pending queue");
             }
         }
         roots
@@ -1295,5 +1297,107 @@ mod tests {
         let debug = format!("{handle:?}");
         assert!(debug.contains("DriverHandle"));
         assert!(debug.contains("running"));
+    }
+
+    // ---- extract_intermediate_roots tests ----
+
+    #[tokio::test]
+    async fn test_extract_intermediate_roots_full_queue() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 5,
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            None,
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
+        );
+
+        let root_a = B256::repeat_byte(0xAA);
+        let root_b = B256::repeat_byte(0xBB);
+
+        let mut p5 = test_proposal(101, 105, false);
+        p5.output.output_root = root_a;
+        let mut p10 = test_proposal(106, 110, false);
+        p10.output.output_root = root_b;
+
+        for n in 101..=104 {
+            driver.pending.push_back(test_proposal(n, n, false));
+        }
+        driver.pending.push_back(p5);
+        for n in 106..=109 {
+            driver.pending.push_back(test_proposal(n, n, false));
+        }
+        driver.pending.push_back(p10);
+
+        let roots = driver.extract_intermediate_roots(100);
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0], root_a);
+        assert_eq!(roots[1], root_b);
+    }
+
+    #[tokio::test]
+    async fn test_extract_intermediate_roots_partial_queue() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 5,
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            None,
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
+        );
+
+        let root_a = B256::repeat_byte(0xAA);
+
+        let mut p5 = test_proposal(101, 105, false);
+        p5.output.output_root = root_a;
+
+        for n in 101..=104 {
+            driver.pending.push_back(test_proposal(n, n, false));
+        }
+        driver.pending.push_back(p5);
+        // Block 110 not yet generated -- only partial queue
+
+        let roots = driver.extract_intermediate_roots(100);
+        assert_eq!(roots.len(), 1, "only the first checkpoint should be found");
+        assert_eq!(roots[0], root_a);
+    }
+
+    #[tokio::test]
+    async fn test_extract_intermediate_roots_interval_equals_block_interval() {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 10,
+                ..Default::default()
+            },
+            1000,
+            sync_status,
+            None,
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
+        );
+
+        let final_root = B256::repeat_byte(0xFF);
+        let mut p10 = test_proposal(101, 110, false);
+        p10.output.output_root = final_root;
+        driver.pending.push_back(p10);
+
+        let roots = driver.extract_intermediate_roots(100);
+        assert_eq!(roots.len(), 1, "should have exactly one root when intervals match");
+        assert_eq!(roots[0], final_root);
     }
 }
