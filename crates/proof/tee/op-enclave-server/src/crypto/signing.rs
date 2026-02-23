@@ -14,12 +14,9 @@ use crate::error::ProposalError;
 /// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
 pub const SIGNATURE_LENGTH: usize = 65;
 
-/// Length of the signing data: address(20) + 8 x bytes32(32) = 276 bytes.
-///
-/// Matches the `AggregateVerifier` contract's journal computation:
-/// `keccak256(abi.encodePacked(prover, l1OriginHash, l1OriginNumber,
-///   prevOutputRoot, startingL2Block, outputRoot, endingL2Block, configHash, imageHash))`
-pub const SIGNING_DATA_LENGTH: usize = 276;
+/// Base length of the signing data without intermediate roots:
+/// address(20) + 8 x bytes32(32) = 276 bytes.
+pub const SIGNING_DATA_BASE_LENGTH: usize = 276;
 
 /// Build the signing data for a proposal.
 ///
@@ -27,8 +24,11 @@ pub const SIGNING_DATA_LENGTH: usize = 276;
 /// ```text
 /// prover(20) || l1OriginHash(32) || l1OriginNumber(32) || prevOutputRoot(32)
 ///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32)
-///   || configHash(32) || imageHash(32)
+///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
 /// ```
+///
+/// For individual block proofs, `intermediate_roots` is empty.
+/// For aggregated proofs, it contains N roots where N = `block_interval` / `intermediate_block_interval`.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn build_signing_data(
@@ -39,10 +39,12 @@ pub fn build_signing_data(
     starting_l2_block: U256,
     output_root: B256,
     ending_l2_block: U256,
+    intermediate_roots: &[B256],
     config_hash: B256,
     tee_image_hash: B256,
-) -> [u8; SIGNING_DATA_LENGTH] {
-    let mut data = [0u8; SIGNING_DATA_LENGTH];
+) -> Vec<u8> {
+    let len = SIGNING_DATA_BASE_LENGTH + 32 * intermediate_roots.len();
+    let mut data = vec![0u8; len];
     let mut offset = 0;
 
     data[offset..offset + 20].copy_from_slice(proposer.as_slice());
@@ -65,6 +67,11 @@ pub fn build_signing_data(
 
     data[offset..offset + 32].copy_from_slice(&ending_l2_block.to_be_bytes::<32>());
     offset += 32;
+
+    for root in intermediate_roots {
+        data[offset..offset + 32].copy_from_slice(root.as_slice());
+        offset += 32;
+    }
 
     data[offset..offset + 32].copy_from_slice(config_hash.as_slice());
     offset += 32;
@@ -156,7 +163,7 @@ mod tests {
 
     use crate::crypto::generate_signer;
 
-    fn test_signing_data() -> [u8; SIGNING_DATA_LENGTH] {
+    fn test_signing_data() -> Vec<u8> {
         build_signing_data(
             address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
             b256!("2222222222222222222222222222222222222222222222222222222222222222"),
@@ -165,6 +172,7 @@ mod tests {
             U256::from(999),
             b256!("4444444444444444444444444444444444444444444444444444444444444444"),
             U256::from(1000),
+            &[],
             b256!("1111111111111111111111111111111111111111111111111111111111111111"),
             b256!("5555555555555555555555555555555555555555555555555555555555555555"),
         )
@@ -173,7 +181,7 @@ mod tests {
     #[test]
     fn test_build_signing_data_length() {
         let data = test_signing_data();
-        assert_eq!(data.len(), SIGNING_DATA_LENGTH);
+        assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH);
         assert_eq!(data.len(), 276);
     }
 
@@ -200,6 +208,7 @@ mod tests {
             starting_l2_block,
             output_root,
             ending_l2_block,
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -222,6 +231,40 @@ mod tests {
         assert_eq!(&data[off..off + 32], config_hash.as_slice());
         off += 32;
         assert_eq!(&data[off..off + 32], tee_image_hash.as_slice());
+    }
+
+    #[test]
+    fn test_build_signing_data_with_intermediate_roots() {
+        let proposer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let intermediate_roots = vec![
+            b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ];
+
+        let data = build_signing_data(
+            proposer,
+            B256::ZERO,
+            U256::ZERO,
+            B256::ZERO,
+            U256::ZERO,
+            B256::ZERO,
+            U256::ZERO,
+            &intermediate_roots,
+            B256::ZERO,
+            B256::ZERO,
+        );
+
+        assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH + 64);
+
+        let ir_offset = 20 + 6 * 32;
+        assert_eq!(
+            &data[ir_offset..ir_offset + 32],
+            intermediate_roots[0].as_slice()
+        );
+        assert_eq!(
+            &data[ir_offset + 32..ir_offset + 64],
+            intermediate_roots[1].as_slice()
+        );
     }
 
     #[test]
@@ -270,6 +313,7 @@ mod tests {
             U256::from(999),
             b256!("4444444444444444444444444444444444444444444444444444444444444444"),
             U256::from(1000),
+            &[],
             b256!("1111111111111111111111111111111111111111111111111111111111111111"),
             b256!("5555555555555555555555555555555555555555555555555555555555555555"),
         );
@@ -285,7 +329,7 @@ mod tests {
     #[test]
     fn test_invalid_signature_length() {
         let public_key = vec![0x04; 65];
-        let data = [0u8; SIGNING_DATA_LENGTH];
+        let data = [0u8; SIGNING_DATA_BASE_LENGTH];
         let short_sig = vec![0u8; 64];
 
         let result = verify_proposal_signature(&public_key, &data, &short_sig);

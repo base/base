@@ -18,6 +18,6 @@ pub use rsa::{
     private_to_public, public_key_to_pkix,
 };
 pub use signing::{
-    SIGNATURE_LENGTH, SIGNING_DATA_LENGTH, build_signing_data, sign_proposal_data_sync,
+    SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, build_signing_data, sign_proposal_data_sync,
     verify_proposal_signature,
 };

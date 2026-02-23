@@ -2,13 +2,11 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::Bytes;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
-use serde::{Deserialize, Serialize};
-
-use op_enclave_core::{ExecuteStatelessRequest, Proposal};
+use op_enclave_core::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 
 use crate::client_error::ClientError;
 
@@ -63,18 +61,6 @@ mod danger {
             ]
         }
     }
-}
-
-/// Request for the `aggregate` RPC method.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AggregateRequest {
-    config_hash: B256,
-    prev_output_root: B256,
-    prev_block_number: u64,
-    proposals: Vec<Proposal>,
-    proposer: Address,
-    tee_image_hash: B256,
 }
 
 /// Client for the enclave RPC server.
@@ -260,36 +246,10 @@ impl EnclaveClient {
 
     /// Aggregate multiple proposals into a single proposal.
     ///
-    /// # Arguments
-    ///
-    /// * `config_hash` - The per-chain configuration hash
-    /// * `prev_output_root` - The output root before the first proposal
-    /// * `prev_block_number` - The L2 block number before the first proposal
-    /// * `proposals` - The proposals to aggregate
-    /// * `proposer` - The proposer address for the signed journal
-    /// * `tee_image_hash` - The TEE image hash for the signed journal
-    ///
     /// # Errors
     ///
     /// Returns an error if the RPC call fails or signature verification fails.
-    pub async fn aggregate(
-        &self,
-        config_hash: B256,
-        prev_output_root: B256,
-        prev_block_number: u64,
-        proposals: Vec<Proposal>,
-        proposer: Address,
-        tee_image_hash: B256,
-    ) -> Result<Proposal, ClientError> {
-        let request = AggregateRequest {
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            proposals,
-            proposer,
-            tee_image_hash,
-        };
-
+    pub async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
         self.inner
             .request("enclave_aggregate", rpc_params![request])
             .await

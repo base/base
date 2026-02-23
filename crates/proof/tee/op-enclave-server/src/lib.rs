@@ -53,10 +53,10 @@ pub use attestation::{
     AttestationDocument, VerificationResult, verify_attestation, verify_attestation_with_pcr0,
 };
 pub use crypto::{
-    SIGNATURE_LENGTH, SIGNING_DATA_LENGTH, build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15,
-    generate_rsa_key, generate_signer, pkix_to_public_key, private_key_bytes, public_key_bytes,
-    public_key_to_pkix, sign_proposal_data_sync, signer_from_bytes, signer_from_hex,
-    verify_proposal_signature,
+    SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, build_signing_data, decrypt_pkcs1v15,
+    encrypt_pkcs1v15, generate_rsa_key, generate_signer, pkix_to_public_key, private_key_bytes,
+    public_key_bytes, public_key_to_pkix, sign_proposal_data_sync, signer_from_bytes,
+    signer_from_hex, verify_proposal_signature,
 };
 pub use error::{AttestationError, CryptoError, NsmError, ProposalError, Result, ServerError};
 pub use nsm::{NsmRng, NsmSession};

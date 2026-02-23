@@ -139,6 +139,22 @@ pub enum ProposalError {
     /// Public key recovery failed.
     #[error("public key recovery failed: {0}")]
     RecoveryFailed(String),
+    /// Intermediate root does not match the proposal's output root at that block.
+    #[error("intermediate root mismatch at index {index}: expected {expected}, got {actual}")]
+    InvalidIntermediateRoot {
+        /// Index of the mismatched intermediate root.
+        index: usize,
+        /// The output root from the proposal at that block.
+        expected: String,
+        /// The intermediate root provided by the caller.
+        actual: String,
+    },
+    /// No proposal found for an intermediate root at the given block.
+    #[error("no proposal found for intermediate root at block {block}")]
+    MissingIntermediateProposal {
+        /// The block number where a proposal was expected.
+        block: u64,
+    },
     /// Core execution failed.
     #[error("execution failed: {0}")]
     ExecutionFailed(String),

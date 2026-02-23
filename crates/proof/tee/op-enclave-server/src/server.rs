@@ -283,7 +283,8 @@ impl Server {
         let starting_l2_block = U256::from(previous_header.number);
         let ending_l2_block = U256::from(block_header.number);
 
-        // Build signing data matching the AggregateVerifier contract's journal
+        // Build signing data matching the AggregateVerifier contract's journal.
+        // Individual block proofs have no intermediate roots.
         let signing_data = build_signing_data(
             proposer,
             l1_origin_hash,
@@ -292,6 +293,7 @@ impl Server {
             starting_l2_block,
             output_root,
             ending_l2_block,
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -374,13 +376,23 @@ impl Server {
         proposals: &[Proposal],
         proposer: Address,
         tee_image_hash: B256,
+        intermediate_roots: &[B256],
     ) -> Result<Proposal, ServerError> {
         if proposals.is_empty() {
             return Err(ProposalError::EmptyProposals.into());
         }
 
-        // Single proposal case - return as-is
+        // Single proposal: return as-is without re-signing. Intermediate roots
+        // only apply to multi-block aggregated proposals (BLOCK_INTERVAL > 1), so
+        // they must be empty here. This path is used for sub-aggregation batches
+        // and would also be hit if BLOCK_INTERVAL == INTERMEDIATE_BLOCK_INTERVAL.
         if proposals.len() == 1 {
+            if !intermediate_roots.is_empty() {
+                return Err(ProposalError::ExecutionFailed(
+                    "intermediate roots must be empty for single-proposal aggregation".to_string(),
+                )
+                .into());
+            }
             return Ok(proposals[0].clone());
         }
 
@@ -399,6 +411,7 @@ impl Server {
             l1_origin_number = proposal.l1_origin_number;
             l2_block_number = proposal.l2_block_number;
 
+            // Input proposals were signed without intermediate roots.
             let signing_data = build_signing_data(
                 proposer,
                 l1_origin_hash,
@@ -407,6 +420,7 @@ impl Server {
                 prev_l2_block,
                 proposal.output_root,
                 l2_block_number,
+                &[],
                 config_hash,
                 tee_image_hash,
             );
@@ -422,7 +436,45 @@ impl Server {
             prev_l2_block = l2_block_number;
         }
 
-        // Create the aggregated proposal
+        // Validate intermediate roots against the individual proposals' output roots.
+        // Each intermediate root must match the output_root of the proposal at the
+        // corresponding block boundary, preventing a compromised proposer from
+        // submitting fake intermediate checkpoints.
+        if !intermediate_roots.is_empty() && proposals.len() > 1 {
+            let total_blocks =
+                proposals.last().unwrap().l2_block_number.to::<u64>() - prev_block_number;
+            if total_blocks % intermediate_roots.len() as u64 != 0 {
+                return Err(ProposalError::ExecutionFailed(format!(
+                    "block range ({total_blocks}) not divisible by intermediate root count ({})",
+                    intermediate_roots.len()
+                ))
+                .into());
+            }
+            let interval = total_blocks / intermediate_roots.len() as u64;
+
+            for (i, expected_root) in intermediate_roots.iter().enumerate() {
+                let target_block = U256::from(prev_block_number + (i as u64 + 1) * interval);
+                match proposals.iter().find(|p| p.l2_block_number == target_block) {
+                    Some(p) if p.output_root == *expected_root => {}
+                    Some(p) => {
+                        return Err(ProposalError::InvalidIntermediateRoot {
+                            index: i,
+                            expected: format!("{:?}", p.output_root),
+                            actual: format!("{expected_root:?}"),
+                        }
+                        .into());
+                    }
+                    None => {
+                        return Err(ProposalError::MissingIntermediateProposal {
+                            block: target_block.to::<u64>(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+
+        // Create the aggregated proposal with intermediate roots in the journal.
         let final_output_root = output_root;
         let starting_l2_block = U256::from(prev_block_number);
 
@@ -434,6 +486,7 @@ impl Server {
             starting_l2_block,
             final_output_root,
             l2_block_number,
+            intermediate_roots,
             config_hash,
             tee_image_hash,
         );
@@ -534,6 +587,7 @@ mod tests {
             &[],
             Address::ZERO,
             B256::ZERO,
+            &[],
         );
 
         assert!(matches!(
@@ -564,6 +618,7 @@ mod tests {
             U256::from(prev_block_number),
             output_root,
             l2_block_number,
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -589,6 +644,7 @@ mod tests {
             &[proposal.clone()],
             proposer,
             tee_image_hash,
+            &[],
         );
 
         assert!(result.is_ok());
@@ -620,6 +676,7 @@ mod tests {
             U256::from(prev_block_number),
             output_root_1,
             U256::from(100),
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -648,6 +705,7 @@ mod tests {
             U256::from(100),
             output_root_2,
             U256::from(101),
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -674,6 +732,7 @@ mod tests {
             &[proposal_1, proposal_2],
             proposer,
             tee_image_hash,
+            &[],
         );
 
         assert!(result.is_ok());
@@ -710,6 +769,7 @@ mod tests {
             U256::from(prev_block_number),
             output_root_1,
             U256::from(100),
+            &[],
             config_hash,
             tee_image_hash,
         );
@@ -749,6 +809,7 @@ mod tests {
             &[proposal_1, proposal_2],
             proposer,
             tee_image_hash,
+            &[],
         );
 
         // The second proposal (index 1) should fail signature verification
@@ -760,6 +821,233 @@ mod tests {
                 }))
             ),
             "Expected InvalidSignature error at index 1, got: {result:?}"
+        );
+    }
+
+    /// Helper: create a signed proposal for a single block.
+    #[allow(clippy::too_many_arguments)]
+    fn make_proposal(
+        server: &Server,
+        proposer: Address,
+        tee_image_hash: B256,
+        config_hash: B256,
+        l1_origin_hash: B256,
+        l1_origin_number: U256,
+        prev_output_root: B256,
+        prev_block: u64,
+        output_root: B256,
+        block: u64,
+    ) -> Proposal {
+        let signing_data = build_signing_data(
+            proposer,
+            l1_origin_hash,
+            l1_origin_number,
+            prev_output_root,
+            U256::from(prev_block),
+            output_root,
+            U256::from(block),
+            &[],
+            config_hash,
+            tee_image_hash,
+        );
+        let signer = server.signer();
+        let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");
+        drop(signer);
+
+        Proposal::new(ProposalParams {
+            output_root,
+            signature,
+            l1_origin_hash,
+            l1_origin_number,
+            l2_block_number: U256::from(block),
+            prev_output_root,
+            config_hash,
+        })
+    }
+
+    #[test]
+    fn test_aggregate_validates_intermediate_roots() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash = B256::repeat_byte(0x22);
+        let l1_origin_number = U256::from(100);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root_1 = B256::repeat_byte(0x44);
+        let output_root_2 = B256::repeat_byte(0x55);
+        let output_root_3 = B256::repeat_byte(0x66);
+        let prev_block_number = 0u64;
+
+        let p1 = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            prev_output_root,
+            0,
+            output_root_1,
+            1,
+        );
+        let p2 = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            output_root_1,
+            1,
+            output_root_2,
+            2,
+        );
+        let p3 = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            output_root_2,
+            2,
+            output_root_3,
+            3,
+        );
+
+        // 3 blocks, 1 intermediate root => interval = 3, target block = 3
+        // proposals[2].output_root == output_root_3
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            &[p1, p2, p3],
+            proposer,
+            tee_image_hash,
+            &[output_root_3],
+        );
+
+        assert!(result.is_ok(), "expected success, got: {result:?}");
+    }
+
+    #[test]
+    fn test_aggregate_rejects_wrong_intermediate_roots() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash = B256::repeat_byte(0x22);
+        let l1_origin_number = U256::from(100);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root_1 = B256::repeat_byte(0x44);
+        let output_root_2 = B256::repeat_byte(0x55);
+        let output_root_3 = B256::repeat_byte(0x66);
+        let prev_block_number = 0u64;
+
+        let p1 = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            prev_output_root,
+            0,
+            output_root_1,
+            1,
+        );
+        let p2 = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            output_root_1,
+            1,
+            output_root_2,
+            2,
+        );
+        let p3 = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            output_root_2,
+            2,
+            output_root_3,
+            3,
+        );
+
+        let wrong_root = B256::repeat_byte(0xFF);
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            &[p1, p2, p3],
+            proposer,
+            tee_image_hash,
+            &[wrong_root],
+        );
+
+        assert!(
+            matches!(
+                &result,
+                Err(ServerError::Proposal(
+                    ProposalError::InvalidIntermediateRoot { .. }
+                ))
+            ),
+            "Expected InvalidIntermediateRoot error, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_rejects_intermediate_roots_with_single_proposal() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash = B256::repeat_byte(0x22);
+        let l1_origin_number = U256::from(100);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root = B256::repeat_byte(0x44);
+        let prev_block_number = 99u64;
+
+        let proposal = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            prev_output_root,
+            prev_block_number,
+            output_root,
+            100,
+        );
+
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            prev_block_number,
+            &[proposal],
+            proposer,
+            tee_image_hash,
+            &[B256::repeat_byte(0xFF)],
+        );
+
+        assert!(
+            matches!(
+                &result,
+                Err(ServerError::Proposal(ProposalError::ExecutionFailed(_)))
+            ),
+            "Expected ExecutionFailed error for single proposal with intermediate roots, got: {result:?}"
         );
     }
 }
