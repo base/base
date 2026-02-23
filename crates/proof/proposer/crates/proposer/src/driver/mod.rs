@@ -280,7 +280,10 @@ where
             if let Some(p) = self.pending.iter().find(|p| p.to.number == target_block) {
                 roots.push(p.output.output_root);
             } else {
-                debug!(target_block, "Intermediate root block not yet in pending queue");
+                debug!(
+                    target_block,
+                    "Intermediate root block not yet in pending queue"
+                );
             }
         }
         roots
@@ -1397,7 +1400,11 @@ mod tests {
         driver.pending.push_back(p10);
 
         let roots = driver.extract_intermediate_roots(100);
-        assert_eq!(roots.len(), 1, "should have exactly one root when intervals match");
+        assert_eq!(
+            roots.len(),
+            1,
+            "should have exactly one root when intervals match"
+        );
         assert_eq!(roots[0], final_root);
     }
 }
