@@ -215,7 +215,14 @@ jobs:
           version: 1.2
 
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+      # TODO: revert to `just check-udeps` once rust-lang/rust#152963 lands in nightly.
+      # nightly-2026-02-22+ breaks shellexpand 3.1.1 because the new inherent
+      # str::as_str() (rust-lang/rust#151603) shadows shellexpand's WstrExt::as_str()
+      # trait method, causing a type mismatch. Pin to the last working nightly and
+      # invoke cargo-udeps directly since `just check-udeps` hardcodes `cargo +nightly`.
       - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+        with:
+          toolchain: nightly-2026-02-21
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
           cache-on-failure: true
@@ -234,7 +241,7 @@ jobs:
         run: |
           LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
           echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
-      - run: just check-udeps
+      - run: just build-contracts && cargo +nightly-2026-02-21 udeps --workspace --all-features --all-targets
 
   crate-deps:
     name: Crate Dependencies
