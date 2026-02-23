@@ -403,7 +403,7 @@ mod tests {
     use base_alloy_consensus::encode_holocene_extra_data;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use kona_registry::ROLLUP_CONFIGS;
+    use kona_registry::Registry;
 
     use super::*;
     use crate::AttributesMismatch::EIP1559Parameters;
@@ -419,7 +419,7 @@ mod tests {
 
     fn default_rollup_config() -> &'static RollupConfig {
         let base_mainnet = 8453;
-        ROLLUP_CONFIGS.get(&base_mainnet).expect("default rollup config should exist")
+        Registry::rollup_config(base_mainnet).expect("default rollup config should exist")
     }
 
     #[test]

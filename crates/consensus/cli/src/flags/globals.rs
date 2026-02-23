@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use clap::Parser;
 use kona_genesis::RollupConfig;
-use kona_registry::OPCHAINS;
+use kona_registry::Registry;
 
 use crate::{CliError, CliResult, LogArgs, MetricsArgs, OverrideArgs};
 
@@ -44,14 +44,7 @@ impl GlobalArgs {
     /// Returns the signer [`Address`] from the rollup config for the given l2 chain id.
     pub fn genesis_signer(&self) -> CliResult<Address> {
         let id = self.l2_chain_id;
-        OPCHAINS
-            .get(&id.id())
-            .ok_or(CliError::ChainConfigNotFound(id.id()))?
-            .roles
-            .as_ref()
-            .ok_or(CliError::RolesNotFound(id.id()))?
-            .unsafe_block_signer
-            .ok_or(CliError::UnsafeBlockSignerNotFound(id.id()))
+        Registry::unsafe_block_signer(id.id()).ok_or(CliError::UnsafeBlockSignerNotFound(id.id()))
     }
 }
 
