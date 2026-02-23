@@ -132,7 +132,7 @@ mod tests {
     fn roundtrip_op_stack_enr() {
         arbtest::arbtest(|u| {
             let op_stack_enr = OpStackEnr::from_chain_id(u.arbitrary()?);
-            let bytes = alloy_rlp::encode(op_stack_enr).to_vec();
+            let bytes = alloy_rlp::encode(op_stack_enr);
             let decoded = OpStackEnr::decode(&mut &bytes[..]).unwrap();
             assert_eq!(decoded, op_stack_enr);
             Ok(())
