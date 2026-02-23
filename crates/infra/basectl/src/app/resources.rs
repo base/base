@@ -261,6 +261,7 @@ impl DaState {
     fn process_flashblock(&mut self, fb: &Flashblock) {
         let block_number = fb.metadata.block_number;
         let da_bytes: u64 = fb.diff.transactions.iter().map(|tx| tx.len() as u64).sum();
+        let tx_count = fb.diff.transactions.len();
         let timestamp = fb.base.as_ref().map(|b| b.timestamp).unwrap_or(0);
 
         if fb.index == 0 {
@@ -273,6 +274,11 @@ impl DaState {
 
             self.tracker.add_block(block_number, da_bytes, timestamp);
 
+            // Set tx_count on the newly added contribution.
+            if let Some(contrib) = self.tracker.block_contributions.front_mut() {
+                contrib.tx_count = tx_count;
+            }
+
             if let (Some(prev), Some(tx)) = (prev_block, &self.block_req_tx) {
                 for missing in (prev..block_number).rev() {
                     let _ = tx.try_send(missing);
@@ -282,6 +288,7 @@ impl DaState {
             self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
         {
             contrib.da_bytes = contrib.da_bytes.saturating_add(da_bytes);
+            contrib.tx_count += tx_count;
             if block_number > self.tracker.safe_l2_block {
                 self.tracker.da_backlog_bytes =
                     self.tracker.da_backlog_bytes.saturating_add(da_bytes);
@@ -381,6 +388,11 @@ impl FlashState {
         let time_diff_ms =
             self.entries.front().map(|prev| (received_at - prev.timestamp).num_milliseconds());
 
+        let decoded_txs = crate::rpc::decode_flashblock_transactions(
+            &fb.diff.transactions,
+            base_fee.and_then(|f| u64::try_from(f).ok()),
+        );
+
         let entry = FlashblockEntry {
             block_number: fb.metadata.block_number,
             index: fb.index,
@@ -391,6 +403,7 @@ impl FlashState {
             prev_base_fee,
             timestamp: received_at,
             time_diff_ms,
+            decoded_txs,
         };
 
         self.entries.push_front(entry);

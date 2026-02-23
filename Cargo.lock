@@ -3195,6 +3195,7 @@ dependencies = [
 name = "basectl-cli"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-contract",
  "alloy-eips",
  "alloy-primitives",

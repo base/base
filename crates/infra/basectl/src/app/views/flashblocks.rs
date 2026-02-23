@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View},
+    app::{Action, Resources, View, views::TransactionPane},
     commands::common::{
         COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, block_color,
         block_color_bright, build_gas_bar, format_gas, format_gwei, render_gas_usage_bar,
@@ -22,6 +22,8 @@ const DEFAULT_ELASTICITY: u64 = 6;
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
+    Keybinding { key: "Enter", description: "View transactions" },
+    Keybinding { key: "\u{2190}/h \u{2192}/l", description: "Switch panel" },
     Keybinding { key: "Space", description: "Pause/Resume" },
     Keybinding { key: "Up/k", description: "Scroll up" },
     Keybinding { key: "Down/j", description: "Scroll down" },
@@ -32,10 +34,11 @@ const KEYBINDINGS: &[Keybinding] = &[
 ];
 
 /// View for displaying the live flashblocks stream with gas usage.
-#[derive(Debug)]
 pub(crate) struct FlashblocksView {
     table_state: TableState,
     auto_scroll: bool,
+    tx_pane: Option<TransactionPane>,
+    focused_on_txns: bool,
 }
 
 impl Default for FlashblocksView {
@@ -49,7 +52,7 @@ impl FlashblocksView {
     pub(crate) fn new() -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
-        Self { table_state, auto_scroll: true }
+        Self { table_state, auto_scroll: true, tx_pane: None, focused_on_txns: false }
     }
 }
 
@@ -58,8 +61,50 @@ impl View for FlashblocksView {
         KEYBINDINGS
     }
 
+    fn consumes_esc(&self) -> bool {
+        self.tx_pane.is_some() && self.focused_on_txns
+    }
+
+    fn consumes_quit(&self) -> bool {
+        self.tx_pane.is_some() && self.focused_on_txns
+    }
+
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
         match key.code {
+            KeyCode::Enter => {
+                if let Some(idx) = self.table_state.selected()
+                    && let Some(entry) = resources.flash.entries.get(idx)
+                {
+                    self.tx_pane = Some(TransactionPane::with_data(
+                        entry.block_number,
+                        format!("Flashblock {}::{}", entry.block_number, entry.index),
+                        entry.decoded_txs.clone(),
+                        resources.config.rpc.as_str(),
+                        resources.config.explorer_base_url(),
+                    ));
+                    self.focused_on_txns = true;
+                }
+                Action::None
+            }
+            KeyCode::Left | KeyCode::Char('h') if self.tx_pane.is_some() => {
+                self.focused_on_txns = false;
+                Action::None
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.tx_pane.is_some() => {
+                self.focused_on_txns = true;
+                Action::None
+            }
+            _ if self.focused_on_txns && self.tx_pane.is_some() => {
+                let pane = self.tx_pane.as_mut().unwrap();
+                let should_close = pane.handle_key(key, &mut |toast| {
+                    resources.toasts.push(toast);
+                });
+                if should_close {
+                    self.tx_pane = None;
+                    self.focused_on_txns = false;
+                }
+                Action::None
+            }
             KeyCode::Char(' ') => {
                 resources.flash.paused = !resources.flash.paused;
                 Action::None
@@ -130,6 +175,9 @@ impl View for FlashblocksView {
     }
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.poll();
+        }
         if self.auto_scroll && !resources.flash.entries.is_empty() {
             self.table_state.select(Some(0));
         }
@@ -160,6 +208,16 @@ impl View for FlashblocksView {
 
         let table_area = chunks[1];
 
+        let (block_area, txn_area) = if self.tx_pane.is_some() {
+            let pane_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(table_area);
+            (pane_chunks[0], Some(pane_chunks[1]))
+        } else {
+            (table_area, None)
+        };
+
         let missed = resources.flash.missed_flashblocks;
         let missed_str = if missed > 0 { format!(" | {missed} missed") } else { String::new() };
         let title = if flash.paused {
@@ -168,15 +226,21 @@ impl View for FlashblocksView {
             format!(" Flashblocks - {} msgs{missed_str} ", flash.message_count)
         };
 
-        let border_color = if flash.paused { Color::Yellow } else { COLOR_ACTIVE_BORDER };
+        let border_color = if flash.paused {
+            Color::Yellow
+        } else if self.focused_on_txns {
+            Color::DarkGray
+        } else {
+            COLOR_ACTIVE_BORDER
+        };
 
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color));
 
-        let inner = block.inner(table_area);
-        frame.render_widget(block, table_area);
+        let inner = block.inner(block_area);
+        frame.render_widget(block, block_area);
 
         // Idx(4) + Txs(4) + Gas(7) + BaseFee(12) + Delta(8) + Dt(8) + Fill(42) + Time(8) + spacing = ~100
         let fixed_cols_width = 4 + 4 + 7 + 12 + 8 + 8 + (GAS_BAR_CHARS as u16 + 2) + 8 + 9;
@@ -295,5 +359,9 @@ impl View for FlashblocksView {
         let table = Table::new(rows, widths).header(header);
 
         frame.render_stateful_widget(table, inner, &mut self.table_state.clone());
+
+        if let (Some(pane), Some(area)) = (&mut self.tx_pane, txn_area) {
+            pane.render(frame, area, self.focused_on_txns);
+        }
     }
 }

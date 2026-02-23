@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View},
+    app::{Action, Resources, View, views::TransactionPane},
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
@@ -29,6 +29,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Space", description: "Pause flashblocks" },
     Keybinding { key: "y", description: "Copy block number" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
+    Keybinding { key: "Enter", description: "View transactions" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,10 +37,10 @@ enum Panel {
     Flashblocks,
     Da,
     L1Blocks,
+    Txns,
 }
 
 /// Combined monitoring view with flashblocks, DA, and L1 block panels.
-#[derive(Debug)]
 pub(crate) struct CommandCenterView {
     focused_panel: Panel,
     da_table_state: TableState,
@@ -47,6 +48,7 @@ pub(crate) struct CommandCenterView {
     l1_table_state: TableState,
     highlighted_block: Option<u64>,
     l1_filter: L1BlockFilter,
+    tx_pane: Option<TransactionPane>,
 }
 
 impl Default for CommandCenterView {
@@ -71,6 +73,7 @@ impl CommandCenterView {
             l1_table_state,
             highlighted_block: None,
             l1_filter: L1BlockFilter::All,
+            tx_pane: None,
         }
     }
 
@@ -78,22 +81,36 @@ impl CommandCenterView {
         self.focused_panel = match self.focused_panel {
             Panel::Flashblocks => Panel::Da,
             Panel::Da => Panel::L1Blocks,
-            Panel::L1Blocks => Panel::Flashblocks,
+            Panel::L1Blocks => {
+                if self.tx_pane.is_some() {
+                    Panel::Txns
+                } else {
+                    Panel::Flashblocks
+                }
+            }
+            Panel::Txns => Panel::Flashblocks,
         };
     }
 
     const fn prev_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
-            Panel::Flashblocks => Panel::L1Blocks,
+            Panel::Flashblocks => {
+                if self.tx_pane.is_some() {
+                    Panel::Txns
+                } else {
+                    Panel::L1Blocks
+                }
+            }
             Panel::Da => Panel::Flashblocks,
             Panel::L1Blocks => Panel::Da,
+            Panel::Txns => Panel::L1Blocks,
         };
     }
 
     const fn active_table_state(&mut self) -> &mut TableState {
         match self.focused_panel {
             Panel::Flashblocks => &mut self.flash_table_state,
-            Panel::Da => &mut self.da_table_state,
+            Panel::Da | Panel::Txns => &mut self.da_table_state,
             Panel::L1Blocks => &mut self.l1_table_state,
         }
     }
@@ -101,7 +118,7 @@ impl CommandCenterView {
     fn selected_row(&self, panel: Panel) -> usize {
         match panel {
             Panel::Flashblocks => self.flash_table_state.selected().unwrap_or(0),
-            Panel::Da => self.da_table_state.selected().unwrap_or(0),
+            Panel::Da | Panel::Txns => self.da_table_state.selected().unwrap_or(0),
             Panel::L1Blocks => self.l1_table_state.selected().unwrap_or(0),
         }
     }
@@ -111,6 +128,7 @@ impl CommandCenterView {
         self.highlighted_block = match self.focused_panel {
             Panel::Flashblocks => resources.flash.entries.get(row).map(|e| e.block_number),
             Panel::Da => resources.da.tracker.block_contributions.get(row).map(|c| c.block_number),
+            Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
             Panel::L1Blocks => None,
         };
     }
@@ -127,6 +145,7 @@ impl CommandCenterView {
                 .block_contributions
                 .get(row)
                 .map(|c| c.block_number.to_string()),
+            Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number.to_string()),
             Panel::L1Blocks => resources
                 .da
                 .tracker
@@ -140,6 +159,14 @@ impl CommandCenterView {
 impl View for CommandCenterView {
     fn keybindings(&self) -> &'static [Keybinding] {
         KEYBINDINGS
+    }
+
+    fn consumes_esc(&self) -> bool {
+        self.tx_pane.is_some() && self.focused_panel == Panel::Txns
+    }
+
+    fn consumes_quit(&self) -> bool {
+        self.tx_pane.is_some() && self.focused_panel == Panel::Txns
     }
 
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
@@ -178,10 +205,21 @@ impl View for CommandCenterView {
                 resources.flash.paused = !resources.flash.paused;
                 Action::None
             }
+            _ if self.focused_panel == Panel::Txns && self.tx_pane.is_some() => {
+                let pane = self.tx_pane.as_mut().unwrap();
+                let should_close = pane.handle_key(key, &mut |toast| {
+                    resources.toasts.push(toast);
+                });
+                if should_close {
+                    self.tx_pane = None;
+                    self.focused_panel = Panel::Da;
+                }
+                Action::None
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 let state = match self.focused_panel {
                     Panel::Flashblocks => &mut self.flash_table_state,
-                    Panel::Da => &mut self.da_table_state,
+                    Panel::Da | Panel::Txns => &mut self.da_table_state,
                     Panel::L1Blocks => &mut self.l1_table_state,
                 };
                 if let Some(selected) = state.selected()
@@ -198,7 +236,7 @@ impl View for CommandCenterView {
                         &mut self.flash_table_state,
                         resources.flash.entries.len().saturating_sub(1),
                     ),
-                    Panel::Da => (
+                    Panel::Da | Panel::Txns => (
                         &mut self.da_table_state,
                         resources.da.tracker.block_contributions.len().saturating_sub(1),
                     ),
@@ -228,7 +266,7 @@ impl View for CommandCenterView {
             KeyCode::Char('G') => {
                 let max = match self.focused_panel {
                     Panel::Flashblocks => resources.flash.entries.len(),
-                    Panel::Da => resources.da.tracker.block_contributions.len(),
+                    Panel::Da | Panel::Txns => resources.da.tracker.block_contributions.len(),
                     Panel::L1Blocks => {
                         resources.da.tracker.filtered_l1_blocks(self.l1_filter).count()
                     }
@@ -247,11 +285,56 @@ impl View for CommandCenterView {
                 }
                 Action::None
             }
+            KeyCode::Enter => {
+                match self.focused_panel {
+                    Panel::Flashblocks => {
+                        let row = self.selected_row(Panel::Flashblocks);
+                        if let Some(entry) = resources.flash.entries.get(row) {
+                            self.tx_pane = Some(TransactionPane::with_data(
+                                entry.block_number,
+                                format!("Flashblock {}::{}", entry.block_number, entry.index),
+                                entry.decoded_txs.clone(),
+                                resources.config.rpc.as_str(),
+                                resources.config.explorer_base_url(),
+                            ));
+                            self.focused_panel = Panel::Txns;
+                        }
+                    }
+                    Panel::Da => {
+                        let row = self.selected_row(Panel::Da);
+                        if let Some(contrib) = resources.da.tracker.block_contributions.get(row) {
+                            let block_number = contrib.block_number;
+                            let title = format!("Block {block_number}");
+
+                            let block_entries: Vec<_> = resources
+                                .flash
+                                .entries
+                                .iter()
+                                .filter(|e| e.block_number == block_number)
+                                .collect();
+
+                            self.tx_pane = Some(TransactionPane::for_block(
+                                block_number,
+                                title,
+                                &block_entries,
+                                resources.config.rpc.as_str(),
+                                resources.config.explorer_base_url(),
+                            ));
+                            self.focused_panel = Panel::Txns;
+                        }
+                    }
+                    _ => {}
+                }
+                Action::None
+            }
             _ => Action::None,
         }
     }
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.poll();
+        }
         let at_top = self.selected_row(self.focused_panel) == 0;
         if at_top {
             self.update_highlighted_block(resources);
@@ -295,14 +378,26 @@ impl View for CommandCenterView {
         render_config_panel(frame, info_chunks[0], resources);
         render_stats_panel(frame, info_chunks[1], resources);
 
-        let panel_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(50),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-            ])
-            .split(main_chunks[3]);
+        let panel_chunks = if self.tx_pane.is_some() {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(12),
+                    Constraint::Percentage(13),
+                    Constraint::Percentage(50),
+                ])
+                .split(main_chunks[3])
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                ])
+                .split(main_chunks[3])
+        };
 
         render_flash_panel(
             frame,
@@ -334,6 +429,10 @@ impl View for CommandCenterView {
                 connection_mode: resources.da.l1_connection_mode,
             },
         );
+
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.render(frame, panel_chunks[3], self.focused_panel == Panel::Txns);
+        }
     }
 }
 
@@ -488,12 +587,13 @@ fn render_da_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let fixed_cols_width = 8 + 6 + 3;
+    let fixed_cols_width = 8 + 5 + 6 + 4;
     let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
         Cell::from("Block").style(header_style),
+        Cell::from("Txs").style(header_style),
         Cell::from("DA").style(header_style),
         Cell::from("Age").style(header_style),
     ]);
@@ -523,9 +623,13 @@ fn render_da_panel(
                 Style::default().fg(block_color(contrib.block_number))
             };
 
+            let tx_str =
+                if contrib.tx_count > 0 { contrib.tx_count.to_string() } else { "-".to_string() };
+
             Row::new(vec![
                 Cell::from(truncate_block_number(contrib.block_number, block_col_width))
                     .style(block_style),
+                Cell::from(tx_str),
                 Cell::from(format_bytes(contrib.da_bytes)),
                 Cell::from(format_duration(Duration::from_secs(contrib.age_seconds()))),
             ])
@@ -533,7 +637,8 @@ fn render_da_panel(
         })
         .collect();
 
-    let widths = [Constraint::Max(10), Constraint::Length(8), Constraint::Min(6)];
+    let widths =
+        [Constraint::Max(10), Constraint::Length(5), Constraint::Length(8), Constraint::Min(6)];
     let table = Table::new(rows, widths).header(header);
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }

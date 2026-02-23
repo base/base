@@ -31,6 +31,17 @@ pub struct ChainConfig {
     pub l1_blob_target: u64,
 }
 
+impl ChainConfig {
+    /// Returns the block explorer base URL for this chain, if known.
+    pub fn explorer_base_url(&self) -> Option<&'static str> {
+        match self.name.as_str() {
+            "mainnet" => Some("https://basescan.org"),
+            "sepolia" => Some("https://sepolia.basescan.org"),
+            _ => None,
+        }
+    }
+}
+
 const fn default_blob_target() -> u64 {
     14
 }
