@@ -71,7 +71,12 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
-dev = [ "dep:proptest", "dep:base-alloy-consensus", "base-alloy-consensus?/arbitrary", "reth-cli-commands/arbitrary" ]
+dev = [
+	"base-alloy-consensus?/arbitrary",
+	"dep:base-alloy-consensus",
+	"dep:proptest",
+	"reth-cli-commands/arbitrary",
+]
 
 serde = [ "reth-optimism-chainspec/serde", "reth-optimism-primitives/serde" ]
 
