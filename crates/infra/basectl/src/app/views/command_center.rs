@@ -196,15 +196,6 @@ impl View for CommandCenterView {
                 self.update_highlighted_block(resources);
                 Action::None
             }
-            KeyCode::Char('f') => {
-                self.l1_filter = self.l1_filter.next();
-                self.l1_table_state.select(Some(0));
-                Action::None
-            }
-            KeyCode::Char(' ') => {
-                resources.flash.paused = !resources.flash.paused;
-                Action::None
-            }
             _ if self.focused_panel == Panel::Txns && self.tx_pane.is_some() => {
                 let pane = self.tx_pane.as_mut().unwrap();
                 let should_close = pane.handle_key(key, &mut |toast| {
@@ -214,6 +205,15 @@ impl View for CommandCenterView {
                     self.tx_pane = None;
                     self.focused_panel = Panel::Da;
                 }
+                Action::None
+            }
+            KeyCode::Char('f') => {
+                self.l1_filter = self.l1_filter.next();
+                self.l1_table_state.select(Some(0));
+                Action::None
+            }
+            KeyCode::Char(' ') => {
+                resources.flash.paused = !resources.flash.paused;
                 Action::None
             }
             KeyCode::Up | KeyCode::Char('k') => {
