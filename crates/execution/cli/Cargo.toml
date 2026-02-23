@@ -42,6 +42,7 @@ eyre.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
+base-alloy-consensus = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -70,7 +71,7 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
-dev = [ "dep:proptest", "reth-cli-commands/arbitrary" ]
+dev = [ "dep:proptest", "dep:base-alloy-consensus", "base-alloy-consensus?/arbitrary", "reth-cli-commands/arbitrary" ]
 
 serde = [ "reth-optimism-chainspec/serde", "reth-optimism-primitives/serde" ]
 

@@ -13115,6 +13115,7 @@ dependencies = [
 name = "reth-optimism-cli"
 version = "0.0.0"
 dependencies = [
+ "base-alloy-consensus",
  "clap",
  "eyre",
  "futures-util",
