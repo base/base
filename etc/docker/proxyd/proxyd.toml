@@ -1,3 +1,8 @@
+# Optimistic async forwarding of eth_sendRawTransaction to ingress-rpc
+# (matches production topology where proxyd sends to mempool nodes and
+# optimistically copies to ingress)
+ingress_rpc = "http://ingress-rpc:8080"
+
 [server]
 rpc_host = "0.0.0.0"
 rpc_port = 8080
@@ -7,9 +12,6 @@ response_timeout_seconds = 30
 max_response_size_bytes = 5242880
 
 [backends]
-[backends.ingress]
-rpc_url = "http://ingress-rpc:8080"
-
 [backends.builder]
 rpc_url = "http://base-builder:7545"
 
@@ -17,9 +19,6 @@ rpc_url = "http://base-builder:7545"
 rpc_url = "http://base-client:8545"
 
 [backend_groups]
-[backend_groups.ingress]
-backends = ["ingress"]
-
 [backend_groups.builder]
 backends = ["builder"]
 
@@ -27,13 +26,9 @@ backends = ["builder"]
 backends = ["client"]
 
 [rpc_method_mappings]
-# Transaction submission methods routed to ingress
-eth_sendRawTransaction = "ingress"
-eth_sendBundle = "ingress"
-eth_sendBackrunBundle = "ingress"
-eth_cancelBundle = "ingress"
-# To route transactions to the builder instead of ingress:
-# eth_sendRawTransaction = "builder"
+# Transaction submission routed to builder; proxyd optimistically forwards
+# eth_sendRawTransaction to ingress-rpc via the ingress_rpc config above.
+eth_sendRawTransaction = "builder"
 
 # All other methods routed to client
 eth_getBlockByHash = "client"

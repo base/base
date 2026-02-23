@@ -96,11 +96,10 @@ services:
       - TIPS_INGRESS_RPC_MEMPOOL=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - TIPS_INGRESS_RPC_SIMULATION=http://base-client:${L2_CLIENT_HTTP_PORT}
       - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT}
-      # NOTE: Production uses "none" — ingress never forwards transactions to the
-      # sequencer mempool. Transactions reach the sequencer through a separate path
-      # (e.g. proxyd). We use "mempool" here as a devnet convenience so that
-      # transactions sent to ingress-rpc also land on-chain without extra infra.
-      - TIPS_INGRESS_TX_SUBMISSION_METHOD=mempool
+      # proxyd routes transactions to the builder and optimistically forwards a
+      # copy to ingress-rpc, matching the production topology. Ingress does not
+      # need to submit transactions itself.
+      - TIPS_INGRESS_TX_SUBMISSION_METHOD=none
       - TIPS_INGRESS_SEND_TO_BUILDER=true
       - TIPS_INGRESS_CHAIN_ID=${L2_CHAIN_ID}
       - TIPS_INGRESS_BLOCK_TIME_MILLISECONDS=2000
@@ -123,6 +122,8 @@ services:
     container_name: proxyd
     depends_on:
       ingress-rpc:
+        condition: service_healthy
+      base-builder:
         condition: service_healthy
       base-client:
         condition: service_healthy
