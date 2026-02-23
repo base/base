@@ -80,6 +80,8 @@ services:
     depends_on:
       base-builder:
         condition: service_healthy
+      base-client:
+        condition: service_healthy
       kafka-init:
         condition: service_completed_successfully
     ports:
@@ -122,7 +124,7 @@ services:
     depends_on:
       ingress-rpc:
         condition: service_healthy
-      base-builder:
+      base-client:
         condition: service_healthy
     ports:
       - "${L2_INGRESS_HTTP_PORT}:8080"

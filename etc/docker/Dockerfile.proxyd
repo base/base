@@ -1,7 +1,7 @@
 FROM golang:1.23-alpine3.20 AS builder
 RUN apk add --no-cache make git gcc musl-dev
 WORKDIR /app
-RUN git clone --depth 1 https://github.com/ethereum-optimism/infra.git .
+RUN git clone --depth 1 --branch proxyd/v4.25.0 https://github.com/ethereum-optimism/infra.git .
 WORKDIR /app/proxyd
 RUN go build -o /bin/proxyd ./cmd/proxyd
 
