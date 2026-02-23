@@ -1,0 +1,11 @@
+FROM golang:1.23-alpine3.20 AS builder
+RUN apk add --no-cache make git gcc musl-dev
+WORKDIR /app
+RUN git clone --depth 1 https://github.com/ethereum-optimism/infra.git .
+WORKDIR /app/proxyd
+RUN go build -o /bin/proxyd ./cmd/proxyd
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates curl
+COPY --from=builder /bin/proxyd /bin/proxyd
+ENTRYPOINT ["/bin/proxyd"]

@@ -33,13 +33,9 @@ echo ""
 echo "=== L2 Ingress Transaction Tests ==="
 INGRESS_HEALTH_URL="http://localhost:${L2_INGRESS_HEALTH_PORT:-8081}/health"
 if curl -sf "$INGRESS_HEALTH_URL" >/dev/null 2>&1; then
-    # Ingress only implements eth_sendRawTransaction — build the tx against
-    # the builder (for nonce/chainId) then send the raw bytes through ingress.
     echo "Sending L2 tx through ingress..."
     sleep 3  # wait for the previous tx's nonce to be reflected on-chain
-    RAW_TX=$(cast mktx --private-key $PK --rpc-url $L2_BUILDER_RPC_URL $TO --value 0.001ether)
-    curl -sf $L2_INGRESS_RPC_URL -X POST -H "Content-Type: application/json" \
-        --data "{\"jsonrpc\":\"2.0\",\"method\":\"eth_sendRawTransaction\",\"params\":[\"$RAW_TX\"],\"id\":1}" | jq -r '"TX: \(.result)"'
+    cast send --private-key $PK --rpc-url $L2_INGRESS_RPC_URL $TO --value 0.001ether --json | jq -r '"TX: \(.transactionHash) block=\(.blockNumber)"'
 else
     echo "Ingress not running (start with: just devnet-ingress)"
 fi

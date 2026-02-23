@@ -1,0 +1,93 @@
+[server]
+rpc_host = "0.0.0.0"
+rpc_port = 8080
+
+[backend]
+response_timeout_seconds = 30
+max_response_size_bytes = 5242880
+
+[backends]
+[backends.ingress]
+rpc_url = "http://ingress-rpc:8080"
+
+[backends.builder]
+rpc_url = "http://base-builder:7545"
+
+[backends.client]
+rpc_url = "http://base-client:8545"
+
+[backend_groups]
+[backend_groups.ingress]
+backends = ["ingress"]
+
+[backend_groups.builder]
+backends = ["builder"]
+
+[backend_groups.client]
+backends = ["client"]
+
+[rpc_method_mappings]
+# Transaction submission methods routed to ingress
+eth_sendRawTransaction = "ingress"
+eth_sendBundle = "ingress"
+eth_sendBackrunBundle = "ingress"
+eth_cancelBundle = "ingress"
+# To route transactions to the builder instead of ingress:
+# eth_sendRawTransaction = "builder"
+
+# All other methods routed to client
+eth_getBlockByHash = "client"
+eth_getBlockByNumber = "client"
+eth_getBlockTransactionCountByHash = "client"
+eth_getBlockTransactionCountByNumber = "client"
+eth_getUncleCountByBlockHash = "client"
+eth_getUncleCountByBlockNumber = "client"
+eth_chainId = "client"
+eth_syncing = "client"
+eth_coinbase = "client"
+eth_accounts = "client"
+eth_blockNumber = "client"
+eth_call = "client"
+eth_estimateGas = "client"
+eth_createAccessList = "client"
+eth_gasPrice = "client"
+eth_maxPriorityFeePerGas = "client"
+eth_feeHistory = "client"
+eth_newFilter = "client"
+eth_newBlockFilter = "client"
+eth_newPendingTransactionFilter = "client"
+eth_uninstallFilter = "client"
+eth_getFilterChanges = "client"
+eth_getFilterLogs = "client"
+eth_getLogs = "client"
+eth_mining = "client"
+eth_hashrate = "client"
+eth_getWork = "client"
+eth_submitWork = "client"
+eth_submitHashrate = "client"
+eth_sign = "client"
+eth_signTransaction = "client"
+eth_getBalance = "client"
+eth_getStorageAt = "client"
+eth_getTransactionCount = "client"
+eth_getCode = "client"
+eth_getProof = "client"
+eth_getTransactionByHash = "client"
+eth_getTransactionByBlockHashAndIndex = "client"
+eth_getTransactionByBlockNumberAndIndex = "client"
+eth_getTransactionReceipt = "client"
+net_version = "client"
+web3_clientVersion = "client"
+web3_sha3 = "client"
+debug_getRawHeader = "client"
+debug_getRawBlock = "client"
+debug_getRawTransaction = "client"
+debug_getRawReceipts = "client"
+debug_getBadBlocks = "client"
+
+# Base-specific RPC methods
+base_transactionStatus = "client"
+base_meterBundle = "client"
+base_meterBlockByHash = "client"
+base_meterBlockByNumber = "client"
+base_meteredPriorityFeePerGas = "client"
