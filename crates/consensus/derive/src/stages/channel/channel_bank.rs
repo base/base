@@ -516,8 +516,8 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         let configs: [RollupConfig; 2] = [
-            kona_registry::ROLLUP_CONFIGS.get(&8453).cloned().unwrap(),
-            kona_registry::ROLLUP_CONFIGS.get(&84532).cloned().unwrap(),
+            kona_registry::Registry::rollup_config(8453).cloned().unwrap(),
+            kona_registry::Registry::rollup_config(84532).cloned().unwrap(),
         ];
 
         for cfg in configs {

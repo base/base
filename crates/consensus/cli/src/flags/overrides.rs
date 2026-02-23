@@ -127,8 +127,7 @@ mod tests {
     #[test]
     fn test_apply_default_overrides() {
         // Use Base Mainnet rollup config.
-        let config = kona_registry::ROLLUP_CONFIGS
-            .get(&8453)
+        let config = kona_registry::Registry::rollup_config(8453)
             .expect("No config found for chain ID 8453")
             .clone();
         let init_forks = config.hardforks;

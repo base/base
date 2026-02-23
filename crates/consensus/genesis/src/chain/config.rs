@@ -36,7 +36,7 @@ pub struct ChainConfig {
     #[cfg_attr(feature = "serde", serde(rename = "Name", alias = "name"))]
     pub name: String,
     /// L1 chain ID
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub l1_chain_id: u64,
     /// Chain public RPC endpoint
     #[cfg_attr(feature = "serde", serde(rename = "PublicRPC", alias = "public_rpc"))]
@@ -90,6 +90,12 @@ pub struct ChainConfig {
     /// Gas paying token metadata. Not consumed by downstream `OPStack` components.
     #[cfg_attr(feature = "serde", serde(rename = "GasPayingToken", alias = "gas_paying_token"))]
     pub gas_paying_token: Option<Address>,
+    /// Protocol versions contract address.
+    #[cfg_attr(feature = "serde", serde(alias = "protocolVersionsAddr", default))]
+    pub protocol_versions_addr: Option<Address>,
+    /// Superchain config contract address.
+    #[cfg_attr(feature = "serde", serde(alias = "superchainConfigAddr", default))]
+    pub superchain_config_addr: Option<Address>,
     /// Hardfork Config. These values may override the superchain-wide defaults.
     #[cfg_attr(feature = "serde", serde(rename = "hardfork_configuration", alias = "hardforks"))]
     pub hardfork_config: HardForkConfig,
@@ -155,12 +161,8 @@ impl ChainConfig {
                 .as_ref()
                 .and_then(|a| a.system_config_proxy)
                 .unwrap_or_default(),
-            protocol_versions_address: self
-                .addresses
-                .as_ref()
-                .and_then(|a| a.address_manager)
-                .unwrap_or_default(),
-            superchain_config_address: None,
+            protocol_versions_address: self.protocol_versions_addr.unwrap_or_default(),
+            superchain_config_address: self.superchain_config_addr,
             blobs_enabled_l1_timestamp: None,
             da_challenge_address: None,
             channel_timeout: 300,

@@ -15,5 +15,8 @@ pub use config::{ChainConfig, L1ChainConfig};
 mod hardfork;
 pub use hardfork::HardForkConfig;
 
+mod level;
+pub use level::SuperchainLevel;
+
 mod roles;
 pub use roles::Roles;

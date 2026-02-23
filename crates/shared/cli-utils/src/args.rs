@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use alloy_primitives::Address;
 use clap::{ArgAction, Parser};
-use kona_registry::OPCHAINS;
+use kona_registry::Registry;
 
 use crate::{
     FileLogConfig, LogConfig, LogFormat, LogRotation, MetricsArgs, StdoutLogConfig,
@@ -114,13 +114,7 @@ impl GlobalArgs {
     /// Returns the signer [`Address`] from the rollup config for the given l2 chain id.
     pub fn genesis_signer(&self) -> eyre::Result<Address> {
         let id = self.l2_chain_id;
-        OPCHAINS
-            .get(&id.id())
-            .ok_or_else(|| eyre::eyre!("No chain config found for chain ID: {id}"))?
-            .roles
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("No roles found for chain ID: {id}"))?
-            .unsafe_block_signer
+        Registry::unsafe_block_signer(id.id())
             .ok_or_else(|| eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
     }
 }

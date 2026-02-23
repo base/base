@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use base_protocol::BatchValidationProvider;
 use kona_derive::ChainProvider;
 use kona_driver::{PipelineCursor, TipCursor};
-use kona_registry::RollupConfig;
+use kona_genesis::RollupConfig;
 use spin::RwLock;
 
 use crate::errors::OracleProviderError;

@@ -13,7 +13,7 @@ use base_alloy_evm::OpEvmFactory;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use kona_genesis::RollupConfig;
 use kona_mpt::{NoopTrieHinter, TrieNode, TrieProvider};
-use kona_registry::ROLLUP_CONFIGS;
+use kona_registry::Registry;
 use rocksdb::{DB, Options};
 use serde::{Deserialize, Serialize};
 use tokio::{fs, runtime::Handle, sync::Mutex};
@@ -111,7 +111,7 @@ impl ExecutorTestFixtureCreator {
     /// Create a static test fixture with the configuration provided.
     pub async fn create_static_fixture(self) {
         let chain_id = self.provider.get_chain_id().await.expect("Failed to get chain ID");
-        let rollup_config = ROLLUP_CONFIGS.get(&chain_id).expect("Rollup config not found");
+        let rollup_config = Registry::rollup_config(chain_id).expect("Rollup config not found");
 
         let executing_block = self
             .provider
