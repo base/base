@@ -18,6 +18,18 @@ pub(crate) trait View {
         Action::None
     }
 
+    /// Returns true if this view wants to handle the Esc key itself
+    /// (e.g., to close a detail pane) instead of the default back/quit behavior.
+    fn consumes_esc(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this view wants to handle the `q` key itself
+    /// (e.g., to close a detail pane) instead of quitting.
+    fn consumes_quit(&self) -> bool {
+        false
+    }
+
     /// Renders this view into the given frame area.
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources);
 }
