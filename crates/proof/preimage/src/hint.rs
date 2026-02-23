@@ -154,6 +154,8 @@ mod test {
         let client = tokio::task::spawn(async move {
             let hint_writer = HintWriter::new(hint_channel.client);
 
+            // SAFETY: This is intentionally invalid UTF-8 to test error handling.
+            // The test verifies that invalid UTF-8 causes an error on the host side.
             #[allow(invalid_from_utf8_unchecked)]
             hint_writer.write(unsafe { alloc::str::from_utf8_unchecked(&mock_data) }).await
         });
