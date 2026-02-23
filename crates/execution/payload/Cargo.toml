@@ -23,7 +23,7 @@ reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-payload-util.workspace = true
-reth-payload-primitives = { workspace = true, features = ["op"] }
+reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-validator.workspace = true
 

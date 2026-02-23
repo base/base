@@ -33,7 +33,7 @@ revm.workspace = true
 auto_impl.workspace = true
 thiserror.workspace = true
 
-# reth (optional)
+# reth (optional, `op` feature provides `TransactionEnv` impl for `OpTransaction<T>`)
 reth-evm = { workspace = true, optional = true, features = ["op"] }
 
 [dev-dependencies]
