@@ -93,6 +93,7 @@ impl AggregateVerifierContractClient {
             .try_into()
             .map_err(|_| ProposerError::Contract("BLOCK_INTERVAL overflows u64".to_string()))?;
 
+        // Also validated at startup in main.rs; duplicated here for defense-in-depth.
         if interval < 2 {
             return Err(ProposerError::Contract(
                 "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)"
