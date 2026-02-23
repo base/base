@@ -29,6 +29,7 @@ struct TestHarness {
     server_addr: SocketAddr,
     client_id_to_handle: HashMap<usize, JoinHandle<()>>,
     sender: Sender<Message>,
+    server_handle: Option<JoinHandle<()>>,
 }
 
 impl TestHarness {
@@ -71,6 +72,7 @@ impl TestHarness {
             server_addr: addr,
             client_id_to_handle: HashMap::new(),
             sender,
+            server_handle: None,
         }
     }
 
@@ -83,16 +85,18 @@ impl TestHarness {
         }
     }
 
-    async fn start_server(&self) {
+    async fn start_server(&mut self) {
         let cancel_token = self.cancel_token.clone();
         let server = self.server.clone();
 
-        // todo!
-        let _server_handle = tokio::spawn(async move {
+        // spawn server task and store the handle
+        let server_handle = tokio::spawn(async move {
             _ = server.listen(cancel_token).await;
         });
 
-        let mut healthy = true;
+        self.server_handle = Some(server_handle);
+
+        let mut healthy = false;
         for _ in 0..5 {
             let resp = self.healthcheck().await;
             match resp {
@@ -223,15 +227,25 @@ impl TestHarness {
             unreachable!()
         }
     }
+
+    async fn stop_server(&mut self) {
+        self.cancel_token.cancel();
+        if let Some(handle) = self.server_handle.take() {
+            handle.await.unwrap_or_else(|e| {
+                error!(message = "Server task panicked", error = e.to_string());
+            });
+        }
+    }
 }
 
 #[tokio::test]
 async fn test_healthcheck() {
     let addr = TestHarness::alloc_port().await;
-    let harness = TestHarness::new(addr);
+    let mut harness = TestHarness::new(addr);
     assert!(harness.healthcheck().await.is_err());
     harness.start_server().await;
     assert!(harness.healthcheck().await.is_ok());
+    harness.stop_server().await;
 }
 
 #[tokio::test]
@@ -251,6 +265,7 @@ async fn test_clients_receive_messages() {
 
     assert_eq!(vec!["one", "two"], harness.messages_for_client(client_one));
     assert_eq!(vec!["one", "two"], harness.messages_for_client(client_two));
+    harness.stop_server().await;
 }
 
 #[tokio::test]
@@ -277,6 +292,7 @@ async fn test_server_limits_connections() {
     // Client four was not able to be setup as the test has a limit of three
     assert!(harness.messages_for_client(client_four).is_empty());
     assert!(harness.clients_failed_to_connect.lock().unwrap()[&client_four]);
+    harness.stop_server().await;
 }
 
 #[tokio::test]
@@ -334,6 +350,7 @@ async fn test_deregister() {
     );
     assert_eq!(vec!["one", "two"], harness.messages_for_client(client_three));
     assert_eq!(vec!["five", "six"], harness.messages_for_client(client_four));
+    harness.stop_server().await;
 }
 
 #[tokio::test]
@@ -341,10 +358,11 @@ async fn test_authentication_disables_public_endpoint() {
     let addr = TestHarness::alloc_port().await;
     let auth = Authentication::none();
 
-    let harness = TestHarness::new_with_auth(addr, Some(auth));
+    let mut harness = TestHarness::new_with_auth(addr, Some(auth));
     harness.start_server().await;
 
     assert!(!(harness.can_connect("ws").await));
+    harness.stop_server().await;
 }
 
 #[tokio::test]
@@ -356,13 +374,14 @@ async fn test_authentication_allows_known_api_keys() {
         ("key3".to_string(), "app3".to_string()),
     ]));
 
-    let harness = TestHarness::new_with_auth(addr, Some(auth));
+    let mut harness = TestHarness::new_with_auth(addr, Some(auth));
     harness.start_server().await;
 
     assert!(harness.can_connect("ws/key1").await);
     assert!(harness.can_connect("ws/key2").await);
     assert!(harness.can_connect("ws/key3").await);
     assert!(!(harness.can_connect("ws/key4").await));
+    harness.stop_server().await;
 }
 
 #[tokio::test]
@@ -398,6 +417,7 @@ async fn test_ping_timeout_disconnects_client() {
         server_addr: addr,
         client_id_to_handle: HashMap::new(),
         sender,
+        server_handle: None,
     };
 
     harness.start_server().await;
@@ -409,6 +429,6 @@ async fn test_ping_timeout_disconnects_client() {
 
     harness.sender.send(Message::Ping(vec![].into())).unwrap();
     tokio::time::sleep(Duration::from_millis(1500)).await;
-
     assert_eq!(harness.sender.receiver_count(), 0);
+    harness.stop_server().await;
 }
