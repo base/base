@@ -799,13 +799,7 @@ mod tests {
         }
         async fn aggregate(
             &self,
-            _: B256,
-            _: B256,
-            _: u64,
-            _: Vec<Proposal>,
-            _: alloy_primitives::Address,
-            _: B256,
-            _: Vec<B256>,
+            _: op_enclave_core::AggregateRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
@@ -825,15 +819,9 @@ mod tests {
         }
         async fn aggregate(
             &self,
-            _: B256,
-            _: B256,
-            _: u64,
-            proposals: Vec<Proposal>,
-            _: alloy_primitives::Address,
-            _: B256,
-            _: Vec<B256>,
+            request: op_enclave_core::AggregateRequest,
         ) -> Result<Proposal, ClientError> {
-            let last = proposals.last().unwrap();
+            let last = request.proposals.last().unwrap();
             Ok(Proposal {
                 output_root: last.output_root,
                 signature: Bytes::from(vec![0xab; 65]),

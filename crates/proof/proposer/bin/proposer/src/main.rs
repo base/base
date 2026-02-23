@@ -254,6 +254,11 @@ async fn main() -> Result<()> {
     let intermediate_block_interval = verifier_client
         .read_intermediate_block_interval(impl_address)
         .await?;
+    if block_interval < 2 {
+        return Err(eyre::eyre!(
+            "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
+        ));
+    }
     if block_interval % intermediate_block_interval != 0 {
         return Err(eyre::eyre!(
             "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
