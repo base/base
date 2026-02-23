@@ -196,7 +196,7 @@ where
             authorities,
         } = outcome
         {
-            let mut l1_block_info = self.block_info.l1_block_info.read().clone();
+            let l1_block_info = self.block_info.l1_block_info.read().clone();
 
             let encoded = valid_tx.transaction().encoded_2718();
 
