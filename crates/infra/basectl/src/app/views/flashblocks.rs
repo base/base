@@ -294,6 +294,6 @@ impl View for FlashblocksView {
 
         let table = Table::new(rows, widths).header(header);
 
-        frame.render_stateful_widget(table, inner, &mut self.table_state.clone());
+        frame.render_stateful_widget(table, inner, &mut self.table_state);
     }
 }
