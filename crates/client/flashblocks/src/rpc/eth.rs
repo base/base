@@ -571,22 +571,35 @@ where
         let mut stream =
             BroadcastStream::new(self.eth_api.provider().subscribe_to_canonical_state());
 
-        while let Some(Ok(canon_state)) = stream.next().await {
-            for (block_receipt, _) in canon_state.block_receipts() {
-                for (canonical_tx_hash, _) in &block_receipt.tx_receipts {
-                    if *canonical_tx_hash == tx_hash {
-                        debug!(
-                            message = "found receipt in canonical state",
-                            tx_hash = %tx_hash
-                        );
-                        return EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
-                            .await
-                            .ok()
-                            .flatten();
+        loop {
+            match stream.next().await {
+                Some(Ok(canon_state)) => {
+                    for (block_receipt, _) in canon_state.block_receipts() {
+                        for (canonical_tx_hash, _) in &block_receipt.tx_receipts {
+                            if *canonical_tx_hash == tx_hash {
+                                debug!(
+                                    message = "found receipt in canonical state",
+                                    tx_hash = %tx_hash
+                                );
+                                return EthTransactions::transaction_receipt(
+                                    &self.eth_api,
+                                    tx_hash,
+                                )
+                                .await
+                                .ok()
+                                .flatten();
+                            }
+                        }
                     }
                 }
+                Some(Err(err)) => {
+                    warn!(
+                        message = "canonical state stream lagged, maybe missing notifications",
+                        ?err
+                    );
+                }
+                None => return None,
             }
         }
-        None
     }
 }
