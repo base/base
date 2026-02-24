@@ -3126,6 +3126,7 @@ dependencies = [
 name = "base-validated-tx-rpc"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-alloy-consensus",
  "base-client-node",
  "base-primitives",

@@ -17,6 +17,9 @@ base-primitives.workspace = true
 base-client-node.workspace = true
 base-alloy-consensus.workspace = true
 
+# alloy
+alloy-primitives.workspace = true
+
 # reth
 reth-transaction-pool.workspace = true
 reth-optimism-txpool.workspace = true

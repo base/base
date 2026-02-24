@@ -5,7 +5,7 @@
 
 use alloy_consensus::{SignableTransaction, Signed, TxEip1559, TxEip2930, TxLegacy};
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use base_alloy_consensus::OpPooledTransaction;
 use reth_primitives_traits::Recovered;
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,16 @@ pub struct ValidatedTransaction {
     /// This is the address that was recovered from the signature.
     /// The RPC trusts that this has been verified by the caller.
     pub from: Address,
+
+    /// Sender's balance at the time of validation.
+    pub balance: U256,
+
+    /// Sender's nonce from state at the time of validation.
+    pub state_nonce: u64,
+
+    /// Sender's code hash (None for EOA).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytecode_hash: Option<B256>,
 
     /// Transaction type.
     ///
