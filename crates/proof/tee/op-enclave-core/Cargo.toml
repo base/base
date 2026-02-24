@@ -40,17 +40,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-# Optional (fixture generator)
-clap = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
-
 [dev-dependencies]
 hex.workspace = true
-
-[features]
-default = []
-fixture-generator = [ "clap", "reqwest", "tokio" ]
 
 [lints]
 workspace = true
