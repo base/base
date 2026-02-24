@@ -34,8 +34,9 @@ fn encode_eip_1559_params(
     Ok(())
 }
 
-/// Extracts the Holocene 1559 parameters from the encoded form:
-/// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>
+/// Extracts the EIP-1559 parameters from the encoded form.
+///
+/// Used by both Holocene and Jovian hardforks to decode the 8-byte EIP-1559 parameter encoding.
 ///
 /// Returns (`elasticity`, `denominator`)
 pub fn decode_eip_1559_params(eip_1559_params: B64) -> (u32, u32) {
