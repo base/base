@@ -9,5 +9,5 @@ filter = 'test(system_test_)'
 test-group = 'system-tests'
 
 [[profile.default.overrides]]
-filter = 'binary(e2e-testsuite)'
+filter = 'binary(e2e_testsuite)'
 test-group = 'e2e-tests'
