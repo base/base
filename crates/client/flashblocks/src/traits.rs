@@ -7,7 +7,7 @@ use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types_eth::{Filter, Log, state::StateOverride};
 use arc_swap::Guard;
 use base_alloy_network::Base;
-use base_primitives::Flashblock;
+use base_alloy_flashblocks::Flashblock;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use tokio::sync::broadcast;

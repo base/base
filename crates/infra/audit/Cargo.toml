@@ -16,7 +16,7 @@ metrics.workspace = true
 async-trait.workspace = true
 futures = { workspace = true }
 metrics-derive.workspace = true
-base-primitives.workspace = true
+base-bundles.workspace = true
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -29,8 +29,7 @@ rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
-base-bundles.workspace = true
-base-primitives = { workspace = true, features = ["test-utils"] }
+base-bundles = { workspace = true, features = ["test-utils"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }

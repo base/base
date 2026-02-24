@@ -20,7 +20,7 @@ use base_client_node::test_utils::{
     Account, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
 };
 use base_flashblocks_node::test_harness::FlashblocksHarness;
-use base_primitives::{
+use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use eyre::Result;

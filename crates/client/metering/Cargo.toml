@@ -56,7 +56,7 @@ derive_more.workspace = true
 [dev-dependencies]
 # workspace
 base-flashblocks.workspace = true
-base-primitives.workspace = true
+base-alloy-flashblocks.workspace = true
 base-client-node = { workspace = true, features = ["test-utils"] }
 
 # reth

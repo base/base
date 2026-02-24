@@ -28,7 +28,7 @@ serde = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 # workspace
-base-primitives = { workspace = true, features = ["test-utils"] }
+base-test-utils.workspace = true
 
 # reth
 reth-evm.workspace = true

@@ -15,7 +15,7 @@ use base_alloy_network::{Base, ReceiptResponse, TransactionResponse};
 use base_alloy_rpc_types::OpTransactionRequest;
 use base_client_node::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
 use base_flashblocks_node::test_harness::FlashblocksHarness;
-use base_primitives::{
+use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use eyre::Result;

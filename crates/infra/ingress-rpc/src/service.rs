@@ -13,7 +13,7 @@ use audit_archiver_lib::BundleEvent;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
 use base_bundles::BundleExtensions;
-use base_primitives::{
+use base_bundles::{
     AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
 };
 use jsonrpsee::{
@@ -478,7 +478,7 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use base_cli_utils::{LogFormat, LogLevel};
-    use base_primitives::create_test_meter_bundle_response;
+    use base_bundles::test_utils::create_test_meter_bundle_response;
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};

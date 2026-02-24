@@ -27,7 +27,7 @@ use alloy_primitives::TxHash;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_alloy_network::Base;
 use base_cli_utils::{LogFormat, LogLevel};
-use base_primitives::{AcceptedBundle, MeterBundleResponse};
+use base_bundles::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
 use tokio::sync::broadcast;
 use tracing::{error, warn};

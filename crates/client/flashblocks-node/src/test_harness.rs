@@ -31,7 +31,7 @@ use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
     FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
 };
-use base_primitives::{
+use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use derive_more::Deref;

@@ -131,7 +131,7 @@ base-jwt = { path = "crates/shared/jwt" }
 base-bundles = { path = "crates/shared/bundles" }
 base-cli-utils = { path = "crates/shared/cli-utils" }
 base-engine-ext = { path = "crates/shared/engine-ext" }
-base-primitives = { path = "crates/shared/primitives" }
+base-test-utils = { path = "crates/shared/test-utils" }
 base-access-lists = { path = "crates/shared/access-lists" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
@@ -331,6 +331,7 @@ base-alloy-consensus = { path = "crates/alloy/consensus", default-features = fal
 base-alloy-hardforks = { path = "crates/alloy/hardforks" }
 base-alloy-flz = { path = "crates/alloy/flz", default-features = false }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
+base-alloy-flashblocks = { path = "crates/alloy/flashblocks" }
 base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine", default-features = false }
 
 # op-revm

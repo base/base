@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 test-utils = [
-	"base-primitives/test-utils",
+	"dep:base-test-utils",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
 	"dep:alloy-primitives",
@@ -24,7 +24,6 @@ test-utils = [
 	"dep:alloy-signer",
 	"dep:base-alloy-network",
 	"dep:base-alloy-rpc-types-engine",
-	"dep:base-primitives",
 	"dep:chrono",
 	"dep:jsonrpsee",
 	"dep:reth-chainspec",
@@ -50,7 +49,7 @@ test-utils = [
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
-base-primitives = { workspace = true, optional = true }
+base-test-utils = { workspace = true, optional = true }
 
 # reth
 reth-evm.workspace = true

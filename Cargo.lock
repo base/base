@@ -1673,7 +1673,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "base-bundles",
- "base-primitives",
  "bytes",
  "futures",
  "metrics",
@@ -2227,7 +2226,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
- "base-primitives",
+ "base-test-utils",
  "eyre",
  "op-revm",
  "reth-evm",
@@ -2284,6 +2283,22 @@ dependencies = [
  "op-revm",
  "revm",
  "rstest",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "base-alloy-flashblocks"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "brotli",
+ "bytes",
+ "rstest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -2431,6 +2446,7 @@ dependencies = [
  "base-access-lists",
  "base-alloy-consensus",
  "base-alloy-evm",
+ "base-alloy-flashblocks",
  "base-alloy-flz",
  "base-alloy-network",
  "base-alloy-rpc-types",
@@ -2439,7 +2455,6 @@ dependencies = [
  "base-builder-publish",
  "base-bundles",
  "base-client-node",
- "base-primitives",
  "chrono",
  "clap",
  "clap_builder",
@@ -2698,7 +2713,7 @@ dependencies = [
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
  "base-cli-utils",
- "base-primitives",
+ "base-test-utils",
  "chrono",
  "eyre",
  "futures-util",
@@ -2811,10 +2826,10 @@ dependencies = [
  "alloy-rpc-types-eth",
  "arc-swap",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
- "base-primitives",
  "derive_more",
  "futures-util",
  "jsonrpsee",
@@ -2865,12 +2880,12 @@ dependencies = [
  "alloy-sol-macro",
  "alloy-sol-types",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-primitives",
  "criterion",
  "derive_more",
  "eyre",
@@ -2933,11 +2948,11 @@ dependencies = [
  "alloy-rpc-types-engine",
  "arc-swap",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-bundles",
  "base-client-node",
  "base-flashblocks",
- "base-primitives",
  "derive_more",
  "eyre",
  "jsonrpsee",
@@ -2964,39 +2979,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-primitives"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-contract",
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-macro",
- "alloy-sol-types",
- "base-alloy-consensus",
- "base-alloy-network",
- "base-alloy-rpc-types",
- "base-alloy-rpc-types-engine",
- "base-bundles",
- "brotli",
- "bytes",
- "eyre",
- "kona-genesis",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
 ]
 
 [[package]]
@@ -3072,6 +3054,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-test-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
+ "eyre",
+ "serde_json",
+]
+
+[[package]]
 name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
@@ -3099,7 +3100,6 @@ dependencies = [
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-primitives",
  "chrono",
  "derive_more",
  "eyre",
@@ -3193,8 +3193,8 @@ dependencies = [
  "anyhow",
  "arboard",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
- "base-primitives",
  "chrono",
  "crossterm 0.28.1",
  "dirs",
@@ -4912,6 +4912,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-builder-core",
@@ -4919,7 +4920,6 @@ dependencies = [
  "base-consensus-rpc",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-primitives",
  "base-protocol",
  "base-txpool-rpc",
  "base-txpool-tracing",
@@ -7059,8 +7059,8 @@ dependencies = [
  "anyhow",
  "audit-archiver-lib",
  "base-alloy-network",
+ "base-bundles",
  "base-cli-utils",
- "base-primitives",
  "clap",
  "dotenvy",
  "ingress-rpc-lib",
@@ -7087,7 +7087,6 @@ dependencies = [
  "base-alloy-network",
  "base-bundles",
  "base-cli-utils",
- "base-primitives",
  "clap",
  "jsonrpsee",
  "metrics",
@@ -16098,7 +16097,6 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-network",
  "base-bundles",
- "base-primitives",
  "bytes",
  "clap",
  "dashmap",

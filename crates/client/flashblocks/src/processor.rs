@@ -12,7 +12,7 @@ use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::TransactionResponse;
-use base_primitives::Flashblock;
+use base_alloy_flashblocks::Flashblock;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;

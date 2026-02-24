@@ -6,7 +6,7 @@ use audit_archiver_lib::{
 };
 use base_alloy_network::Base;
 use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
-use base_primitives::{AcceptedBundle, MeterBundleResponse};
+use base_bundles::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
 use ingress_rpc_lib::{
     Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers, bind_health_server,

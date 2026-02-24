@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_alloy_network::Base;
-use base_primitives::Bundle;
+use base_bundles::Bundle;
 use jsonrpsee::core::RpcResult;
 use op_revm::l1block::L1BlockInfo;
 use reth_optimism_evm::extract_l1_info_from_tx;

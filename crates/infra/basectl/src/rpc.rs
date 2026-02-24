@@ -6,7 +6,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use anyhow::Result;
 use base_alloy_network::Base;
-use base_primitives::Flashblock;
+use base_alloy_flashblocks::Flashblock;
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;

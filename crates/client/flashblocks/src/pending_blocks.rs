@@ -13,7 +13,7 @@ use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use base_primitives::Flashblock;
+use base_alloy_flashblocks::Flashblock;
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};

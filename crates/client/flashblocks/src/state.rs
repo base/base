@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
-use base_primitives::Flashblock;
+use base_alloy_flashblocks::Flashblock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::OpBlock;

@@ -1,0 +1,31 @@
+[package]
+name = "base-alloy-flashblocks"
+description = "Flashblocks primitive types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-serde = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+
+# misc
+bytes.workspace = true
+brotli = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+rstest.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }

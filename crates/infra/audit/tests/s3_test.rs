@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 mod common;
 use base_bundles::BundleExtensions;
-use base_primitives::{TXN_HASH, create_bundle_from_txn_data};
+use base_bundles::test_utils::{TXN_HASH, create_bundle_from_txn_data};
 use common::TestHarness;
 
 fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {

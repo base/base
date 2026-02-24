@@ -14,7 +14,7 @@ workspace = true
 [features]
 test-utils = [
 	"base-client-node/test-utils",
-	"base-primitives/test-utils",
+	"dep:base-alloy-flashblocks",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
@@ -68,7 +68,7 @@ tracing = { workspace = true, features = ["std"] }
 
 # test-utils (optional)
 eyre = { workspace = true, optional = true }
-base-primitives = { workspace = true, optional = true }
+base-alloy-flashblocks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]

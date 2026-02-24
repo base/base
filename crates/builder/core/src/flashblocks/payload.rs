@@ -13,7 +13,7 @@ use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_builder_publish::WebSocketPublisher;
-use base_primitives::{
+use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use either::Either;

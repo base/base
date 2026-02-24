@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use audit_archiver_lib::BundleEvent;
 use base_alloy_network::Base;
 use base_bundles::BundleExtensions;
-use base_primitives::Bundle;
+use base_bundles::Bundle;
 use common::kafka::wait_for_audit_event_by_hash;
 use serial_test::serial;
 use system_tests::{

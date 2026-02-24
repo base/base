@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
-use base_primitives::{Account, build_test_genesis};
+use base_test_utils::{Account, build_test_genesis};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},

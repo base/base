@@ -7,7 +7,7 @@ use aws_sdk_s3::{
     Client as S3Client, error::SdkError, operation::get_object::GetObjectError,
     primitives::ByteStream,
 };
-use base_primitives::AcceptedBundle;
+use base_bundles::AcceptedBundle;
 use futures::future;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -412,7 +412,7 @@ impl BundleEventS3Reader for S3EventReaderWriter {
 mod tests {
     use alloy_primitives::TxHash;
     use base_bundles::BundleExtensions;
-    use base_primitives::create_bundle_from_txn_data;
+    use base_bundles::test_utils::create_bundle_from_txn_data;
     use uuid::Uuid;
 
     use super::*;
