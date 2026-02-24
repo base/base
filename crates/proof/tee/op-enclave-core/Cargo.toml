@@ -5,48 +5,59 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-alloy-chains.workspace = true
-alloy-eips.workspace = true
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true
+# EVM
+revm = { workspace = true, features = ["std"] }
+op-revm.workspace = true
+
+# Alloy
 alloy-rlp.workspace = true
 alloy-trie.workspace = true
-alloy-evm.workspace = true
-alloy-op-evm.workspace = true
+alloy-chains.workspace = true
+alloy-evm = { workspace = true, features = ["op"] }
+alloy-eips = { workspace = true, features = ["serde"] }
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-engine.workspace = true
-kona-genesis.workspace = true
-kona-derive.workspace = true
-kona-executor.workspace = true
+
+# Base Alloy
+base-alloy-evm.workspace = true
+base-alloy-consensus = { workspace = true, features = ["serde"] }
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+
+# Kona
 kona-mpt.workspace = true
 kona-driver.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types-engine.workspace = true
-kona-protocol.workspace = true
-revm.workspace = true
-op-revm.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-hex.workspace = true
+kona-derive.workspace = true
+kona-executor.workspace = true
+kona-genesis = { workspace = true, features = ["serde"] }
+
+# Consensus
+base-protocol = { workspace = true, features = ["serde"] }
+
+# Serialization
+hex = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
 hex-literal.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-# Optional dependencies for fixture generator binary
+# Optional (fixture generator)
+clap = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-clap = { workspace = true, optional = true }
 
-[features]
-default = []
-fixture-generator = ["tokio", "reqwest", "clap"]
+[dev-dependencies]
+hex.workspace = true
 
 [[bin]]
 name = "generate_fixtures"
 path = "src/bin/generate_fixtures.rs"
 required-features = ["fixture-generator"]
 
-[dev-dependencies]
-hex = { workspace = true }
+[features]
+default = []
+fixture-generator = ["tokio", "reqwest", "clap"]
 
 [lints]
 workspace = true

@@ -11,15 +11,15 @@ op-enclave-core.workspace = true
 alloy-primitives.workspace = true
 
 # RPC
-jsonrpsee.workspace = true
+jsonrpsee = { workspace = true, features = ["http-client"] }
 async-trait.workspace = true
 
 # Error handling
 thiserror.workspace = true
 
 # TLS
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
-rustls-pki-types = "1.0"
+rustls = { workspace = true, features = ["std", "tls12"] }
+rustls-pki-types.workspace = true
 
 [lints]
 workspace = true

@@ -13,7 +13,16 @@ members = [
     "bin/*",
     "crates/client/*",
     "crates/consensus/*",
-    "crates/proof/*",
+    "crates/proof/mpt",
+    "crates/proof/proof",
+    "crates/proof/driver",
+    "crates/proof/executor",
+    "crates/proof/preimage",
+    "crates/proof/std-fpvm",
+    "crates/proof/std-fpvm-proc",
+    "crates/proof/tee/op-enclave-core",
+    "crates/proof/tee/op-enclave-client",
+    "crates/proof/tee/op-enclave-server",
     "crates/shared/*",
     "crates/builder/*",
     "crates/infra/*",
@@ -196,6 +205,9 @@ kona-executor = { path = "crates/proof/executor", default-features = false }
 kona-preimage = { path = "crates/proof/preimage", default-features = false }
 kona-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
 kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
+op-enclave-core = { path = "crates/proof/tee/op-enclave-core" }
+op-enclave-client = { path = "crates/proof/tee/op-enclave-client" }
+op-enclave-server = { path = "crates/proof/tee/op-enclave-server" }
 
 # Shared
 base-jwt = { path = "crates/shared/jwt" }
@@ -352,10 +364,15 @@ metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 
 # misc
 hex = "0.4"
+zip = "2.2"
+hex-literal = "0.4"
 tar = "0.4"
+rsa = { version = "0.9", features = ["sha2"] }
 http = "1.0"
 sha3 = "0.10"
+spki = "0.7"
 tower = "0.5"
+tower-http = { version = "0.6", features = ["limit"] }
 anyhow = "1"
 moka = "0.12"
 discv5 = "0.10"
@@ -369,6 +386,7 @@ lru = "0.16.3"
 dashmap = "6.1"
 strum = "0.27.2"
 k256 = "0.13.4"
+vsock = "0.5"
 uuid = "1.19.0"
 hyper = "1.7.0"
 eyre = "0.6.12"
@@ -378,6 +396,10 @@ bytes = "1.11.1"
 rstest = "0.26.1"
 chrono = "0.4.42"
 rustls = "0.23.35"
+rustls-pki-types = "1.0"
+base64 = "0.22"
+x509-cert = "0.2"
+ciborium = "0.2"
 serde = { version = "1.0.228", default-features = false }
 thiserror = { version = "2.0", default-features = false }
 tempfile = "3.8"
@@ -396,6 +418,7 @@ derive_more = { version = "2.1.0", default-features = false }
 lazy_static = "1.4.0"
 parking_lot = "0.12.3"
 shellexpand = "3.1"
+serde_bytes = "0.11"
 serde_json = { version = "1.0.145", default-features = false }
 opentelemetry = "0.31"
 ethereum_ssz = "0.9.0"
@@ -416,6 +439,8 @@ rdkafka = { version = "0.37.0", default-features = false }
 aws-config = { version = "1.1.7", default-features = false }
 aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
+aws-nitro-enclaves-nsm-api = "0.4"
+aws-nitro-enclaves-cose = "0.5"
 axum = { version = "0.8.3", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 libc = "0.2"
