@@ -1,0 +1,123 @@
+# Multi-stage Dockerfile for building Rust op-enclave EIF
+# Mirrors the Go setup in op-enclave/Dockerfile
+
+# Stage 1: Bootstrap - AWS Nitro SDK bootstrap image for kernel + NSM
+FROM ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc1920208e93d222533a36f9f5dc85615591cbfe56a03312b0 AS bootstrap
+
+
+# Stage 2: Builder - Alpine-based Rust image with musl toolchain
+FROM rust:1.88-alpine AS builder
+
+# Set reproducible build timestamp
+ENV SOURCE_DATE_EPOCH=0
+
+# Install build dependencies for musl static builds
+RUN apk add --no-cache \
+    musl-dev \
+    openssl-dev \
+    openssl-libs-static \
+    pkgconfig \
+    perl \
+    make \
+    clang \
+    git \
+    go
+
+# Set OpenSSL static linking environment variables
+ENV OPENSSL_STATIC=1
+ENV OPENSSL_LIB_DIR=/usr/lib
+ENV OPENSSL_INCLUDE_DIR=/usr/include
+
+# Install linuxkit at the specific commit
+RUN go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@270fd1c5aa1986977b31af6c743c6a2681f67a29
+ENV PATH="${PATH}:/root/go/bin"
+
+WORKDIR /build
+
+# Add musl target
+RUN rustup target add x86_64-unknown-linux-musl
+
+# Copy Cargo files first for dependency caching
+COPY Cargo.toml Cargo.lock ./
+COPY .cargo .cargo/
+COPY op-enclave-core/Cargo.toml op-enclave-core/
+COPY op-enclave-server/Cargo.toml op-enclave-server/
+COPY op-enclave-client/Cargo.toml op-enclave-client/
+
+# Create dummy source files for dependency compilation
+RUN mkdir -p op-enclave-core/src op-enclave-server/src op-enclave-client/src && \
+    echo "pub fn dummy() {}" > op-enclave-core/src/lib.rs && \
+    mkdir -p op-enclave-server/src/bin && \
+    echo "fn main() {}" > op-enclave-server/src/lib.rs && \
+    echo "fn main() {}" > op-enclave-server/src/bin/enclave.rs && \
+    echo "fn main() {}" > op-enclave-client/src/lib.rs
+
+# Build dependencies (cached layer)
+RUN cargo build --release --target x86_64-unknown-linux-musl --package op-enclave-server --bin enclave || true
+
+# Copy actual source code
+COPY op-enclave-core op-enclave-core/
+COPY op-enclave-server op-enclave-server/
+COPY op-enclave-client op-enclave-client/
+
+# Touch source files to invalidate cache
+RUN touch op-enclave-core/src/lib.rs op-enclave-server/src/lib.rs
+
+# Build the enclave binary with musl target
+RUN cargo build --release --target x86_64-unknown-linux-musl --package op-enclave-server --bin enclave
+
+# Strip debug symbols for smaller binary
+RUN strip target/x86_64-unknown-linux-musl/release/enclave
+
+# Copy EIF configuration and build ramdisks
+COPY eif eif/
+COPY --from=bootstrap /build/out bootstrap
+
+# Build init ramdisk (init-ramdisk.yaml copied from Go setup)
+RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./eif/init-ramdisk.yaml
+
+# Build user ramdisk with Rust binary
+RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./eif/user-ramdisk-rust.yaml
+
+
+# Stage 3: EIF - Build EIF using aws-nitro-enclaves-image-format
+FROM rust:1.88 AS eif
+
+# Set reproducible build timestamp
+ENV SOURCE_DATE_EPOCH=0
+
+WORKDIR /build
+
+# Clone and build EIF tools at specific commit
+ENV REPO=https://github.com/aws/aws-nitro-enclaves-image-format.git
+ENV COMMIT=483114f1da3bad913ad1fb7d5c00dadacc6cbae6
+RUN git init && \
+    git remote add origin $REPO && \
+    git fetch --depth=1 origin $COMMIT && \
+    git reset --hard FETCH_HEAD
+
+RUN cargo build --all --release
+
+# Copy cmdline (copied from Go setup)
+COPY eif/cmdline-x86_64 cmdline
+COPY --from=bootstrap /build/out bootstrap
+COPY --from=builder /build/init-ramdisk-initrd.img .
+COPY --from=builder /build/user-ramdisk-initrd.img .
+
+# Build the EIF
+RUN ./target/release/eif_build \
+    --kernel bootstrap/bzImage \
+    --kernel_config bootstrap/bzImage.config \
+    --cmdline "$(cat cmdline)" \
+    --ramdisk init-ramdisk-initrd.img \
+    --ramdisk user-ramdisk-initrd.img \
+    --output eif.bin
+
+
+# Stage 4: Final - Extract EIF to minimal container
+FROM busybox
+
+WORKDIR /build
+
+COPY --from=eif /build/eif.bin .
+COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/enclave .

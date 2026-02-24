@@ -1,0 +1,10 @@
+files:
+  - path: dev
+    directory: true
+    mode: "0755"
+  - path: init
+    source: bootstrap/init
+    mode: "0755"
+  - path: nsm.ko
+    source: bootstrap/nsm.ko
+    mode: "0755"

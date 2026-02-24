@@ -1,0 +1,25 @@
+[package]
+name = "op-enclave-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+op-enclave-core.workspace = true
+
+# Alloy types
+alloy-primitives.workspace = true
+
+# RPC
+jsonrpsee.workspace = true
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# TLS
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-pki-types = "1.0"
+
+[lints]
+workspace = true

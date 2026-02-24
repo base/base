@@ -1,0 +1,52 @@
+[package]
+name = "op-enclave-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+alloy-chains.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-rlp.workspace = true
+alloy-trie.workspace = true
+alloy-evm.workspace = true
+alloy-op-evm.workspace = true
+alloy-rpc-types-engine.workspace = true
+kona-genesis.workspace = true
+kona-derive.workspace = true
+kona-executor.workspace = true
+kona-mpt.workspace = true
+kona-driver.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+kona-protocol.workspace = true
+revm.workspace = true
+op-revm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+hex-literal.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# Optional dependencies for fixture generator binary
+tokio = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+
+[features]
+default = []
+fixture-generator = ["tokio", "reqwest", "clap"]
+
+[[bin]]
+name = "generate_fixtures"
+path = "src/bin/generate_fixtures.rs"
+required-features = ["fixture-generator"]
+
+[dev-dependencies]
+hex = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,46 @@
+files:
+  - path: rootfs/dev/pts
+    directory: true
+    mode: "0755"
+  - path: rootfs/dev/shm
+    directory: true
+    mode: "0755"
+  - path: rootfs/proc
+    directory: true
+    mode: "0755"
+  - path: rootfs/run
+    directory: true
+    mode: "0755"
+  - path: rootfs/sys
+    directory: true
+    mode: "0755"
+  - path: rootfs/tmp
+    directory: true
+    mode: "0755"
+  - path: rootfs/var
+    directory: true
+    mode: "0755"
+  - path: rootfs/etc/mtab
+    symlink: /proc/mounts
+    mode: "0777"
+  - path: rootfs/etc/resolv.conf
+    symlink: /run/resolvconf/resolv.conf
+    mode: "0755"
+  - path: rootfs/etc/hosts
+    contents: "127.0.0.1       localhost
+              ::1     localhost ip6-localhost ip6-loopback
+              fe00::0 ip6-localnet
+              ff00::0 ip6-mcastprefix
+              ff02::1 ip6-allnodes
+              ff02::2 ip6-allrouters
+              "
+    mode: "0755"
+  - path: rootfs/bin/enclave
+    source: target/x86_64-unknown-linux-musl/release/enclave
+    mode: "0755"
+  - path: cmd
+    contents: "/bin/enclave"
+    mode: "0644"
+  - path: env
+    contents: ""
+    mode: "0644"
