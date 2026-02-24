@@ -35,9 +35,6 @@ op-revm = { workspace = true, optional = true }
 revm = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
-# RPC
-jsonrpsee = { workspace = true, optional = true }
-
 # signing
 alloy-network = { workspace = true, optional = true }
 alloy-signer = { workspace = true, optional = true }
@@ -48,7 +45,6 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 # misc
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
-thiserror.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
@@ -74,7 +70,6 @@ std = [
 	"revm?/std",
 	"serde/std",
 	"serde_json/std",
-	"thiserror/std",
 ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
@@ -98,7 +93,6 @@ serde = [
 	"op-revm?/serde",
 	"revm?/serde",
 ]
-jsonrpsee = [ "dep:jsonrpsee" ]
 reth = [
 	"dep:alloy-evm",
 	"dep:alloy-network",

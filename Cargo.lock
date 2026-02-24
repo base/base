@@ -2357,7 +2357,6 @@ dependencies = [
  "arbitrary",
  "base-alloy-consensus",
  "derive_more",
- "jsonrpsee",
  "op-revm",
  "rand 0.9.2",
  "reth-rpc-convert",
@@ -2365,7 +2364,6 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2381,7 +2379,6 @@ dependencies = [
  "arbitrary",
  "arbtest",
  "base-alloy-consensus",
- "derive_more",
  "ethereum_ssz 0.9.1",
  "ethereum_ssz_derive 0.9.1",
  "reth-payload-primitives",
@@ -7776,7 +7773,6 @@ dependencies = [
  "rand 0.9.2",
  "serde",
  "serde_json",
- "serde_repr",
  "thiserror 2.0.18",
  "toml 1.0.3+spec-1.1.0",
 ]

@@ -8,8 +8,7 @@ use alloy_primitives::Address;
 
 use crate::{
     AddressList, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, Roles,
-    RollupConfig, SuperchainLevel, base_fee_params, base_fee_params_canyon,
-    params::base_fee_config,
+    RollupConfig, base_fee_params, base_fee_params_canyon, params::base_fee_config,
 };
 
 /// L1 chain configuration from the `alloy-genesis` crate.
@@ -47,21 +46,6 @@ pub struct ChainConfig {
     /// Chain explorer HTTP endpoint
     #[cfg_attr(feature = "serde", serde(rename = "Explorer", alias = "explorer"))]
     pub explorer: String,
-    /// Level of integration with the superchain.
-    #[cfg_attr(feature = "serde", serde(rename = "SuperchainLevel", alias = "superchain_level"))]
-    pub superchain_level: SuperchainLevel,
-    /// Whether the chain is governed by optimism.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "GovernedByOptimism", alias = "governed_by_optimism")
-    )]
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub governed_by_optimism: bool,
-    /// Time of when a given chain is opted in to the Superchain.
-    /// If set, hardforks times after the superchain time
-    /// will be inherited from the superchain-wide config.
-    #[cfg_attr(feature = "serde", serde(rename = "SuperchainTime", alias = "superchain_time"))]
-    pub superchain_time: Option<u64>,
     /// Data availability type.
     #[cfg_attr(
         feature = "serde",
@@ -93,9 +77,6 @@ pub struct ChainConfig {
     /// Protocol versions contract address.
     #[cfg_attr(feature = "serde", serde(alias = "protocolVersionsAddr", default))]
     pub protocol_versions_addr: Option<Address>,
-    /// Superchain config contract address.
-    #[cfg_attr(feature = "serde", serde(alias = "superchainConfigAddr", default))]
-    pub superchain_config_addr: Option<Address>,
     /// Hardfork Config. These values may override the superchain-wide defaults.
     #[cfg_attr(feature = "serde", serde(rename = "hardfork_configuration", alias = "hardforks"))]
     pub hardfork_config: HardForkConfig,
@@ -135,12 +116,6 @@ impl ChainConfig {
     }
 
     /// Loads the rollup config for the OP-Stack chain given the chain config and address list.
-    #[deprecated(since = "0.2.1", note = "please use `as_rollup_config` instead")]
-    pub fn load_op_stack_rollup_config(&self) -> RollupConfig {
-        self.as_rollup_config()
-    }
-
-    /// Loads the rollup config for the OP-Stack chain given the chain config and address list.
     pub fn as_rollup_config(&self) -> RollupConfig {
         RollupConfig {
             genesis: self.genesis,
@@ -162,9 +137,7 @@ impl ChainConfig {
                 .and_then(|a| a.system_config_proxy)
                 .unwrap_or_default(),
             protocol_versions_address: self.protocol_versions_addr.unwrap_or_default(),
-            superchain_config_address: self.superchain_config_addr,
             blobs_enabled_l1_timestamp: None,
-            da_challenge_address: None,
             channel_timeout: 300,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
             chain_op_config: self.base_fee_config(),
@@ -185,9 +158,6 @@ mod tests {
             "PublicRPC": "https://mainnet.base.org",
             "SequencerRPC": "https://mainnet-sequencer.base.org",
             "Explorer": "https://explorer.base.org",
-            "SuperchainLevel": 1,
-            "GovernedByOptimism": false,
-            "SuperchainTime": 0,
             "DataAvailabilityType": "eth-da",
             "l2_chain_id": 8453,
             "batch_inbox_address": "0xff00000000000000000000000000000000008453",
@@ -268,9 +238,6 @@ mod tests {
             "PublicRPC": "https://mainnet.base.org",
             "SequencerRPC": "https://mainnet-sequencer.base.org",
             "Explorer": "https://explorer.base.org",
-            "SuperchainLevel": 1,
-            "GovernedByOptimism": false,
-            "SuperchainTime": 0,
             "DataAvailabilityType": "eth-da",
             "l2_chain_id": 8453,
             "batch_inbox_address": "0xff00000000000000000000000000000000008453",

@@ -29,11 +29,6 @@ pub use payload::{
     OpExecutionPayloadV4, OpPayloadError,
 };
 
-mod superchain;
-pub use superchain::{
-    ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
-};
-
 mod flashblock;
 pub use flashblock::{
     OpFlashblockError, OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,

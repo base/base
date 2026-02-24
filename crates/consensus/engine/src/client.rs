@@ -27,7 +27,7 @@ use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types::Transaction;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
-    OpPayloadAttributes, ProtocolVersion,
+    OpPayloadAttributes,
 };
 use base_protocol::{FromBlockError, L2BlockInfo};
 use http_body_util::Full;
@@ -347,19 +347,6 @@ where
         <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_client_version_v1(
             &self.engine,
             client_version,
-        )
-        .await
-    }
-
-    async fn signal_superchain_v1(
-        &self,
-        recommended: ProtocolVersion,
-        required: ProtocolVersion,
-    ) -> TransportResult<ProtocolVersion> {
-        <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::signal_superchain_v1(
-            &self.engine,
-            recommended,
-            required,
         )
         .await
     }
