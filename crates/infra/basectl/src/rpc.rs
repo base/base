@@ -1,11 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::Address;
+use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::Result;
-use base_alloy_network::Base;
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_network::{Base, TransactionResponse};
 use base_primitives::Flashblock;
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
@@ -495,5 +497,99 @@ fn extract_l1_block_info(
         timestamp: block.header.timestamp,
         total_blobs,
         base_blobs,
+    }
+}
+
+/// Summary of a single transaction within a block.
+#[derive(Debug, Clone)]
+pub(crate) struct TxSummary {
+    /// Transaction hash.
+    pub hash: B256,
+    /// Sender address.
+    pub from: Address,
+    /// Recipient address (None for contract creations).
+    pub to: Option<Address>,
+    /// Max priority fee per gas (tip), in wei.
+    pub max_priority_fee_per_gas: Option<u128>,
+    /// Block base fee per gas, in wei.
+    pub base_fee_per_gas: Option<u64>,
+}
+
+/// Decodes raw EIP-2718 encoded transaction bytes into summaries.
+///
+/// Used to extract transaction details from flashblock stream data without RPC calls.
+pub(crate) fn decode_flashblock_transactions(
+    raw_txs: &[Bytes],
+    base_fee_per_gas: Option<u64>,
+) -> Vec<TxSummary> {
+    raw_txs
+        .iter()
+        .filter_map(|tx_bytes| {
+            let envelope = OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
+                .inspect_err(|e| warn!("Failed to decode transaction: {e}"))
+                .ok()?;
+            let hash = envelope.tx_hash();
+            let to = envelope.to();
+            let max_priority_fee = envelope.max_priority_fee_per_gas();
+            let recovered = envelope
+                .try_into_recovered()
+                .inspect_err(|e| warn!("Failed to recover signer: {e}"))
+                .ok()?;
+            Some(TxSummary {
+                hash,
+                from: recovered.signer(),
+                to,
+                max_priority_fee_per_gas: max_priority_fee,
+                base_fee_per_gas,
+            })
+        })
+        .collect()
+}
+
+/// Fetches all transactions for a given block and sends summaries through the channel.
+pub(crate) async fn fetch_block_transactions(
+    l2_rpc: String,
+    block_number: u64,
+    tx: mpsc::Sender<Vec<TxSummary>>,
+) {
+    let result = async {
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect(&l2_rpc)
+            .await?;
+
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .full()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Block {block_number} not found"))?;
+
+        let base_fee = block.header.base_fee_per_gas;
+
+        let summaries: Vec<TxSummary> = block
+            .transactions
+            .txns()
+            .map(|tx_obj| TxSummary {
+                hash: tx_obj.inner.tx_hash(),
+                from: tx_obj.inner.inner.signer(),
+                to: tx_obj.inner.to(),
+                max_priority_fee_per_gas: tx_obj.inner.max_priority_fee_per_gas(),
+                base_fee_per_gas: base_fee,
+            })
+            .collect();
+
+        Ok::<_, anyhow::Error>(summaries)
+    }
+    .await;
+
+    match result {
+        Ok(summaries) => {
+            let _ = tx.send(summaries).await;
+        }
+        Err(e) => {
+            warn!("Failed to fetch block transactions for block {block_number}: {e}");
+            let _ = tx.send(Vec::new()).await;
+        }
     }
 }

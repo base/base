@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View},
+    app::{Action, Resources, View, views::TransactionPane},
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
@@ -26,12 +26,14 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
+    Keybinding { key: "Enter", description: "View transactions" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
     L2Blocks,
     L1Blocks,
+    Txns,
 }
 
 /// View for monitoring data availability backlog and L1 blob submissions.
@@ -41,6 +43,7 @@ pub(crate) struct DaMonitorView {
     l2_table_state: TableState,
     l1_table_state: TableState,
     l1_filter: L1BlockFilter,
+    tx_pane: Option<TransactionPane>,
 }
 
 impl Default for DaMonitorView {
@@ -61,28 +64,36 @@ impl DaMonitorView {
             l2_table_state,
             l1_table_state,
             l1_filter: L1BlockFilter::All,
+            tx_pane: None,
         }
     }
 
     const fn active_table_state(&mut self) -> &mut TableState {
         match self.selected_panel {
-            Panel::L2Blocks => &mut self.l2_table_state,
+            Panel::L2Blocks | Panel::Txns => &mut self.l2_table_state,
             Panel::L1Blocks => &mut self.l1_table_state,
         }
     }
 
     const fn next_panel(&mut self) {
         self.selected_panel = match self.selected_panel {
-            Panel::L2Blocks => Panel::L1Blocks,
+            Panel::L2Blocks => {
+                if self.tx_pane.is_some() {
+                    Panel::Txns
+                } else {
+                    Panel::L1Blocks
+                }
+            }
+            Panel::Txns => Panel::L1Blocks,
             Panel::L1Blocks => Panel::L2Blocks,
         };
-        self.active_table_state().select(Some(0));
     }
 
     fn panel_len(&self, panel: Panel, resources: &Resources) -> usize {
         match panel {
             Panel::L2Blocks => resources.da.tracker.block_contributions.len(),
             Panel::L1Blocks => resources.da.tracker.filtered_l1_blocks(self.l1_filter).count(),
+            Panel::Txns => 0,
         }
     }
 }
@@ -92,8 +103,51 @@ impl View for DaMonitorView {
         KEYBINDINGS
     }
 
+    fn consumes_esc(&self) -> bool {
+        self.tx_pane.is_some() && self.selected_panel == Panel::Txns
+    }
+
+    fn consumes_quit(&self) -> bool {
+        self.tx_pane.is_some() && self.selected_panel == Panel::Txns
+    }
+
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
         match key.code {
+            KeyCode::Enter if self.selected_panel == Panel::L2Blocks => {
+                let row = self.l2_table_state.selected().unwrap_or(0);
+                if let Some(contrib) = resources.da.tracker.block_contributions.get(row) {
+                    let block_number = contrib.block_number;
+                    let title = format!("Block {block_number}");
+
+                    let block_entries: Vec<_> = resources
+                        .flash
+                        .entries
+                        .iter()
+                        .filter(|e| e.block_number == block_number)
+                        .collect();
+
+                    self.tx_pane = Some(TransactionPane::for_block(
+                        block_number,
+                        title,
+                        &block_entries,
+                        resources.config.rpc.as_str(),
+                        resources.config.explorer_base_url(),
+                    ));
+                    self.selected_panel = Panel::Txns;
+                }
+                Action::None
+            }
+            _ if self.selected_panel == Panel::Txns && self.tx_pane.is_some() => {
+                let pane = self.tx_pane.as_mut().unwrap();
+                let should_close = pane.handle_key(key, &mut |toast| {
+                    resources.toasts.push(toast);
+                });
+                if should_close {
+                    self.tx_pane = None;
+                    self.selected_panel = Panel::L2Blocks;
+                }
+                Action::None
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 let state = self.active_table_state();
                 if let Some(selected) = state.selected()
@@ -139,6 +193,14 @@ impl View for DaMonitorView {
         }
     }
 
+    fn tick(&mut self, resources: &mut Resources) -> Action {
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.poll();
+        }
+        let _ = resources;
+        Action::None
+    }
+
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -163,10 +225,21 @@ impl View for DaMonitorView {
 
         render_stats_panel(frame, chunks[1], resources, self.l1_filter);
 
-        let panel_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[2]);
+        let panel_chunks = if self.tx_pane.is_some() {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(50),
+                ])
+                .split(chunks[2])
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[2])
+        };
 
         render_blocks_panel(
             frame,
@@ -188,6 +261,10 @@ impl View for DaMonitorView {
                 connection_mode: resources.da.l1_connection_mode,
             },
         );
+
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.render(frame, panel_chunks[2], self.selected_panel == Panel::Txns);
+        }
     }
 }
 
@@ -288,12 +365,13 @@ fn render_blocks_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let fixed_cols_width = 8 + 6 + 3;
+    let fixed_cols_width = 8 + 5 + 6 + 4;
     let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
         Cell::from("Block").style(header_style),
+        Cell::from("Txs").style(header_style),
         Cell::from("DA").style(header_style),
         Cell::from("Age").style(header_style),
     ]);
@@ -320,9 +398,13 @@ fn render_blocks_panel(
                 Style::default().fg(block_color(contrib.block_number))
             };
 
+            let tx_str =
+                if contrib.tx_count > 0 { contrib.tx_count.to_string() } else { "-".to_string() };
+
             Row::new(vec![
                 Cell::from(truncate_block_number(contrib.block_number, block_col_width))
                     .style(block_style),
+                Cell::from(tx_str),
                 Cell::from(fmt_bytes(contrib.da_bytes)),
                 Cell::from(fmt_dur(Duration::from_secs(contrib.age_seconds()))),
             ])
@@ -330,7 +412,8 @@ fn render_blocks_panel(
         })
         .collect();
 
-    let widths = [Constraint::Max(10), Constraint::Length(8), Constraint::Min(6)];
+    let widths =
+        [Constraint::Max(10), Constraint::Length(5), Constraint::Length(8), Constraint::Min(6)];
     let table = Table::new(rows, widths).header(header);
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }

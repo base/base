@@ -80,9 +80,17 @@ impl App {
                         self.show_help = !self.show_help;
                         Action::None
                     }
-                    KeyCode::Char('q') => Action::Quit,
+                    KeyCode::Char('q') => {
+                        if current_view.consumes_quit() {
+                            current_view.handle_key(key, &mut self.resources)
+                        } else {
+                            Action::Quit
+                        }
+                    }
                     KeyCode::Esc => {
-                        if self.router.current() == ViewId::Home {
+                        if current_view.consumes_esc() {
+                            current_view.handle_key(key, &mut self.resources)
+                        } else if self.router.current() == ViewId::Home {
                             Action::Quit
                         } else {
                             Action::SwitchView(ViewId::Home)

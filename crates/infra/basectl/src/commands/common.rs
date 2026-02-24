@@ -108,6 +108,8 @@ pub(crate) struct FlashblockEntry {
     pub timestamp: DateTime<Local>,
     /// Time difference in milliseconds from the previous flashblock.
     pub time_diff_ms: Option<i64>,
+    /// Decoded transaction summaries from the flashblock stream.
+    pub decoded_txs: Vec<crate::rpc::TxSummary>,
 }
 
 /// An L2 block's data availability contribution.
@@ -119,6 +121,8 @@ pub(crate) struct BlockContribution {
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
+    /// Total transaction count accumulated from flashblocks.
+    pub tx_count: usize,
 }
 
 impl BlockContribution {
@@ -370,7 +374,7 @@ impl DaTracker {
 
     /// Adds a block from the initial backlog fetch.
     pub(crate) fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
-        let contribution = BlockContribution { block_number, da_bytes, timestamp };
+        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
         self.block_contributions.push_front(contribution);
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
@@ -386,7 +390,7 @@ impl DaTracker {
         self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
         self.growth_tracker.add_sample(da_bytes);
 
-        let contribution = BlockContribution { block_number, da_bytes, timestamp };
+        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
         self.block_contributions.push_front(contribution);
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
@@ -420,7 +424,7 @@ impl DaTracker {
 
         // Block not found - insert it in sorted position (gap fill)
         let contribution =
-            BlockContribution { block_number, da_bytes: accurate_da_bytes, timestamp };
+            BlockContribution { block_number, da_bytes: accurate_da_bytes, timestamp, tx_count: 0 };
 
         if block_number > self.safe_l2_block {
             self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(accurate_da_bytes);
