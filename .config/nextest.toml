@@ -1,6 +1,13 @@
 [test-groups.system-tests]
 max-threads = 1
 
+[test-groups.e2e-tests]
+max-threads = 1
+
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
 test-group = 'system-tests'
+
+[[profile.default.overrides]]
+filter = 'binary(e2e-testsuite)'
+test-group = 'e2e-tests'

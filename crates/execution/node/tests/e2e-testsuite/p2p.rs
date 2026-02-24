@@ -15,7 +15,7 @@ async fn can_sync() -> eyre::Result<()> {
     let mut second_node = nodes.pop().unwrap();
     let mut first_node = nodes.pop().unwrap();
 
-    let tip: usize = 90;
+    let tip: usize = 20;
     let tip_index: usize = tip - 1;
     let reorg_depth = 2;
 
