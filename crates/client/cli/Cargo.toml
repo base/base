@@ -31,6 +31,7 @@ kona-cli = { workspace = true, features = ["secrets"] }
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
+alloy-rpc-types-engine.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true

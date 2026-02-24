@@ -33,9 +33,6 @@ revm.workspace = true
 auto_impl.workspace = true
 thiserror.workspace = true
 
-# reth (optional, `op` feature provides `TransactionEnv` impl for `OpTransaction<T>`)
-reth-evm = { workspace = true, optional = true, features = ["op"] }
-
 [dev-dependencies]
 rstest.workspace = true
 alloy-hardforks.workspace = true
@@ -52,4 +49,4 @@ std = [
 	"revm/std",
 	"thiserror/std",
 ]
-reth = [ "base-alloy-consensus/reth", "dep:reth-evm", "std" ]
+reth = [ "base-alloy-consensus/reth", "std" ]

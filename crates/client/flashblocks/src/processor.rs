@@ -16,7 +16,7 @@ use base_primitives::Flashblock;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
-use reth_optimism_chainspec::OpHardforks;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
 use reth_primitives::RecoveredBlock;

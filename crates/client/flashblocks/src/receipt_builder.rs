@@ -6,7 +6,7 @@
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
 use reth_evm::Evm;
-use reth_optimism_chainspec::OpHardforks;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::OpReceipt;
 use revm::{Database, context::result::ExecutionResult};
 

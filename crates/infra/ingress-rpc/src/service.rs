@@ -16,7 +16,7 @@ use base_bundles::BundleExtensions;
 use base_primitives::{
     AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
 };
-use base_reth_rpc_types::EthApiError;
+use reth_rpc_eth_types::EthApiError;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,

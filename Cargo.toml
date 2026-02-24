@@ -134,7 +134,6 @@ base-engine-ext = { path = "crates/shared/engine-ext" }
 base-primitives = { path = "crates/shared/primitives" }
 base-access-lists = { path = "crates/shared/access-lists" }
 base-proofs-extension = { path = "crates/client/proofs" }
-base-reth-rpc-types = { path = "crates/shared/reth-rpc-types" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-txpool-rpc = { path = "crates/shared/txpool-rpc" }
 
@@ -264,7 +263,6 @@ reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag 
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 
 # op-reth (local)
-reth-op = { path = "crates/execution/reth" }
 reth-optimism-evm = { path = "crates/execution/evm" }
 reth-optimism-cli = { path = "crates/execution/cli" }
 reth-optimism-rpc = { path = "crates/execution/rpc" }
