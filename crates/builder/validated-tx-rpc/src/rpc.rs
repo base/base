@@ -160,3 +160,149 @@ where
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, U256};
+    use base_primitives::{TransactionSignature, ValidatedTransaction};
+
+    /// Helper to create a valid EIP-1559 `ValidatedTransaction` for testing.
+    fn create_test_validated_tx(nonce: u64, from: Address) -> ValidatedTransaction {
+        ValidatedTransaction {
+            from,
+            balance: U256::from(1_000_000_000_000_000_000u128), // 1 ETH
+            state_nonce: nonce,
+            bytecode_hash: None,
+            tx_type: 2,           // EIP-1559
+            chain_id: Some(8453), // Base mainnet
+            nonce,
+            to: Some(Address::repeat_byte(0x42)),
+            value: U256::from(1000),
+            gas_limit: 21000,
+            gas_price: None,
+            max_fee_per_gas: Some(1_000_000_000),
+            max_priority_fee_per_gas: Some(100_000_000),
+            input: alloy_primitives::Bytes::default(),
+            access_list: None,
+            signature: TransactionSignature { v: 0, r: U256::from(1), s: U256::from(2) },
+        }
+    }
+
+    #[test]
+    fn test_validated_tx_compute_hash_success() {
+        let tx = create_test_validated_tx(0, Address::repeat_byte(0x01));
+        let hash = tx.compute_tx_hash();
+        assert!(hash.is_ok(), "hash computation should succeed for valid tx");
+        assert!(!hash.unwrap().is_zero(), "hash should not be zero");
+    }
+
+    #[test]
+    fn test_validated_tx_into_recovered_success() {
+        let tx = create_test_validated_tx(0, Address::repeat_byte(0x01));
+        let recovered = tx.into_recovered();
+        assert!(recovered.is_ok(), "conversion should succeed for valid tx");
+    }
+
+    #[test]
+    fn test_validated_tx_missing_max_fee_fails() {
+        let mut tx = create_test_validated_tx(0, Address::repeat_byte(0x01));
+        tx.max_fee_per_gas = None; // Remove required field for EIP-1559
+        let hash = tx.compute_tx_hash();
+        assert!(hash.is_err(), "should fail without max_fee_per_gas");
+    }
+
+    #[test]
+    fn test_validated_tx_legacy_type() {
+        let tx = ValidatedTransaction {
+            from: Address::repeat_byte(0x01),
+            balance: U256::from(1_000_000_000_000_000_000u128),
+            state_nonce: 0,
+            bytecode_hash: None,
+            tx_type: 0, // Legacy
+            chain_id: Some(8453),
+            nonce: 0,
+            to: Some(Address::repeat_byte(0x42)),
+            value: U256::from(1000),
+            gas_limit: 21000,
+            gas_price: Some(1_000_000_000),
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            input: alloy_primitives::Bytes::default(),
+            access_list: None,
+            signature: TransactionSignature { v: 27, r: U256::from(1), s: U256::from(2) },
+        };
+
+        let hash = tx.compute_tx_hash();
+        assert!(hash.is_ok(), "legacy tx hash computation should succeed");
+
+        let recovered = tx.into_recovered();
+        assert!(recovered.is_ok(), "legacy tx conversion should succeed");
+    }
+
+    #[test]
+    fn test_validated_tx_unsupported_type() {
+        let mut tx = create_test_validated_tx(0, Address::repeat_byte(0x01));
+        tx.tx_type = 99; // Unsupported type
+        let hash = tx.compute_tx_hash();
+        assert!(hash.is_err(), "unsupported tx type should fail");
+    }
+
+    #[test]
+    fn test_validated_tx_eip2930_type() {
+        let tx = ValidatedTransaction {
+            from: Address::repeat_byte(0x01),
+            balance: U256::from(1_000_000_000_000_000_000u128),
+            state_nonce: 0,
+            bytecode_hash: None,
+            tx_type: 1, // EIP-2930
+            chain_id: Some(8453),
+            nonce: 0,
+            to: Some(Address::repeat_byte(0x42)),
+            value: U256::from(1000),
+            gas_limit: 21000,
+            gas_price: Some(1_000_000_000),
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            input: alloy_primitives::Bytes::default(),
+            access_list: Some(Default::default()),
+            signature: TransactionSignature { v: 0, r: U256::from(1), s: U256::from(2) },
+        };
+
+        let hash = tx.compute_tx_hash();
+        assert!(hash.is_ok(), "EIP-2930 tx hash computation should succeed");
+
+        let recovered = tx.into_recovered();
+        assert!(recovered.is_ok(), "EIP-2930 tx conversion should succeed");
+    }
+
+    #[test]
+    fn test_validated_tx_preserves_validation_metadata() {
+        let balance = U256::from(999_000_000_000u128);
+        let state_nonce = 42u64;
+        let bytecode_hash = Some(B256::repeat_byte(0xAB));
+
+        let tx = ValidatedTransaction {
+            from: Address::repeat_byte(0x01),
+            balance,
+            state_nonce,
+            bytecode_hash,
+            tx_type: 2,
+            chain_id: Some(8453),
+            nonce: 5,
+            to: Some(Address::repeat_byte(0x42)),
+            value: U256::from(1000),
+            gas_limit: 21000,
+            gas_price: None,
+            max_fee_per_gas: Some(1_000_000_000),
+            max_priority_fee_per_gas: Some(100_000_000),
+            input: alloy_primitives::Bytes::default(),
+            access_list: None,
+            signature: TransactionSignature { v: 0, r: U256::from(1), s: U256::from(2) },
+        };
+
+        // Verify the metadata is preserved
+        assert_eq!(tx.balance, balance);
+        assert_eq!(tx.state_nonce, state_nonce);
+        assert_eq!(tx.bytecode_hash, bytecode_hash);
+    }
+}
