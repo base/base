@@ -50,11 +50,6 @@ reqwest = { workspace = true, optional = true }
 [dev-dependencies]
 hex.workspace = true
 
-[[bin]]
-name = "generate_fixtures"
-path = "src/bin/generate_fixtures.rs"
-required-features = ["fixture-generator"]
-
 [features]
 default = []
 fixture-generator = [ "clap", "reqwest", "tokio" ]
