@@ -1,6 +1,6 @@
 use std::{
     env,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use anyhow::Result;
@@ -28,13 +28,27 @@ use rkyv::to_bytes;
 use sp1_core_executor::SP1RecursionProof;
 use sp1_hypercube::SP1PcsProofInner;
 use sp1_primitives::SP1GlobalContext;
-use sp1_sdk::{blocking::Prover as BlockingProver, Elf, ProvingKey, SP1Stdin};
+use sp1_sdk::{blocking::Prover as BlockingProver, Elf, ProvingKey, SP1Stdin, SP1VerifyingKey};
 
 type WitnessExecutor = EigenDAWitnessExecutor<
     PreimageWitnessCollector<DefaultOracleBase>,
     OnlineBlobStore<OracleBlobProvider<DefaultOracleBase>>,
     OracleEigenDAPreimageProvider<DefaultOracleBase>,
 >;
+
+/// Cached canoe verifying key. The canoe ELF is a compile-time constant, so the
+/// resulting vkey is deterministic and only needs to be computed once. Uses a
+/// separate thread to avoid nested tokio runtime panics.
+static CANOE_VK: LazyLock<SP1VerifyingKey> = LazyLock::new(|| {
+    std::thread::spawn(|| {
+        let client = sp1_sdk::blocking::ProverClient::from_env();
+        let pk =
+            client.setup(Elf::Static(canoe_sp1_cc_host::ELF)).expect("Failed to setup canoe ELF");
+        pk.verifying_key().clone()
+    })
+    .join()
+    .expect("Canoe VK setup thread panicked")
+});
 
 pub struct EigenDAWitnessGenerator {}
 
@@ -59,22 +73,10 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
 
             // Take the canoe proof bytes from the witness data
             if let Some(proof_bytes) = eigenda_witness.canoe_proof_bytes.take() {
-                // blocking::ProverClient creates its own tokio runtime; run on a separate
-                // thread to avoid nesting when called from an async context.
-                let canoe_vk = std::thread::spawn(|| {
-                    let client = sp1_sdk::blocking::ProverClient::from_env();
-                    let pk = client
-                        .setup(Elf::Static(canoe_sp1_cc_host::ELF))
-                        .map_err(|e| anyhow::anyhow!("Failed to setup canoe ELF: {}", e))?;
-                    Ok::<_, anyhow::Error>(pk.verifying_key().vk.clone())
-                })
-                .join()
-                .map_err(|e| anyhow::anyhow!("Prover setup thread panicked: {:?}", e))??;
-
                 let reduced_proof: SP1RecursionProof<SP1GlobalContext, SP1PcsProofInner> =
                     serde_cbor::from_slice(&proof_bytes)
                         .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
-                stdin.write_proof(reduced_proof, canoe_vk);
+                stdin.write_proof(reduced_proof, CANOE_VK.vk.clone());
 
                 // Re-serialize the witness data without the proof
                 witness.eigenda_data = Some(serde_cbor::to_vec(&eigenda_witness).map_err(|e| {
