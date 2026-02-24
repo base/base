@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, U256, utils::parse_ether};
 
-use super::Account;
+use crate::Account;
 
 /// Chain ID for devnet test network.
 pub const DEVNET_CHAIN_ID: u64 = 84538453;

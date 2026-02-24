@@ -19,7 +19,6 @@ indicatif.workspace = true
 rand_chacha.workspace = true
 url = { workspace = true }
 base-bundles.workspace = true
-base-primitives.workspace = true
 bytes = { workspace = true }
 async-trait = { workspace = true }
 audit-archiver-lib = { workspace = true }

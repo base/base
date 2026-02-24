@@ -9,7 +9,7 @@ use base_alloy_network::TransactionBuilder;
 use base_alloy_rpc_types::OpTransactionRequest;
 use eyre::{Result, eyre};
 
-use super::DEVNET_CHAIN_ID;
+use crate::DEVNET_CHAIN_ID;
 
 /// EIP-1559 transaction type constant.
 const EIP1559_TX_TYPE: u8 = 2;

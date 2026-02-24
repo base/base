@@ -10,10 +10,10 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
+use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
 };
-use base_primitives::{ExecutionPayloadBaseV1, Flashblock};
 use reth_evm::op_revm::L1BlockInfo;
 use reth_optimism_primitives::OpBlock;
 
@@ -135,7 +135,9 @@ impl BlockAssembler {
 mod tests {
     use alloy_primitives::{Address, Bloom, U256};
     use alloy_rpc_types_engine::PayloadId;
-    use base_primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata};
+    use base_alloy_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
+    };
 
     use super::*;
     use crate::ProtocolError;

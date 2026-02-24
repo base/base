@@ -3,7 +3,7 @@
 use std::{fs, io::Write, path::PathBuf};
 
 use alloy_primitives::utils::format_ether;
-use base_primitives::Flashblock;
+use base_alloy_flashblocks::Flashblock;
 use clap::Parser;
 use devnet::{
     DevnetBuilder, DevnetUrls,

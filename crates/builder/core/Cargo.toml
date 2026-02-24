@@ -27,7 +27,6 @@ min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
 	"base-client-node/test-utils",
-	"base-primitives/test-utils",
 	"ctor",
 	"http-body-util",
 	"hyper",
@@ -57,7 +56,7 @@ test-utils = [
 # workspace
 base-bundles.workspace = true
 base-client-node.workspace = true
-base-primitives.workspace = true
+base-alloy-flashblocks.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true
 

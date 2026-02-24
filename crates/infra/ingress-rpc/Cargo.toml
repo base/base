@@ -18,7 +18,6 @@ async-trait.workspace = true
 base-cli-utils.workspace = true
 metrics-derive.workspace = true
 base-bundles.workspace = true
-base-primitives.workspace = true
 base-alloy-network.workspace = true
 audit-archiver-lib.workspace = true
 alloy-signer-local.workspace = true
@@ -42,4 +41,4 @@ rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored
 
 [dev-dependencies]
 wiremock.workspace = true
-base-primitives = { workspace = true, features = ["test-utils"] }
+base-bundles = { workspace = true, features = ["test-utils"] }

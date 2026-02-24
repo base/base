@@ -17,7 +17,7 @@ ratatui = { workspace = true }
 arboard = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 crossterm = { workspace = true }
-base-primitives.workspace = true
+base-alloy-flashblocks.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }

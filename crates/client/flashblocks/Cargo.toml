@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-primitives.workspace = true
+base-alloy-flashblocks.workspace = true
 
 # reth
 reth-rpc.workspace = true

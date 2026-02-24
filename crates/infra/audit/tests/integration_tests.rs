@@ -6,8 +6,7 @@ use audit_archiver_lib::{
     BundleEvent, BundleEventPublisher, BundleEventS3Reader, DropReason, KafkaAuditArchiver,
     KafkaAuditLogReader, KafkaBundleEventPublisher, S3EventReaderWriter,
 };
-use base_bundles::BundleExtensions;
-use base_primitives::create_bundle_from_txn_data;
+use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
 use uuid::Uuid;
 mod common;
 use common::TestHarness;
