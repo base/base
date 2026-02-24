@@ -1,0 +1,28 @@
+[package]
+name = "proposer-bin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "proposer"
+path = "src/main.rs"
+
+[dependencies]
+base-proposer.workspace = true
+
+alloy-primitives.workspace = true
+clap.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+eyre.workspace = true
+rustls = { version = "0.23", features = ["ring"] }
+
+[lints]
+workspace = true

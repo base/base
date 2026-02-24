@@ -1,0 +1,161 @@
+[workspace]
+members = [
+    "bin/proposer",
+    "crates/proposer",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Base"]
+license = "MIT"
+repository = "https://github.com/base/base"
+
+[workspace.dependencies]
+# Workspace crates
+base-proposer = { path = "crates/proposer" }
+
+# Base
+base-cli-utils = { git = "https://github.com/base/base.git", package = "base-cli-utils" }
+
+# Alloy
+alloy = { version = "1.4.3", features = ["full"] }
+alloy-primitives = "1.4.3"
+alloy-sol-types = "1.4.3"
+alloy-provider = "1.4.3"
+alloy-transport = "1.4.3"
+alloy-transport-http = "1.4.3"
+alloy-rpc-types = "1.4.3"
+alloy-rpc-types-eth = "1.4.3"
+alloy-contract = "1.4.3"
+alloy-network = "1.4.3"
+alloy-signer = "1.4.3"
+alloy-consensus = "1.4.3"
+alloy-eips = "1.4.3"
+
+# OP Alloy
+op-alloy-rpc-types = "0.23.1"
+op-alloy-network = "0.23.1"
+op-alloy-consensus = "0.23.1"
+
+# Async runtime
+tokio = { version = "1.48.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3.31"
+async-trait = "0.1.88"
+
+# CLI
+clap = { version = "4.5.53", features = ["derive", "env"] }
+
+# Serialization
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+
+# Logging/Tracing
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+
+# Error handling
+thiserror = "2.0"
+eyre = "0.6.12"
+
+# Metrics
+metrics = "0.24.3"
+metrics-exporter-prometheus = "0.18.1"
+
+# RPC
+jsonrpsee = { version = "0.26.0", features = ["http-client", "ws-client"] }
+
+# Caching
+moka = { version = "0.12", features = ["future"] }
+
+# Enclave
+op-enclave-client = { git = "https://github.com/jackchuma/op-enclave.git", branch = "jack/rust", package = "op-enclave-client" }
+op-enclave-core = { git = "https://github.com/jackchuma/op-enclave.git", branch = "jack/rust", package = "op-enclave-core" }
+
+# Retry
+backon = { version = "1", features = ["tokio-sleep"] }
+
+# HTTP server (health + admin)
+axum = "0.8"
+
+# Misc
+url = "2.5.4"
+hex = "0.4.3"
+bytes = "1.10.1"
+once_cell = "1.21.3"
+parking_lot = "0.12.4"
+humantime = "2.1"
+
+[workspace.lints.rust]
+missing-debug-implementations = "warn"
+missing-docs = "warn"
+unreachable-pub = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+unnameable-types = "warn"
+
+[workspace.lints.clippy]
+# Baseline
+all = { level = "warn", priority = -1 }
+
+# Performance & Cloning
+missing-const-for-fn = "warn"
+redundant-clone = "warn"
+clone-on-ref-ptr = "warn"
+unnecessary-to-owned = "warn"
+cloned-instead-of-copied = "warn"
+flat-map-option = "warn"
+implicit-clone = "warn"
+or-fun-call = "warn"
+
+# Code Style
+use-self = "warn"
+option-if-let-else = "warn"
+uninlined-format-args = "warn"
+manual-string-new = "warn"
+single-char-pattern = "warn"
+redundant-else = "warn"
+match-same-arms = "warn"
+
+# Safety & Documentation
+undocumented-unsafe-blocks = "warn"
+doc-markdown = "warn"
+
+# Debugging Artifacts
+dbg-macro = "warn"
+
+# Code Quality
+branches-sharing-code = "warn"
+derive-partial-eq-without-eq = "warn"
+explicit-into-iter-loop = "warn"
+explicit-iter-loop = "warn"
+iter-with-drain = "warn"
+needless-pass-by-ref-mut = "warn"
+string-lit-as-bytes = "warn"
+
+[workspace.lints.rustdoc]
+all = "warn"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1
+overflow-checks = true
+
+# Patch crates.io to use the same op-alloy versions as the enclave's kona deps.
+# Without this, the proposer would compile with crates.io op-alloy types that are
+# incompatible with the git-sourced types used by kona inside the enclave.
+[patch.crates-io]
+op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy-rpc-types-engine = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy-network = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+op-alloy = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
+alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", rev = "48a7a09bfcce4bf95144cbc73062d5baabe88f6c" }
