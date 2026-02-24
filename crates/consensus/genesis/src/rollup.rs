@@ -302,13 +302,6 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
-
-    /// Returns the [`HardForkConfig`] using [`RollupConfig`] timestamps.
-    #[deprecated(since = "0.1.0", note = "Use the `hardforks` field instead.")]
-    pub const fn hardfork_config(&self) -> HardForkConfig {
-        self.hardforks
-    }
-
     /// Computes a block number from a timestamp, relative to the L2 genesis time and the block
     /// time.
     ///
