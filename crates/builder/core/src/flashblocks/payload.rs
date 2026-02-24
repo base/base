@@ -10,7 +10,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_builder_publish::WebSocketPublisher;
 use base_primitives::{
@@ -25,7 +25,7 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
-use reth_optimism_primitives::OpTransactionSigned;
+use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
@@ -824,12 +824,13 @@ where
     }
 }
 
+// TODO: unify with `base_primitives::Metadata` once receipts and balances are added to the shared type
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
-    /// The block number this flashblock belongs to
+    receipts: HashMap<B256, OpReceipt>,
+    new_account_balances: HashMap<Address, U256>,
     block_number: u64,
-    /// The flashblock access list
-    access_list: FlashblockAccessList,
+    access_list: Option<FlashblockAccessList>,
 }
 
 fn execute_pre_steps<DB>(
@@ -1023,22 +1024,40 @@ where
     let block_hash = sealed_block.hash();
 
     // pick the new transactions from the info field and update the last flashblock index
-    let new_transactions_encoded = info.executed_transactions[info.extra.last_flashblock_index..]
-        .iter()
-        .map(|tx| tx.encoded_2718().into())
-        .collect::<Vec<_>>();
+    let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..].to_vec();
+
+    let new_transactions_encoded =
+        new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
     let min_tx_index = info.extra.last_flashblock_index as u64;
     let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
 
+    let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
+
+    let receipts_with_hash = new_transactions
+        .iter()
+        .zip(new_receipts.iter())
+        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
+        .collect::<HashMap<B256, OpReceipt>>();
+
+    let new_account_balances = state
+        .bundle_state
+        .state
+        .iter()
+        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
+        .collect::<HashMap<Address, U256>>();
 
     // finalize and build the FAL
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let access_list = fal_builder.build(min_tx_index, max_tx_index);
+    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
 
-    let metadata: FlashblocksMetadata =
-        FlashblocksMetadata { block_number: ctx.parent().number + 1, access_list };
+    let metadata: FlashblocksMetadata = FlashblocksMetadata {
+        receipts: receipts_with_hash,
+        new_account_balances,
+        block_number: ctx.parent().number + 1,
+        access_list: None,
+    };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);
 
