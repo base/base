@@ -8,7 +8,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Log, address};
 use hex_literal::hex;
 use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
-use kona_protocol::{L1BlockInfoTx, decode_deposit};
+use base_protocol::{L1BlockInfoTx, decode_deposit};
 
 use crate::error::ExecutorError;
 

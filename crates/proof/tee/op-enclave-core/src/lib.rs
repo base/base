@@ -32,7 +32,7 @@ pub use executor::{
 // Re-export commonly used types from alloy
 pub use alloy_consensus::Header;
 pub use alloy_primitives::{Address, B256, Bytes, U256};
-pub use op_alloy_consensus::OpReceiptEnvelope;
+pub use base_alloy_consensus::OpReceiptEnvelope;
 
 // Re-export kona_genesis types for ecosystem compatibility
 pub use alloy_eips::eip1898::BlockNumHash;

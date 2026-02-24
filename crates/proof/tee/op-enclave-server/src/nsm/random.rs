@@ -2,7 +2,7 @@
 //!
 //! This module provides an RNG that uses the NSM device for random bytes.
 
-use rand::{CryptoRng, RngCore};
+use rand_08::{CryptoRng, RngCore};
 
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::api::{Request, Response};
@@ -18,7 +18,7 @@ pub struct NsmRng {
     #[cfg(target_os = "linux")]
     fd: i32,
     #[cfg(not(target_os = "linux"))]
-    inner: rand::rngs::ThreadRng,
+    inner: rand_08::rngs::ThreadRng,
 }
 
 impl NsmRng {
@@ -38,7 +38,7 @@ impl NsmRng {
     #[cfg(not(target_os = "linux"))]
     pub fn new() -> Option<Self> {
         Some(Self {
-            inner: rand::thread_rng(),
+            inner: rand_08::thread_rng(),
         })
     }
 
@@ -46,7 +46,7 @@ impl NsmRng {
     #[cfg(not(target_os = "linux"))]
     pub fn fallback() -> Self {
         Self {
-            inner: rand::thread_rng(),
+            inner: rand_08::thread_rng(),
         }
     }
 
@@ -104,7 +104,7 @@ impl RngCore for NsmRng {
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         if self.fd < 0 {
             // Fallback to OS RNG if NSM is not available
-            rand::rngs::OsRng.fill_bytes(dest);
+            rand_08::rngs::OsRng.fill_bytes(dest);
             return;
         }
 
@@ -122,7 +122,7 @@ impl RngCore for NsmRng {
                 }
                 _ => {
                     // Fallback to OS RNG on error
-                    rand::rngs::OsRng.fill_bytes(&mut dest[filled..]);
+                    rand_08::rngs::OsRng.fill_bytes(&mut dest[filled..]);
                     return;
                 }
             }
@@ -135,13 +135,13 @@ impl RngCore for NsmRng {
     }
 
     #[cfg(target_os = "linux")]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_08::Error> {
         self.fill_bytes(dest);
         Ok(())
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_08::Error> {
         self.inner.try_fill_bytes(dest)
     }
 }

@@ -322,7 +322,7 @@ impl Server {
     /// The decryption key is NOT usable - do not use for actual encryption/decryption tests.
     #[cfg(test)]
     pub fn new_for_testing() -> Result<Self, ServerError> {
-        use rand::rngs::OsRng;
+        use rand_08::rngs::OsRng;
 
         let mut rng = OsRng;
 
@@ -548,7 +548,7 @@ mod tests {
         let public_key = server2.decryption_public_key().expect("failed to get key");
         let parsed_key = pkix_to_public_key(&public_key).expect("failed to parse key");
 
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = rand_08::rngs::OsRng;
         let encrypted =
             encrypt_pkcs1v15(&mut rng, &parsed_key, &private_key).expect("failed to encrypt");
 

@@ -7,7 +7,7 @@ use alloy_consensus::{Header, ReceiptEnvelope, Sealable};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, address};
 use kona_genesis::{L1ChainConfig, RollupConfig};
-use op_alloy_consensus::OpTxEnvelope;
+use base_alloy_consensus::OpTxEnvelope;
 
 use super::attributes::extract_deposits_from_receipts;
 use super::evm::{build_l1_block_info_from_deposit, execute_block};

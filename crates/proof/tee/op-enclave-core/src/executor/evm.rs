@@ -6,13 +6,13 @@
 use alloy_consensus::{Header, Sealed};
 use alloy_evm::precompiles::PrecompilesMap;
 use alloy_evm::{Database, EvmEnv, EvmFactory};
-use alloy_op_evm::OpEvm;
+use base_alloy_evm::OpEvm;
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use kona_executor::StatelessL2Builder;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use op_revm::precompiles::OpPrecompiles;
 // Re-export L1BlockInfo for use by callers
 pub use op_revm::L1BlockInfo;
@@ -132,7 +132,7 @@ pub fn build_l1_block_info_from_deposit(
     prev_deposit_calldata: &Bytes,
     spec_id: OpSpecId,
 ) -> Result<L1BlockInfo, String> {
-    use kona_protocol::L1BlockInfoTx;
+    use base_protocol::L1BlockInfoTx;
 
     // Decode the L1BlockInfoTx from the calldata
     let l1_info_tx = L1BlockInfoTx::decode_calldata(prev_deposit_calldata)

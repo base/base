@@ -5,7 +5,7 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::B256;
-use op_alloy_consensus::OpReceiptEnvelope;
+use base_alloy_consensus::OpReceiptEnvelope;
 
 use super::block_info::BlockInfoWrapper;
 use super::trie::compute_receipt_root;

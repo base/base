@@ -9,8 +9,8 @@ use alloy_eips::Typed2718;
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{B256, Bytes};
 use kona_genesis::RollupConfig;
-use kona_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
-use op_alloy_consensus::OpTxEnvelope;
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_alloy_consensus::OpTxEnvelope;
 
 use crate::error::ExecutorError;
 

@@ -31,8 +31,8 @@ use alloy_rlp::Decodable;
 use clap::Parser;
 use kona_executor::{StatelessL2Builder, TrieDBProvider};
 use kona_mpt::{TrieNode, TrieProvider};
-use kona_protocol::L1BlockInfoTx;
-use op_alloy_consensus::OpTxEnvelope;
+use base_protocol::L1BlockInfoTx;
+use base_alloy_consensus::OpTxEnvelope;
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 
@@ -592,7 +592,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Executing block to capture witness...");
     use alloy_primitives::B64;
     use alloy_rpc_types_engine::PayloadAttributes;
-    use op_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
 
     let parent_sealed = previous_header.seal_slow();
 
