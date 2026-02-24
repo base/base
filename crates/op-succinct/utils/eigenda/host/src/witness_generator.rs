@@ -62,7 +62,7 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
     }
 
     fn get_sp1_stdin(&self, mut witness: Self::WitnessData) -> Result<SP1Stdin> {
-        let mut stdin = SP1Stdin::new();
+        let mut stdin = SP1Stdin::default();
 
         // If eigenda blob witness data is present, write the canoe proof to stdin
         if let Some(eigenda_data) = &witness.eigenda_data {

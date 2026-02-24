@@ -230,7 +230,7 @@ k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k2
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }
 
 # Note: alloy-tx-macros crates.io version must match alloy-consensus version
-# Both are now at 1.4.x for hokulea v1.1.4 compatibility
+# Both are now at 1.4.x for hokulea v1.1.6 compatibility
 
 
 # Note: vergen-lib conflict fixed by pinning vergen=9.0.4, vergen-git2=1.0.5 in Cargo.lock
