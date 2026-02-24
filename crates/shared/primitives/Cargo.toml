@@ -45,6 +45,7 @@ thiserror.workspace = true
 serde_json.workspace = true
 eyre = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["v5", "serde"] }
+reth-optimism-primitives.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
