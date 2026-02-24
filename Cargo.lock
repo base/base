@@ -6284,6 +6284,7 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+ "rayon",
  "serde",
  "serde_core",
 ]
@@ -13583,6 +13584,7 @@ dependencies = [
  "bytes",
  "derive_more",
  "eyre",
+ "hashbrown 0.16.1",
  "metrics",
  "mockall",
  "parking_lot",
