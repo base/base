@@ -125,6 +125,9 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    pub max_uncompressed_block_size: Option<u64>,
+
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
 
@@ -151,6 +154,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("sampling_ratio", &self.sampling_ratio)
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
+            .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("gas_limiter_config", &self.gas_limiter_config)
             .field("tx_data_store", &self.tx_data_store)
             .finish()
@@ -170,6 +174,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             specific: S::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
+            max_uncompressed_block_size: None,
             gas_limiter_config: GasLimiterArgs::default(),
             tx_data_store: TxDataStore::default(),
         }
@@ -193,6 +198,7 @@ where
             gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
+            max_uncompressed_block_size: args.max_uncompressed_block_size,
             gas_limiter_config: args.gas_limiter.clone(),
             tx_data_store: TxDataStore::new(
                 args.enable_resource_metering,

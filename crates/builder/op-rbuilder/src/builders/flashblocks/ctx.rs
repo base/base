@@ -28,6 +28,8 @@ pub(super) struct OpPayloadSyncerCtx {
     chain_spec: Arc<OpChainSpec>,
     /// Max gas that can be used by a transaction.
     max_gas_per_txn: Option<u64>,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    max_uncompressed_block_size: Option<u64>,
     /// The metrics for the builder
     metrics: Arc<OpRBuilderMetrics>,
     /// Unified transaction data store (backrun bundles + resource metering)
@@ -50,6 +52,7 @@ impl OpPayloadSyncerCtx {
             da_config: builder_config.da_config.clone(),
             chain_spec,
             max_gas_per_txn: builder_config.max_gas_per_txn,
+            max_uncompressed_block_size: builder_config.max_uncompressed_block_size,
             metrics,
             tx_data_store: builder_config.tx_data_store,
         })
@@ -83,6 +86,7 @@ impl OpPayloadSyncerCtx {
             metrics: self.metrics,
             extra_ctx: (),
             max_gas_per_txn: self.max_gas_per_txn,
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
             tx_data_store: self.tx_data_store.clone(),
         }

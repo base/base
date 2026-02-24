@@ -278,6 +278,7 @@ where
             metrics: Default::default(),
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
+            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             address_gas_limiter: self.address_gas_limiter.clone(),
             tx_data_store: self.config.tx_data_store.clone(),
         })
@@ -685,6 +686,7 @@ where
             target_gas_for_batch.min(ctx.block_gas_limit()),
             target_da_for_batch,
             target_da_footprint_for_batch,
+            self.config.max_uncompressed_block_size,
         )
         .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
@@ -813,6 +815,7 @@ where
                     flashblock_index = flashblock_index,
                     current_gas = info.cumulative_gas_used,
                     current_da = info.cumulative_da_bytes_used,
+                    current_uncompressed_da = info.cumulative_uncompressed_bytes,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
@@ -843,12 +846,19 @@ where
         ctx.metrics
             .payload_num_tx_gauge
             .set(info.executed_transactions.len() as f64);
-
-        debug!(
+        ctx.metrics
+            .block_uncompressed_size
+            .record(info.cumulative_uncompressed_bytes as f64);
+        info!(
             target: "payload_builder",
             message = message,
             flashblocks_per_block = flashblocks_per_block,
             flashblock_index = ctx.flashblock_index(),
+            missing_flashblocks = flashblocks_per_block.saturating_sub(ctx.flashblock_index()),
+            num_tx = info.executed_transactions.len(),
+            cumulative_gas_used = info.cumulative_gas_used,
+            cumulative_da_bytes_used = info.cumulative_da_bytes_used,
+            cumulative_uncompressed_bytes = info.cumulative_uncompressed_bytes,
         );
 
         span.record("flashblock_count", ctx.flashblock_index());
