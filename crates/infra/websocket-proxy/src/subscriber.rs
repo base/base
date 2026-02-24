@@ -146,7 +146,6 @@ where
                                 error = e.to_string()
                             );
                             self.metrics.upstream_errors.increment(1);
-                            self.metrics.upstream_connections.decrement(1);
 
                             if let Some(duration) = self.backoff.next_backoff() {
                                 warn!(
@@ -243,6 +242,7 @@ where
         };
 
         ping_task.abort();
+        self.metrics.upstream_connections.decrement(1);
         result
     }
 
