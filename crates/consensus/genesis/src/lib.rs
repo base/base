@@ -41,7 +41,7 @@ pub use system::{
 mod chain;
 pub use chain::{
     AddressList, BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID, ChainConfig, HardForkConfig,
-    L1ChainConfig, Roles, SuperchainLevel,
+    L1ChainConfig, Roles,
 };
 
 mod genesis;

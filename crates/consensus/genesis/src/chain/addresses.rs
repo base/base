@@ -30,9 +30,6 @@ pub struct AddressList {
     pub system_config_proxy: Option<Address>,
     /// Proxy Admin address
     pub proxy_admin: Option<Address>,
-    /// The superchain config address
-    pub superchain_config: Option<Address>,
-
     // Fault Proof Contract Addresses
     /// Anchor State Registry Proxy address
     pub anchor_state_registry_proxy: Option<Address>,
@@ -50,9 +47,6 @@ pub struct AddressList {
     pub permissioned_dispute_game: Option<Address>,
     /// Preimage Oracle Proxy address
     pub preimage_oracle: Option<Address>,
-    /// The data availability challenge contract address
-    #[cfg_attr(feature = "serde", serde(alias = "DAChallengeAddress"))]
-    pub data_availability_challenge: Option<Address>,
 }
 
 impl AddressList {
@@ -149,7 +143,6 @@ mod tests {
             optimism_portal_proxy: Some(address!("49048044D57e1C92A77f79988d21Fa8fAF74E97e")),
             system_config_proxy: Some(address!("73a79Fab69143498Ed3712e519A88a918e1f4072")),
             proxy_admin: Some(address!("0475cBCAebd9CE8AfA5025828d5b98DFb67E059E")),
-            superchain_config: None,
             anchor_state_registry_proxy: Some(address!("db9091e48b1c42992a1213e6916184f9ebdbfedf")),
             delayed_weth_proxy: Some(address!("a2f2ac6f5af72e494a227d79db20473cf7a1ffe8")),
             dispute_game_factory_proxy: Some(address!("43edb88c4b80fdd2adff2412a7bebf9df42cb40e")),
@@ -157,7 +150,6 @@ mod tests {
             mips: Some(address!("16e83ce5ce29bf90ad9da06d2fe6a15d5f344ce4")),
             permissioned_dispute_game: Some(address!("19009debf8954b610f207d5925eede827805986e")),
             preimage_oracle: Some(address!("9c065e11870b891d214bc2da7ef1f9ddfa1be277")),
-            data_availability_challenge: None,
         };
 
         let deserialized: AddressList = serde_json::from_str(raw).unwrap();
@@ -202,7 +194,6 @@ mod tests {
             optimism_portal_proxy: Some(address!("49048044D57e1C92A77f79988d21Fa8fAF74E97e")),
             system_config_proxy: Some(address!("73a79Fab69143498Ed3712e519A88a918e1f4072")),
             proxy_admin: Some(address!("0475cBCAebd9CE8AfA5025828d5b98DFb67E059E")),
-            superchain_config: None,
             anchor_state_registry_proxy: Some(address!("db9091e48b1c42992a1213e6916184f9ebdbfedf")),
             delayed_weth_proxy: Some(address!("a2f2ac6f5af72e494a227d79db20473cf7a1ffe8")),
             dispute_game_factory_proxy: Some(address!("43edb88c4b80fdd2adff2412a7bebf9df42cb40e")),
@@ -210,7 +201,6 @@ mod tests {
             mips: Some(address!("16e83ce5ce29bf90ad9da06d2fe6a15d5f344ce4")),
             permissioned_dispute_game: Some(address!("19009debf8954b610f207d5925eede827805986e")),
             preimage_oracle: Some(address!("9c065e11870b891d214bc2da7ef1f9ddfa1be277")),
-            data_availability_challenge: None,
         };
 
         let deserialized: AddressList = serde_json::from_str(raw).unwrap();
