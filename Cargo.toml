@@ -13,17 +13,9 @@ members = [
     "bin/*",
     "crates/client/*",
     "crates/consensus/*",
-    "crates/proof/mpt",
-    "crates/proof/proof",
-    "crates/proof/driver",
-    "crates/proof/executor",
-    "crates/proof/preimage",
-    "crates/proof/std-fpvm",
-    "crates/proof/std-fpvm-proc",
-    "crates/proof/tee/op-enclave-core",
-    "crates/proof/tee/op-enclave-client",
-    "crates/proof/tee/op-enclave-server",
-    "crates/shared/*",
+    "crates/proof/*",
+    "crates/proof/tee/*",
+    "crates/utilities/*",
     "crates/builder/*",
     "crates/infra/*",
     "crates/alloy/*",
@@ -133,10 +125,12 @@ incremental = false
 [workspace.dependencies]
 # Base Primitives
 base-alloy-evm = { path = "crates/alloy/evm" }
+base-bundles = { path = "crates/alloy/bundles" }
 base-alloy-network = { path = "crates/alloy/network" }
 base-alloy-provider = { path = "crates/alloy/provider" }
 base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
 base-alloy-hardforks = { path = "crates/alloy/hardforks" }
+base-access-lists = { path = "crates/alloy/access-lists" }
 base-alloy-flashblocks = { path = "crates/alloy/flashblocks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
 base-alloy-flz = { path = "crates/alloy/flz", default-features = false }
@@ -150,7 +144,7 @@ base-builder-metering = { path = "crates/builder/metering" }
 
 # Client
 base-client-cli = { path = "crates/client/cli" }
-base-client-node = { path = "crates/shared/node" }
+base-client-node = { path = "crates/utilities/node" }
 base-metering = { path = "crates/client/metering" }
 base-client-engine = { path = "crates/client/engine" }
 base-flashblocks = { path = "crates/client/flashblocks" }
@@ -210,15 +204,11 @@ op-enclave-client = { path = "crates/proof/tee/op-enclave-client" }
 op-enclave-server = { path = "crates/proof/tee/op-enclave-server" }
 
 # Shared
-base-jwt = { path = "crates/shared/jwt" }
-base-bundles = { path = "crates/shared/bundles" }
-base-cli-utils = { path = "crates/shared/cli-utils" }
-base-txpool-rpc = { path = "crates/shared/txpool-rpc" }
-base-engine-ext = { path = "crates/shared/engine-ext" }
-base-primitives = { path = "crates/shared/primitives" }
-base-test-utils = { path = "crates/shared/test-utils" }
+base-jwt = { path = "crates/utilities/jwt" }
+base-cli-utils = { path = "crates/utilities/cli" }
+base-txpool-rpc = { path = "crates/utilities/txpool-rpc" }
+base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
-base-access-lists = { path = "crates/shared/access-lists" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # op-revm

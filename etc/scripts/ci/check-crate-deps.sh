@@ -4,11 +4,11 @@ set -euo pipefail
 # Disallowed crate dependency rules: "source:target"
 # Crates in crates/<source>/ must not depend on crates in crates/<target>/
 DISALLOWED_DEPS=(
-  "shared:client"
-  "shared:builder"
-  "shared:consensus"
+  "utilities:client"
+  "utilities:builder"
+  "utilities:consensus"
   "client:infra"
-  "shared:infra"
+  "utilities:infra"
   "builder:infra"
   "consensus:infra"
 )
