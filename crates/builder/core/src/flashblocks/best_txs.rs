@@ -137,22 +137,27 @@ mod tests {
         assert!(iterator.next(()).is_none(), "Iterator should be empty");
     }
 
-    /// This test demonstrates the nonce-chain gating issue across flashblock boundaries.
+    /// This test simulates the nonce-chain gating fix across flashblock boundaries.
     ///
     /// Scenario (based on real Base Mainnet block 41628995):
-    /// - Sender A has TX_A (nonce 0, LOW tip) and TX_B (nonce 1, HIGH tip) in the pool
-    /// - Sender B has TX_C (MEDIUM tip)
-    /// TX_A is in the mempool, TX_B and TX_C arrive later after the first flashblock has
-    /// started building already
-    /// - In flashblock 1, TX_A gets consumed (TX_B unlocks after TX_A)
-    /// - Only TX_A is marked as committed (simulating flashblock timer expiring)
-    /// - In flashblock 2, TX_B (HIGH tip) should come before TX_C (MEDIUM tip)
+    /// - Sender A has `TX_A` (nonce 0, LOW tip) and `TX_B` (nonce 1, HIGH tip) in the pool
+    /// - Sender B has `TX_C` (MEDIUM tip)
     ///
-    /// Expected: TX_B (100 gwei) before TX_C (10 gwei) in flashblock 2
-    /// Previously, actual: TX_C comes first because pool still thinks TX_A is pending
-    /// Now, it should match expected with the fix
-    /// This test doesn't test the exact fix, since we cannot simulate the transaction getting pruned from the pool
-    /// within the test - but it stands as a proof of concept of the original issue it was fixing
+    /// `TX_A` is in the mempool, `TX_B` and `TX_C` arrive later after the first flashblock has
+    /// started building already.
+    ///
+    /// - In flashblock 1, `TX_A` gets consumed (`TX_B` unlocks after `TX_A`)
+    /// - Only `TX_A` is marked as committed (simulating flashblock timer expiring)
+    /// - In flashblock 2, `TX_B` (HIGH tip) should come before `TX_C` (MEDIUM tip)
+    ///
+    /// Expected: `TX_B` (100 gwei) before `TX_C` (10 gwei) in flashblock 2.
+    ///
+    /// The upstream reth PR (<https://github.com/paradigmxyz/reth/pull/21765>) that added
+    /// `prune_transactions` to the pool trait has been merged. The production fix calls
+    /// `pool.prune_transactions` after `mark_committed` between flashblocks, which removes
+    /// the already-executed `TX_A` from the pool so the iterator sees the correct priority
+    /// ordering. This test simulates that behavior by recreating the pool without `TX_A`
+    /// and verifies that `TX_B` (100 gwei) is correctly ordered before `TX_C` (10 gwei).
     #[test]
     fn test_nonce_chain_gating_bug_across_flashblocks() {
         use alloy_primitives::Address;
@@ -199,11 +204,10 @@ mod tests {
 
         // Simulate: flashblock 1 is complete after TX_A was executed
         iterator.mark_committed(&[*tx_a.hash()]);
-        // We cannot simulate the transaction getting pruned from the pool
-        // so we instead recreate the pool without TX_A
+        // Simulate pool.prune_transactions by recreating the pool without TX_A
         let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
-        pool.add_transaction(Arc::new(f.validated(tx_b.clone())), 0);
-        pool.add_transaction(Arc::new(f.validated(tx_c.clone())), 0);
+        pool.add_transaction(Arc::new(f.validated(tx_b)), 0);
+        pool.add_transaction(Arc::new(f.validated(tx_c)), 0);
 
         // === FLASHBLOCK 2 ===
         // We refresh the iterator with the latest best transactions
