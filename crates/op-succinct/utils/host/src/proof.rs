@@ -13,7 +13,7 @@ pub fn get_agg_proof_stdin(
     latest_checkpoint_head: B256,
     prover_address: Address,
 ) -> Result<SP1Stdin> {
-    let mut stdin = SP1Stdin::new();
+    let mut stdin = SP1Stdin::default();
     for proof in proofs {
         let SP1Proof::Compressed(compressed_proof) = proof else {
             return Err(anyhow::anyhow!("Invalid proof passed as compressed proof!"));
