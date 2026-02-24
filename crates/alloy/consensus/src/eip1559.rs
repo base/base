@@ -34,7 +34,7 @@ fn encode_eip_1559_params(
     Ok(())
 }
 
-/// Extracts the Holocene 1599 parameters from the encoded form:
+/// Extracts the Holocene 1559 parameters from the encoded form:
 /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>
 ///
 /// Returns (`elasticity`, `denominator`)
