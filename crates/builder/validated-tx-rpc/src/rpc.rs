@@ -1,6 +1,7 @@
 //! RPC trait and implementation for inserting pre-validated transactions.
 
 use base_alloy_consensus::OpPooledTransaction;
+use base_primitives::{InsertResult, ValidatedTransaction};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -9,11 +10,6 @@ use jsonrpsee::{
 use reth_optimism_txpool::OpPooledTx;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use tracing::{debug, warn};
-
-use crate::{
-    convert::compute_tx_hash,
-    types::{InsertResult, ValidatedTransaction},
-};
 
 /// RPC trait for inserting pre-validated transactions into the pool.
 #[rpc(server, namespace = "base")]
@@ -55,15 +51,15 @@ where
         txs: Vec<ValidatedTransaction>,
     ) -> RpcResult<Vec<InsertResult>> {
         let tx_count = txs.len();
-        debug!(target: "rpc::validated_tx", count = tx_count, "inserting validated transactions");
+        debug!(target: "rpc::insert_validated_transactions", count = tx_count, "inserting validated transactions");
 
         let mut results = Vec::with_capacity(tx_count);
 
         for validated_tx in txs {
-            let tx_hash = match compute_tx_hash(&validated_tx) {
+            let tx_hash = match validated_tx.compute_tx_hash() {
                 Ok(hash) => hash,
                 Err(e) => {
-                    warn!(target: "rpc::validated_tx", error = %e, "failed to compute tx hash");
+                    warn!(target: "rpc::insert_validated_transactions", error = %e, "failed to compute tx hash");
                     results.push(InsertResult::failure(Default::default(), e.to_string()));
                     continue;
                 }
@@ -72,7 +68,7 @@ where
             let recovered = match validated_tx.into_recovered() {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(target: "rpc::validated_tx", %tx_hash, error = %e, "failed to convert transaction");
+                    warn!(target: "rpc::insert_validated_transactions", %tx_hash, error = %e, "failed to convert transaction");
                     results.push(InsertResult::failure(tx_hash, e.to_string()));
                     continue;
                 }
@@ -83,11 +79,11 @@ where
 
             match self.pool.add_transaction(TransactionOrigin::External, pool_tx).await {
                 Ok(_outcome) => {
-                    debug!(target: "rpc::validated_tx", %tx_hash, "transaction inserted");
+                    debug!(target: "rpc::insert_validated_transactions", %tx_hash, "transaction inserted");
                     results.push(InsertResult::success(tx_hash));
                 }
                 Err(e) => {
-                    warn!(target: "rpc::validated_tx", %tx_hash, error = %e, "failed to insert transaction");
+                    warn!(target: "rpc::insert_validated_transactions", %tx_hash, error = %e, "failed to insert transaction");
                     results.push(InsertResult::failure(tx_hash, e.to_string()));
                 }
             }
@@ -97,7 +93,7 @@ where
         let failure_count = results.len() - success_count;
 
         debug!(
-            target: "rpc::validated_tx",
+            target: "rpc::insert_validated_transactions",
             total = tx_count,
             success = success_count,
             failures = failure_count,

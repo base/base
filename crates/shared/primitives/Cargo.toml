@@ -39,7 +39,11 @@ base-alloy-rpc-types = { workspace = true, optional = true }
 base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 base-alloy-rpc-types-engine = { workspace = true, optional = true }
 
+# reth
+reth-primitives-traits.workspace = true
+
 # misc
+base64.workspace = true
 bytes.workspace = true
 serde = { workspace = true, features = ["std"] }
 brotli = { workspace = true, features = ["std"] }

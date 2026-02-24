@@ -22,6 +22,11 @@ pub use flashblocks::{
     FlashblocksPayloadV1, Metadata,
 };
 
+mod validated_tx;
+pub use validated_tx::{
+    ConversionError, InsertResult, TransactionSignature, ValidatedTransaction, base64_bytes,
+};
+
 #[cfg(feature = "test-utils")]
 pub mod test_utils;
 #[cfg(feature = "test-utils")]
