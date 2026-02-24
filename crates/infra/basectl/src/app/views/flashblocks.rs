@@ -71,21 +71,6 @@ impl View for FlashblocksView {
 
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
         match key.code {
-            KeyCode::Enter => {
-                if let Some(idx) = self.table_state.selected()
-                    && let Some(entry) = resources.flash.entries.get(idx)
-                {
-                    self.tx_pane = Some(TransactionPane::with_data(
-                        entry.block_number,
-                        format!("Flashblock {}::{}", entry.block_number, entry.index),
-                        entry.decoded_txs.clone(),
-                        resources.config.rpc.as_str(),
-                        resources.config.explorer_base_url(),
-                    ));
-                    self.focused_on_txns = true;
-                }
-                Action::None
-            }
             KeyCode::Left | KeyCode::Char('h') if self.tx_pane.is_some() => {
                 self.focused_on_txns = false;
                 Action::None
@@ -167,6 +152,20 @@ impl View for FlashblocksView {
                     if clipboard.set_text(&block_num).is_ok() {
                         resources.toasts.push(Toast::info(format!("Copied {block_num}")));
                     }
+                }
+                Action::None
+            }
+            KeyCode::Enter => {
+                if let Some(idx) = self.table_state.selected()
+                    && let Some(entry) = resources.flash.entries.get(idx)
+                {
+                    self.tx_pane = Some(TransactionPane::with_data(
+                        entry.block_number,
+                        format!("Flashblock {}::{}", entry.block_number, entry.index),
+                        entry.decoded_txs.clone(),
+                        resources.config.explorer_base_url(),
+                    ));
+                    self.focused_on_txns = true;
                 }
                 Action::None
             }

@@ -1,6 +1,5 @@
-use std::{collections::HashMap, ops::Range};
+use std::ops::Range;
 
-use alloy_primitives::B256;
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -10,8 +9,8 @@ use ratatui::{
 use tokio::sync::mpsc;
 
 use crate::{
-    commands::common::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED, FlashblockEntry, format_gas},
-    rpc::{GasUsed, TxSummary},
+    commands::common::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED, FlashblockEntry},
+    rpc::TxSummary,
     tui::Toast,
 };
 
@@ -31,8 +30,6 @@ pub(crate) struct TransactionPane {
     rx: Option<mpsc::Receiver<Vec<TxSummary>>>,
     /// Optional range to slice the fetched transactions (for flashblock-specific views).
     tx_range: Option<Range<usize>>,
-    /// Channel for receiving `gas_used` backfill from `eth_getBlockReceipts`.
-    gas_rx: Option<mpsc::Receiver<HashMap<B256, u64>>>,
     /// Flashblock boundary sizes for color-coding groups (e.g. [5, 3, 12] means
     /// first 5 txs are flashblock 0, next 3 are flashblock 1, next 12 are flashblock 2).
     fb_sizes: Option<Vec<usize>>,
@@ -68,27 +65,20 @@ impl TransactionPane {
             loading: true,
             rx: Some(rx),
             tx_range,
-            gas_rx: None,
             fb_sizes: None,
             explorer_base_url: explorer_base_url.map(String::from),
         }
     }
 
-    /// Creates a pane with pre-decoded transaction data and kicks off a single
-    /// `eth_getBlockReceipts` call to backfill `gas_used` values.
+    /// Creates a pane with pre-decoded transaction data.
     pub(crate) fn with_data(
         block_number: u64,
         title_prefix: String,
         transactions: Vec<TxSummary>,
-        l2_rpc: &str,
         explorer_base_url: Option<&str>,
     ) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
-
-        let (tx, gas_rx) = mpsc::channel(1);
-        let rpc = l2_rpc.to_string();
-        tokio::spawn(crate::rpc::fetch_block_receipts_gas(rpc, block_number, tx));
 
         Self {
             block_number,
@@ -98,7 +88,6 @@ impl TransactionPane {
             loading: false,
             rx: None,
             tx_range: None,
-            gas_rx: Some(gas_rx),
             fb_sizes: None,
             explorer_base_url: explorer_base_url.map(String::from),
         }
@@ -126,8 +115,7 @@ impl TransactionPane {
         } else {
             let fb_sizes: Vec<usize> =
                 flash_entries.iter().rev().map(|e| e.decoded_txs.len()).collect();
-            let mut pane =
-                Self::with_data(block_number, title, cached_txs, l2_rpc, explorer_base_url);
+            let mut pane = Self::with_data(block_number, title, cached_txs, explorer_base_url);
             pane.set_flashblock_sizes(fb_sizes);
             pane
         }
@@ -144,18 +132,6 @@ impl TransactionPane {
             };
             self.loading = false;
             self.rx = None;
-        }
-
-        if let Some(ref mut rx) = self.gas_rx
-            && let Ok(gas_map) = rx.try_recv()
-        {
-            for tx in &mut self.transactions {
-                if matches!(tx.gas_used, GasUsed::Pending) {
-                    tx.gas_used =
-                        gas_map.get(&tx.hash).map(|&g| GasUsed::Value(g)).unwrap_or(GasUsed::Error);
-                }
-            }
-            self.gas_rx = None;
         }
     }
 
@@ -291,7 +267,6 @@ impl TransactionPane {
             Cell::from("Tx Hash").style(header_style),
             Cell::from("From").style(header_style),
             Cell::from("To").style(header_style),
-            Cell::from("Gas Used").style(header_style),
             Cell::from("Pri. Fee (Mwei)").style(header_style),
         ]);
 
@@ -302,7 +277,6 @@ impl TransactionPane {
             Constraint::Fill(3),    // Tx Hash (widest)
             Constraint::Fill(2),    // From
             Constraint::Fill(2),    // To
-            Constraint::Length(10), // Gas Used (fixed, short values)
             Constraint::Length(15), // Pri. Fee (fixed, short values)
         ];
 
@@ -358,17 +332,10 @@ impl TransactionPane {
                     .map(|a| truncate_hex(&format!("{a:#x}"), to_w))
                     .unwrap_or_else(|| "Create".to_string());
 
-                let gas_str = match tx_summary.gas_used {
-                    GasUsed::Value(g) => format_gas(g),
-                    GasUsed::Pending => "-".to_string(),
-                    GasUsed::Error => "ERR".to_string(),
-                };
-
                 Row::new(vec![
                     Cell::from(truncate_hex(&format!("{:#x}", tx_summary.hash), hash_w)),
                     Cell::from(truncate_hex(&format!("{:#x}", tx_summary.from), from_w)),
                     Cell::from(to_str),
-                    Cell::from(gas_str),
                     Cell::from(format_mwei(tx_summary.max_priority_fee_per_gas)),
                 ])
                 .style(style)

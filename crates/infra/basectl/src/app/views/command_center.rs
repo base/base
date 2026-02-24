@@ -294,7 +294,6 @@ impl View for CommandCenterView {
                                 entry.block_number,
                                 format!("Flashblock {}::{}", entry.block_number, entry.index),
                                 entry.decoded_txs.clone(),
-                                resources.config.rpc.as_str(),
                                 resources.config.explorer_base_url(),
                             ));
                             self.focused_panel = Panel::Txns;

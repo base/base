@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
@@ -500,17 +500,6 @@ fn extract_l1_block_info(
     }
 }
 
-/// Result of fetching `gas_used` from a transaction receipt.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum GasUsed {
-    /// Successfully fetched.
-    Value(u64),
-    /// Not yet fetched (decoded from stream, no receipt available).
-    Pending,
-    /// Receipt fetch failed after retries.
-    Error,
-}
-
 /// Summary of a single transaction within a block.
 #[derive(Debug, Clone)]
 pub(crate) struct TxSummary {
@@ -520,8 +509,6 @@ pub(crate) struct TxSummary {
     pub from: Address,
     /// Recipient address (None for contract creations).
     pub to: Option<Address>,
-    /// Gas consumed by this transaction (from receipt).
-    pub gas_used: GasUsed,
     /// Max priority fee per gas (tip), in wei.
     pub max_priority_fee_per_gas: Option<u128>,
     /// Block base fee per gas, in wei.
@@ -531,7 +518,6 @@ pub(crate) struct TxSummary {
 /// Decodes raw EIP-2718 encoded transaction bytes into summaries.
 ///
 /// Used to extract transaction details from flashblock stream data without RPC calls.
-/// `gas_used` is set to `GasUsed::Pending` since receipts are not available from the stream.
 pub(crate) fn decode_flashblock_transactions(
     raw_txs: &[Bytes],
     base_fee_per_gas: Option<u64>,
@@ -553,51 +539,11 @@ pub(crate) fn decode_flashblock_transactions(
                 hash,
                 from: recovered.signer(),
                 to,
-                gas_used: GasUsed::Pending,
                 max_priority_fee_per_gas: max_priority_fee,
                 base_fee_per_gas,
             })
         })
         .collect()
-}
-
-/// Fetches `gas_used` for transactions via a single `eth_getBlockReceipts` call.
-///
-/// Returns a map of transaction hash to gas used. If the RPC doesn't support
-/// `eth_getBlockReceipts`, returns an empty map.
-pub(crate) async fn fetch_block_receipts_gas(
-    l2_rpc: String,
-    block_number: u64,
-    tx: mpsc::Sender<HashMap<B256, u64>>,
-) {
-    let result = async {
-        let provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Base>()
-            .connect(&l2_rpc)
-            .await?;
-
-        let receipts = provider
-            .get_block_receipts(BlockNumberOrTag::Number(block_number).into())
-            .await?
-            .unwrap_or_default();
-
-        let gas_map: HashMap<B256, u64> =
-            receipts.into_iter().map(|r| (r.inner.transaction_hash, r.inner.gas_used)).collect();
-
-        Ok::<_, anyhow::Error>(gas_map)
-    }
-    .await;
-
-    match result {
-        Ok(gas_map) => {
-            let _ = tx.send(gas_map).await;
-        }
-        Err(e) => {
-            warn!("eth_getBlockReceipts failed for block {block_number}: {e}");
-            let _ = tx.send(HashMap::new()).await;
-        }
-    }
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.
@@ -621,30 +567,15 @@ pub(crate) async fn fetch_block_transactions(
 
         let base_fee = block.header.base_fee_per_gas;
 
-        let receipts = provider
-            .get_block_receipts(BlockNumberOrTag::Number(block_number).into())
-            .await?
-            .unwrap_or_default();
-
-        let gas_map: HashMap<B256, u64> =
-            receipts.into_iter().map(|r| (r.inner.transaction_hash, r.inner.gas_used)).collect();
-
         let summaries: Vec<TxSummary> = block
             .transactions
             .txns()
-            .map(|tx_obj| {
-                let hash = tx_obj.inner.tx_hash();
-                TxSummary {
-                    hash,
-                    from: tx_obj.inner.inner.signer(),
-                    to: tx_obj.inner.to(),
-                    gas_used: gas_map
-                        .get(&hash)
-                        .map(|&g| GasUsed::Value(g))
-                        .unwrap_or(GasUsed::Error),
-                    max_priority_fee_per_gas: tx_obj.inner.max_priority_fee_per_gas(),
-                    base_fee_per_gas: base_fee,
-                }
+            .map(|tx_obj| TxSummary {
+                hash: tx_obj.inner.tx_hash(),
+                from: tx_obj.inner.inner.signer(),
+                to: tx_obj.inner.to(),
+                max_priority_fee_per_gas: tx_obj.inner.max_priority_fee_per_gas(),
+                base_fee_per_gas: base_fee,
             })
             .collect();
 
