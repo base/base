@@ -115,7 +115,7 @@ impl OpHardfork {
             (Self::Granite, ForkCondition::ZERO_TIMESTAMP),
             (Self::Holocene, ForkCondition::ZERO_TIMESTAMP),
             (Self::Isthmus, ForkCondition::ZERO_TIMESTAMP),
-            (Self::Jovian, ForkCondition::Timestamp(1762185600)),
+            (Self::Jovian, ForkCondition::ZERO_TIMESTAMP),
         ]
     }
 
