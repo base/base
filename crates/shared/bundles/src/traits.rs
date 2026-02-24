@@ -3,8 +3,8 @@
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_primitives::{Address, B256, TxHash, keccak256};
 use alloy_provider::network::eip2718::Encodable2718;
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_flz::tx_estimated_size_fjord_bytes;
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_flz::tx_estimated_size_fjord_bytes;
 
 use crate::{AcceptedBundle, ParsedBundle};
 

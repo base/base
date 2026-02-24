@@ -3,12 +3,12 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
-use kona_genesis::RollupConfig;
-use op_alloy_consensus::{
+use base_alloy_consensus::{
     EIP1559ParamError, decode_holocene_extra_data, decode_jovian_extra_data,
     encode_holocene_extra_data, encode_jovian_extra_data,
 };
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use kona_genesis::RollupConfig;
 
 use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 
@@ -105,8 +105,8 @@ mod test {
     use alloy_consensus::Header;
     use alloy_primitives::{B64, b64, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use kona_genesis::{BaseFeeConfig, RollupConfig};
-    use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
     use super::decode_holocene_eip_1559_params_block_header;
     use crate::util::{

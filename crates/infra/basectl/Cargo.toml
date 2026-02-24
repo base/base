@@ -24,10 +24,10 @@ alloy-eips = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
-op-alloy-network = { workspace = true }
+base-alloy-network = { workspace = true }
 alloy-primitives = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
-op-alloy-consensus = { workspace = true }
+base-alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }

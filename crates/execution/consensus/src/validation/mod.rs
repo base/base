@@ -212,7 +212,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, U256, b256, hex};
-    use op_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::OpTxEnvelope;
     use reth_chainspec::{BaseFeeParams, ChainSpec, EthChainSpec, ForkCondition, Hardfork};
     use reth_optimism_chainspec::{BASE_SEPOLIA, OpChainSpec};
     use reth_optimism_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};

@@ -2,10 +2,8 @@
 
 use std::{collections::BinaryHeap, sync::Arc};
 
-use alloy_rpc_types_eth::Transaction;
 use base_protocol::{BlockInfo, L2BlockInfo, OpBlockConversionError, to_system_config};
 use kona_genesis::{RollupConfig, SystemConfig};
-use op_alloy_consensus::OpTxEnvelope;
 use thiserror::Error;
 use tokio::sync::watch::Sender;
 
@@ -136,7 +134,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             .map_err(SyncStartError::RpcError)?
             .ok_or(SyncStartError::BlockNotFound(origin_block.into()))?
             .into_consensus()
-            .map_transactions(|t| <Transaction<OpTxEnvelope> as Clone>::clone(&t).into_inner());
+            .map_transactions(|t| t.inner.inner.into_inner());
         let system_config = to_system_config(&l2_safe_block, &config)?;
 
         kona_macros::inc!(counter, Metrics::ENGINE_RESET_COUNT);

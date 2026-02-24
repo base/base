@@ -5,9 +5,9 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use anyhow::Result;
+use base_alloy_network::Base;
 use base_primitives::Flashblock;
 use futures_util::{StreamExt, stream};
-use op_alloy_network::Optimism;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tracing::warn;
@@ -40,7 +40,7 @@ struct RawBlockInfo {
     timestamp: u64,
 }
 
-async fn fetch_raw_block_info<P: Provider<Optimism>>(
+async fn fetch_raw_block_info<P: Provider<Base>>(
     provider: &P,
     block_num: u64,
 ) -> Option<RawBlockInfo> {
@@ -217,7 +217,7 @@ pub(crate) async fn fetch_initial_backlog_with_progress(
         let provider = Arc::new(
             ProviderBuilder::new()
                 .disable_recommended_fillers()
-                .network::<Optimism>()
+                .network::<Base>()
                 .connect(&l2_rpc)
                 .await?,
         );
@@ -297,7 +297,7 @@ pub(crate) async fn run_block_fetcher(
 ) {
     let provider = match ProviderBuilder::new()
         .disable_recommended_fillers()
-        .network::<Optimism>()
+        .network::<Base>()
         .connect(&l2_rpc)
         .await
     {

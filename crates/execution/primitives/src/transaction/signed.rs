@@ -20,7 +20,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, Uint, keccak256};
 use alloy_rlp::Header;
-use op_alloy_consensus::{OpPooledTransaction, OpTxEnvelope, OpTypedTransaction, TxDeposit};
+use base_alloy_consensus::{OpPooledTransaction, OpTxEnvelope, OpTypedTransaction, TxDeposit};
 #[cfg(any(test, feature = "reth-codec"))]
 use reth_primitives_traits::{
     InMemorySize, SignedTransaction,
@@ -152,7 +152,7 @@ impl TxHashRef for OpTransactionSigned {
 
 impl IsTyped2718 for OpTransactionSigned {
     fn is_type(type_id: u8) -> bool {
-        <op_alloy_consensus::OpTxEnvelope as IsTyped2718>::is_type(type_id)
+        <base_alloy_consensus::OpTxEnvelope as IsTyped2718>::is_type(type_id)
     }
 }
 
@@ -287,26 +287,26 @@ impl Encodable2718 for OpTransactionSigned {
 impl Decodable2718 for OpTransactionSigned {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
         match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
-            op_alloy_consensus::OpTxType::Legacy => Err(Eip2718Error::UnexpectedType(0)),
-            op_alloy_consensus::OpTxType::Eip2930 => {
+            base_alloy_consensus::OpTxType::Legacy => Err(Eip2718Error::UnexpectedType(0)),
+            base_alloy_consensus::OpTxType::Eip2930 => {
                 let (tx, signature, hash) = TxEip2930::rlp_decode_signed(buf)?.into_parts();
                 let signed_tx = Self::new_unhashed(OpTypedTransaction::Eip2930(tx), signature);
                 signed_tx.hash.get_or_init(|| hash);
                 Ok(signed_tx)
             }
-            op_alloy_consensus::OpTxType::Eip1559 => {
+            base_alloy_consensus::OpTxType::Eip1559 => {
                 let (tx, signature, hash) = TxEip1559::rlp_decode_signed(buf)?.into_parts();
                 let signed_tx = Self::new_unhashed(OpTypedTransaction::Eip1559(tx), signature);
                 signed_tx.hash.get_or_init(|| hash);
                 Ok(signed_tx)
             }
-            op_alloy_consensus::OpTxType::Eip7702 => {
+            base_alloy_consensus::OpTxType::Eip7702 => {
                 let (tx, signature, hash) = TxEip7702::rlp_decode_signed(buf)?.into_parts();
                 let signed_tx = Self::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
                 signed_tx.hash.get_or_init(|| hash);
                 Ok(signed_tx)
             }
-            op_alloy_consensus::OpTxType::Deposit => Ok(Self::new_unhashed(
+            base_alloy_consensus::OpTxType::Deposit => Ok(Self::new_unhashed(
                 OpTypedTransaction::Deposit(TxDeposit::rlp_decode(buf)?),
                 TxDeposit::signature(),
             )),

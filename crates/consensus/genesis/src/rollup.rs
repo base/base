@@ -2,8 +2,8 @@
 
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_op_hardforks::{OpHardfork, OpHardforks};
 use alloy_primitives::Address;
+use base_alloy_hardforks::{OpHardfork, OpHardforks};
 
 use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
 
@@ -63,9 +63,6 @@ pub struct RollupConfig {
     pub l1_system_config_address: Address,
     /// `protocol_versions_address` is the L1 address that the protocol versions are stored at.
     pub protocol_versions_address: Address,
-    /// The superchain config address.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub superchain_config_address: Option<Address>,
     /// `blobs_enabled_l1_timestamp` is the timestamp to start reading blobs as a batch data
     /// source. Optional.
     #[cfg_attr(
@@ -73,10 +70,6 @@ pub struct RollupConfig {
         serde(rename = "blobs_data", skip_serializing_if = "Option::is_none")
     )]
     pub blobs_enabled_l1_timestamp: Option<u64>,
-    /// `da_challenge_address` is the L1 address that the data availability challenge contract is
-    /// stored at.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub da_challenge_address: Option<Address>,
     /// `chain_op_config` is the chain-specific EIP1559 config for the rollup.
     #[cfg_attr(feature = "serde", serde(default = "BaseFeeConfig::base_mainnet"))]
     pub chain_op_config: BaseFeeConfig,
@@ -105,9 +98,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             deposit_contract_address: Address::arbitrary(u)?,
             l1_system_config_address: Address::arbitrary(u)?,
             protocol_versions_address: Address::arbitrary(u)?,
-            superchain_config_address: Option::<Address>::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
-            da_challenge_address: Option::<Address>::arbitrary(u)?,
             chain_op_config,
         })
     }
@@ -130,9 +121,7 @@ impl Default for RollupConfig {
             deposit_contract_address: Address::ZERO,
             l1_system_config_address: Address::ZERO,
             protocol_versions_address: Address::ZERO,
-            superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
-            da_challenge_address: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
         }
     }
@@ -313,13 +302,6 @@ impl RollupConfig {
             self.channel_timeout
         }
     }
-
-    /// Returns the [`HardForkConfig`] using [`RollupConfig`] timestamps.
-    #[deprecated(since = "0.1.0", note = "Use the `hardforks` field instead.")]
-    pub const fn hardfork_config(&self) -> HardForkConfig {
-        self.hardforks
-    }
-
     /// Computes a block number from a timestamp, relative to the L2 genesis time and the block
     /// time.
     ///
@@ -795,9 +777,7 @@ mod tests {
             deposit_contract_address: address!("08073dc48dde578137b8af042bcbc1c2491f1eb2"),
             l1_system_config_address: address!("94ee52a9d8edd72a85dea7fae3ba6d75e4bf1710"),
             protocol_versions_address: Address::ZERO,
-            superchain_config_address: None,
             blobs_enabled_l1_timestamp: None,
-            da_challenge_address: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
         };
 

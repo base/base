@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
 use kona_derive::{ResetSignal, Signal};
 use kona_engine::{
@@ -7,7 +8,6 @@ use kona_engine::{
     EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, InsertTask, SealTask,
 };
 use kona_genesis::RollupConfig;
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,

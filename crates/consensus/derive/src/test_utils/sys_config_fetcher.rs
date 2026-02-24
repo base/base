@@ -4,9 +4,9 @@ use alloc::{boxed::Box, string::ToString, sync::Arc};
 
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
+use base_alloy_consensus::OpBlock;
 use base_protocol::{BatchValidationProvider, L2BlockInfo};
 use kona_genesis::{RollupConfig, SystemConfig};
-use op_alloy_consensus::OpBlock;
 use thiserror::Error;
 
 use crate::{

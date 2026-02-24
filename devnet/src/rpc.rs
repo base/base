@@ -3,18 +3,18 @@
 use alloy_network::Network;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
+use base_alloy_network::Base;
 use base_consensus_rpc::SyncStatusApiClient;
 use base_protocol::SyncStatus;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use op_alloy_network::Optimism;
 
 /// RPC client for querying devnet L1 and L2 nodes.
 #[derive(Debug)]
 pub struct DevnetRpcClient {
     l1_provider: RootProvider,
-    l2_builder_provider: RootProvider<Optimism>,
-    l2_client_provider: RootProvider<Optimism>,
+    l2_builder_provider: RootProvider<Base>,
+    l2_client_provider: RootProvider<Base>,
     l2_builder_op_client: HttpClient,
     l2_client_op_client: HttpClient,
 }

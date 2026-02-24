@@ -12,14 +12,11 @@ use alloy_evm::{
     EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
-use alloy_op_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory,
-    block::{OpAlloyReceiptBuilder, OpTxEnv},
-};
+use base_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
+use base_alloy_evm::{OpAlloyReceiptBuilder, OpBlockExecutionCtx, OpBlockExecutorFactory, OpTxEnv};
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-use op_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use op_revm::OpSpecId;
 use revm::{
     context::BlockEnv,

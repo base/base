@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use alloy_rpc_client::ReqwestClient;
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use url::Url;
 
 /// Trait for interacting with the conductor service.

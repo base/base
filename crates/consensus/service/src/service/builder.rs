@@ -9,11 +9,11 @@ use alloy_transport_http::{
     AuthLayer, Http, HyperClient,
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
+use base_alloy_network::Base;
 use base_consensus_rpc::RpcBuilder;
 use http_body_util::Full;
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_providers_alloy::OnlineBeaconClient;
-use op_alloy_network::Optimism;
 use tower::ServiceBuilder;
 use url::Url;
 
@@ -154,7 +154,7 @@ impl RollupNodeBuilder {
         let layer_transport = HyperClient::with_service(service);
         let http_hyper = Http::with_client(layer_transport, self.engine_config.l2_url.clone());
         let rpc_client = RpcClient::new(http_hyper, false);
-        let l2_provider = RootProvider::<Optimism>::new(rpc_client);
+        let l2_provider = RootProvider::<Base>::new(rpc_client);
 
         let rollup_config = Arc::new(self.config);
 

@@ -4,9 +4,9 @@
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
-use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
+use base_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
 use reth_evm::Evm;
-use reth_optimism_chainspec::OpHardforks;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::OpReceipt;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -130,7 +130,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
-    use op_alloy_consensus::TxDeposit;
+    use base_alloy_consensus::TxDeposit;
     use reth_evm::{ConfigureEvm, op_revm::OpHaltReason};
     use reth_optimism_chainspec::OpChainSpecBuilder;
     use reth_optimism_evm::OpEvmConfig;

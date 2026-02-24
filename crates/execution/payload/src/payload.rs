@@ -12,10 +12,12 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
     ExecutionPayloadV3, PayloadId,
 };
-use op_alloy_consensus::{EIP1559ParamError, encode_holocene_extra_data, encode_jovian_extra_data};
+use base_alloy_consensus::{
+    EIP1559ParamError, encode_holocene_extra_data, encode_jovian_extra_data,
+};
 /// Re-export for use in downstream arguments.
-pub use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use op_alloy_rpc_types_engine::{
+pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
 };
 use reth_chainspec::EthChainSpec;

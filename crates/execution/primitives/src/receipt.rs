@@ -10,7 +10,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
-use op_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
+use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
 use reth_primitives_traits::InMemorySize;
 
 /// Trait for deposit receipt.
@@ -74,7 +74,7 @@ pub(super) mod serde_bincode_compat {
         Eip7702(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// Deposit receipt
         Deposit(
-            op_alloy_consensus::serde_bincode_compat::OpDepositReceipt<'a, alloy_primitives::Log>,
+            base_alloy_consensus::serde_bincode_compat::OpDepositReceipt<'a, alloy_primitives::Log>,
         ),
     }
 

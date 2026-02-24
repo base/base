@@ -1,17 +1,19 @@
 [package]
-name = "base-reth-rpc-types"
-description = "Re-exports reth RPC types for external consumers"
+name = "base-alloy-flz"
+description = "FastLZ compression length estimation and Fjord transaction size utilities"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+exclude.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-# reth
-reth-optimism-evm.workspace = true
-reth-rpc-eth-types.workspace = true
+
+[features]
+default = [ "std" ]
+std = []

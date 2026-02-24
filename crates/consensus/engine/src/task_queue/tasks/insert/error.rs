@@ -4,8 +4,8 @@
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_alloy_rpc_types_engine::OpPayloadError;
 use base_protocol::FromBlockError;
-use op_alloy_rpc_types_engine::OpPayloadError;
 
 use crate::{
     EngineTaskError, SynchronizeTaskError, task_queue::tasks::task::EngineTaskErrorSeverity,

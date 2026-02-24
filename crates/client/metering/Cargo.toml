@@ -62,7 +62,7 @@ base-client-node = { workspace = true, features = ["test-utils"] }
 # reth
 reth-db-common.workspace = true
 reth-optimism-node.workspace = true
-reth-db = { workspace = true, features = ["op", "test-utils"] }
+reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # revm
@@ -73,9 +73,9 @@ revm-context-interface.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-client.workspace = true
 
-# op-alloy
-op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
+# base-alloy
+base-alloy-network.workspace = true
+base-alloy-consensus.workspace = true
 
 # misc
 url.workspace = true

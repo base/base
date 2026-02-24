@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_network::ReceiptResponse;
 use alloy_provider::{Provider, RootProvider};
 use anyhow::Result;
-use op_alloy_network::Optimism;
+use base_alloy_network::Base;
 use tracing::debug;
 
 use super::tracker::TransactionTracker;
@@ -11,7 +11,7 @@ use super::tracker::TransactionTracker;
 /// Polls the sequencer for transaction receipts and updates the tracker.
 #[derive(Debug)]
 pub(crate) struct ReceiptPoller {
-    sequencer: RootProvider<Optimism>,
+    sequencer: RootProvider<Base>,
     tracker: Arc<TransactionTracker>,
     timeout: Duration,
 }
@@ -19,7 +19,7 @@ pub(crate) struct ReceiptPoller {
 impl ReceiptPoller {
     /// Creates a new receipt poller with the given sequencer, tracker, and timeout.
     pub(crate) const fn new(
-        sequencer: RootProvider<Optimism>,
+        sequencer: RootProvider<Base>,
         tracker: Arc<TransactionTracker>,
         timeout: Duration,
     ) -> Self {

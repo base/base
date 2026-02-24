@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
+use base_alloy_network::Base;
 use futures_util::stream;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
@@ -15,7 +16,6 @@ use jsonrpsee::{
     proc_macros::rpc,
     server::SubscriptionMessage,
 };
-use op_alloy_network::Optimism;
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
@@ -72,7 +72,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks
-    fn new_flashblocks_stream(flashblocks_state: Arc<FB>) -> impl Stream<Item = RpcBlock<Optimism>>
+    fn new_flashblocks_stream(flashblocks_state: Arc<FB>) -> impl Stream<Item = RpcBlock<Base>>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {

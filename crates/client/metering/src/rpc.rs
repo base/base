@@ -394,9 +394,9 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, address};
     use alloy_rpc_client::RpcClient;
+    use base_alloy_consensus::OpTxEnvelope;
     use base_bundles::{Bundle, MeterBundleResponse};
     use base_client_node::test_utils::{Account, TestHarness};
-    use op_alloy_consensus::OpTxEnvelope;
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 

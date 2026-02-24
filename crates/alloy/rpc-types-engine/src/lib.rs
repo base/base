@@ -9,8 +9,6 @@
 
 extern crate alloc;
 
-pub use alloy_rpc_types_engine::ForkchoiceUpdateVersion;
-
 mod attributes;
 pub use attributes::OpPayloadAttributes;
 
@@ -29,13 +27,11 @@ pub use payload::{
     OpExecutionPayloadV4, OpPayloadError,
 };
 
-mod superchain;
-pub use superchain::{
-    ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
-};
-
 mod flashblock;
 pub use flashblock::{
     OpFlashblockError, OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
     OpFlashblockPayloadMetadata,
 };
+
+#[cfg(feature = "reth")]
+mod reth;

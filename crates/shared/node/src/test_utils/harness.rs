@@ -8,9 +8,9 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_alloy_network::Base;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use eyre::{Result, eyre};
-use op_alloy_network::Optimism;
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth_chainspec::ChainSpecProvider;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
@@ -107,8 +107,8 @@ impl TestHarness {
         Self { node, engine }
     }
 
-    /// Return an Optimism JSON-RPC provider connected to the harness node.
-    pub fn provider(&self) -> RootProvider<Optimism> {
+    /// Return a Base JSON-RPC provider connected to the harness node.
+    pub fn provider(&self) -> RootProvider<Base> {
         self.node.provider().expect("provider should always be available after node initialization")
     }
 

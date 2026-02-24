@@ -4,6 +4,7 @@ use alloy_provider::ProviderBuilder;
 use audit_archiver_lib::{
     BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
 };
+use base_alloy_network::Base;
 use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
 use base_primitives::{AcceptedBundle, MeterBundleResponse};
 use clap::Parser;
@@ -12,7 +13,6 @@ use ingress_rpc_lib::{
     connect_ingress_to_builder,
 };
 use jsonrpsee::server::Server;
-use op_alloy_network::Optimism;
 use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
@@ -48,17 +48,14 @@ async fn main() -> anyhow::Result<()> {
     let providers = Providers {
         mempool: ProviderBuilder::new()
             .disable_recommended_fillers()
-            .network::<Optimism>()
+            .network::<Base>()
             .connect_http(config.mempool_url),
         simulation: ProviderBuilder::new()
             .disable_recommended_fillers()
-            .network::<Optimism>()
+            .network::<Base>()
             .connect_http(config.simulation_rpc),
         raw_tx_forward: config.raw_tx_forward_rpc.clone().map(|url| {
-            ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .network::<Optimism>()
-                .connect_http(url)
+            ProviderBuilder::new().disable_recommended_fillers().network::<Base>().connect_http(url)
         }),
     };
 

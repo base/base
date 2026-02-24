@@ -10,10 +10,10 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
-use base_primitives::{ExecutionPayloadBaseV1, Flashblock};
-use op_alloy_rpc_types_engine::{
+use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
 };
+use base_primitives::{ExecutionPayloadBaseV1, Flashblock};
 use reth_evm::op_revm::L1BlockInfo;
 use reth_optimism_primitives::OpBlock;
 

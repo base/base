@@ -15,15 +15,15 @@ use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as Eth
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use alloy_transport_http::Http;
 use async_trait::async_trait;
+use base_alloy_network::Base;
+use base_alloy_provider::OpEngineApi;
+use base_alloy_rpc_types::Transaction as OpTransaction;
+use base_alloy_rpc_types_engine::{
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
+    OpPayloadAttributes,
+};
 use base_protocol::L2BlockInfo;
 use kona_genesis::RollupConfig;
-use op_alloy_network::Optimism;
-use op_alloy_provider::ext::engine::OpEngineApi;
-use op_alloy_rpc_types::Transaction as OpTransaction;
-use op_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
-    OpPayloadAttributes, ProtocolVersion,
-};
 use tokio::sync::RwLock;
 
 use crate::{EngineClient, EngineClientError, HyperAuthClient};
@@ -77,8 +77,6 @@ pub struct MockEngineStorage {
     // Non-versioned responses
     /// Storage for client version responses.
     pub client_versions: Option<Vec<ClientVersionV1>>,
-    /// Storage for protocol version responses.
-    pub protocol_version: Option<ProtocolVersion>,
     /// Storage for capabilities responses.
     pub capabilities: Option<Vec<String>>,
 
@@ -222,12 +220,6 @@ impl MockEngineClientBuilder {
     /// Sets the client versions response.
     pub fn with_client_versions(mut self, versions: Vec<ClientVersionV1>) -> Self {
         self.storage.client_versions = Some(versions);
-        self
-    }
-
-    /// Sets the protocol version response.
-    pub const fn with_protocol_version(mut self, version: ProtocolVersion) -> Self {
-        self.storage.protocol_version = Some(version);
         self
     }
 
@@ -380,11 +372,6 @@ impl MockEngineClient {
         self.storage.write().await.client_versions = Some(versions);
     }
 
-    /// Sets the protocol version response.
-    pub async fn set_protocol_version(&self, version: ProtocolVersion) {
-        self.storage.write().await.protocol_version = Some(version);
-    }
-
     /// Sets the capabilities response.
     pub async fn set_capabilities(&self, capabilities: Vec<String>) {
         self.storage.write().await.capabilities = Some(capabilities);
@@ -438,7 +425,7 @@ impl EngineClient for MockEngineClient {
         )
     }
 
-    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Optimism as Network>::BlockResponse> {
+    fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
         let storage = Arc::clone(&self.storage);
         let block_key = block_id_to_key(&block);
 
@@ -510,7 +497,7 @@ impl EngineClient for MockEngineClient {
 }
 
 #[async_trait]
-impl OpEngineApi<Optimism, Http<HyperAuthClient>> for MockEngineClient {
+impl OpEngineApi<Base, Http<HyperAuthClient>> for MockEngineClient {
     async fn new_payload_v2(
         &self,
         _payload: ExecutionPayloadInputV2,
@@ -650,17 +637,6 @@ impl OpEngineApi<Optimism, Http<HyperAuthClient>> for MockEngineClient {
         let storage = self.storage.read().await;
         storage.client_versions.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str("No client versions set in mock"))
-        })
-    }
-
-    async fn signal_superchain_v1(
-        &self,
-        _recommended: ProtocolVersion,
-        _required: ProtocolVersion,
-    ) -> TransportResult<ProtocolVersion> {
-        let storage = self.storage.read().await;
-        storage.protocol_version.ok_or_else(|| {
-            TransportError::from(TransportErrorKind::custom_str("No protocol version set in mock"))
         })
     }
 

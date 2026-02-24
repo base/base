@@ -1,7 +1,7 @@
 //! Fork choice update methods.
 
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth_payload_primitives::EngineApiMessageVersion;
 use tracing::debug;
 

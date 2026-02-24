@@ -4,9 +4,9 @@ use alloy_consensus::{Block, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::Encodable2718;
 use alloy_primitives::Bytes;
 use arbitrary::{Arbitrary, Unstructured};
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use libp2p::bytes::BufMut;
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 
 use crate::actors::generator::seed::SeedGenerator;
 

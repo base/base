@@ -2,9 +2,9 @@ use std::fmt::Debug;
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
 use derive_more::Constructor;
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use tokio::sync::{mpsc, watch};
 
 use crate::{

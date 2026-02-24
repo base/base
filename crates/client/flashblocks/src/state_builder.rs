@@ -7,10 +7,10 @@ use alloy_consensus::{
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use op_alloy_consensus::{OpReceipt, OpTxEnvelope};
-use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
+use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_evm::{Evm, FromRecoveredTx, op_revm::L1BlockInfo};
-use reth_optimism_chainspec::OpHardforks;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;

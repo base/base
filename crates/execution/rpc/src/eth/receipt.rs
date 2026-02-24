@@ -5,8 +5,8 @@ use std::fmt::Debug;
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
-use op_alloy_consensus::{OpReceipt, OpTransaction};
-use op_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
+use base_alloy_consensus::{OpReceipt, OpTransaction};
+use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
 use op_revm::estimate_tx_compressed_size;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
@@ -343,12 +343,10 @@ impl OpReceiptBuilder {
 #[cfg(test)]
 mod test {
     use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
-    use alloy_op_hardforks::{
-        BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP, OpChainHardforks,
-    };
+    use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
-    use op_alloy_consensus::OpTypedTransaction;
-    use op_alloy_network::eip2718::Decodable2718;
+    use base_alloy_consensus::OpTypedTransaction;
+    use base_alloy_hardforks::{BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP};
     use reth_optimism_chainspec::BASE_MAINNET;
     use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
@@ -416,7 +414,10 @@ mod test {
             reth_optimism_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
-        assert!(BASE_MAINNET.is_fjord_active_at_timestamp(BLOCK_124665056_TIMESTAMP));
+        assert!(OpHardforks::is_fjord_active_at_timestamp(
+            &*BASE_MAINNET,
+            BLOCK_124665056_TIMESTAMP
+        ));
 
         let receipt_meta = OpReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
@@ -610,7 +611,7 @@ mod test {
             ..Default::default()
         };
 
-        let op_hardforks = OpChainHardforks::base_mainnet();
+        let op_hardforks = &*BASE_MAINNET;
 
         let receipt = OpReceiptFieldsBuilder::new(BASE_MAINNET_JOVIAN_TIMESTAMP, u64::MAX)
             .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
@@ -645,7 +646,7 @@ mod test {
             ..Default::default()
         };
 
-        let op_hardforks = OpChainHardforks::base_mainnet();
+        let op_hardforks = &*BASE_MAINNET;
 
         let op_receipt = OpReceiptBuilder::new(
             &op_hardforks,
@@ -699,7 +700,7 @@ mod test {
             ..Default::default()
         };
 
-        let op_hardforks = OpChainHardforks::base_mainnet();
+        let op_hardforks = &*BASE_MAINNET;
 
         let op_receipt = OpReceiptBuilder::new(
             &op_hardforks,

@@ -219,8 +219,8 @@ impl DerivationStateMachine {
 mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{BlockHash, b256};
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_protocol::{BlockInfo, OpAttributesWithParent};
-    use op_alloy_rpc_types_engine::OpPayloadAttributes;
     use rstest::rstest;
 
     use super::{

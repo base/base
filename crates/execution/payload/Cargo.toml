@@ -23,7 +23,7 @@ reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-payload-util.workspace = true
-reth-payload-primitives = { workspace = true, features = ["op"] }
+reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-validator.workspace = true
 
@@ -38,8 +38,8 @@ revm.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
-op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
-op-alloy-consensus.workspace = true
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-debug.workspace = true
 alloy-consensus.workspace = true

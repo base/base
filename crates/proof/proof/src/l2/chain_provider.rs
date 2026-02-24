@@ -7,6 +7,7 @@ use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
+use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use kona_derive::L2ChainProvider;
 use kona_driver::PipelineCursor;
@@ -14,7 +15,6 @@ use kona_executor::TrieDBProvider;
 use kona_genesis::{RollupConfig, SystemConfig};
 use kona_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use spin::RwLock;
 
 use crate::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
@@ -267,7 +267,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     fn hint_execution_witness(
         &self,
         parent_hash: B256,
-        op_payload_attributes: &op_alloy_rpc_types_engine::OpPayloadAttributes,
+        op_payload_attributes: &base_alloy_rpc_types_engine::OpPayloadAttributes,
     ) -> Result<(), Self::Error> {
         crate::block_on(async move {
             let encoded_attributes =

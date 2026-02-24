@@ -4,12 +4,12 @@ use alloy_eips::{Decodable2718, eip1559::BaseFeeParams};
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
-use base_protocol::OpAttributesWithParent;
-use kona_genesis::RollupConfig;
-use op_alloy_consensus::{
+use base_alloy_consensus::{
     EIP1559ParamError, OpTxEnvelope, decode_holocene_extra_data, decode_jovian_extra_data,
 };
-use op_alloy_rpc_types::Transaction;
+use base_alloy_rpc_types::Transaction;
+use base_protocol::OpAttributesWithParent;
+use kona_genesis::RollupConfig;
 
 /// Result of validating payload attributes against an execution layer block.
 ///
@@ -400,10 +400,10 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
+    use base_alloy_consensus::encode_holocene_extra_data;
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use kona_registry::ROLLUP_CONFIGS;
-    use op_alloy_consensus::encode_holocene_extra_data;
-    use op_alloy_rpc_types_engine::OpPayloadAttributes;
+    use kona_registry::Registry;
 
     use super::*;
     use crate::AttributesMismatch::EIP1559Parameters;
@@ -419,7 +419,7 @@ mod tests {
 
     fn default_rollup_config() -> &'static RollupConfig {
         let base_mainnet = 8453;
-        ROLLUP_CONFIGS.get(&base_mainnet).expect("default rollup config should exist")
+        Registry::rollup_config(base_mainnet).expect("default rollup config should exist")
     }
 
     #[test]

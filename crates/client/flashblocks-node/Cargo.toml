@@ -19,9 +19,9 @@ test-utils = [
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
 	"dep:alloy-rpc-types-engine",
+	"dep:base-alloy-consensus",
 	"dep:derive_more",
 	"dep:eyre",
-	"dep:op-alloy-consensus",
 	"dep:reth-chainspec",
 	"dep:reth-optimism-chainspec",
 	"dep:reth-optimism-primitives",
@@ -57,7 +57,7 @@ alloy-primitives = { workspace = true, optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 
 # op-alloy
-op-alloy-consensus = { workspace = true, optional = true }
+base-alloy-consensus = { workspace = true, optional = true }
 
 # tokio
 tokio.workspace = true
@@ -85,7 +85,7 @@ reth-primitives.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-testing-utils.workspace = true
 reth-optimism-node = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["op"] }
+reth-db.workspace = true
 
 # revm
 revm = { workspace = true, features = ["std"] }
@@ -100,9 +100,9 @@ alloy-rpc-client.workspace = true
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-sol-macro = { workspace = true, features = ["json"] }
 
-# op-alloy
-op-alloy-network.workspace = true
-op-alloy-rpc-types.workspace = true
+# base-alloy
+base-alloy-network.workspace = true
+base-alloy-rpc-types.workspace = true
 
 # tokio
 tokio-tungstenite.workspace = true

@@ -6,7 +6,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub use alloy_network::*;
+pub use alloy_network::{
+    BlockResponse, ReceiptResponse, TransactionBuilder, TransactionResponse, TxSignerSync, eip2718,
+};
 
 mod base;
 pub use base::Base;
@@ -14,3 +16,6 @@ pub use base::Base;
 mod builder;
 
 mod wallet;
+
+#[cfg(feature = "reth")]
+mod reth;

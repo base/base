@@ -4,7 +4,7 @@
 use alloy_primitives::{B256, U256};
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_preimage::{PreimageKey, PreimageOracleClient};
-use kona_registry::{L1_CONFIGS, ROLLUP_CONFIGS};
+use kona_registry::Registry;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::OracleProviderError;
@@ -197,7 +197,7 @@ impl BootInfo {
 
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
-        let rollup_config = if let Some(config) = ROLLUP_CONFIGS.get(&chain_id) {
+        let rollup_config = if let Some(config) = Registry::rollup_config(chain_id) {
             config.clone()
         } else {
             warn!(
@@ -214,7 +214,7 @@ impl BootInfo {
 
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
-        let l1_config = if let Some(config) = L1_CONFIGS.get(&rollup_config.l1_chain_id) {
+        let l1_config = if let Some(config) = Registry::l1_config(rollup_config.l1_chain_id) {
             config.clone()
         } else {
             warn!(

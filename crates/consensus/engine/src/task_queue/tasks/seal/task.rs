@@ -3,10 +3,10 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
 use derive_more::Constructor;
 use kona_genesis::RollupConfig;
-use op_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use tokio::sync::mpsc;
 
 use super::SealTaskError;

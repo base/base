@@ -15,8 +15,8 @@ use std::{
 };
 
 use alloy_primitives::U256;
+use base_alloy_network::Base;
 use eyre::WrapErr;
-use op_alloy_network::Optimism;
 pub use receipt::{OpReceiptBuilder, OpReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
@@ -298,7 +298,7 @@ pub type OpRpcConvert<N, NetworkT> = RpcConverter<
 
 /// Builds [`OpEthApi`] for Optimism.
 #[derive(Debug)]
-pub struct OpEthApiBuilder<NetworkT = Optimism> {
+pub struct OpEthApiBuilder<NetworkT = Base> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
     sequencer_url: Option<String>,

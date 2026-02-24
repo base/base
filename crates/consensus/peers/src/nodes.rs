@@ -1,7 +1,7 @@
 //! Bootnodes for consensus network discovery.
 
 use derive_more::Deref;
-use kona_registry::CHAINS;
+use kona_registry::Registry;
 use lazy_static::lazy_static;
 
 use crate::BootNode;
@@ -15,10 +15,10 @@ impl BootNodes {
     ///
     /// If the chain id is not recognized, no bootnodes are returned.
     pub fn from_chain_id(id: u64) -> Self {
-        let Some(chain) = CHAINS.get_chain_by_id(id) else {
+        let Some(rollup) = Registry::rollup_config(id) else {
             return Self(vec![]);
         };
-        match chain.parent.chain_id() {
+        match rollup.l1_chain_id {
             1 => Self::mainnet(),
             11155111 => Self::testnet(),
             _ => Self(vec![]),

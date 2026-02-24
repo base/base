@@ -20,7 +20,7 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-hardforks.workspace = true
-alloy-op-hardforks.workspace = true
+base-alloy-hardforks.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 
@@ -36,10 +36,6 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 # `serde` feature
 serde = { workspace = true, optional = true }
-serde_repr = { workspace = true, optional = true }
-
-# `tabled` feature
-tabled = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
 toml = { workspace = true, features = ["parse", "serde"] }
@@ -51,7 +47,6 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 [features]
 default = []
 revm = [ "dep:op-revm" ]
-tabled = [ "dep:tabled", "std" ]
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
@@ -62,7 +57,6 @@ std = [
 	"derive_more/std",
 	"op-revm?/std",
 	"serde?/std",
-	"tabled?/std",
 	"thiserror/std",
 ]
 arbitrary = [
@@ -80,9 +74,8 @@ serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
-	"alloy-op-hardforks/serde",
 	"alloy-primitives/serde",
+	"base-alloy-hardforks/serde",
 	"dep:serde",
-	"dep:serde_repr",
 	"op-revm?/serde",
 ]

@@ -23,12 +23,6 @@ pub use params::{
     base_fee_params, base_fee_params_canyon,
 };
 
-mod superchain;
-pub use superchain::{
-    Chain, ChainList, FaultProofs, Superchain, SuperchainConfig, SuperchainL1Info, SuperchainLevel,
-    SuperchainParent, Superchains,
-};
-
 mod updates;
 pub use updates::{
     BatcherUpdate, DaFootprintGasScalarUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,

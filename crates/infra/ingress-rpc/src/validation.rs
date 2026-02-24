@@ -7,11 +7,12 @@ use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
+use base_alloy_network::Base;
 use base_primitives::Bundle;
-use base_reth_rpc_types::{EthApiError, SignError, extract_l1_info_from_tx};
 use jsonrpsee::core::RpcResult;
-use op_alloy_network::Optimism;
 use op_revm::l1block::L1BlockInfo;
+use reth_optimism_evm::extract_l1_info_from_tx;
+use reth_rpc_eth_types::{EthApiError, SignError};
 use tokio::time::Instant;
 use tracing::warn;
 
@@ -39,7 +40,7 @@ pub trait AccountInfoLookup: Send + Sync {
 
 /// Implementation of the `AccountInfoLookup` trait for the `RootProvider`
 #[async_trait]
-impl AccountInfoLookup for RootProvider<Optimism> {
+impl AccountInfoLookup for RootProvider<Base> {
     async fn fetch_account_info(&self, address: Address) -> RpcResult<AccountInfo> {
         let start = Instant::now();
         let account = self
@@ -65,7 +66,7 @@ pub trait L1BlockInfoLookup: Send + Sync {
 
 /// Implementation of the `L1BlockInfoLookup` trait for the `RootProvider`
 #[async_trait]
-impl L1BlockInfoLookup for RootProvider<Optimism> {
+impl L1BlockInfoLookup for RootProvider<Base> {
     async fn fetch_l1_block_info(&self) -> RpcResult<L1BlockInfo> {
         let start = Instant::now();
         let block = self
@@ -156,8 +157,8 @@ mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_primitives::{Bytes, bytes};
     use alloy_signer_local::PrivateKeySigner;
-    use op_alloy_consensus::OpTxEnvelope;
-    use op_alloy_network::{TxSignerSync, eip2718::Encodable2718};
+    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_network::{TxSignerSync, eip2718::Encodable2718};
 
     use super::*;
 
@@ -348,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn test_decode_tx_rejects_empty_bytes() {
         // Test that empty bytes fail to decode
-        use op_alloy_network::eip2718::Decodable2718;
+        use base_alloy_network::eip2718::Decodable2718;
         let empty_bytes = Bytes::new();
         let result = OpTxEnvelope::decode_2718(&mut empty_bytes.as_ref());
         assert!(result.is_err(), "Empty bytes should fail decoding");
@@ -357,7 +358,7 @@ mod tests {
     #[tokio::test]
     async fn test_decode_tx_rejects_invalid_bytes() {
         // Test that malformed bytes fail to decode
-        use op_alloy_network::eip2718::Decodable2718;
+        use base_alloy_network::eip2718::Decodable2718;
         let invalid_bytes = Bytes::from(vec![0x01, 0x02, 0x03]);
         let result = OpTxEnvelope::decode_2718(&mut invalid_bytes.as_ref());
         assert!(result.is_err(), "Invalid bytes should fail decoding");

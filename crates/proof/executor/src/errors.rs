@@ -7,8 +7,8 @@
 use alloc::string::String;
 
 use alloy_evm::block::BlockExecutionError;
+use base_alloy_consensus::EIP1559ParamError;
 use kona_mpt::TrieNodeError;
-use op_alloy_consensus::EIP1559ParamError;
 use revm::context::DBErrorMarker;
 use thiserror::Error;
 

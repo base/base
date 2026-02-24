@@ -14,7 +14,7 @@ use super::{
     tracker::TransactionTracker,
     wallet::load_wallets,
 };
-use crate::{client::TipsRpcClient, fixtures::create_optimism_provider};
+use crate::{client::TipsRpcClient, fixtures::create_base_provider};
 
 /// Executes the load test with the given arguments.
 pub async fn run(args: LoadArgs) -> Result<()> {
@@ -26,9 +26,9 @@ pub async fn run(args: LoadArgs) -> Result<()> {
 
     let num_wallets = wallets.len();
 
-    let sequencer = create_optimism_provider(&args.sequencer)?;
+    let sequencer = create_base_provider(&args.sequencer)?;
 
-    let tips_provider = create_optimism_provider(&args.target)?;
+    let tips_provider = create_base_provider(&args.target)?;
     let tips_client = TipsRpcClient::new(tips_provider);
 
     let tracker = TransactionTracker::new(Duration::from_secs(args.duration));

@@ -5,8 +5,8 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use alloy_sol_types::SolCall;
-use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
-use op_alloy_rpc_types::Transaction;
+use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
+use base_alloy_rpc_types::Transaction;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},

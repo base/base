@@ -29,15 +29,22 @@ alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 
-# RPC
-jsonrpsee = { workspace = true, optional = true }
+# reth
+alloy-evm = { workspace = true, optional = true }
+op-revm = { workspace = true, optional = true }
+revm = { workspace = true, optional = true }
+reth-rpc-convert = { workspace = true, optional = true }
+
+# signing
+alloy-network = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+
 
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 # misc
 derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
-thiserror.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
@@ -52,15 +59,17 @@ default = [ "std" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
+	"alloy-evm?/std",
 	"alloy-network-primitives/std",
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
 	"base-alloy-consensus/std",
 	"derive_more/std",
+	"op-revm?/std",
+	"revm?/std",
 	"serde/std",
 	"serde_json/std",
-	"thiserror/std",
 ]
 arbitrary = [
 	"alloy-consensus/arbitrary",
@@ -70,6 +79,7 @@ arbitrary = [
 	"alloy-serde/arbitrary",
 	"base-alloy-consensus/arbitrary",
 	"dep:arbitrary",
+	"revm?/arbitrary",
 	"std",
 ]
 k256 = [ "alloy-rpc-types-eth/k256", "base-alloy-consensus/k256" ]
@@ -80,5 +90,15 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-alloy-consensus/serde",
+	"op-revm?/serde",
+	"revm?/serde",
 ]
-jsonrpsee = [ "dep:jsonrpsee" ]
+reth = [
+	"dep:alloy-evm",
+	"dep:alloy-network",
+	"dep:alloy-signer",
+	"dep:op-revm",
+	"dep:reth-rpc-convert",
+	"dep:revm",
+	"std",
+]

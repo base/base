@@ -31,9 +31,9 @@ alloy-rpc-client.workspace = true
 alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 
-# Op Alloy
-op-alloy-consensus.workspace = true
-op-alloy-network.workspace = true
+# Base Alloy
+base-alloy-consensus.workspace = true
+base-alloy-network.workspace = true
 
 # Misc
 lru.workspace = true

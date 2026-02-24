@@ -33,11 +33,11 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 
-# op-alloy
-op-alloy-network = { workspace = true, optional = true }
-op-alloy-rpc-types = { workspace = true, optional = true }
-op-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
-op-alloy-rpc-types-engine = { workspace = true, optional = true }
+# base-alloy
+base-alloy-network = { workspace = true, optional = true }
+base-alloy-rpc-types = { workspace = true, optional = true }
+base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+base-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # misc
 bytes.workspace = true
@@ -50,17 +50,17 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 
 [dev-dependencies]
 rstest.workspace = true
-op-alloy-network.workspace = true
 alloy-signer-local.workspace = true
-op-alloy-rpc-types = { workspace = true, features = ["std"] }
+base-alloy-network.workspace = true
+base-alloy-rpc-types = { workspace = true, features = ["std"] }
 
 [features]
 default = []
 engine = [
 	"dep:alloy-provider",
+	"dep:base-alloy-network",
+	"dep:base-alloy-rpc-types-engine",
 	"dep:kona-genesis",
-	"dep:op-alloy-network",
-	"dep:op-alloy-rpc-types-engine",
 ]
 test-utils = [
 	"base-bundles/test-utils",
@@ -70,7 +70,7 @@ test-utils = [
 	"dep:alloy-signer-local",
 	"dep:alloy-sol-macro",
 	"dep:alloy-sol-types",
+	"dep:base-alloy-network",
+	"dep:base-alloy-rpc-types",
 	"dep:eyre",
-	"dep:op-alloy-network",
-	"dep:op-alloy-rpc-types",
 ]

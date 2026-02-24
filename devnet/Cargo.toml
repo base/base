@@ -35,7 +35,7 @@ reth-optimism-rpc.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-txpool.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-db = { workspace = true, features = ["op"] }
+reth-db.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # alloy
@@ -48,8 +48,8 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
-# op-alloy
-op-alloy-network.workspace = true
+# base-alloy
+base-alloy-network.workspace = true
 
 # tokio
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
@@ -82,5 +82,5 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 
-# op-alloy
-op-alloy-rpc-types.workspace = true
+# base-alloy
+base-alloy-rpc-types.workspace = true

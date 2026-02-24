@@ -66,8 +66,10 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
                     .await?
                     .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
 
-                current_fc.un_safe =
-                    L2BlockInfo::from_block_and_genesis(&l2_parent.into_consensus(), &cfg.genesis)?;
+                current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
+                    &l2_parent.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                    &cfg.genesis,
+                )?;
             }
         }
     }
@@ -105,7 +107,10 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
             .full()
             .await?
             .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
-        safe_cursor = L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &cfg.genesis)?;
+        safe_cursor = L2BlockInfo::from_block_and_genesis(
+            &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            &cfg.genesis,
+        )?;
     }
 
     // Leave the finalized block as-is, and return the current forkchoice.
@@ -118,9 +123,9 @@ mod test {
     use alloy_primitives::{B256, b256};
     use alloy_provider::Network;
     use alloy_rpc_types_eth::Block;
+    use base_alloy_network::Base;
     use base_protocol::L2BlockInfo;
     use kona_genesis::ChainGenesis;
-    use op_alloy_network::Optimism;
 
     const OP_SEPOLIA_GENESIS_HASH: B256 =
         b256!("102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d");
@@ -136,7 +141,7 @@ mod test {
             l2: BlockNumHash { number: 0, hash: OP_SEPOLIA_GENESIS_HASH },
             ..Default::default()
         };
-        let genesis_block: Block<<Optimism as Network>::TransactionResponse> =
+        let genesis_block: Block<<Base as Network>::TransactionResponse> =
             serde_json::from_str(OP_SEPOLIA_GENESIS_RPC_RESPONSE).unwrap();
 
         let rpc_reported_hash = genesis_block.header.hash;

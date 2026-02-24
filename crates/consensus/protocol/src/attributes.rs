@@ -1,7 +1,7 @@
 //! Optimism Payload attributes that reference the parent L2 block.
 
-use op_alloy_consensus::OpTxType;
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_consensus::OpTxType;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 
 use crate::{BlockInfo, L2BlockInfo};
 

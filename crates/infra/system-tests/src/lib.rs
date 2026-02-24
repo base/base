@@ -5,7 +5,7 @@ pub use client::TipsRpcClient;
 
 mod fixtures;
 pub use fixtures::{
-    create_funded_signer, create_load_test_transaction, create_optimism_provider,
+    create_base_provider, create_funded_signer, create_load_test_transaction,
     create_signed_transaction, create_test_signer,
 };
 

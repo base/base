@@ -27,7 +27,7 @@ reth-rpc-eth-api.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-rpc.workspace = true
-reth-optimism-chainspec.workspace = true
+reth-optimism-forks.workspace = true
 reth-optimism-primitives.workspace = true
 
 # revm
@@ -43,11 +43,13 @@ alloy-primitives.workspace = true
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
-# op-alloy
-op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
-op-alloy-rpc-types-engine.workspace = true
+# base-alloy
+base-alloy-rpc-types-engine.workspace = true
+
+# base-alloy
+base-alloy-consensus.workspace = true
+base-alloy-network.workspace = true
+base-alloy-rpc-types.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -76,3 +78,4 @@ derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]
 rstest.workspace = true
+reth-optimism-chainspec.workspace = true

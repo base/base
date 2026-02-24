@@ -6,11 +6,11 @@ use core::fmt::Debug;
 use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
+use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
 use base_protocol::L2BlockInfo;
 use kona_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use kona_executor::BlockBuildingOutcome;
 use kona_genesis::RollupConfig;
-use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
 use spin::RwLock;
 
 use crate::{DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor};

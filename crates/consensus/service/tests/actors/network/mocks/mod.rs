@@ -3,10 +3,10 @@
 use std::{str::FromStr, time::Duration};
 
 use backon::{ExponentialBuilder, Retryable};
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use discv5::Enr;
 use kona_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
 use kona_node_service::{NetworkActorError, NetworkInboundData};
-use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,

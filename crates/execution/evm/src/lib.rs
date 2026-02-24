@@ -16,15 +16,13 @@ use core::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
-use alloy_op_evm::block::{OpTxEnv, receipt_builder::OpReceiptBuilder};
-use op_alloy_consensus::EIP1559ParamError;
+use base_alloy_consensus::EIP1559ParamError;
+use base_alloy_evm::{OpReceiptBuilder, OpTxEnv};
 use op_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
-use reth_evm::{
-    ConfigureEvm, EvmEnv, TransactionEnv, eth::NextEvmEnvAttributes, precompiles::PrecompilesMap,
-};
+use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
@@ -34,7 +32,7 @@ use revm::context::{BlockEnv, TxEnv};
 use {
     alloy_eips::Decodable2718,
     alloy_primitives::{Bytes, U256},
-    op_alloy_rpc_types_engine::OpExecutionData,
+    base_alloy_rpc_types_engine::OpExecutionData,
     reth_evm::{EvmEnvFor, ExecutionCtxFor},
     reth_primitives_traits::{TxTy, WithEncoded},
     reth_storage_errors::any::AnyError,
@@ -56,8 +54,67 @@ mod build;
 pub use build::OpBlockAssembler;
 
 mod error;
-pub use alloy_op_evm::{OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
+pub use base_alloy_evm::{OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
 pub use error::{L1BlockInfoError, OpBlockExecutionError};
+
+/// Builds an [`EvmEnv`] for a given block header using [`base_alloy_evm`]'s spec resolution.
+fn op_evm_env(header: &Header, chain_spec: &(impl OpHardforks + EthChainSpec)) -> EvmEnv<OpSpecId> {
+    let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, header.timestamp);
+    let cfg_env =
+        CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
+
+    let blob_excess_gas_and_price = spec
+        .into_eth_spec()
+        .is_enabled_in(SpecId::CANCUN)
+        .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 });
+
+    let is_merge = spec.into_eth_spec() >= SpecId::MERGE;
+
+    let block_env = BlockEnv {
+        number: U256::from(header.number),
+        beneficiary: header.beneficiary,
+        timestamp: U256::from(header.timestamp),
+        difficulty: if is_merge { U256::ZERO } else { header.difficulty },
+        prevrandao: if is_merge { Some(header.mix_hash) } else { None },
+        gas_limit: header.gas_limit,
+        basefee: header.base_fee_per_gas.unwrap_or_default(),
+        blob_excess_gas_and_price,
+    };
+
+    EvmEnv { cfg_env, block_env }
+}
+
+/// Builds an [`EvmEnv`] for the next block given a parent header.
+fn op_next_evm_env(
+    parent: &Header,
+    attributes: &OpNextBlockEnvAttributes,
+    base_fee_per_gas: u64,
+    chain_spec: &(impl OpHardforks + EthChainSpec),
+) -> EvmEnv<OpSpecId> {
+    let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, attributes.timestamp);
+    let cfg_env =
+        CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
+
+    let blob_excess_gas_and_price = spec
+        .into_eth_spec()
+        .is_enabled_in(SpecId::CANCUN)
+        .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 });
+
+    let is_merge = spec.into_eth_spec() >= SpecId::MERGE;
+
+    let block_env = BlockEnv {
+        number: U256::from(parent.number.saturating_add(1)),
+        beneficiary: attributes.suggested_fee_recipient,
+        timestamp: U256::from(attributes.timestamp),
+        difficulty: if is_merge { U256::ZERO } else { parent.difficulty },
+        prevrandao: if is_merge { Some(attributes.prev_randao) } else { None },
+        gas_limit: attributes.gas_limit,
+        basefee: base_fee_per_gas,
+        blob_excess_gas_and_price,
+    };
+
+    EvmEnv { cfg_env, block_env }
+}
 
 /// Optimism-related EVM configuration.
 #[derive(Debug)]
@@ -158,7 +215,7 @@ where
     }
 
     fn evm_env(&self, header: &Header) -> Result<EvmEnv<OpSpecId>, Self::Error> {
-        Ok(EvmEnv::for_op_block(header, self.chain_spec(), self.chain_spec().chain().id()))
+        Ok(op_evm_env(header, self.chain_spec()))
     }
 
     fn next_evm_env(
@@ -166,18 +223,10 @@ where
         parent: &Header,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnv<OpSpecId>, Self::Error> {
-        Ok(EvmEnv::for_op_next_block(
-            parent,
-            NextEvmEnvAttributes {
-                timestamp: attributes.timestamp,
-                suggested_fee_recipient: attributes.suggested_fee_recipient,
-                prev_randao: attributes.prev_randao,
-                gas_limit: attributes.gas_limit,
-            },
-            self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default(),
-            self.chain_spec(),
-            self.chain_spec().chain().id(),
-        ))
+        let base_fee =
+            self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
+
+        Ok(op_next_evm_env(parent, attributes, base_fee, self.chain_spec()))
     }
 
     fn context_for_block(

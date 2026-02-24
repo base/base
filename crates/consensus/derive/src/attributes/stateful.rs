@@ -8,12 +8,12 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
 use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_hardforks::{Hardfork, Hardforks};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,

@@ -3,11 +3,11 @@ use core::{future::Future, marker::PhantomData};
 use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
+use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
 };
-use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_rpc::OpEngineApiClient;

@@ -15,7 +15,7 @@ pub mod builder;
 pub use builder::OpPayloadBuilder;
 pub mod error;
 pub mod payload;
-use op_alloy_rpc_types_engine::OpExecutionData;
+use base_alloy_rpc_types_engine::OpExecutionData;
 pub use payload::{
     OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilderAttributes, payload_id_optimism,
 };

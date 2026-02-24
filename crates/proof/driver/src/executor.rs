@@ -10,8 +10,8 @@ use core::error::Error;
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
 use async_trait::async_trait;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use kona_executor::BlockBuildingOutcome;
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
 /// Executor trait for block execution in the driver pipeline.
 ///

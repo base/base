@@ -31,18 +31,18 @@ alloy-eips.workspace = true
 alloy-hardforks.workspace = true
 
 # op
-op-alloy-rpc-types.workspace = true
+base-alloy-rpc-types.workspace = true
 
 serde = { workspace = true, optional = true }
 serde_json.workspace = true
 
 # misc
 derive_more.workspace = true
-op-alloy-consensus.workspace = true
+base-alloy-consensus.workspace = true
 
 [dev-dependencies]
 reth-chainspec = { workspace = true, features = ["test-utils"] }
-alloy-op-hardforks.workspace = true
+base-alloy-hardforks.workspace = true
 
 [features]
 default = [ "std" ]
@@ -52,9 +52,9 @@ std = [
 	"alloy-eips/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
+	"base-alloy-consensus/std",
+	"base-alloy-rpc-types/std",
 	"derive_more/std",
-	"op-alloy-consensus/std",
-	"op-alloy-rpc-types/std",
 	"reth-chainspec/std",
 	"reth-ethereum-forks/std",
 	"reth-network-peers/std",
@@ -69,10 +69,9 @@ serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
-	"alloy-op-hardforks/serde",
 	"alloy-primitives/serde",
-	"op-alloy-consensus/serde",
-	"op-alloy-rpc-types/serde",
+	"base-alloy-consensus/serde",
+	"base-alloy-rpc-types/serde",
 	"reth-ethereum-forks/serde",
 	"reth-optimism-forks/serde",
 	"reth-optimism-primitives/serde",

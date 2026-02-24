@@ -29,4 +29,10 @@ printf "%-12s-+-%-10s-+-%-10s\n" "------------" "----------" "----------"
 printf "%-12s | %-10s | %-10s\n" "L1" "$L1_BLOCK" "-"
 printf "%-12s | %-10s | %-10s\n" "L2 Builder" "$BUILDER_UNSAFE" "$BUILDER_SAFE"
 printf "%-12s | %-10s | %-10s\n" "L2 Client" "$CLIENT_UNSAFE" "$CLIENT_SAFE"
+
+# Check ingress health
+INGRESS_HEALTH_URL="http://localhost:${L2_INGRESS_HEALTH_PORT:-8081}/health"
+INGRESS_STATUS=$(curl -sf "$INGRESS_HEALTH_URL" >/dev/null 2>&1 && echo "healthy" || echo "not running")
+printf "%-12s | %-10s | %-10s\n" "L2 Ingress" "$INGRESS_STATUS" "-"
+
 printf "\n"

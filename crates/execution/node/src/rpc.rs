@@ -7,7 +7,7 @@
 //!
 //! ```rust
 //! use alloy_rpc_types_eth::BlockId;
-//! use op_alloy_network::Optimism;
+//! use base_alloy_network::Base;
 //! use reth_db::test_utils::create_test_rw_db_with_path;
 //! use reth_node_builder::{
 //!     ConsensusEngineHandle, LaunchContext, NodeConfig, RethFullAdapter,
@@ -76,7 +76,7 @@
 //!         cache,
 //!         engine_handle: ConsensusEngineHandle::new(tx),
 //!     };
-//!     let eth_api = OpEthApiBuilder::<Optimism>::default().build_eth_api(ctx).await.unwrap();
+//!     let eth_api = OpEthApiBuilder::<Base>::default().build_eth_api(ctx).await.unwrap();
 //!
 //!     // build `trace` namespace API
 //!     let trace_api = TraceApi::new(eth_api, BlockingTaskGuard::new(10), EthConfig::default());
@@ -89,7 +89,7 @@
 use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
-use op_alloy_rpc_types_engine::OpExecutionData;
+use base_alloy_rpc_types_engine::OpExecutionData;
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
     AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes,
