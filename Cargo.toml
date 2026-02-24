@@ -297,6 +297,7 @@ reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11
 reth-trie-parallel = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-tracing-otlp = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-storage-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1", default-features = false }
 reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
