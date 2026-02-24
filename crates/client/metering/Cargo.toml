@@ -30,8 +30,8 @@ reth-optimism-primitives.workspace = true
 # revm
 revm-database.workspace = true
 
-# op-revm
-op-revm.workspace = true
+# base-revm
+base-revm.workspace = true
 
 # alloy
 alloy-eips = { workspace = true, features = ["std"] }

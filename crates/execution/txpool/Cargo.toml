@@ -25,7 +25,7 @@ reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 
 # revm
-op-revm.workspace = true
+base-revm.workspace = true
 
 # optimism
 base-alloy-flz.workspace = true

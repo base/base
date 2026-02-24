@@ -31,7 +31,7 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 
 # reth
 alloy-evm = { workspace = true, optional = true }
-op-revm = { workspace = true, optional = true }
+base-revm = { workspace = true, optional = true }
 revm = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
@@ -65,8 +65,8 @@ std = [
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
 	"base-alloy-consensus/std",
+	"base-revm?/std",
 	"derive_more/std",
-	"op-revm?/std",
 	"revm?/std",
 	"serde/std",
 	"serde_json/std",
@@ -90,14 +90,14 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-alloy-consensus/serde",
-	"op-revm?/serde",
+	"base-revm?/serde",
 	"revm?/serde",
 ]
 reth = [
 	"dep:alloy-evm",
 	"dep:alloy-network",
 	"dep:alloy-signer",
-	"dep:op-revm",
+	"dep:base-revm",
 	"dep:reth-rpc-convert",
 	"dep:revm",
 	"std",

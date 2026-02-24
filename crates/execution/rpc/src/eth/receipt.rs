@@ -7,7 +7,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_alloy_consensus::{OpReceipt, OpTransaction};
 use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
-use op_revm::estimate_tx_compressed_size;
+use base_revm::estimate_tx_compressed_size;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
 use reth_optimism_evm::RethL1BlockInfo;
@@ -166,12 +166,12 @@ impl OpReceiptFieldsBuilder {
         }
     }
 
-    /// Applies [`L1BlockInfo`](op_revm::L1BlockInfo).
+    /// Applies [`L1BlockInfo`](base_revm::L1BlockInfo).
     pub fn l1_block_info<T: Encodable2718 + OpTransaction>(
         mut self,
         chain_spec: &impl OpHardforks,
         tx: &T,
-        l1_block_info: &mut op_revm::L1BlockInfo,
+        l1_block_info: &mut base_revm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError> {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
@@ -283,7 +283,7 @@ impl OpReceiptBuilder {
     pub fn new<N>(
         chain_spec: &impl OpHardforks,
         input: ConvertReceiptInput<'_, N>,
-        l1_block_info: &mut op_revm::L1BlockInfo,
+        l1_block_info: &mut base_revm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError>
     where
         N: NodePrimitives<SignedTx: OpTransaction, Receipt = OpReceipt>,
@@ -491,7 +491,7 @@ mod test {
             OpTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = op_revm::L1BlockInfo {
+        let mut l1_block_info = base_revm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::from(2)),
             ..Default::default()
@@ -515,7 +515,7 @@ mod test {
             OpTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = op_revm::L1BlockInfo {
+        let mut l1_block_info = base_revm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
@@ -606,7 +606,7 @@ mod test {
 
         let tx = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = op_revm::L1BlockInfo {
+        let mut l1_block_info = base_revm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -641,7 +641,7 @@ mod test {
 
         let tx = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = op_revm::L1BlockInfo {
+        let mut l1_block_info = base_revm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -695,7 +695,7 @@ mod test {
 
         let tx = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = op_revm::L1BlockInfo {
+        let mut l1_block_info = base_revm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };

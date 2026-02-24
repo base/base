@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use std::sync::OnceLock;
 
 use alloy_primitives::{Bytes, address};
-use op_revm::{
+use base_revm::{
     OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
     precompiles::OpPrecompiles,
 };

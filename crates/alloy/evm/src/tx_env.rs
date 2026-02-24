@@ -1,5 +1,5 @@
 use alloy_primitives::Bytes;
-use op_revm::OpTransaction;
+use base_revm::OpTransaction;
 
 /// Trait for OP transaction environments. Allows to recover the transaction encoded bytes if
 /// they're available.

@@ -107,7 +107,7 @@ reth-optimism-rpc = { workspace = true, features = ["client"] }
 
 # revm
 revm.workspace = true
-op-revm.workspace = true
+base-revm.workspace = true
 
 # alloy
 alloy-eips = { workspace = true, features = ["std"] }

@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 # Reth
 reth-chainspec.workspace = true
-reth-evm = { workspace = true, features = ["op"] }
+reth-evm.workspace = true
 reth-primitives-traits.workspace = true
 reth-execution-errors.workspace = true
 reth-execution-types.workspace = true
@@ -38,7 +38,7 @@ reth-optimism-primitives.workspace = true
 
 # revm
 revm.workspace = true
-op-revm.workspace = true
+base-revm = { workspace = true, features = ["reth"] }
 
 # misc
 thiserror.workspace = true
@@ -60,7 +60,7 @@ std = [
 	"base-alloy-consensus/std",
 	"base-alloy-evm/std",
 	"base-alloy-rpc-types-engine/std",
-	"op-revm/std",
+	"base-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",
 	"reth-execution-errors/std",
@@ -75,7 +75,7 @@ std = [
 	"revm/std",
 	"thiserror/std",
 ]
-portable = [ "op-revm/portable", "reth-revm/portable", "revm/portable" ]
+portable = [ "base-revm/portable", "reth-revm/portable", "revm/portable" ]
 rpc = [
 	"alloy-evm/rpc",
 	"reth-optimism-primitives/reth-codec",

@@ -58,7 +58,7 @@ revm = { workspace = true, features = [
   "c-kzg",
   "memory_limit",
 ] }
-op-revm.workspace = true
+base-revm.workspace = true
 
 # ethereum
 alloy-primitives.workspace = true

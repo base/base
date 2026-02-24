@@ -5,9 +5,9 @@ use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::Blob
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_revm::OpSpecId;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-use op_revm::OpSpecId;
 use revm::{
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,

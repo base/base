@@ -14,7 +14,7 @@ use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
 };
-use reth_evm::op_revm::L1BlockInfo;
+use base_revm::L1BlockInfo;
 use reth_optimism_primitives::OpBlock;
 
 use crate::{ExecutionError, ProtocolError, Result};

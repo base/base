@@ -33,9 +33,9 @@ base-alloy-consensus.workspace = true
 base-alloy-rpc-types-engine.workspace = true
 
 # Execution
-op-revm.workspace = true
+base-revm.workspace = true
 base-alloy-evm.workspace = true
-alloy-evm = { workspace = true, features = ["op"] }
+alloy-evm.workspace = true
 
 # General
 lru.workspace = true
@@ -76,11 +76,11 @@ std = [
 	"base-alloy-evm/std",
 	"base-alloy-rpc-types-engine/std",
 	"base-protocol/std",
+	"base-revm/std",
 	"dep:tokio",
 	"kona-genesis/std",
 	"kona-preimage/std",
 	"kona-registry/std",
-	"op-revm/std",
 	"serde/std",
 	"serde_json/std",
 	"spin/std",

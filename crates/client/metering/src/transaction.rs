@@ -1,8 +1,8 @@
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
+use base_revm::{L1BlockInfo, OpSpecId};
 use derive_more::Display;
-use op_revm::{OpSpecId, l1block::L1BlockInfo};
 use reth_primitives_traits::{Account, Bytecode};
 use tracing::warn;
 

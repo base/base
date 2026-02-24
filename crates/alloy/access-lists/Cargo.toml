@@ -36,7 +36,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 
 # revm
-op-revm.workspace = true
+base-revm.workspace = true
 
 # alloy
 alloy-contract.workspace = true

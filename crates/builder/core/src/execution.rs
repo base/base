@@ -5,8 +5,8 @@
 use core::fmt::Debug;
 
 use alloy_primitives::{Address, U256};
+use base_revm::OpTransactionError;
 use derive_more::Display;
-use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use thiserror::Error;
 

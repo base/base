@@ -10,11 +10,11 @@ use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_evm::OpTxEnv;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_revm::OpSpecId;
 use kona_driver::Executor;
 use kona_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-use op_revm::OpSpecId;
 
 /// An executor wrapper type.
 #[derive(Debug)]

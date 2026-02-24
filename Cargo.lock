@@ -296,7 +296,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-hardforks",
- "alloy-op-hardforks",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -402,18 +401,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-serde",
  "serde",
-]
-
-[[package]]
-name = "alloy-op-hardforks"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6472c610150c4c4c15be9e1b964c9b78068f933bda25fb9cdf09b9ac2bb66f36"
-dependencies = [
- "alloy-chains",
- "alloy-hardforks",
- "alloy-primitives",
- "auto_impl",
 ]
 
 [[package]]
@@ -1673,6 +1660,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "base-bundles",
+ "base-primitives",
  "bytes",
  "futures",
  "metrics",
@@ -2254,9 +2242,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
- "base-test-utils",
+ "base-primitives",
+ "base-revm",
  "eyre",
- "op-revm",
  "reth-evm",
  "reth-optimism-chainspec",
  "reth-optimism-evm",
@@ -2279,10 +2267,10 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "arbitrary",
+ "base-revm",
  "bincode 2.0.1",
  "bytes",
  "modular-bitfield",
- "op-revm",
  "rand 0.9.2",
  "reth-codecs",
  "reth-db-api",
@@ -2308,25 +2296,9 @@ dependencies = [
  "auto_impl",
  "base-alloy-consensus",
  "base-alloy-hardforks",
- "op-revm",
+ "base-revm",
  "revm",
  "rstest",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "base-alloy-flashblocks"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "brotli",
- "bytes",
- "rstest",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -2397,8 +2369,8 @@ dependencies = [
  "alloy-signer",
  "arbitrary",
  "base-alloy-consensus",
+ "base-revm",
  "derive_more",
- "op-revm",
  "rand 0.9.2",
  "reth-rpc-convert",
  "revm",
@@ -2474,7 +2446,6 @@ dependencies = [
  "base-access-lists",
  "base-alloy-consensus",
  "base-alloy-evm",
- "base-alloy-flashblocks",
  "base-alloy-flz",
  "base-alloy-network",
  "base-alloy-rpc-types",
@@ -2483,6 +2454,8 @@ dependencies = [
  "base-builder-publish",
  "base-bundles",
  "base-client-node",
+ "base-primitives",
+ "base-revm",
  "chrono",
  "clap",
  "clap_builder",
@@ -2506,7 +2479,6 @@ dependencies = [
  "metrics",
  "moka",
  "nanoid",
- "op-revm",
  "opentelemetry",
  "parking_lot",
  "rand 0.9.2",
@@ -2741,7 +2713,7 @@ dependencies = [
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
  "base-cli-utils",
- "base-test-utils",
+ "base-primitives",
  "chrono",
  "eyre",
  "futures-util",
@@ -2838,10 +2810,11 @@ dependencies = [
  "alloy-rpc-types-eth",
  "arc-swap",
  "base-alloy-consensus",
- "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
+ "base-primitives",
+ "base-revm",
  "derive_more",
  "futures-util",
  "jsonrpsee",
@@ -2892,12 +2865,12 @@ dependencies = [
  "alloy-sol-macro",
  "alloy-sol-types",
  "base-alloy-consensus",
- "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
+ "base-primitives",
  "criterion",
  "derive_more",
  "eyre",
@@ -2960,17 +2933,17 @@ dependencies = [
  "alloy-rpc-types-engine",
  "arc-swap",
  "base-alloy-consensus",
- "base-alloy-flashblocks",
  "base-alloy-network",
  "base-bundles",
  "base-client-node",
  "base-flashblocks",
+ "base-primitives",
+ "base-revm",
  "derive_more",
  "eyre",
  "jsonrpsee",
  "metrics",
  "metrics-derive",
- "op-revm",
  "rand 0.9.2",
  "reth-db",
  "reth-db-common",
@@ -2991,6 +2964,39 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "base-primitives"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "base-alloy-consensus",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
+ "base-alloy-rpc-types-engine",
+ "base-bundles",
+ "brotli",
+ "bytes",
+ "eyre",
+ "kona-genesis",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -3066,22 +3072,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-test-utils"
+name = "base-revm"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
- "alloy-contract",
- "alloy-eips",
- "alloy-genesis",
+ "alloy-evm",
  "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-macro",
  "alloy-sol-types",
- "base-alloy-network",
- "base-alloy-rpc-types",
- "eyre",
+ "auto_impl",
+ "reth-evm",
+ "revm",
+ "rstest",
+ "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -3112,6 +3115,7 @@ dependencies = [
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
+ "base-primitives",
  "chrono",
  "derive_more",
  "eyre",
@@ -3205,8 +3209,8 @@ dependencies = [
  "anyhow",
  "arboard",
  "base-alloy-consensus",
- "base-alloy-flashblocks",
  "base-alloy-network",
+ "base-primitives",
  "chrono",
  "crossterm 0.28.1",
  "dirs",
@@ -4958,7 +4962,6 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
- "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-builder-core",
@@ -4966,6 +4969,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-flashblocks",
  "base-flashblocks-node",
+ "base-primitives",
  "base-protocol",
  "base-txpool-rpc",
  "base-txpool-tracing",
@@ -7120,8 +7124,8 @@ dependencies = [
  "anyhow",
  "audit-archiver-lib",
  "base-alloy-network",
- "base-bundles",
  "base-cli-utils",
+ "base-primitives",
  "clap",
  "dotenvy",
  "ingress-rpc-lib",
@@ -7148,12 +7152,13 @@ dependencies = [
  "base-alloy-network",
  "base-bundles",
  "base-cli-utils",
+ "base-primitives",
+ "base-revm",
  "clap",
  "jsonrpsee",
  "metrics",
  "metrics-derive",
  "moka",
- "op-revm",
  "rdkafka",
  "reth-optimism-evm",
  "reth-rpc-eth-types",
@@ -7790,10 +7795,10 @@ dependencies = [
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
  "base-protocol",
+ "base-revm",
  "kona-genesis",
  "kona-mpt",
  "kona-registry",
- "op-revm",
  "rand 0.9.2",
  "revm",
  "rocksdb",
@@ -7818,8 +7823,8 @@ dependencies = [
  "alloy-sol-types",
  "arbitrary",
  "base-alloy-hardforks",
+ "base-revm",
  "derive_more",
- "op-revm",
  "rand 0.9.2",
  "serde",
  "serde_json",
@@ -7874,7 +7879,7 @@ dependencies = [
  "alloy-primitives",
  "base-alloy-consensus",
  "base-protocol",
- "op-revm",
+ "base-revm",
  "revm",
 ]
 
@@ -8018,6 +8023,7 @@ dependencies = [
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
  "base-protocol",
+ "base-revm",
  "c-kzg",
  "kona-derive",
  "kona-driver",
@@ -8028,7 +8034,6 @@ dependencies = [
  "kona-registry",
  "lazy_static",
  "lru 0.16.3",
- "op-revm",
  "rand 0.9.2",
  "rayon",
  "rstest",
@@ -13301,7 +13306,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
- "op-revm",
+ "base-revm",
  "reth-chainspec",
  "reth-evm",
  "reth-execution-errors",
@@ -13369,12 +13374,12 @@ dependencies = [
  "base-alloy-hardforks",
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
+ "base-revm",
  "clap",
  "eyre",
  "futures",
  "futures-util",
  "humantime",
- "op-revm",
  "reth-chainspec",
  "reth-consensus",
  "reth-db",
@@ -13433,6 +13438,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "base-alloy-consensus",
  "base-alloy-rpc-types-engine",
+ "base-revm",
  "derive_more",
  "either",
  "reth-basic-payload-builder",
@@ -13509,6 +13515,7 @@ dependencies = [
  "base-alloy-rpc-jsonrpsee",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
+ "base-revm",
  "derive_more",
  "eyre",
  "futures",
@@ -13516,7 +13523,6 @@ dependencies = [
  "jsonrpsee-core",
  "jsonrpsee-types",
  "metrics",
- "op-revm",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -13619,9 +13625,9 @@ dependencies = [
  "alloy-primitives",
  "base-alloy-consensus",
  "base-alloy-flz",
+ "base-revm",
  "c-kzg",
  "derive_more",
- "op-revm",
  "parking_lot",
  "reth-chainspec",
  "reth-evm",
@@ -14790,6 +14796,7 @@ dependencies = [
  "ripemd",
  "secp256k1 0.31.1",
  "sha2",
+ "substrate-bn",
 ]
 
 [[package]]
@@ -16189,6 +16196,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "substrate-bn"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b5bbfa79abbae15dd642ea8176a21a635ff3c00059961d1ea27ad04e5b441c"
+dependencies = [
+ "byteorder",
+ "crunchy",
+ "lazy_static",
+ "rand 0.8.5",
+ "rustc-hex",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16311,6 +16331,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-network",
  "base-bundles",
+ "base-primitives",
  "bytes",
  "clap",
  "dashmap",

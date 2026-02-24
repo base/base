@@ -2,7 +2,7 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
-use op_revm::{L1BlockInfo, OpSpecId};
+use base_revm::{L1BlockInfo, OpSpecId};
 use reth_execution_errors::BlockExecutionError;
 use reth_optimism_forks::OpHardforks;
 use reth_primitives_traits::BlockBody;

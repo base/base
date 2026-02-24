@@ -38,7 +38,7 @@ pub mod proof_history;
 #[cfg(feature = "test-utils")]
 pub mod utils;
 
-use op_revm as _;
+use base_revm as _;
 pub use reth_optimism_evm::*;
 pub use reth_optimism_payload_builder::{
     self as payload, OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilder,

@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 url.workspace = true
-op-revm.workspace = true
+base-revm.workspace = true
 metrics.workspace = true
 async-trait.workspace = true
 base-cli-utils.workspace = true

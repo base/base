@@ -11,8 +11,8 @@ pub use base_test_utils::{
     AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
     build_test_genesis,
 };
+pub use base_revm::OpTransaction;
 pub use eyre::Result;
-pub use op_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::OpEvmConfig;

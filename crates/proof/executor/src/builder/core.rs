@@ -15,9 +15,9 @@ use alloy_evm::{
 use base_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
 use base_alloy_evm::{OpAlloyReceiptBuilder, OpBlockExecutionCtx, OpBlockExecutorFactory, OpTxEnv};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_revm::OpSpecId;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-use op_revm::OpSpecId;
 use revm::{
     context::BlockEnv,
     database::{State, states::bundle_state::BundleRetention},
