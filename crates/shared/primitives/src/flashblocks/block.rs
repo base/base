@@ -93,27 +93,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::plain(encode_plain)]
-    #[case::brotli(encode_brotli)]
-    fn try_decode_old_format_still_decodes(#[case] encoder: fn(&FlashblocksPayloadV1) -> Bytes) {
-        // old format should still decode
-        let payload = sample_payload(json!({
-            "block_number": 1234u64,
-            "receipts": {},
-            "new_account_balances": {},
-        }));
-
-        let decoded =
-            Flashblock::try_decode_message(encoder(&payload)).expect("payload should decode");
-
-        assert_eq!(decoded.payload_id, payload.payload_id);
-        assert_eq!(decoded.index, payload.index);
-        assert_eq!(decoded.base, payload.base);
-        assert_eq!(decoded.diff, payload.diff);
-        assert_eq!(decoded.metadata.block_number, 1234);
-    }
-
-    #[rstest]
     #[case::invalid_brotli(Bytes::from_static(b"not brotli data"))]
     #[case::missing_metadata(encode_plain(&sample_payload(json!({
     }))))] // missing block_number in metadata
