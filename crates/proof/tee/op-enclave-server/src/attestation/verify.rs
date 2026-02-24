@@ -3,19 +3,21 @@
 //! This module provides verification of AWS Nitro Enclave attestation documents,
 //! similar to the `nitrite` Go library.
 
-use aws_nitro_enclaves_cose::CoseSign1;
-use openssl::asn1::Asn1Time;
-use openssl::stack::Stack;
-use openssl::x509::store::X509StoreBuilder;
-use openssl::x509::{X509, X509StoreContext};
-use serde::Deserialize;
-use std::collections::BTreeMap;
-use std::time::SystemTime;
-use x509_cert::Certificate;
-use x509_cert::der::Decode;
+use std::{collections::BTreeMap, time::SystemTime};
 
-use crate::attestation::ca_roots::get_default_ca_root;
-use crate::error::{AttestationError, ServerError};
+use aws_nitro_enclaves_cose::CoseSign1;
+use openssl::{
+    asn1::Asn1Time,
+    stack::Stack,
+    x509::{X509, X509StoreContext, store::X509StoreBuilder},
+};
+use serde::Deserialize;
+use x509_cert::{Certificate, der::Decode};
+
+use crate::{
+    attestation::ca_roots::get_default_ca_root,
+    error::{AttestationError, ServerError},
+};
 
 /// An attestation document from a Nitro Enclave.
 #[derive(Debug, Clone, Deserialize)]
@@ -91,10 +93,9 @@ fn check_certificate_validity(cert: &X509, check_time: &Asn1Time) -> Result<(), 
 
     // Check if certificate has expired
     if check_time > not_after {
-        return Err(AttestationError::CertificateExpired {
-            not_after: not_after.to_string(),
-        }
-        .into());
+        return Err(
+            AttestationError::CertificateExpired { not_after: not_after.to_string() }.into()
+        );
     }
 
     Ok(())
@@ -138,9 +139,8 @@ fn verify_certificate_chain(
     let mut store_ctx = X509StoreContext::new()
         .map_err(|e| AttestationError::X509StoreError(format!("failed to create context: {e}")))?;
 
-    let result = store_ctx
-        .init(&store, leaf_cert, &chain, |ctx| ctx.verify_cert())
-        .map_err(|e| {
+    let result =
+        store_ctx.init(&store, leaf_cert, &chain, |ctx| ctx.verify_cert()).map_err(|e| {
             AttestationError::ChainVerificationFailed(format!("verification init failed: {e}"))
         })?;
 
@@ -215,11 +215,9 @@ pub fn verify_attestation_with_options(
         .map_err(|e| AttestationError::CertificateChain(format!("missing public key: {e}")))?;
 
     // Verify the COSE signature
-    cose_sign1
-        .verify_signature::<aws_nitro_enclaves_cose::crypto::Openssl>(&public_key)
-        .map_err(|e| {
-            AttestationError::CoseVerify(format!("signature verification failed: {e:?}"))
-        })?;
+    cose_sign1.verify_signature::<aws_nitro_enclaves_cose::crypto::Openssl>(&public_key).map_err(
+        |e| AttestationError::CoseVerify(format!("signature verification failed: {e:?}")),
+    )?;
 
     // Get the CA root for chain verification
     let ca_root = get_default_ca_root()?;
@@ -254,10 +252,7 @@ pub fn verify_attestation_with_options(
         Some(&check_time),
     )?;
 
-    Ok(VerificationResult {
-        document,
-        certificate_chain,
-    })
+    Ok(VerificationResult { document, certificate_chain })
 }
 
 /// Verify an attestation document and check that PCR0 matches the expected value.
@@ -305,14 +300,20 @@ pub fn extract_public_key(document: &AttestationDocument) -> Result<Vec<u8>, Ser
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use openssl::bn::BigNum;
-    use openssl::hash::MessageDigest;
-    use openssl::pkey::PKey;
-    use openssl::rsa::Rsa;
-    use openssl::x509::extension::{BasicConstraints, KeyUsage};
-    use openssl::x509::{X509Builder, X509NameBuilder};
     use std::time::Duration;
+
+    use openssl::{
+        bn::BigNum,
+        hash::MessageDigest,
+        pkey::PKey,
+        rsa::Rsa,
+        x509::{
+            X509Builder, X509NameBuilder,
+            extension::{BasicConstraints, KeyUsage},
+        },
+    };
+
+    use super::*;
 
     /// Helper to create a self-signed test certificate with custom validity period
     fn create_test_cert_with_times(not_before: Asn1Time, not_after: Asn1Time) -> X509 {
@@ -320,18 +321,14 @@ mod tests {
         let pkey = PKey::from_rsa(rsa).unwrap();
 
         let mut name_builder = X509NameBuilder::new().unwrap();
-        name_builder
-            .append_entry_by_text("CN", "Test Cert")
-            .unwrap();
+        name_builder.append_entry_by_text("CN", "Test Cert").unwrap();
         let name = name_builder.build();
 
         let mut builder = X509Builder::new().unwrap();
         builder.set_version(2).unwrap();
 
         let serial = BigNum::from_u32(1).unwrap();
-        builder
-            .set_serial_number(&serial.to_asn1_integer().unwrap())
-            .unwrap();
+        builder.set_serial_number(&serial.to_asn1_integer().unwrap()).unwrap();
 
         builder.set_subject_name(&name).unwrap();
         builder.set_issuer_name(&name).unwrap();
@@ -340,9 +337,7 @@ mod tests {
         builder.set_not_before(&not_before).unwrap();
         builder.set_not_after(&not_after).unwrap();
 
-        builder
-            .append_extension(BasicConstraints::new().critical().ca().build().unwrap())
-            .unwrap();
+        builder.append_extension(BasicConstraints::new().critical().ca().build().unwrap()).unwrap();
         builder
             .append_extension(KeyUsage::new().critical().key_cert_sign().build().unwrap())
             .unwrap();
@@ -353,10 +348,8 @@ mod tests {
 
     /// Create a test certificate valid from `days_ago` to `valid_for_days` from now
     fn create_valid_test_cert(days_ago: u32, valid_for_days: u32) -> X509 {
-        let now_secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now_secs =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
         let not_before = Asn1Time::from_unix(now_secs - (days_ago as i64 * 86400)).unwrap();
         let not_after = Asn1Time::from_unix(now_secs + (valid_for_days as i64 * 86400)).unwrap();
         create_test_cert_with_times(not_before, not_after)
@@ -364,10 +357,8 @@ mod tests {
 
     /// Create an expired test certificate
     fn create_expired_test_cert() -> X509 {
-        let now_secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now_secs =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
         let not_before = Asn1Time::from_unix(now_secs - (20 * 86400)).unwrap(); // 20 days ago
         let not_after = Asn1Time::from_unix(now_secs - 86400).unwrap(); // 1 day ago
         create_test_cert_with_times(not_before, not_after)
@@ -375,10 +366,8 @@ mod tests {
 
     /// Create a not-yet-valid test certificate
     fn create_future_test_cert() -> X509 {
-        let now_secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let now_secs =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
         let not_before = Asn1Time::from_unix(now_secs + 86400).unwrap(); // 1 day from now
         let not_after = Asn1Time::from_unix(now_secs + (10 * 86400)).unwrap(); // 10 days from now
         create_test_cert_with_times(not_before, not_after)
@@ -405,10 +394,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(
-                err,
-                ServerError::Attestation(AttestationError::CertificateExpired { .. })
-            ),
+            matches!(err, ServerError::Attestation(AttestationError::CertificateExpired { .. })),
             "Expected CertificateExpired, got: {err:?}"
         );
     }

@@ -93,11 +93,8 @@ pub fn compute_tx_root(txs_rlp: &[Vec<u8>]) -> B256 {
     }
 
     // Build key-value pairs: (RLP(index), tx_rlp)
-    let mut pairs: Vec<(Vec<u8>, &[u8])> = txs_rlp
-        .iter()
-        .enumerate()
-        .map(|(i, tx)| (encode_index(i), tx.as_slice()))
-        .collect();
+    let mut pairs: Vec<(Vec<u8>, &[u8])> =
+        txs_rlp.iter().enumerate().map(|(i, tx)| (encode_index(i), tx.as_slice())).collect();
 
     // Sort by key (lexicographic order for proper trie construction)
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -124,9 +121,12 @@ fn encode_index(index: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::slice;
+
     use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
     use alloy_primitives::{Bloom, Log, b256};
+
+    use super::*;
 
     /// Creates a test receipt for use in test vectors.
     ///
@@ -174,20 +174,15 @@ mod tests {
         // Expected root from Go: types.DeriveSha(receipts, trie.NewStackTrie(nil))
         let expected = b256!("f78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa");
 
-        assert_eq!(
-            computed, expected,
-            "Receipt root must match Go DeriveSha for single receipt"
-        );
+        assert_eq!(computed, expected, "Receipt root must match Go DeriveSha for single receipt");
     }
 
     #[test]
     fn test_compute_receipt_root_matches_go_multiple() {
         // Test vector generated from Go types.DeriveSha()
         // Two EIP-1559 receipts with known cumulative gas values
-        let receipts = vec![
-            create_test_receipt(2, true, 21000),
-            create_test_receipt(2, true, 42000),
-        ];
+        let receipts =
+            vec![create_test_receipt(2, true, 21000), create_test_receipt(2, true, 42000)];
 
         let computed = compute_receipt_root(&receipts);
 
@@ -249,13 +244,13 @@ mod tests {
             alloy_primitives::Bloom::default(),
         ));
 
-        let root = compute_receipt_root(&[receipt.clone()]);
+        let root = compute_receipt_root(slice::from_ref(&receipt));
 
         // Root should be deterministic and non-empty
         assert_ne!(root, EMPTY_ROOT_HASH);
 
         // Same input produces same output
-        let root2 = compute_receipt_root(&[receipt]);
+        let root2 = compute_receipt_root(slice::from_ref(&receipt));
         assert_eq!(root, root2);
     }
 
@@ -291,7 +286,7 @@ mod tests {
         // Simple RLP-encoded transaction-like data
         let tx_rlp = vec![0xc0]; // Empty RLP list
 
-        let root = compute_tx_root(&[tx_rlp.clone()]);
+        let root = compute_tx_root(slice::from_ref(&tx_rlp));
         assert_ne!(root, EMPTY_ROOT_HASH);
 
         // Same input produces same output

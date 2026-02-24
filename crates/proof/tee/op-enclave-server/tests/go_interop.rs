@@ -19,15 +19,19 @@
 //! cargo test --package op-enclave-server --test go_interop -- --ignored --test-threads=1
 //! ```
 
-use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::{
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256, U256, b256};
-use op_enclave_server::Server;
-use op_enclave_server::crypto::{
-    build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, pkix_to_public_key,
-    private_to_public, public_key_bytes, public_key_to_pkix, sign_proposal_data_sync,
-    signer_from_hex, verify_proposal_signature,
+use op_enclave_server::{
+    Server,
+    crypto::{
+        build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key,
+        pkix_to_public_key, private_to_public, public_key_bytes, public_key_to_pkix,
+        sign_proposal_data_sync, signer_from_hex, verify_proposal_signature,
+    },
 };
 
 /// Well-known test signer private key (Hardhat account #0).
@@ -58,23 +62,12 @@ impl GoServerHandle {
         // Try to find the enclave binary in various locations
         let possible_paths = [
             // From rust directory: ../op-enclave/op-enclave/bin/enclave
-            cwd.parent().map(|p| {
-                p.join("op-enclave")
-                    .join("op-enclave")
-                    .join("bin")
-                    .join("enclave")
-            }),
-            // From rust directory: ../op-enclave/bin/enclave (flat structure)
             cwd.parent()
-                .map(|p| p.join("op-enclave").join("bin").join("enclave")),
+                .map(|p| p.join("op-enclave").join("op-enclave").join("bin").join("enclave")),
+            // From rust directory: ../op-enclave/bin/enclave (flat structure)
+            cwd.parent().map(|p| p.join("op-enclave").join("bin").join("enclave")),
             // Direct path from workspace root
-            Some(
-                cwd.join("..")
-                    .join("op-enclave")
-                    .join("op-enclave")
-                    .join("bin")
-                    .join("enclave"),
-            ),
+            Some(cwd.join("..").join("op-enclave").join("op-enclave").join("bin").join("enclave")),
         ];
 
         // First check if a server is already running
@@ -154,10 +147,7 @@ struct JsonRpcError {
 
 impl GoEnclaveClient {
     fn new() -> Self {
-        Self {
-            client: reqwest::blocking::Client::new(),
-            url: go_server_url(),
-        }
+        Self { client: reqwest::blocking::Client::new(), url: go_server_url() }
     }
 
     fn call<P: serde::Serialize, R: serde::de::DeserializeOwned>(
@@ -165,12 +155,7 @@ impl GoEnclaveClient {
         method: &'static str,
         params: P,
     ) -> Result<R, Box<dyn std::error::Error>> {
-        let request = JsonRpcRequest {
-            jsonrpc: "2.0",
-            method,
-            params,
-            id: 1,
-        };
+        let request = JsonRpcRequest { jsonrpc: "2.0", method, params, id: 1 };
 
         let response: JsonRpcResponse<R> =
             self.client.post(&self.url).json(&request).send()?.json()?;
@@ -212,16 +197,11 @@ fn test_signer_public_key_format() {
     let client = GoEnclaveClient::new();
 
     // Get Go server's public key
-    let go_public_key = client
-        .get_signer_public_key()
-        .expect("failed to get Go public key");
+    let go_public_key = client.get_signer_public_key().expect("failed to get Go public key");
 
     // Verify format: 65 bytes, starts with 0x04 (uncompressed point marker)
     assert_eq!(go_public_key.len(), 65, "Go public key should be 65 bytes");
-    assert_eq!(
-        go_public_key[0], 0x04,
-        "Go public key should start with 0x04"
-    );
+    assert_eq!(go_public_key[0], 0x04, "Go public key should start with 0x04");
 
     // Create a Rust server with the same key
     // SAFETY: This test is single-threaded and we control the environment.
@@ -230,15 +210,8 @@ fn test_signer_public_key_format() {
     let rust_public_key = rust_server.signer_public_key();
 
     // Verify Rust key has same format
-    assert_eq!(
-        rust_public_key.len(),
-        65,
-        "Rust public key should be 65 bytes"
-    );
-    assert_eq!(
-        rust_public_key[0], 0x04,
-        "Rust public key should start with 0x04"
-    );
+    assert_eq!(rust_public_key.len(), 65, "Rust public key should be 65 bytes");
+    assert_eq!(rust_public_key[0], 0x04, "Rust public key should start with 0x04");
 
     // When using the same private key, public keys should match
     assert_eq!(
@@ -248,10 +221,7 @@ fn test_signer_public_key_format() {
 
     // Verify address matches expected
     let rust_address = format!("{}", rust_server.signer_address());
-    assert_eq!(
-        rust_address, TEST_SIGNER_ADDRESS,
-        "Rust address should match expected"
-    );
+    assert_eq!(rust_address, TEST_SIGNER_ADDRESS, "Rust address should match expected");
 }
 
 /// Test that Go's PKIX-encoded decryption key is parseable by Rust.
@@ -262,16 +232,10 @@ fn test_decryption_public_key_pkix() {
     let client = GoEnclaveClient::new();
 
     // Get Go server's decryption public key
-    let go_pkix = client
-        .get_decryption_public_key()
-        .expect("failed to get Go decryption key");
+    let go_pkix = client.get_decryption_public_key().expect("failed to get Go decryption key");
 
     // PKIX-encoded RSA-4096 key should be ~550 bytes
-    assert!(
-        go_pkix.len() > 500,
-        "PKIX key should be at least 500 bytes, got {}",
-        go_pkix.len()
-    );
+    assert!(go_pkix.len() > 500, "PKIX key should be at least 500 bytes, got {}", go_pkix.len());
 
     // Rust should be able to parse it
     let parsed_key = pkix_to_public_key(&go_pkix).expect("Rust should parse Go's PKIX key");
@@ -294,14 +258,12 @@ fn test_rust_encrypts_go_decrypts() {
     let client = GoEnclaveClient::new();
 
     // Get initial signer public key from Go
-    let initial_public_key = client
-        .get_signer_public_key()
-        .expect("failed to get initial public key");
+    let initial_public_key =
+        client.get_signer_public_key().expect("failed to get initial public key");
 
     // Get Go's decryption public key
-    let go_decryption_pkix = client
-        .get_decryption_public_key()
-        .expect("failed to get decryption key");
+    let go_decryption_pkix =
+        client.get_decryption_public_key().expect("failed to get decryption key");
 
     // Parse the public key in Rust
     let go_decryption_key =
@@ -312,40 +274,30 @@ fn test_rust_encrypts_go_decrypts() {
     let new_private_key_bytes = hex::decode(new_private_key_hex).expect("valid hex");
 
     // Encrypt the new key with Go's decryption public key
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = rand_08::rngs::OsRng;
     let encrypted = encrypt_pkcs1v15(&mut rng, &go_decryption_key, &new_private_key_bytes)
         .expect("failed to encrypt");
 
     // Send to Go server
-    client
-        .set_signer_key(&encrypted)
-        .expect("Go should decrypt Rust-encrypted key");
+    client.set_signer_key(&encrypted).expect("Go should decrypt Rust-encrypted key");
 
     // Verify the signer key changed
-    let new_public_key = client
-        .get_signer_public_key()
-        .expect("failed to get new public key");
+    let new_public_key = client.get_signer_public_key().expect("failed to get new public key");
 
-    assert_ne!(
-        initial_public_key, new_public_key,
-        "signer public key should have changed"
-    );
+    assert_ne!(initial_public_key, new_public_key, "signer public key should have changed");
 
     // Verify the new key matches what we expect
     let expected_signer =
         signer_from_hex(new_private_key_hex).expect("failed to create expected signer");
     let expected_public_key = op_enclave_server::crypto::public_key_bytes(&expected_signer);
 
-    assert_eq!(
-        new_public_key, expected_public_key,
-        "new public key should match expected"
-    );
+    assert_eq!(new_public_key, expected_public_key, "new public key should match expected");
 }
 
 /// Test RSA encrypt/decrypt roundtrip without server (pure crypto test).
 #[test]
 fn test_rsa_crypto_compatibility() {
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = rand_08::rngs::OsRng;
 
     // Generate an RSA key
     let private_key = generate_rsa_key(&mut rng).expect("failed to generate RSA key");
@@ -482,24 +434,15 @@ fn test_signing_data_format() {
     off += 20;
     assert_eq!(&signing_data[off..off + 32], L1_ORIGIN_HASH.as_slice());
     off += 32;
-    assert_eq!(
-        &signing_data[off..off + 32],
-        &U256::from(L1_ORIGIN_NUMBER).to_be_bytes::<32>()
-    );
+    assert_eq!(&signing_data[off..off + 32], &U256::from(L1_ORIGIN_NUMBER).to_be_bytes::<32>());
     off += 32;
     assert_eq!(&signing_data[off..off + 32], PREV_OUTPUT_ROOT.as_slice());
     off += 32;
-    assert_eq!(
-        &signing_data[off..off + 32],
-        &U256::from(STARTING_L2_BLOCK).to_be_bytes::<32>()
-    );
+    assert_eq!(&signing_data[off..off + 32], &U256::from(STARTING_L2_BLOCK).to_be_bytes::<32>());
     off += 32;
     assert_eq!(&signing_data[off..off + 32], OUTPUT_ROOT.as_slice());
     off += 32;
-    assert_eq!(
-        &signing_data[off..off + 32],
-        &U256::from(L2_BLOCK_NUMBER).to_be_bytes::<32>()
-    );
+    assert_eq!(&signing_data[off..off + 32], &U256::from(L2_BLOCK_NUMBER).to_be_bytes::<32>());
     off += 32;
     assert_eq!(&signing_data[off..off + 32], CONFIG_HASH.as_slice());
     off += 32;

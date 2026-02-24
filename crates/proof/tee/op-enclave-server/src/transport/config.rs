@@ -50,11 +50,7 @@ impl TransportConfig {
     /// Create a new transport configuration with custom values.
     #[must_use]
     pub const fn new(vsock_port: u32, http_port: u16, http_body_limit: u32) -> Self {
-        Self {
-            vsock_port,
-            http_port,
-            http_body_limit,
-        }
+        Self { vsock_port, http_port, http_body_limit }
     }
 
     /// Get the HTTP body limit from environment or use default.

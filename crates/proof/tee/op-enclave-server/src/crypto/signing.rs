@@ -6,8 +6,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use k256::ecdsa::signature::hazmat::PrehashVerifier;
-use k256::ecdsa::{Signature, VerifyingKey};
+use k256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
 
 use crate::error::ProposalError;
 
@@ -103,9 +102,8 @@ pub fn sign_proposal_data_sync(
     data: &[u8],
 ) -> Result<Bytes, ProposalError> {
     let hash = keccak256(data);
-    let signature = signer
-        .sign_hash_sync(&hash)
-        .map_err(|e| ProposalError::SigningFailed(e.to_string()))?;
+    let signature =
+        signer.sign_hash_sync(&hash).map_err(|e| ProposalError::SigningFailed(e.to_string()))?;
 
     // Convert to 65-byte format: r (32) || s (32) || v (1)
     // Use as_rsy() which returns v as 0 or 1 (parity bit), matching Go's crypto.Sign format.
@@ -157,10 +155,10 @@ pub fn verify_proposal_signature(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{address, b256};
     use rand_08::rngs::OsRng;
 
+    use super::*;
     use crate::crypto::generate_signer;
 
     fn test_signing_data() -> Vec<u8> {
@@ -257,14 +255,8 @@ mod tests {
         assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH + 64);
 
         let ir_offset = 20 + 6 * 32;
-        assert_eq!(
-            &data[ir_offset..ir_offset + 32],
-            intermediate_roots[0].as_slice()
-        );
-        assert_eq!(
-            &data[ir_offset + 32..ir_offset + 64],
-            intermediate_roots[1].as_slice()
-        );
+        assert_eq!(&data[ir_offset..ir_offset + 32], intermediate_roots[0].as_slice());
+        assert_eq!(&data[ir_offset + 32..ir_offset + 64], intermediate_roots[1].as_slice());
     }
 
     #[test]
@@ -333,9 +325,6 @@ mod tests {
         let short_sig = vec![0u8; 64];
 
         let result = verify_proposal_signature(&public_key, &data, &short_sig);
-        assert!(matches!(
-            result,
-            Err(ProposalError::InvalidSignatureLength(64))
-        ));
+        assert!(matches!(result, Err(ProposalError::InvalidSignatureLength(64))));
     }
 }

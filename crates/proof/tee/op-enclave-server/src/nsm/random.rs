@@ -2,12 +2,11 @@
 //!
 //! This module provides an RNG that uses the NSM device for random bytes.
 
-use rand_08::{CryptoRng, RngCore};
-
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::api::{Request, Response};
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::driver::{nsm_exit, nsm_init, nsm_process_request};
+use rand_08::{CryptoRng, RngCore};
 
 /// A cryptographically secure random number generator backed by NSM.
 ///
@@ -37,17 +36,13 @@ impl NsmRng {
     /// On non-Linux platforms, always returns a fallback RNG.
     #[cfg(not(target_os = "linux"))]
     pub fn new() -> Option<Self> {
-        Some(Self {
-            inner: rand_08::thread_rng(),
-        })
+        Some(Self { inner: rand_08::thread_rng() })
     }
 
     /// Create a fallback RNG using the OS random source.
     #[cfg(not(target_os = "linux"))]
     pub fn fallback() -> Self {
-        Self {
-            inner: rand_08::thread_rng(),
-        }
+        Self { inner: rand_08::thread_rng() }
     }
 
     /// Create a fallback RNG using the OS random source.

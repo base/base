@@ -64,8 +64,9 @@ pub const fn signer_address(signer: &PrivateKeySigner) -> Address {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand_08::rngs::OsRng;
+
+    use super::*;
 
     #[test]
     fn test_generate_signer() {
@@ -126,9 +127,7 @@ mod tests {
         let signer = signer_from_hex(hex_key).expect("failed to parse hex key");
         let address = signer_address(&signer);
         // Anvil's first account address
-        let expected = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-            .parse::<Address>()
-            .unwrap();
+        let expected = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".parse::<Address>().unwrap();
         assert_eq!(address, expected);
     }
 }

@@ -7,8 +7,7 @@ use alloy_consensus::Header;
 use alloy_primitives::B256;
 use base_alloy_consensus::OpReceiptEnvelope;
 
-use super::block_info::BlockInfoWrapper;
-use super::trie::compute_receipt_root;
+use super::{block_info::BlockInfoWrapper, trie::compute_receipt_root};
 use crate::error::ProviderError;
 
 /// A fetcher for L1 block information and receipts.
@@ -29,11 +28,7 @@ impl L1ReceiptsFetcher {
     /// Creates a new `L1ReceiptsFetcher` with the given hash, header, and receipts.
     #[must_use]
     pub const fn new(hash: B256, header: Header, receipts: Vec<OpReceiptEnvelope>) -> Self {
-        Self {
-            hash,
-            header,
-            receipts,
-        }
+        Self { hash, header, receipts }
     }
 
     /// Returns block info for the given hash.
@@ -153,9 +148,6 @@ mod tests {
         let fetcher = L1ReceiptsFetcher::new(hash, header, vec![]);
 
         let result = fetcher.verify_receipts();
-        assert!(matches!(
-            result,
-            Err(ProviderError::InvalidReceiptRoot { .. })
-        ));
+        assert!(matches!(result, Err(ProviderError::InvalidReceiptRoot { .. })));
     }
 }

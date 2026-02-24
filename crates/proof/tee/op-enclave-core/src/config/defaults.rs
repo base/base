@@ -2,8 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy_eips::eip1898::BlockNumHash;
-use alloy_eips::eip7840::BlobParams;
+use alloy_eips::{eip1898::BlockNumHash, eip7840::BlobParams};
 use alloy_primitives::Address;
 use kona_genesis::{
     BaseFeeConfig, ChainGenesis, HardForkConfig, L1ChainConfig, RollupConfig, SystemConfig,
@@ -175,10 +174,7 @@ fn default_genesis() -> ChainGenesis {
         l1: BlockNumHash::default(),
         l2: BlockNumHash::default(),
         l2_time: 0,
-        system_config: Some(SystemConfig {
-            gas_limit: 30_000_000,
-            ..SystemConfig::default()
-        }),
+        system_config: Some(SystemConfig { gas_limit: 30_000_000, ..SystemConfig::default() }),
     }
 }
 
@@ -223,10 +219,7 @@ mod tests {
     #[test]
     fn test_l1_config_for_l2_chain_id() {
         assert_eq!(l1_config_for_l2_chain_id(8453).unwrap().chain_id, 1);
-        assert_eq!(
-            l1_config_for_l2_chain_id(84532).unwrap().chain_id,
-            11_155_111
-        );
+        assert_eq!(l1_config_for_l2_chain_id(84532).unwrap().chain_id, 11_155_111);
         assert!(l1_config_for_l2_chain_id(42).is_none());
     }
 }

@@ -3,20 +3,19 @@
 //! These tests validate the complete stateless execution flow using
 //! test fixtures from Base Sepolia testnet.
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_primitives::{B256, Bytes, U256, address, b256};
-use serde::{Deserialize, Serialize};
-
-use op_enclave_core::L1ChainConfig;
-use op_enclave_core::executor::{
-    ExecutionWitness, MAX_SEQUENCER_DRIFT_FJORD, execute_stateless, validate_not_deposit,
-    validate_sequencer_drift,
+use op_enclave_core::{
+    L1ChainConfig,
+    executor::{
+        ExecutionWitness, MAX_SEQUENCER_DRIFT_FJORD, execute_stateless, validate_not_deposit,
+        validate_sequencer_drift,
+    },
+    types::account::{AccountResult, StorageProof},
 };
-use op_enclave_core::types::account::{AccountResult, StorageProof};
+use serde::{Deserialize, Serialize};
 
 /// Complete test fixture for stateless execution.
 ///
@@ -95,18 +94,10 @@ fn test_validate_sequencer_drift_integration() {
     let l1_timestamp = 1_700_000_000u64;
 
     // Block within drift should pass
-    assert!(validate_sequencer_drift(
-        l1_timestamp + 1000,
-        l1_timestamp,
-        true
-    ));
+    assert!(validate_sequencer_drift(l1_timestamp + 1000, l1_timestamp, true));
 
     // Block at exact limit should pass
-    assert!(validate_sequencer_drift(
-        l1_timestamp + MAX_SEQUENCER_DRIFT_FJORD,
-        l1_timestamp,
-        true
-    ));
+    assert!(validate_sequencer_drift(l1_timestamp + MAX_SEQUENCER_DRIFT_FJORD, l1_timestamp, true));
 
     // Block exceeding drift should fail
     assert!(!validate_sequencer_drift(
@@ -116,11 +107,7 @@ fn test_validate_sequencer_drift_integration() {
     ));
 
     // Empty blocks (no sequenced txs) should always pass
-    assert!(validate_sequencer_drift(
-        l1_timestamp + 10000,
-        l1_timestamp,
-        false
-    ));
+    assert!(validate_sequencer_drift(l1_timestamp + 10000, l1_timestamp, false));
 }
 
 #[test]
@@ -218,14 +205,8 @@ fn test_execute_stateless_minimal_block() {
 
     assert!(result.is_ok(), "Execution failed: {:?}", result.err());
     let execution = result.unwrap();
-    assert_eq!(
-        execution.state_root, fixture.expected_state_root,
-        "State root mismatch"
-    );
-    assert_eq!(
-        execution.receipt_hash, fixture.expected_receipts_root,
-        "Receipt hash mismatch"
-    );
+    assert_eq!(execution.state_root, fixture.expected_state_root, "State root mismatch");
+    assert_eq!(execution.receipt_hash, fixture.expected_receipts_root, "Receipt hash mismatch");
 }
 
 #[test]
@@ -236,44 +217,41 @@ fn test_execute_stateless_base_sepolia_block() {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with("base_sepolia_") && name.ends_with(".json") {
-                println!("Testing with fixture: {name}");
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.starts_with("base_sepolia_")
+            && name.ends_with(".json")
+        {
+            println!("Testing with fixture: {name}");
 
-                let fixture = load_fixture(name).expect("Failed to load fixture");
+            let fixture = load_fixture(name).expect("Failed to load fixture");
 
-                println!("  Block number: {}", fixture.block_header.number);
-                println!("  Block timestamp: {}", fixture.block_header.timestamp);
+            println!("  Block number: {}", fixture.block_header.number);
+            println!("  Block timestamp: {}", fixture.block_header.timestamp);
 
-                let result = execute_stateless(
-                    &fixture.rollup_config,
-                    &fixture.l1_config,
-                    &fixture.l1_origin,
-                    &fixture.l1_receipts,
-                    &fixture.previous_block_txs,
-                    &fixture.block_header,
-                    &fixture.sequenced_txs,
-                    fixture.witness,
-                    &fixture.message_account,
-                );
+            let result = execute_stateless(
+                &fixture.rollup_config,
+                &fixture.l1_config,
+                &fixture.l1_origin,
+                &fixture.l1_receipts,
+                &fixture.previous_block_txs,
+                &fixture.block_header,
+                &fixture.sequenced_txs,
+                fixture.witness,
+                &fixture.message_account,
+            );
 
-                assert!(
-                    result.is_ok(),
-                    "Execution failed for {name}: {:?}",
-                    result.err()
-                );
-                let execution = result.unwrap();
-                assert_eq!(
-                    execution.state_root, fixture.expected_state_root,
-                    "State root mismatch for {name}"
-                );
-                assert_eq!(
-                    execution.receipt_hash, fixture.expected_receipts_root,
-                    "Receipt hash mismatch for {name}"
-                );
+            assert!(result.is_ok(), "Execution failed for {name}: {:?}", result.err());
+            let execution = result.unwrap();
+            assert_eq!(
+                execution.state_root, fixture.expected_state_root,
+                "State root mismatch for {name}"
+            );
+            assert_eq!(
+                execution.receipt_hash, fixture.expected_receipts_root,
+                "Receipt hash mismatch for {name}"
+            );
 
-                println!("Fixture {name} passed!");
-            }
+            println!("Fixture {name} passed!");
         }
     }
 }
@@ -286,11 +264,8 @@ fn test_execute_stateless_base_sepolia_block() {
 fn test_execution_witness_empty_headers() {
     use op_enclave_core::executor::transform_witness;
 
-    let witness = ExecutionWitness {
-        headers: vec![],
-        codes: HashMap::new(),
-        state: HashMap::new(),
-    };
+    let witness =
+        ExecutionWitness { headers: vec![], codes: HashMap::new(), state: HashMap::new() };
 
     let result = transform_witness(witness);
     assert!(result.is_err());

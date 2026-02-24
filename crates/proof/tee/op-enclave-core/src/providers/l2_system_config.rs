@@ -5,8 +5,8 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, U256};
-use kona_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{L1BlockInfoIsthmusBaseFields, L1BlockInfoJovianBaseFields, L1BlockInfoTx};
+use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::error::ProviderError;
 
@@ -43,12 +43,7 @@ impl L2SystemConfigFetcher {
         header: Header,
         first_tx_data: Option<Bytes>,
     ) -> Self {
-        Self {
-            config,
-            hash,
-            header,
-            first_tx_data,
-        }
+        Self { config, hash, header, first_tx_data }
     }
 
     /// Returns the system configuration for the given L2 block hash.
@@ -90,10 +85,8 @@ impl L2SystemConfigFetcher {
         }
 
         // Non-genesis block: parse L1 info from deposit tx
-        let tx_data = self
-            .first_tx_data
-            .as_ref()
-            .ok_or(ProviderError::MissingL1InfoDeposit(block_hash))?;
+        let tx_data =
+            self.first_tx_data.as_ref().ok_or(ProviderError::MissingL1InfoDeposit(block_hash))?;
 
         // Parse L1BlockInfo from the deposit transaction data
         let l1_info = L1BlockInfoTx::decode_calldata(tx_data)
@@ -221,10 +214,10 @@ const fn is_fork_active_but_not_activation(fork_time: Option<u64>, l2_time: u64)
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::default_rollup_config;
-    use crate::providers::test_utils::test_header;
     use alloy_primitives::{address, b256, hex};
+
+    use super::*;
+    use crate::{config::default_rollup_config, providers::test_utils::test_header};
 
     // Test vectors from kona-protocol crate - these are real L1BlockInfo calldata bytes
     // from mainnet/testnet blocks.
@@ -248,10 +241,7 @@ mod tests {
             .expect("valid bedrock calldata");
 
         // Expected values from the raw hex above
-        assert_eq!(
-            l1_info.batcher_address(),
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985")
-        );
+        assert_eq!(l1_info.batcher_address(), address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
         assert_eq!(l1_info.sequence_number(), 4);
         assert_eq!(l1_info.l1_fee_overhead(), U256::from(0xbc));
         assert_eq!(l1_info.l1_fee_scalar(), U256::from(0xa6fe0));
@@ -273,10 +263,7 @@ mod tests {
             .expect("valid ecotone calldata");
 
         // Expected values from the raw hex above
-        assert_eq!(
-            l1_info.batcher_address(),
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985")
-        );
+        assert_eq!(l1_info.batcher_address(), address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
         assert_eq!(l1_info.sequence_number(), 5);
 
         // Ecotone-specific scalar fields (packed as u32)
@@ -316,15 +303,11 @@ mod tests {
             Some(Bytes::from_static(&ECOTONE_CALLDATA)),
         );
 
-        let sys_cfg = fetcher
-            .system_config_by_l2_hash(block_hash)
-            .expect("should extract system config");
+        let sys_cfg =
+            fetcher.system_config_by_l2_hash(block_hash).expect("should extract system config");
 
         // Verify batcher address extracted correctly
-        assert_eq!(
-            sys_cfg.batcher_address,
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985")
-        );
+        assert_eq!(sys_cfg.batcher_address, address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
 
         // Verify the scalar is encoded in v1 format:
         // byte 0: version (1)
@@ -372,15 +355,11 @@ mod tests {
             Some(Bytes::from_static(&BEDROCK_CALLDATA)),
         );
 
-        let sys_cfg = fetcher
-            .system_config_by_l2_hash(block_hash)
-            .expect("should extract system config");
+        let sys_cfg =
+            fetcher.system_config_by_l2_hash(block_hash).expect("should extract system config");
 
         // Verify batcher address extracted correctly
-        assert_eq!(
-            sys_cfg.batcher_address,
-            address!("6887246668a3b87f54deb3b94ba47a6f63f32985")
-        );
+        assert_eq!(sys_cfg.batcher_address, address!("6887246668a3b87f54deb3b94ba47a6f63f32985"));
 
         // For Bedrock, scalar is the raw l1_fee_scalar value (0xa6fe0)
         assert_eq!(sys_cfg.scalar, U256::from(0xa6fe0));
@@ -403,10 +382,7 @@ mod tests {
         assert!(result.is_ok());
 
         let sys_cfg = result.unwrap();
-        assert_eq!(
-            sys_cfg.gas_limit,
-            config.genesis.system_config.unwrap().gas_limit
-        );
+        assert_eq!(sys_cfg.gas_limit, config.genesis.system_config.unwrap().gas_limit);
     }
 
     #[test]
@@ -420,10 +396,7 @@ mod tests {
         let fetcher = L2SystemConfigFetcher::new(config, wrong_hash, header, None);
 
         let result = fetcher.system_config_by_l2_hash(wrong_hash);
-        assert!(matches!(
-            result,
-            Err(ProviderError::GenesisHashMismatch { .. })
-        ));
+        assert!(matches!(result, Err(ProviderError::GenesisHashMismatch { .. })));
     }
 
     #[test]
@@ -449,10 +422,7 @@ mod tests {
         let fetcher = L2SystemConfigFetcher::new(config, hash, header, None);
 
         let result = fetcher.system_config_by_l2_hash(hash);
-        assert!(matches!(
-            result,
-            Err(ProviderError::MissingL1InfoDeposit(_))
-        ));
+        assert!(matches!(result, Err(ProviderError::MissingL1InfoDeposit(_))));
     }
 
     #[test]

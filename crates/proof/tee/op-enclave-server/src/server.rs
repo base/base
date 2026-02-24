@@ -7,21 +7,26 @@ use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
 use kona_genesis::{L1ChainConfig, RollupConfig};
+use op_enclave_core::{
+    Proposal, ProposalParams,
+    executor::{ExecutionWitness, execute_stateless as core_execute_stateless},
+    output_root_v0,
+    types::account::AccountResult,
+};
 use parking_lot::RwLock;
 use rsa::RsaPrivateKey;
 
-use crate::attestation::{extract_public_key, verify_attestation_with_pcr0};
-use crate::crypto::{
-    build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, generate_signer,
-    pkix_to_public_key, private_key_bytes, private_to_public, public_key_bytes, public_key_to_pkix,
-    sign_proposal_data_sync, signer_from_bytes, signer_from_hex, verify_proposal_signature,
+use crate::{
+    attestation::{extract_public_key, verify_attestation_with_pcr0},
+    crypto::{
+        build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, generate_signer,
+        pkix_to_public_key, private_key_bytes, private_to_public, public_key_bytes,
+        public_key_to_pkix, sign_proposal_data_sync, signer_from_bytes, signer_from_hex,
+        verify_proposal_signature,
+    },
+    error::{CryptoError, NsmError, ProposalError, ServerError},
+    nsm::{NsmRng, NsmSession},
 };
-use crate::error::{CryptoError, NsmError, ProposalError, ServerError};
-use crate::nsm::{NsmRng, NsmSession};
-
-use op_enclave_core::executor::{ExecutionWitness, execute_stateless as core_execute_stateless};
-use op_enclave_core::types::account::AccountResult;
-use op_enclave_core::{Proposal, ProposalParams, output_root_v0};
 
 /// Environment variable for setting the signer key in local mode.
 const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
@@ -82,11 +87,7 @@ impl Server {
             "server initialized"
         );
 
-        Ok(Self {
-            pcr0,
-            signer_key: RwLock::new(signer_key),
-            decryption_key,
-        })
+        Ok(Self { pcr0, signer_key: RwLock::new(signer_key), decryption_key })
     }
 
     /// Check if the server is running in local mode.
@@ -339,11 +340,7 @@ impl Server {
         let decryption_key = rsa::RsaPrivateKey::new(&mut rng, 512)
             .map_err(|e| CryptoError::RsaKeyGeneration(e.to_string()))?;
 
-        Ok(Self {
-            pcr0: Vec::new(),
-            signer_key: RwLock::new(signer_key),
-            decryption_key,
-        })
+        Ok(Self { pcr0: Vec::new(), signer_key: RwLock::new(signer_key), decryption_key })
     }
 
     /// Aggregate multiple proposals into a single proposal.
@@ -443,7 +440,7 @@ impl Server {
         if !intermediate_roots.is_empty() && proposals.len() > 1 {
             let total_blocks =
                 proposals.last().unwrap().l2_block_number.to::<u64>() - prev_block_number;
-            if total_blocks % intermediate_roots.len() as u64 != 0 {
+            if !total_blocks.is_multiple_of(intermediate_roots.len() as u64) {
                 return Err(ProposalError::ExecutionFailed(format!(
                     "block range ({total_blocks}) not divisible by intermediate root count ({})",
                     intermediate_roots.len()
@@ -508,6 +505,8 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
+    use std::slice;
+
     use super::*;
 
     #[test]
@@ -553,9 +552,7 @@ mod tests {
             encrypt_pkcs1v15(&mut rng, &parsed_key, &private_key).expect("failed to encrypt");
 
         // Decrypt and set on server2
-        server2
-            .set_signer_key(&encrypted)
-            .expect("failed to set key");
+        server2.set_signer_key(&encrypted).expect("failed to set key");
 
         // Verify both servers now have the same signer address
         assert_eq!(server1.signer_address(), server2.signer_address());
@@ -580,20 +577,10 @@ mod tests {
     fn test_aggregate_empty_proposals() {
         let server = Server::new_for_testing().expect("failed to create server");
 
-        let result = server.aggregate(
-            B256::ZERO,
-            B256::ZERO,
-            99u64,
-            &[],
-            Address::ZERO,
-            B256::ZERO,
-            &[],
-        );
+        let result =
+            server.aggregate(B256::ZERO, B256::ZERO, 99u64, &[], Address::ZERO, B256::ZERO, &[]);
 
-        assert!(matches!(
-            result,
-            Err(ServerError::Proposal(ProposalError::EmptyProposals))
-        ));
+        assert!(matches!(result, Err(ServerError::Proposal(ProposalError::EmptyProposals))));
     }
 
     #[test]
@@ -641,7 +628,7 @@ mod tests {
             config_hash,
             prev_output_root,
             prev_block_number,
-            &[proposal.clone()],
+            slice::from_ref(&proposal),
             proposer,
             tee_image_hash,
             &[],
@@ -816,9 +803,7 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(ServerError::Proposal(ProposalError::InvalidSignature {
-                    index: 1
-                }))
+                Err(ServerError::Proposal(ProposalError::InvalidSignature { index: 1 }))
             ),
             "Expected InvalidSignature error at index 1, got: {result:?}"
         );
@@ -998,9 +983,7 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(ServerError::Proposal(
-                    ProposalError::InvalidIntermediateRoot { .. }
-                ))
+                Err(ServerError::Proposal(ProposalError::InvalidIntermediateRoot { .. }))
             ),
             "Expected InvalidIntermediateRoot error, got: {result:?}"
         );
@@ -1043,10 +1026,7 @@ mod tests {
         );
 
         assert!(
-            matches!(
-                &result,
-                Err(ServerError::Proposal(ProposalError::ExecutionFailed(_)))
-            ),
+            matches!(&result, Err(ServerError::Proposal(ProposalError::ExecutionFailed(_)))),
             "Expected ExecutionFailed error for single proposal with intermediate roots, got: {result:?}"
         );
     }

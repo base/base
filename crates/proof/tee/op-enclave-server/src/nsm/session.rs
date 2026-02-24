@@ -22,12 +22,12 @@
 //! - **Go implementation parity**: The Go enclave implementation (`op-enclave/enclave/server.go`)
 //!   follows the same pattern, opening sessions per-operation for consistency.
 
-use crate::error::{NsmError, ServerError};
-
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::api::{Request, Response};
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::driver::{nsm_exit, nsm_init, nsm_process_request};
+
+use crate::error::{NsmError, ServerError};
 
 /// A session with the Nitro Secure Module.
 ///

@@ -71,7 +71,7 @@ async-trait.workspace = true
 vsock.workspace = true
 
 [dev-dependencies]
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json", "blocking"] }
 
 [lints]
 workspace = true
