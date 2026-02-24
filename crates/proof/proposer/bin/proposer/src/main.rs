@@ -251,11 +251,26 @@ async fn main() -> Result<()> {
         ));
     }
     let block_interval = verifier_client.read_block_interval(impl_address).await?;
+    let intermediate_block_interval = verifier_client
+        .read_intermediate_block_interval(impl_address)
+        .await?;
+    if block_interval < 2 {
+        return Err(eyre::eyre!(
+            "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
+        ));
+    }
+    if block_interval % intermediate_block_interval != 0 {
+        return Err(eyre::eyre!(
+            "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+        ));
+    }
     info!(
         block_interval,
+        intermediate_block_interval,
+        intermediate_roots_count = block_interval / intermediate_block_interval,
         impl_address = %impl_address,
         game_type = config.game_type,
-        "Read BLOCK_INTERVAL from AggregateVerifier"
+        "Read BLOCK_INTERVAL and INTERMEDIATE_BLOCK_INTERVAL from AggregateVerifier"
     );
 
     let init_bond = factory_client.init_bonds(config.game_type).await?;
@@ -313,6 +328,7 @@ async fn main() -> Result<()> {
     let driver_config = DriverConfig {
         poll_interval: config.poll_interval,
         block_interval,
+        intermediate_block_interval,
         init_bond,
         game_type: config.game_type,
         allow_non_finalized: config.allow_non_finalized,

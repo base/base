@@ -37,6 +37,9 @@ sol! {
         /// Returns the block interval between proposals (immutable on the implementation).
         function BLOCK_INTERVAL() external view returns (uint256);
 
+        /// Returns the intermediate block interval for intermediate output root checkpoints.
+        function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
+
         /// Returns the game type.
         function gameType() external view returns (uint32);
 
@@ -90,9 +93,39 @@ impl AggregateVerifierContractClient {
             .try_into()
             .map_err(|_| ProposerError::Contract("BLOCK_INTERVAL overflows u64".to_string()))?;
 
+        // Also validated at startup in main.rs; duplicated here for defense-in-depth.
+        if interval < 2 {
+            return Err(ProposerError::Contract(
+                "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)"
+                    .to_string(),
+            ));
+        }
+
+        Ok(interval)
+    }
+
+    /// Reads `INTERMEDIATE_BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
+    pub async fn read_intermediate_block_interval(
+        &self,
+        impl_address: Address,
+    ) -> Result<u64, ProposerError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+        let interval_u256: U256 = contract
+            .INTERMEDIATE_BLOCK_INTERVAL()
+            .call()
+            .await
+            .map_err(|e| {
+                ProposerError::Contract(format!("INTERMEDIATE_BLOCK_INTERVAL failed: {e}"))
+            })?;
+
+        let interval: u64 = interval_u256.try_into().map_err(|_| {
+            ProposerError::Contract("INTERMEDIATE_BLOCK_INTERVAL overflows u64".to_string())
+        })?;
+
         if interval == 0 {
             return Err(ProposerError::Contract(
-                "BLOCK_INTERVAL cannot be 0".to_string(),
+                "INTERMEDIATE_BLOCK_INTERVAL cannot be 0".to_string(),
             ));
         }
 

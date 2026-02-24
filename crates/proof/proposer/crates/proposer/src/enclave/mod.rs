@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 pub use op_enclave_client::EnclaveClient;
 use op_enclave_client::{ClientError, ExecuteStatelessRequest};
+use op_enclave_core::AggregateRequest;
 use op_enclave_core::types::config::{BlockId, Genesis, GenesisSystemConfig, RollupConfig};
 pub use op_enclave_core::{Proposal, executor::ExecutionWitness, types::config::PerChainConfig};
 
@@ -22,15 +23,7 @@ pub trait EnclaveClientTrait: Send + Sync {
     ) -> Result<Proposal, ClientError>;
 
     /// Aggregates multiple proposals into a single batched proposal.
-    async fn aggregate(
-        &self,
-        config_hash: B256,
-        prev_output_root: B256,
-        prev_block_number: u64,
-        proposals: Vec<Proposal>,
-        proposer: Address,
-        tee_image_hash: B256,
-    ) -> Result<Proposal, ClientError>;
+    async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError>;
 }
 
 #[async_trait]
@@ -42,24 +35,8 @@ impl EnclaveClientTrait for EnclaveClient {
         self.execute_stateless(req).await
     }
 
-    async fn aggregate(
-        &self,
-        config_hash: B256,
-        prev_output_root: B256,
-        prev_block_number: u64,
-        proposals: Vec<Proposal>,
-        proposer: Address,
-        tee_image_hash: B256,
-    ) -> Result<Proposal, ClientError> {
-        self.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            proposals,
-            proposer,
-            tee_image_hash,
-        )
-        .await
+    async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
+        self.aggregate(request).await
     }
 }
 
