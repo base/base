@@ -37,8 +37,6 @@ pub fn default_rollup_config() -> RollupConfig {
         // Protocol addresses (defaults)
         batch_inbox_address: Address::ZERO,
         protocol_versions_address: Address::ZERO,
-        da_challenge_address: None,
-        superchain_config_address: None,
 
         // Blob configuration
         blobs_enabled_l1_timestamp: Some(0),
