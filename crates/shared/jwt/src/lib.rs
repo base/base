@@ -3,9 +3,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-// Re-export the [`JwtSecret`] type from the `alloy-rpc-types-engine` crate
-pub use alloy_rpc_types_engine::JwtSecret;
-
 mod error;
 pub use error::{JwtError, JwtValidationError};
 

@@ -9,9 +9,10 @@ use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_alloy_network::Base;
 use base_primitives::Bundle;
-use base_reth_rpc_types::{EthApiError, SignError, extract_l1_info_from_tx};
 use jsonrpsee::core::RpcResult;
 use op_revm::l1block::L1BlockInfo;
+use reth_optimism_evm::extract_l1_info_from_tx;
+use reth_rpc_eth_types::{EthApiError, SignError};
 use tokio::time::Instant;
 use tracing::warn;
 

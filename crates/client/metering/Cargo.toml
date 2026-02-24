@@ -75,8 +75,6 @@ alloy-rpc-client.workspace = true
 
 # base-alloy
 base-alloy-network.workspace = true
-
-# base-alloy
 base-alloy-consensus.workspace = true
 
 # misc

@@ -22,7 +22,6 @@ pub use mainnet::{
 };
 
 mod sepolia;
-pub use alloy_hardforks::{EthereumHardforks, ForkCondition};
 pub use sepolia::{
     BASE_SEPOLIA_BEDROCK_BLOCK, BASE_SEPOLIA_CANYON_TIMESTAMP, BASE_SEPOLIA_ECOTONE_TIMESTAMP,
     BASE_SEPOLIA_FJORD_TIMESTAMP, BASE_SEPOLIA_GRANITE_TIMESTAMP, BASE_SEPOLIA_HOLOCENE_TIMESTAMP,

@@ -37,8 +37,7 @@ use reth_chainspec::{
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::NodeRecord;
-/// Re-export for convenience
-pub use reth_optimism_forks::*;
+use reth_optimism_forks::{BASE_MAINNET_HARDFORKS, OpHardfork, OpHardforks};
 use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 

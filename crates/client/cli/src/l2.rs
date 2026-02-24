@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use base_jwt::{JwtError, JwtSecret, JwtSecretReader, JwtValidator};
+use alloy_rpc_types_engine::JwtSecret;
+use base_jwt::{JwtError, JwtSecretReader, JwtValidator};
 use url::Url;
 
 const DEFAULT_L2_ENGINE_TIMEOUT: u64 = 30_000;
