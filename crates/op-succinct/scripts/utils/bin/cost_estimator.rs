@@ -15,7 +15,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use op_succinct_scripts::HostExecutorArgs;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sp1_sdk::{
     blocking::{CpuProver, Prover},
     utils, Elf,
@@ -121,9 +121,9 @@ where
     let report_path_clone = report_path.clone();
     tokio::task::spawn_blocking(move || {
         let prover = CpuProver::new();
-        execution_inputs.par_iter().for_each(|(sp1_stdin, (range, block_data))| {
+        execution_inputs.into_par_iter().for_each(|(sp1_stdin, (range, block_data))| {
             let result = prover
-                .execute(Elf::Static(get_range_elf_embedded()), sp1_stdin.clone())
+                .execute(Elf::Static(get_range_elf_embedded()), sp1_stdin)
                 .deferred_proof_verification(false)
                 .run();
 
@@ -139,7 +139,7 @@ where
 
             let (_, report) = result.unwrap();
 
-            let execution_stats = ExecutionStats::new(0, block_data, &report, 0, 0);
+            let execution_stats = ExecutionStats::new(0, &block_data, &report, 0, 0);
 
             let mut file = OpenOptions::new()
                 .read(true)
