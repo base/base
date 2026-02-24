@@ -2992,6 +2992,7 @@ dependencies = [
  "bytes",
  "eyre",
  "kona-genesis",
+ "reth-optimism-primitives",
  "rstest",
  "serde",
  "serde_json",

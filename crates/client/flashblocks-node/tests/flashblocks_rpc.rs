@@ -284,7 +284,7 @@ impl TestSetup {
                 withdrawals_root: EMPTY_WITHDRAWALS,
                 ..Default::default()
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata { block_number: 1, ..Default::default() },
         }
     }
 
@@ -316,7 +316,7 @@ impl TestSetup {
                 logs_bloom: Default::default(),
                 withdrawals_root: EMPTY_WITHDRAWALS,
             },
-            metadata: Metadata { block_number: 1 },
+            metadata: Metadata { block_number: 1, ..Default::default() },
         }
     }
 

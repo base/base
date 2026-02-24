@@ -10,7 +10,7 @@ use alloy_consensus::{
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_builder_publish::WebSocketPublisher;
 use base_primitives::{
@@ -25,7 +25,7 @@ use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
-use reth_optimism_primitives::OpTransactionSigned;
+use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
@@ -826,6 +826,10 @@ where
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
+    /// Transaction receipts indexed by tx hash.
+    receipts: HashMap<B256, OpReceipt>,
+    /// Updated account balances.
+    new_account_balances: HashMap<Address, U256>,
     /// The block number this flashblock belongs to
     block_number: u64,
     /// The flashblock access list
@@ -997,9 +1001,16 @@ where
         },
     );
 
+    // Extract account balances before take_bundle() empties the state
+    let new_account_balances: HashMap<Address, U256> = state
+        .bundle_state
+        .state
+        .iter()
+        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
+        .collect();
+
     let recovered_block =
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
-    // create the executed block data
 
     let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(recovered_block),
@@ -1023,10 +1034,17 @@ where
     let block_hash = sealed_block.hash();
 
     // pick the new transactions from the info field and update the last flashblock index
-    let new_transactions_encoded = info.executed_transactions[info.extra.last_flashblock_index..]
+    let new_transactions = &info.executed_transactions[info.extra.last_flashblock_index..];
+    let new_receipts = &info.receipts[info.extra.last_flashblock_index..];
+
+    let new_transactions_encoded: Vec<_> =
+        new_transactions.iter().map(|tx| tx.encoded_2718().into()).collect();
+
+    let receipts_with_hash: HashMap<B256, OpReceipt> = new_transactions
         .iter()
-        .map(|tx| tx.encoded_2718().into())
-        .collect::<Vec<_>>();
+        .zip(new_receipts.iter())
+        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
+        .collect();
 
     let min_tx_index = info.extra.last_flashblock_index as u64;
     let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
@@ -1037,8 +1055,12 @@ where
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
     let access_list = fal_builder.build(min_tx_index, max_tx_index);
 
-    let metadata: FlashblocksMetadata =
-        FlashblocksMetadata { block_number: ctx.parent().number + 1, access_list };
+    let metadata: FlashblocksMetadata = FlashblocksMetadata {
+        receipts: receipts_with_hash,
+        new_account_balances,
+        block_number: ctx.parent().number + 1,
+        access_list,
+    };
 
     let (_, blob_gas_used) = ctx.blob_fields(info);
 
