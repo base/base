@@ -13,4 +13,6 @@ mod metadata;
 pub use metadata::Metadata;
 
 mod payload;
-pub use payload::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1};
+pub use payload::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
+};

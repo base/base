@@ -12,9 +12,9 @@ use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use audit_archiver_lib::BundleEvent;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
-use base_bundles::BundleExtensions;
 use base_bundles::{
-    AcceptedBundle, Bundle, BundleHash, CancelBundle, MeterBundleResponse, ParsedBundle,
+    AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
+    ParsedBundle,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -477,8 +477,8 @@ mod tests {
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
-    use base_cli_utils::{LogFormat, LogLevel};
     use base_bundles::test_utils::create_test_meter_bundle_response;
+    use base_cli_utils::{LogFormat, LogLevel};
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};

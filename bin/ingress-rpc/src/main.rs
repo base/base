@@ -5,8 +5,8 @@ use audit_archiver_lib::{
     BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
 };
 use base_alloy_network::Base;
-use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
 use base_bundles::{AcceptedBundle, MeterBundleResponse};
+use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
 use clap::Parser;
 use ingress_rpc_lib::{
     Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers, bind_health_server,

@@ -14,12 +14,12 @@ workspace = true
 [features]
 test-utils = [
 	"base-client-node/test-utils",
-	"dep:base-alloy-flashblocks",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
 	"dep:alloy-rpc-types-engine",
 	"dep:base-alloy-consensus",
+	"dep:base-alloy-flashblocks",
 	"dep:derive_more",
 	"dep:eyre",
 	"dep:reth-chainspec",

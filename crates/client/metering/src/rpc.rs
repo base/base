@@ -765,10 +765,10 @@ mod tests {
     async fn test_meter_bundle_with_flashblocks_zero_hash_header() -> eyre::Result<()> {
         use alloy_consensus::Header;
         use alloy_primitives::{B256, Bloom};
-        use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
         use base_alloy_flashblocks::{
             ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
         };
+        use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
         use url::Url;
 
         // Create a shared flashblocks state that we can inject pending blocks into

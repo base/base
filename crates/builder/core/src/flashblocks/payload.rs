@@ -12,10 +12,10 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{B256, U256};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
-use base_builder_publish::WebSocketPublisher;
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
+use base_builder_publish::WebSocketPublisher;
 use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;

@@ -19,6 +19,9 @@ use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use base_alloy_consensus::OpDepositReceipt;
+use base_alloy_flashblocks::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
 use base_client_node::{
     BaseNodeExtension, NodeHooks,
     test_utils::{
@@ -30,9 +33,6 @@ use base_client_node::{
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
     FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
-};
-use base_alloy_flashblocks::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use derive_more::Deref;
 use eyre::Result;

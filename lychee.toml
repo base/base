@@ -3,7 +3,7 @@ no_progress = false
 exclude_all_private = false
 accept = [200, 403] # 403 status code is often returned by private repos instead of 404
 exclude_path = [
-    "crates/shared/primitives/contracts/"
+    "crates/shared/test-utils/contracts/"
 ]
 exclude = [
     'foo.bar',

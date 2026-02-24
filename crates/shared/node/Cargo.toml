@@ -13,7 +13,6 @@ workspace = true
 
 [features]
 test-utils = [
-	"dep:base-test-utils",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
 	"dep:alloy-primitives",
@@ -24,6 +23,7 @@ test-utils = [
 	"dep:alloy-signer",
 	"dep:base-alloy-network",
 	"dep:base-alloy-rpc-types-engine",
+	"dep:base-test-utils",
 	"dep:chrono",
 	"dep:jsonrpsee",
 	"dep:reth-chainspec",
