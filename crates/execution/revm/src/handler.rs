@@ -207,10 +207,9 @@ where
             } else if is_deposit && tx.is_system_transaction() {
                 gas.erase_cost(tx_gas_limit);
             }
-        } else if instruction_result.is_revert()
-            && (!is_deposit || is_regolith) {
-                gas.erase_cost(remaining);
-            }
+        } else if instruction_result.is_revert() && (!is_deposit || is_regolith) {
+            gas.erase_cost(remaining);
+        }
         Ok(())
     }
 
