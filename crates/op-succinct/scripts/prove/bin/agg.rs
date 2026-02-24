@@ -33,7 +33,7 @@ struct Args {
 }
 
 /// Load the aggregation proof data.
-async fn load_aggregation_proof_data(
+fn load_aggregation_proof_data(
     proof_names: Vec<String>,
     range_vkey: &SP1VerifyingKey,
     prover: &impl Prover,
@@ -52,6 +52,7 @@ async fn load_aggregation_proof_data(
         }
         let mut deserialized_proof =
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
+        // None = infer proof mode from the proof itself.
         prover.verify(&deserialized_proof, range_vkey, None).expect("proof verification failed");
         proofs.push(deserialized_proof.proof);
 
@@ -78,7 +79,7 @@ async fn main() -> Result<()> {
     let range_pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
     let vkey = range_pk.verifying_key().clone();
 
-    let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey, &prover).await;
+    let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey, &prover);
 
     let header = fetcher.get_latest_l1_head_in_batch(&boot_infos).await?;
     let headers = fetcher.get_header_preimages(&boot_infos, header.hash_slow()).await?;
