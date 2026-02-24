@@ -172,6 +172,10 @@ skip = [
     "toml",
     "toml_datetime",
     "toml_edit",
+
+    # op-enclave-server upstream dep mismatches (aws-nitro-enclaves, vsock, ciborium)
+    "half",
+    "memoffset",
 ]
 
 [sources]
