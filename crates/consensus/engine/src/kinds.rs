@@ -37,16 +37,4 @@ pub enum EngineKind {
 impl EngineKind {
     /// Contains all valid engine client kinds.
     pub const KINDS: [Self; 3] = [Self::Geth, Self::Reth, Self::Erigon];
-
-    /// Returns whether the engine client kind supports post finalization EL sync.
-    #[deprecated(
-        since = "0.1.0",
-        note = "Node behavior is now equivalent across all engine client types."
-    )]
-    pub const fn supports_post_finalization_elsync(self) -> bool {
-        match self {
-            Self::Geth => false,
-            Self::Erigon | Self::Reth => true,
-        }
-    }
 }
