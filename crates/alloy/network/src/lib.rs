@@ -7,8 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub use alloy_network::{
-    BlockResponse, ReceiptResponse, TransactionBuilder, TransactionResponse, TxSignerSync,
-    eip2718,
+    BlockResponse, ReceiptResponse, TransactionBuilder, TransactionResponse, TxSignerSync, eip2718,
 };
 
 mod base;
