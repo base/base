@@ -33,14 +33,8 @@ pub use spec::*;
 
 mod transaction;
 pub use transaction::{
-    DEPOSIT_TRANSACTION_TYPE,
-    DepositTransactionParts,
-    OpBuildError,
-    OpTransaction,
-    OpTransactionBuilder,
-    OpTransactionError,
-    OpTxTr,
-    estimate_tx_compressed_size,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, OpBuildError, OpTransaction,
+    OpTransactionBuilder, OpTransactionError, OpTxTr, estimate_tx_compressed_size,
 };
 
 mod compat;

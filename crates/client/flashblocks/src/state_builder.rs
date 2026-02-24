@@ -11,7 +11,7 @@ use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_revm::L1BlockInfo;
 use reth_evm::{Evm, FromRecoveredTx};
-use reth_optimism_chainspec::OpHardforks;
+use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::OpPrimitives;
 use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;

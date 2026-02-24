@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use base_alloy_network::Base;
 use base_bundles::Bundle;
 use base_revm::L1BlockInfo;
+use jsonrpsee::core::RpcResult;
 use reth_optimism_evm::extract_l1_info_from_tx;
 use reth_rpc_eth_types::{EthApiError, SignError};
-use jsonrpsee::core::RpcResult;
 use tokio::time::Instant;
 use tracing::warn;
 
