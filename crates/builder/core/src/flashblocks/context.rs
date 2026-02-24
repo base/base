@@ -50,6 +50,9 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
         TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
         TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
+        TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
+            "block_uncompressed_size_exceeded"
+        }
         TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 "tx_execution_time_exceeded"
@@ -162,6 +165,8 @@ pub struct OpPayloadBuilderCtx {
     pub flashblock_execution_time_budget_us: Option<u128>,
     /// Block-level state root calculation time budget in microseconds.
     pub block_state_root_time_budget_us: Option<u128>,
+    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
+    pub max_uncompressed_block_size: Option<u64>,
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
     /// Resource metering provider
@@ -423,6 +428,7 @@ impl OpPayloadBuilderCtx {
                 info.cumulative_da_bytes_used += base_alloy_flz::tx_estimated_size_fjord_bytes(
                     sequencer_tx.encoded_2718().as_slice(),
                 );
+                info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
             }
 
             let ctx = ReceiptBuilderCtx {
@@ -505,6 +511,7 @@ impl OpPayloadBuilderCtx {
             flashblock_execution_time_limit_us,
             tx_state_root_time_limit_us: self.max_state_root_time_per_tx_us,
             block_state_root_time_limit_us,
+            block_uncompressed_size_limit: self.max_uncompressed_block_size,
         };
 
         debug!(
@@ -522,6 +529,7 @@ impl OpPayloadBuilderCtx {
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
+            let tx_uncompressed_size = tx.encode_2718_len() as u64;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
                 let result_str = match &result {
@@ -553,6 +561,7 @@ impl OpPayloadBuilderCtx {
                 gas_limit: tx.gas_limit(),
                 execution_time_us: predicted_execution_time_us,
                 state_root_time_us: predicted_state_root_time_us,
+                uncompressed_size: tx_uncompressed_size,
             };
 
             // ensure we still have capacity for this transaction
@@ -678,6 +687,8 @@ impl OpPayloadBuilderCtx {
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
+            // record uncompressed tx size
+            info.cumulative_uncompressed_bytes += tx_uncompressed_size;
             // record execution time (use predicted time if available, fall back to actual)
             info.flashblock_execution_time_us +=
                 predicted_execution_time_us.unwrap_or(actual_execution_time_us);
@@ -768,6 +779,9 @@ impl OpPayloadBuilderCtx {
             }
             TxnExecutionError::TransactionGasLimitExceeded { .. } => {
                 self.metrics.gas_limit_exceeded_total.increment(1);
+            }
+            TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
+                self.metrics.block_uncompressed_size_exceeded_total.increment(1);
             }
             _ => {}
         }
