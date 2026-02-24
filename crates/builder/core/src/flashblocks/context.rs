@@ -428,6 +428,7 @@ impl OpPayloadBuilderCtx {
                 info.cumulative_da_bytes_used += op_alloy_flz::tx_estimated_size_fjord_bytes(
                     sequencer_tx.encoded_2718().as_slice(),
                 );
+                info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;
             }
 
             let ctx = ReceiptBuilderCtx {
