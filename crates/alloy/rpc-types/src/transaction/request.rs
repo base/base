@@ -190,11 +190,11 @@ impl From<OpTypedTransaction> for OpTransactionRequest {
 impl From<OpTxEnvelope> for OpTransactionRequest {
     fn from(value: OpTxEnvelope) -> Self {
         match value {
+            OpTxEnvelope::Legacy(tx) => tx.into(),
             OpTxEnvelope::Eip2930(tx) => tx.into(),
             OpTxEnvelope::Eip1559(tx) => tx.into(),
             OpTxEnvelope::Eip7702(tx) => tx.into(),
             OpTxEnvelope::Deposit(tx) => tx.into(),
-            _ => Default::default(),
         }
     }
 }
