@@ -2396,6 +2396,7 @@ dependencies = [
  "base-cli-utils",
  "base-client-node",
  "base-txpool-rpc",
+ "base-validated-tx-rpc",
  "clap",
  "eyre",
  "reth-cli-util",
@@ -3116,6 +3117,28 @@ dependencies = [
  "revm-database",
  "tokio",
  "tokio-stream",
+ "tracing",
+]
+
+[[package]]
+name = "base-validated-tx-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "base-alloy-consensus",
+ "base-client-node",
+ "base64 0.22.1",
+ "eyre",
+ "jsonrpsee",
+ "reth-optimism-txpool",
+ "reth-primitives-traits",
+ "reth-transaction-pool",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 

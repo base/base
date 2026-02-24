@@ -149,6 +149,7 @@ base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 base-builder-core = { path = "crates/builder/core" }
 base-builder-metering = { path = "crates/builder/metering" }
 base-builder-publish = { path = "crates/builder/publish" }
+base-validated-tx-rpc = { path = "crates/builder/validated-tx-rpc" }
 
 # Infra
 based = { path = "crates/infra/based" }
@@ -377,6 +378,7 @@ tar = "0.4"
 http = "1.0"
 sha3 = "0.10"
 tower = "0.5"
+base64 = "0.22"
 anyhow = "1"
 moka = "0.12"
 discv5 = "0.10"

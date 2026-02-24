@@ -1,0 +1,42 @@
+[package]
+name = "base-validated-tx-rpc"
+description = "RPC endpoint for inserting pre-validated transactions into the builder pool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-client-node.workspace = true
+base-alloy-consensus.workspace = true
+
+# reth
+reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
+reth-optimism-txpool.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+
+# misc
+serde.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+eyre.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
