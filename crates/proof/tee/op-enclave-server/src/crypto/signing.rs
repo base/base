@@ -159,7 +159,7 @@ pub fn verify_proposal_signature(
 mod tests {
     use super::*;
     use alloy_primitives::{address, b256};
-    use rand::rngs::OsRng;
+    use rand_08::rngs::OsRng;
 
     use crate::crypto::generate_signer;
 

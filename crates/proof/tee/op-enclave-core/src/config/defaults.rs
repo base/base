@@ -56,17 +56,10 @@ pub fn default_rollup_config() -> RollupConfig {
             pectra_blob_schedule_time: None,
             isthmus_time: Some(0),
             jovian_time: Some(0),
-            interop_time: None,
         },
 
-        // Interop message expiry window (default 0)
-        interop_message_expiry_window: 0,
-
-        // Alt DA configuration (disabled by default)
-        alt_da_config: None,
-
-        // Base fee config (Optimism defaults)
-        chain_op_config: BaseFeeConfig::optimism(),
+        // Base fee config
+        chain_op_config: BaseFeeConfig::base_mainnet(),
     }
 }
 

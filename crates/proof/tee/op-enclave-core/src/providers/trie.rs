@@ -8,7 +8,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_rlp::Encodable;
 use alloy_trie::{EMPTY_ROOT_HASH, HashBuilder, Nibbles};
-use op_alloy_consensus::OpReceiptEnvelope;
+use base_alloy_consensus::OpReceiptEnvelope;
 
 /// Computes the receipt root from a list of receipts.
 ///
@@ -147,8 +147,8 @@ mod tests {
             0 => OpReceiptEnvelope::Legacy(receipt_with_bloom),
             1 => OpReceiptEnvelope::Eip2930(receipt_with_bloom),
             2 => OpReceiptEnvelope::Eip1559(receipt_with_bloom),
-            126 => OpReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                receipt: op_alloy_consensus::OpDepositReceipt {
+            126 => OpReceiptEnvelope::Deposit(base_alloy_consensus::OpDepositReceiptWithBloom {
+                receipt: base_alloy_consensus::OpDepositReceipt {
                     inner: Receipt::<Log> {
                         status: Eip658Value::Eip658(success),
                         cumulative_gas_used: cumulative_gas,

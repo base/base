@@ -3,7 +3,7 @@
 //! This module provides RSA-4096 key generation, PKIX serialization,
 //! and `PKCS1v15` encryption/decryption.
 
-use rand::CryptoRng;
+use rand_08::CryptoRng;
 use rsa::pkcs1v15::{DecryptingKey, EncryptingKey};
 use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
 use rsa::traits::{Decryptor, RandomizedEncryptor};
@@ -15,7 +15,7 @@ use crate::error::{CryptoError, ServerError};
 pub const RSA_KEY_BITS: usize = 4096;
 
 /// Generate a new RSA-4096 private key.
-pub fn generate_rsa_key<R: CryptoRng + rand::RngCore>(
+pub fn generate_rsa_key<R: CryptoRng + rand_08::RngCore>(
     rng: &mut R,
 ) -> Result<RsaPrivateKey, ServerError> {
     RsaPrivateKey::new(rng, RSA_KEY_BITS)
@@ -40,7 +40,7 @@ pub fn pkix_to_public_key(bytes: &[u8]) -> Result<RsaPublicKey, ServerError> {
 }
 
 /// Encrypt data using RSA PKCS#1 v1.5.
-pub fn encrypt_pkcs1v15<R: CryptoRng + rand::RngCore>(
+pub fn encrypt_pkcs1v15<R: CryptoRng + rand_08::RngCore>(
     rng: &mut R,
     public_key: &RsaPublicKey,
     data: &[u8],
@@ -70,7 +70,7 @@ pub fn private_to_public(private_key: &RsaPrivateKey) -> RsaPublicKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
+    use rand_08::rngs::OsRng;
 
     #[test]
     fn test_generate_rsa_key() {

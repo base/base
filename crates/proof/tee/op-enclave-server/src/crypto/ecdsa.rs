@@ -6,12 +6,12 @@
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use k256::ecdsa::SigningKey;
-use rand::CryptoRng;
+use rand_08::CryptoRng;
 
 use crate::error::{CryptoError, ServerError};
 
 /// Generate a new ECDSA signer with a random private key.
-pub fn generate_signer<R: CryptoRng + rand::RngCore>(
+pub fn generate_signer<R: CryptoRng + rand_08::RngCore>(
     rng: &mut R,
 ) -> Result<PrivateKeySigner, ServerError> {
     let signing_key = SigningKey::random(rng);
@@ -65,7 +65,7 @@ pub const fn signer_address(signer: &PrivateKeySigner) -> Address {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
+    use rand_08::rngs::OsRng;
 
     #[test]
     fn test_generate_signer() {
