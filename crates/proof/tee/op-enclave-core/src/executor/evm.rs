@@ -4,25 +4,26 @@
 //! for executing L2 blocks in a stateless manner within an enclave.
 
 use alloy_consensus::{Header, Sealed};
-use alloy_evm::precompiles::PrecompilesMap;
-use alloy_evm::{Database, EvmEnv, EvmFactory};
-use base_alloy_evm::OpEvm;
+use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_alloy_evm::OpEvm;
+use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use kona_executor::StatelessL2Builder;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use op_revm::precompiles::OpPrecompiles;
 // Re-export L1BlockInfo for use by callers
 pub use op_revm::L1BlockInfo;
 use op_revm::{
     DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+    precompiles::OpPrecompiles,
 };
-use revm::Inspector;
-use revm::context::{BlockEnv, TxEnv};
-use revm::context_interface::result::EVMError;
-use revm::inspector::NoOpInspector;
+use revm::{
+    Inspector,
+    context::{BlockEnv, TxEnv},
+    context_interface::result::EVMError,
+    inspector::NoOpInspector,
+};
 
 use super::trie_db::EnclaveTrieDB;
 use crate::error::ExecutorError;
@@ -267,11 +268,7 @@ pub fn execute_block(
     // Extract EIP-1559 params from extra_data for Holocene+
     // After Holocene, blocks must have the EIP-1559 parameters in extra_data[1..9]
     let eip_1559_params = if rollup_config.is_holocene_active(block_header.timestamp) {
-        block_header
-            .extra_data
-            .get(1..9)
-            .and_then(|s| <[u8; 8]>::try_from(s).ok())
-            .map(B64::from)
+        block_header.extra_data.get(1..9).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(B64::from)
     } else {
         None
     };
@@ -317,9 +314,8 @@ pub fn execute_block(
     );
 
     // Execute the block
-    let outcome = builder
-        .build_block(attrs)
-        .map_err(|e| ExecutorError::ExecutionFailed(format!("{e}")))?;
+    let outcome =
+        builder.build_block(attrs).map_err(|e| ExecutorError::ExecutionFailed(format!("{e}")))?;
 
     Ok(BlockExecutionResult {
         state_root: outcome.header.state_root,
@@ -375,11 +371,7 @@ mod tests {
         // All hint methods should succeed (no-op)
         assert!(hinter.hint_trie_node(B256::ZERO).is_ok());
         assert!(hinter.hint_account_proof(Address::ZERO, 0).is_ok());
-        assert!(
-            hinter
-                .hint_storage_proof(Address::ZERO, U256::ZERO, 0)
-                .is_ok()
-        );
+        assert!(hinter.hint_storage_proof(Address::ZERO, U256::ZERO, 0).is_ok());
     }
 
     #[test]
@@ -387,11 +379,7 @@ mod tests {
         let state_root = B256::repeat_byte(0xAA);
         let receipts_root = B256::repeat_byte(0xBB);
 
-        let result = BlockExecutionResult {
-            state_root,
-            receipts_root,
-            gas_used: 21000,
-        };
+        let result = BlockExecutionResult { state_root, receipts_root, gas_used: 21000 };
 
         assert!(verify_execution_result(state_root, receipts_root, &result).is_ok());
     }
@@ -402,11 +390,8 @@ mod tests {
         let actual_state_root = B256::repeat_byte(0xCC);
         let receipts_root = B256::repeat_byte(0xBB);
 
-        let result = BlockExecutionResult {
-            state_root: actual_state_root,
-            receipts_root,
-            gas_used: 21000,
-        };
+        let result =
+            BlockExecutionResult { state_root: actual_state_root, receipts_root, gas_used: 21000 };
 
         let err = verify_execution_result(expected_state_root, receipts_root, &result);
         assert!(matches!(err, Err(ExecutorError::InvalidStateRoot { .. })));

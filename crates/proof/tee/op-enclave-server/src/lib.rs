@@ -43,11 +43,6 @@ mod server;
 pub mod transport;
 
 // Re-export core types
-pub use op_enclave_core::*;
-
-// Re-export server
-pub use server::Server;
-
 // Re-export commonly used types
 pub use attestation::{
     AttestationDocument, VerificationResult, verify_attestation, verify_attestation_with_pcr0,
@@ -60,3 +55,6 @@ pub use crypto::{
 };
 pub use error::{AttestationError, CryptoError, NsmError, ProposalError, Result, ServerError};
 pub use nsm::{NsmRng, NsmSession};
+pub use op_enclave_core::*;
+// Re-export server
+pub use server::Server;

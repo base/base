@@ -126,10 +126,7 @@ pub fn transform_witness(witness: ExecutionWitness) -> Result<TransformedWitness
             )));
         }
     }
-    debug!(
-        entries = state.len(),
-        "Witness state integrity check passed"
-    );
+    debug!(entries = state.len(), "Witness state integrity check passed");
 
     // Code integrity check: verify each code entry's key matches keccak256(value).
     for (hash, bytecode) in &codes {
@@ -143,12 +140,7 @@ pub fn transform_witness(witness: ExecutionWitness) -> Result<TransformedWitness
     }
     debug!(entries = codes.len(), "Witness code integrity check passed");
 
-    Ok(TransformedWitness {
-        previous_header,
-        codes,
-        state,
-        headers_by_hash,
-    })
+    Ok(TransformedWitness { previous_header, codes, state, headers_by_hash })
 }
 
 /// Transform the codes map from hex strings to decoded bytes.
@@ -213,8 +205,9 @@ fn decode_hex(hex_str: &str) -> Result<Vec<u8>, ExecutorError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::b256;
+
+    use super::*;
 
     fn test_header() -> Header {
         Header {
@@ -248,17 +241,11 @@ mod tests {
 
     #[test]
     fn test_transform_witness_empty_headers() {
-        let witness = ExecutionWitness {
-            headers: vec![],
-            codes: HashMap::new(),
-            state: HashMap::new(),
-        };
+        let witness =
+            ExecutionWitness { headers: vec![], codes: HashMap::new(), state: HashMap::new() };
 
         let result = transform_witness(witness);
-        assert!(matches!(
-            result,
-            Err(ExecutorError::WitnessTransformFailed(_))
-        ));
+        assert!(matches!(result, Err(ExecutorError::WitnessTransformFailed(_))));
     }
 
     #[test]
@@ -278,11 +265,7 @@ mod tests {
             "0xc0".to_string(),
         );
 
-        let witness = ExecutionWitness {
-            headers: vec![header.clone()],
-            codes,
-            state,
-        };
+        let witness = ExecutionWitness { headers: vec![header.clone()], codes, state };
 
         let result = transform_witness(witness);
         assert!(result.is_ok());
@@ -316,9 +299,6 @@ mod tests {
     #[test]
     fn test_decode_hex_invalid() {
         let result = decode_hex("ghij");
-        assert!(matches!(
-            result,
-            Err(ExecutorError::WitnessTransformFailed(_))
-        ));
+        assert!(matches!(result, Err(ExecutorError::WitnessTransformFailed(_))));
     }
 }

@@ -6,17 +6,21 @@
 use alloy_consensus::{Header, ReceiptEnvelope, Sealable};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, address};
-use kona_genesis::{L1ChainConfig, RollupConfig};
 use base_alloy_consensus::OpTxEnvelope;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 
-use super::attributes::extract_deposits_from_receipts;
-use super::evm::{build_l1_block_info_from_deposit, execute_block};
-use super::l2_block_ref::l2_block_to_block_info;
-use super::trie_db::EnclaveTrieDB;
-use super::witness::{ExecutionWitness, transform_witness};
-use crate::error::ExecutorError;
-use crate::providers::{L2SystemConfigFetcher, compute_l1_receipt_root, compute_tx_root};
-use crate::types::account::AccountResult;
+use super::{
+    attributes::extract_deposits_from_receipts,
+    evm::{build_l1_block_info_from_deposit, execute_block},
+    l2_block_ref::l2_block_to_block_info,
+    trie_db::EnclaveTrieDB,
+    witness::{ExecutionWitness, transform_witness},
+};
+use crate::{
+    error::ExecutorError,
+    providers::{L2SystemConfigFetcher, compute_l1_receipt_root, compute_tx_root},
+    types::account::AccountResult,
+};
 
 /// Maximum sequencer drift in seconds (Fjord hardfork).
 /// If a block's timestamp exceeds `l1_origin.timestamp` + `MAX_SEQUENCER_DRIFT_FJORD`,
@@ -326,29 +330,18 @@ mod tests {
     #[test]
     fn test_validate_sequencer_drift_at_limit() {
         // Exactly at MAX_SEQUENCER_DRIFT_FJORD
-        assert!(validate_sequencer_drift(
-            1000 + MAX_SEQUENCER_DRIFT_FJORD,
-            1000,
-            true
-        ));
+        assert!(validate_sequencer_drift(1000 + MAX_SEQUENCER_DRIFT_FJORD, 1000, true));
     }
 
     #[test]
     fn test_validate_sequencer_drift_exceeds_limit() {
         // Exceeds MAX_SEQUENCER_DRIFT_FJORD
-        assert!(!validate_sequencer_drift(
-            1000 + MAX_SEQUENCER_DRIFT_FJORD + 1,
-            1000,
-            true
-        ));
+        assert!(!validate_sequencer_drift(1000 + MAX_SEQUENCER_DRIFT_FJORD + 1, 1000, true));
     }
 
     #[test]
     fn test_l2_to_l1_message_passer_address() {
-        assert_eq!(
-            L2_TO_L1_MESSAGE_PASSER,
-            address!("4200000000000000000000000000000000000016")
-        );
+        assert_eq!(L2_TO_L1_MESSAGE_PASSER, address!("4200000000000000000000000000000000000016"));
     }
 
     #[test]

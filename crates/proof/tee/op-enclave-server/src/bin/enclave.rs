@@ -3,15 +3,15 @@
 //! This is the entry point for the enclave server, matching Go's `cmd/enclave/main.go`.
 //! It attempts to listen on vsock first, falling back to HTTP if vsock is unavailable.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use jsonrpsee::server::Server as JsonRpcServer;
-
-use op_enclave_server::Server;
-use op_enclave_server::rpc::{EnclaveApiServer, RpcServerImpl};
-use op_enclave_server::transport::TransportConfig;
+use jsonrpsee::server::{ServerBuilder, ServerConfig};
+use op_enclave_server::{
+    Server,
+    rpc::{EnclaveApiServer, RpcServerImpl},
+    transport::TransportConfig,
+};
+use serde_json::value::RawValue;
 
 /// Read timeout for vsock connections (5 minutes).
 const VSOCK_READ_TIMEOUT: Duration = Duration::from_secs(300);
@@ -57,6 +57,7 @@ async fn try_vsock_server(
     config: &TransportConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::io::{Read, Write};
+
     use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 
     let addr = VsockAddr::new(VMADDR_CID_ANY, config.vsock_port);
@@ -98,12 +99,12 @@ async fn try_vsock_server(
                     Ok(n) => {
                         total_read += n;
                         // Check if we have a complete JSON object
-                        if let Ok(s) = std::str::from_utf8(&buffer[..total_read]) {
-                            if s.ends_with('\n') || s.ends_with('}') {
-                                // Try to parse as JSON
-                                if serde_json::from_str::<serde_json::Value>(s).is_ok() {
-                                    break;
-                                }
+                        if let Ok(s) = std::str::from_utf8(&buffer[..total_read])
+                            && (s.ends_with('\n') || s.ends_with('}'))
+                        {
+                            // Try to parse as JSON
+                            if serde_json::from_str::<serde_json::Value>(s).is_ok() {
+                                break;
                             }
                         }
                     }
@@ -141,16 +142,16 @@ async fn try_vsock_server(
                     Ok((response, _)) => response,
                     Err(e) => {
                         // Return JSON-RPC error response
-                        format!(
-                            r#"{{"jsonrpc":"2.0","error":{{"code":-32700,"message":"{}"}},"id":null}}"#,
-                            e.to_string().replace('"', "\\\"")
-                        )
+                        let msg = e.to_string().replace('"', "\\\"");
+                        RawValue::from_string(format!(
+                            r#"{{"jsonrpc":"2.0","error":{{"code":-32700,"message":"{msg}"}},"id":null}}"#,
+                        )).expect("valid JSON-RPC error")
                     }
                 }
             });
 
             // Write the response
-            if let Err(e) = stream.write_all(response.as_bytes()) {
+            if let Err(e) = stream.write_all(response.get().as_bytes()) {
                 tracing::warn!("vsock write error: {e}");
             }
         });
@@ -173,10 +174,9 @@ async fn run_http_server(
     let rpc_impl = RpcServerImpl::new(server);
 
     // Build the JSON-RPC server with body limit
-    let server = JsonRpcServer::builder()
-        .max_request_body_size(config.http_body_limit)
-        .build(addr)
-        .await?;
+    let server_config =
+        ServerConfig::builder().max_request_body_size(config.http_body_limit).build();
+    let server = ServerBuilder::with_config(server_config).build(addr).await?;
 
     let handle = server.start(rpc_impl.into_rpc());
 

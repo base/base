@@ -5,7 +5,6 @@
 
 use alloy_primitives::Bytes;
 use jsonrpsee::proc_macros::rpc;
-
 use op_enclave_core::{ExecuteStatelessRequest, Proposal};
 
 use super::types::AggregateRequest;

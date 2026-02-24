@@ -65,15 +65,7 @@ impl AccountResult {
         storage_hash: B256,
         storage_proof: Vec<StorageProof>,
     ) -> Self {
-        Self {
-            address,
-            account_proof,
-            balance,
-            code_hash,
-            nonce,
-            storage_hash,
-            storage_proof,
-        }
+        Self { address, account_proof, balance, code_hash, nonce, storage_hash, storage_proof }
     }
 
     /// Verify the account proof against a state root.
@@ -160,8 +152,9 @@ impl Encodable for Account {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{address, b256};
+
+    use super::*;
 
     fn sample_account_result() -> AccountResult {
         AccountResult {
@@ -225,10 +218,7 @@ mod tests {
 
         let account: AccountResult = serde_json::from_str(rpc_json).unwrap();
 
-        assert_eq!(
-            account.address,
-            address!("4200000000000000000000000000000000000016")
-        );
+        assert_eq!(account.address, address!("4200000000000000000000000000000000000016"));
         assert_eq!(account.storage_proof.len(), 1);
         assert_eq!(account.storage_proof[0].value, U256::from(42));
     }

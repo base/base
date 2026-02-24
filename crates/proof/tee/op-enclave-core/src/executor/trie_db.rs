@@ -58,13 +58,7 @@ impl EnclaveTrieDB {
         parent_header: Header,
     ) -> Self {
         let parent_hash = parent_header.hash_slow();
-        Self {
-            codes,
-            state,
-            parent_header,
-            parent_hash,
-            headers_by_hash: HashMap::new(),
-        }
+        Self { codes, state, parent_header, parent_hash, headers_by_hash: HashMap::new() }
     }
 
     /// Returns bytecode by its hash.
@@ -93,9 +87,7 @@ impl EnclaveTrieDB {
         if let Some(header) = self.headers_by_hash.get(&hash) {
             return Ok(header.clone());
         }
-        Err(ExecutorError::ExecutionFailed(format!(
-            "header not found for hash: {hash}"
-        )))
+        Err(ExecutorError::ExecutionFailed(format!("header not found for hash: {hash}")))
     }
 
     /// Returns a state trie node by its hash.
@@ -185,16 +177,15 @@ impl TrieDBProvider for EnclaveTrieDB {
         if let Some(header) = self.headers_by_hash.get(&hash) {
             return Ok(header.clone());
         }
-        Err(TrieProviderError(format!(
-            "header not found for hash: {hash}"
-        )))
+        Err(TrieProviderError(format!("header not found for hash: {hash}")))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::b256;
+
+    use super::*;
 
     fn test_header() -> Header {
         Header {

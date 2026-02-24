@@ -6,9 +6,9 @@
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Log, address};
+use base_protocol::{L1BlockInfoTx, decode_deposit};
 use hex_literal::hex;
 use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
-use base_protocol::{L1BlockInfoTx, decode_deposit};
 
 use crate::error::ExecutorError;
 
@@ -20,9 +20,8 @@ pub const L1_ATTRIBUTES_PREDEPLOYED: Address = address!("42000000000000000000000
 
 /// Deposit event topic (`TransactionDeposited` event).
 /// keccak256("TransactionDeposited(address,address,uint256,bytes)")
-pub const DEPOSIT_EVENT_TOPIC: B256 = B256::new(hex!(
-    "b3813568d9991fc951961fcb4c784893574240a28925604d09fc577c55bb7c32"
-));
+pub const DEPOSIT_EVENT_TOPIC: B256 =
+    B256::new(hex!("b3813568d9991fc951961fcb4c784893574240a28925604d09fc577c55bb7c32"));
 
 /// Extract deposit transactions from L1 receipts.
 ///
@@ -155,13 +154,7 @@ mod tests {
     #[test]
     fn test_l1_attributes_addresses() {
         // Verify the predefined addresses are correct
-        assert_eq!(
-            L1_ATTRIBUTES_DEPOSITOR,
-            address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001")
-        );
-        assert_eq!(
-            L1_ATTRIBUTES_PREDEPLOYED,
-            address!("4200000000000000000000000000000000000015")
-        );
+        assert_eq!(L1_ATTRIBUTES_DEPOSITOR, address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001"));
+        assert_eq!(L1_ATTRIBUTES_PREDEPLOYED, address!("4200000000000000000000000000000000000015"));
     }
 }

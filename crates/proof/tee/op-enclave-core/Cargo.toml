@@ -57,7 +57,7 @@ required-features = ["fixture-generator"]
 
 [features]
 default = []
-fixture-generator = ["tokio", "reqwest", "clap"]
+fixture-generator = [ "clap", "reqwest", "tokio" ]
 
 [lints]
 workspace = true

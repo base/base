@@ -11,10 +11,9 @@
 //! For `RollupConfig`, we re-export from `kona_genesis` to maintain ecosystem compatibility.
 
 use alloy_primitives::{Address, B256, U256, keccak256};
-use serde::{Deserialize, Serialize};
-
 // Re-export RollupConfig from kona_genesis for ecosystem compatibility
 pub use kona_genesis::RollupConfig;
+use serde::{Deserialize, Serialize};
 
 /// Version constant for binary serialization format.
 const VERSION_0: u64 = 0;
@@ -34,10 +33,7 @@ pub struct BlockId {
 
 impl Default for BlockId {
     fn default() -> Self {
-        Self {
-            hash: B256::ZERO,
-            number: 0,
-        }
+        Self { hash: B256::ZERO, number: 0 }
     }
 }
 
@@ -232,14 +228,8 @@ impl PerChainConfig {
         use alloy_eips::eip1898::BlockNumHash;
 
         kona_genesis::ChainGenesis {
-            l1: BlockNumHash {
-                hash: self.genesis.l1.hash,
-                number: self.genesis.l1.number,
-            },
-            l2: BlockNumHash {
-                hash: self.genesis.l2.hash,
-                number: self.genesis.l2.number,
-            },
+            l1: BlockNumHash { hash: self.genesis.l1.hash, number: self.genesis.l1.number },
+            l2: BlockNumHash { hash: self.genesis.l2.hash, number: self.genesis.l2.number },
             l2_time: self.genesis.l2_time,
             system_config: Some(kona_genesis::SystemConfig {
                 batcher_address: self.genesis.system_config.batcher_addr,
@@ -261,21 +251,16 @@ impl PerChainConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{address, b256};
+
+    use super::*;
 
     fn sample_config() -> PerChainConfig {
         PerChainConfig {
             chain_id: U256::from(8453), // Base
             genesis: Genesis {
-                l1: BlockId {
-                    hash: B256::repeat_byte(0x11),
-                    number: 1,
-                },
-                l2: BlockId {
-                    hash: B256::repeat_byte(0x22),
-                    number: 0,
-                },
+                l1: BlockId { hash: B256::repeat_byte(0x11), number: 1 },
+                l2: BlockId { hash: B256::repeat_byte(0x22), number: 0 },
                 l2_time: 1686789600,
                 system_config: GenesisSystemConfig {
                     batcher_addr: address!("5050f69a9786f081509234f1a7f4684b5e5b76c9"),
@@ -342,10 +327,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            binary, expected,
-            "Binary serialization must match Go implementation"
-        );
+        assert_eq!(binary, expected, "Binary serialization must match Go implementation");
     }
 
     /// Golden test: verify hash matches Go's `Hash()` output.
@@ -438,14 +420,8 @@ mod tests {
 
         assert_eq!(rollup_config.l2_chain_id.id(), 8453);
         assert_eq!(rollup_config.block_time, config.block_time);
-        assert_eq!(
-            rollup_config.deposit_contract_address,
-            config.deposit_contract_address
-        );
-        assert_eq!(
-            rollup_config.l1_system_config_address,
-            config.l1_system_config_address
-        );
+        assert_eq!(rollup_config.deposit_contract_address, config.deposit_contract_address);
+        assert_eq!(rollup_config.l1_system_config_address, config.l1_system_config_address);
         assert_eq!(rollup_config.genesis.l1.hash, config.genesis.l1.hash);
         assert_eq!(rollup_config.genesis.l2.hash, config.genesis.l2.hash);
     }

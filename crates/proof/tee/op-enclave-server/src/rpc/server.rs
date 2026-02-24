@@ -7,14 +7,10 @@ use std::sync::Arc;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use jsonrpsee::types::ErrorObjectOwned;
+use op_enclave_core::{ExecuteStatelessRequest, Proposal, config::l1_config_for_l2_chain_id};
 
-use op_enclave_core::config::l1_config_for_l2_chain_id;
-use op_enclave_core::{ExecuteStatelessRequest, Proposal};
-
-use super::api::EnclaveApiServer;
-use super::types::AggregateRequest;
-use crate::Server;
-use crate::error::ServerError;
+use super::{api::EnclaveApiServer, types::AggregateRequest};
+use crate::{Server, error::ServerError};
 
 /// RPC server implementation wrapping the core `Server`.
 #[derive(Debug, Clone)]
@@ -41,31 +37,19 @@ impl EnclaveApiServer for RpcServerImpl {
     }
 
     async fn signer_attestation(&self) -> Result<Bytes, ErrorObjectOwned> {
-        self.server
-            .signer_attestation()
-            .map(Bytes::from)
-            .map_err(to_rpc_error)
+        self.server.signer_attestation().map(Bytes::from).map_err(to_rpc_error)
     }
 
     async fn decryption_public_key(&self) -> Result<Bytes, ErrorObjectOwned> {
-        self.server
-            .decryption_public_key()
-            .map(Bytes::from)
-            .map_err(to_rpc_error)
+        self.server.decryption_public_key().map(Bytes::from).map_err(to_rpc_error)
     }
 
     async fn decryption_attestation(&self) -> Result<Bytes, ErrorObjectOwned> {
-        self.server
-            .decryption_attestation()
-            .map(Bytes::from)
-            .map_err(to_rpc_error)
+        self.server.decryption_attestation().map(Bytes::from).map_err(to_rpc_error)
     }
 
     async fn encrypted_signer_key(&self, attestation: Bytes) -> Result<Bytes, ErrorObjectOwned> {
-        self.server
-            .encrypted_signer_key(&attestation)
-            .map(Bytes::from)
-            .map_err(to_rpc_error)
+        self.server.encrypted_signer_key(&attestation).map(Bytes::from).map_err(to_rpc_error)
     }
 
     async fn set_signer_key(&self, encrypted: Bytes) -> Result<(), ErrorObjectOwned> {

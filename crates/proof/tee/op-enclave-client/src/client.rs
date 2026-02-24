@@ -3,18 +3,22 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-use jsonrpsee::core::client::ClientT;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use jsonrpsee::rpc_params;
+use jsonrpsee::{
+    core::client::ClientT,
+    http_client::{HttpClient, HttpClientBuilder},
+    rpc_params,
+};
 use op_enclave_core::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 
 use crate::client_error::ClientError;
 
 /// Module for insecure TLS configuration that skips certificate verification.
 mod danger {
-    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-    use rustls::{DigitallySignedStruct, Error, SignatureScheme};
+    use rustls::{
+        DigitallySignedStruct, Error, SignatureScheme,
+        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        pki_types::{CertificateDer, ServerName, UnixTime},
+    };
 
     #[derive(Debug)]
     pub(super) struct NoCertificateVerification;
@@ -141,9 +145,7 @@ impl EnclaveClient {
                 .build(url)
                 .map_err(|e| ClientError::ClientCreation(e.to_string()))?
         } else {
-            builder
-                .build(url)
-                .map_err(|e| ClientError::ClientCreation(e.to_string()))?
+            builder.build(url).map_err(|e| ClientError::ClientCreation(e.to_string()))?
         };
 
         Ok(Self { inner })
@@ -155,10 +157,7 @@ impl EnclaveClient {
     ///
     /// Returns an error if the RPC call fails.
     pub async fn signer_public_key(&self) -> Result<Bytes, ClientError> {
-        self.inner
-            .request("enclave_signerPublicKey", rpc_params![])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_signerPublicKey", rpc_params![]).await.map_err(Into::into)
     }
 
     /// Get an attestation document containing the signer's public key.
@@ -167,10 +166,7 @@ impl EnclaveClient {
     ///
     /// Returns an error if the RPC call fails or if running in local mode.
     pub async fn signer_attestation(&self) -> Result<Bytes, ClientError> {
-        self.inner
-            .request("enclave_signerAttestation", rpc_params![])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_signerAttestation", rpc_params![]).await.map_err(Into::into)
     }
 
     /// Get the decryption public key in PKIX/DER format.
@@ -179,10 +175,7 @@ impl EnclaveClient {
     ///
     /// Returns an error if the RPC call fails.
     pub async fn decryption_public_key(&self) -> Result<Bytes, ClientError> {
-        self.inner
-            .request("enclave_decryptionPublicKey", rpc_params![])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_decryptionPublicKey", rpc_params![]).await.map_err(Into::into)
     }
 
     /// Get an attestation document containing the decryption public key.
@@ -191,10 +184,7 @@ impl EnclaveClient {
     ///
     /// Returns an error if the RPC call fails or if running in local mode.
     pub async fn decryption_attestation(&self) -> Result<Bytes, ClientError> {
-        self.inner
-            .request("enclave_decryptionAttestation", rpc_params![])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_decryptionAttestation", rpc_params![]).await.map_err(Into::into)
     }
 
     /// Encrypt the signer key for a remote enclave.
@@ -223,10 +213,7 @@ impl EnclaveClient {
     ///
     /// Returns an error if the RPC call fails.
     pub async fn set_signer_key(&self, encrypted: Bytes) -> Result<(), ClientError> {
-        self.inner
-            .request("enclave_setSignerKey", rpc_params![encrypted])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_setSignerKey", rpc_params![encrypted]).await.map_err(Into::into)
     }
 
     /// Execute stateless block validation and create a signed proposal.
@@ -238,10 +225,7 @@ impl EnclaveClient {
         &self,
         req: ExecuteStatelessRequest,
     ) -> Result<Proposal, ClientError> {
-        self.inner
-            .request("enclave_executeStateless", rpc_params![req])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_executeStateless", rpc_params![req]).await.map_err(Into::into)
     }
 
     /// Aggregate multiple proposals into a single proposal.
@@ -250,9 +234,6 @@ impl EnclaveClient {
     ///
     /// Returns an error if the RPC call fails or signature verification fails.
     pub async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
-        self.inner
-            .request("enclave_aggregate", rpc_params![request])
-            .await
-            .map_err(Into::into)
+        self.inner.request("enclave_aggregate", rpc_params![request]).await.map_err(Into::into)
     }
 }

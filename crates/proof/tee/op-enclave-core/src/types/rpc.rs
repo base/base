@@ -5,9 +5,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use kona_genesis::ChainConfig;
 use serde::{Deserialize, Serialize};
 
-use crate::Proposal;
-use crate::executor::ExecutionWitness;
-use crate::types::account::AccountResult;
+use crate::{Proposal, executor::ExecutionWitness, types::account::AccountResult};
 
 /// Request for the `executeStateless` RPC method.
 ///

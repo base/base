@@ -28,6 +28,5 @@ mod client_error;
 
 pub use client::EnclaveClient;
 pub use client_error::ClientError;
-
 // Re-export core types
 pub use op_enclave_core::*;

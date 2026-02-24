@@ -98,8 +98,9 @@ impl Proposal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::b256;
+
+    use super::*;
 
     fn sample_proposal() -> Proposal {
         Proposal {

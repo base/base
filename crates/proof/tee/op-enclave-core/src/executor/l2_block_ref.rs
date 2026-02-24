@@ -4,13 +4,11 @@
 //! and first transaction data, matching the Go `derive.L2BlockToBlockRef()` function.
 
 use alloy_consensus::Header;
-use alloy_eips::BlockNumHash;
-use alloy_eips::Typed2718;
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::{BlockNumHash, Typed2718, eip2718::Decodable2718};
 use alloy_primitives::{B256, Bytes};
-use kona_genesis::RollupConfig;
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_alloy_consensus::OpTxEnvelope;
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use kona_genesis::RollupConfig;
 
 use crate::error::ExecutorError;
 
@@ -43,12 +41,8 @@ pub fn l2_block_to_block_info(
     first_tx: &Bytes,
 ) -> Result<L2BlockInfo, ExecutorError> {
     // Build the L2 block info
-    let block_info = BlockInfo::new(
-        block_hash,
-        header.number,
-        header.parent_hash,
-        header.timestamp,
-    );
+    let block_info =
+        BlockInfo::new(block_hash, header.number, header.parent_hash, header.timestamp);
 
     // Handle genesis block
     if header.number == rollup_config.genesis.l2.number {
@@ -89,18 +83,15 @@ pub fn l2_block_to_block_info(
         ExecutorError::ExecutionFailed(format!("failed to decode L1BlockInfoTx: {e}"))
     })?;
 
-    Ok(L2BlockInfo::new(
-        block_info,
-        l1_info.id(),
-        l1_info.sequence_number(),
-    ))
+    Ok(L2BlockInfo::new(block_info, l1_info.id(), l1_info.sequence_number()))
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{address, b256};
+
     use super::*;
     use crate::config::default_rollup_config;
-    use alloy_primitives::{address, b256};
 
     fn test_header(number: u64, timestamp: u64) -> Header {
         Header {

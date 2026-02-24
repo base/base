@@ -3,12 +3,12 @@
 //! This module handles loading and validating the AWS CA roots used
 //! to verify Nitro Enclave attestation documents.
 
+use std::io::Read;
+
 use base64::Engine;
 use openssl::x509::X509;
 use sha2::{Digest, Sha256};
-use std::io::Read;
-use x509_cert::Certificate;
-use x509_cert::der::Decode;
+use x509_cert::{Certificate, der::Decode};
 
 use crate::error::{AttestationError, ServerError};
 
@@ -29,7 +29,7 @@ pub struct AwsCaRoot {
     pub pem_data: Vec<u8>,
     /// The parsed X.509 certificate (using x509-cert crate).
     pub certificate: Certificate,
-    /// The parsed X.509 certificate (using OpenSSL) for chain verification.
+    /// The parsed X.509 certificate (using `OpenSSL`) for chain verification.
     pub openssl_cert: X509,
 }
 
@@ -65,9 +65,8 @@ impl AwsCaRoot {
 
         let mut pem_data = Vec::new();
         {
-            let mut file = archive
-                .by_index(0)
-                .map_err(|e| AttestationError::ZipRead(e.to_string()))?;
+            let mut file =
+                archive.by_index(0).map_err(|e| AttestationError::ZipRead(e.to_string()))?;
             file.read_to_end(&mut pem_data)
                 .map_err(|e| AttestationError::ZipRead(e.to_string()))?;
         }
@@ -79,11 +78,7 @@ impl AwsCaRoot {
         let openssl_cert = X509::from_pem(&pem_data)
             .map_err(|e| AttestationError::PemParse(format!("OpenSSL PEM parse error: {e}")))?;
 
-        Ok(Self {
-            pem_data,
-            certificate,
-            openssl_cert,
-        })
+        Ok(Self { pem_data, certificate, openssl_cert })
     }
 
     /// Parse a PEM-encoded certificate.

@@ -70,9 +70,10 @@ pub mod u256_hex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{Bytes, U256};
     use serde::{Deserialize, Serialize};
+
+    use super::*;
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct TestBytes {
@@ -88,9 +89,7 @@ mod tests {
 
     #[test]
     fn test_bytes_hex_serialize() {
-        let test = TestBytes {
-            data: Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
-        };
+        let test = TestBytes { data: Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]) };
         let json = serde_json::to_string(&test).unwrap();
         assert_eq!(json, r#"{"data":"0xdeadbeef"}"#);
     }
@@ -114,9 +113,7 @@ mod tests {
 
     #[test]
     fn test_u256_hex_serialize() {
-        let test = TestU256 {
-            value: U256::from(12345),
-        };
+        let test = TestU256 { value: U256::from(12345) };
         let json = serde_json::to_string(&test).unwrap();
         assert_eq!(json, r#"{"value":"0x3039"}"#);
     }
@@ -130,9 +127,7 @@ mod tests {
 
     #[test]
     fn test_u256_hex_serialize_large() {
-        let test = TestU256 {
-            value: U256::from(0x123456789abcdef0_u64),
-        };
+        let test = TestU256 { value: U256::from(0x123456789abcdef0_u64) };
         let json = serde_json::to_string(&test).unwrap();
         assert_eq!(json, r#"{"value":"0x123456789abcdef0"}"#);
     }
@@ -146,9 +141,7 @@ mod tests {
 
     #[test]
     fn test_u256_hex_roundtrip() {
-        let original = TestU256 {
-            value: U256::from(0xdeadbeef_u64),
-        };
+        let original = TestU256 { value: U256::from(0xdeadbeef_u64) };
         let json = serde_json::to_string(&original).unwrap();
         let parsed: TestU256 = serde_json::from_str(&json).unwrap();
         assert_eq!(original, parsed);

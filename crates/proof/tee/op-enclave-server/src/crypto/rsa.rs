@@ -4,10 +4,12 @@
 //! and `PKCS1v15` encryption/decryption.
 
 use rand_08::CryptoRng;
-use rsa::pkcs1v15::{DecryptingKey, EncryptingKey};
-use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
-use rsa::traits::{Decryptor, RandomizedEncryptor};
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rsa::{
+    RsaPrivateKey, RsaPublicKey,
+    pkcs1v15::{DecryptingKey, EncryptingKey},
+    pkcs8::{DecodePublicKey, EncodePublicKey},
+    traits::{Decryptor, RandomizedEncryptor},
+};
 
 use crate::error::{CryptoError, ServerError};
 
@@ -57,9 +59,7 @@ pub fn decrypt_pkcs1v15(
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, ServerError> {
     let decrypting_key = DecryptingKey::new(private_key.clone());
-    decrypting_key
-        .decrypt(ciphertext)
-        .map_err(|e| CryptoError::RsaDecrypt(e.to_string()).into())
+    decrypting_key.decrypt(ciphertext).map_err(|e| CryptoError::RsaDecrypt(e.to_string()).into())
 }
 
 /// Get the public key from a private key.
@@ -69,8 +69,9 @@ pub fn private_to_public(private_key: &RsaPrivateKey) -> RsaPublicKey {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use rand_08::rngs::OsRng;
+
+    use super::*;
 
     #[test]
     fn test_generate_rsa_key() {

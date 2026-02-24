@@ -19,30 +19,33 @@
 //! - Access to Sepolia L1 RPC endpoint
 //! - The L2 node must support `debug_dbGet` RPC method
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use alloy_consensus::{Header, ReceiptEnvelope, Sealable};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_rlp::Decodable;
+use base_alloy_consensus::OpTxEnvelope;
+use base_protocol::L1BlockInfoTx;
 use clap::Parser;
 use kona_executor::{StatelessL2Builder, TrieDBProvider};
 use kona_mpt::{TrieNode, TrieProvider};
-use base_protocol::L1BlockInfoTx;
-use base_alloy_consensus::OpTxEnvelope;
+use op_enclave_core::{
+    L1ChainConfig,
+    executor::{
+        EnclaveEvmFactory, EnclaveTrieHinter, ExecutionWitness, build_l1_block_info_from_deposit,
+        extract_deposits_from_receipts, l2_block_to_block_info,
+    },
+    providers::L2SystemConfigFetcher,
+    types::account::AccountResult,
+};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
-
-use op_enclave_core::L1ChainConfig;
-use op_enclave_core::executor::{
-    EnclaveEvmFactory, EnclaveTrieHinter, ExecutionWitness, build_l1_block_info_from_deposit,
-    extract_deposits_from_receipts, l2_block_to_block_info,
-};
-use op_enclave_core::providers::L2SystemConfigFetcher;
-use op_enclave_core::types::account::AccountResult;
 
 /// Command-line arguments for the fixture generator.
 #[derive(Parser, Debug)]
@@ -274,13 +277,7 @@ impl CachingTrieProvider {
         runtime_handle: Handle,
         caches: SharedWitnessCaches,
     ) -> Self {
-        Self {
-            client,
-            rpc_url,
-            caches,
-            parent_header,
-            runtime_handle,
-        }
+        Self { client, rpc_url, caches, parent_header, runtime_handle }
     }
 
     /// Fetch a value from the node's database using `debug_dbGet`.
@@ -353,10 +350,7 @@ impl TrieProvider for CachingTrieProvider {
             )));
         }
 
-        eprintln!(
-            "    [RPC] Fetched {} bytes for node {key}",
-            node_bytes.len()
-        );
+        eprintln!("    [RPC] Fetched {} bytes for node {key}", node_bytes.len());
 
         // Cache it
         {
@@ -392,9 +386,7 @@ impl TrieDBProvider for CachingTrieProvider {
             }
         }
 
-        Err(CachingTrieError(format!(
-            "bytecode not found for hash: {code_hash}"
-        )))
+        Err(CachingTrieError(format!("bytecode not found for hash: {code_hash}")))
     }
 
     fn header_by_hash(&self, hash: B256) -> Result<Header, Self::Error> {
@@ -402,9 +394,7 @@ impl TrieDBProvider for CachingTrieProvider {
         if hash == parent_hash {
             Ok(self.parent_header.clone())
         } else {
-            Err(CachingTrieError(format!(
-                "header not found for hash: {hash}"
-            )))
+            Err(CachingTrieError(format!("header not found for hash: {hash}")))
         }
     }
 }
@@ -510,10 +500,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let l1_config = get_sepolia_l1_config();
 
     // Get L2 parent info and system config
-    let first_prev_tx_bytes = prev_block_response
-        .transactions
-        .first()
-        .ok_or("Previous block has no transactions")?;
+    let first_prev_tx_bytes =
+        prev_block_response.transactions.first().ok_or("Previous block has no transactions")?;
     let first_prev_tx = OpTxEnvelope::decode_2718(&mut first_prev_tx_bytes.as_ref())
         .map_err(|e| format!("Failed to decode previous block deposit tx: {e}"))?;
     let first_prev_tx_calldata = match &first_prev_tx {
@@ -531,21 +519,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .system_config_by_l2_hash(prev_hash)
         .map_err(|e| format!("Failed to get system config: {e}"))?;
 
-    let l2_parent = l2_block_to_block_info(
-        &rollup_config,
-        &previous_header,
-        prev_hash,
-        first_prev_tx_bytes,
-    )
-    .map_err(|e| format!("Failed to get L2 parent info: {e}"))?;
+    let l2_parent =
+        l2_block_to_block_info(&rollup_config, &previous_header, prev_hash, first_prev_tx_bytes)
+            .map_err(|e| format!("Failed to get L2 parent info: {e}"))?;
 
     // Determine if we need deposits from this L1 block
     let include_deposits = l2_parent.l1_origin.hash != l1_origin_hash;
-    let sequence_number = if include_deposits {
-        0
-    } else {
-        l2_parent.seq_num + 1
-    };
+    let sequence_number = if include_deposits { 0 } else { l2_parent.seq_num + 1 };
 
     eprintln!("  Include deposits: {include_deposits}, sequence: {sequence_number}");
 
@@ -581,9 +561,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build L1BlockInfo from the previous block's deposit (same as test does)
     let spec_id = rollup_config.spec_id(block_header.timestamp);
     let l1_block_info = build_l1_block_info_from_deposit(
-        first_prev_tx_calldata
-            .as_ref()
-            .ok_or("No deposit calldata")?,
+        first_prev_tx_calldata.as_ref().ok_or("No deposit calldata")?,
         spec_id,
     )
     .map_err(|e| format!("Failed to build L1BlockInfo: {e}"))?;
@@ -598,11 +576,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Extract EIP-1559 params from extra_data for Holocene+
     let eip_1559_params = if rollup_config.is_holocene_active(block_header.timestamp) {
-        block_header
-            .extra_data
-            .get(1..9)
-            .and_then(|s| <[u8; 8]>::try_from(s).ok())
-            .map(B64::from)
+        block_header.extra_data.get(1..9).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(B64::from)
     } else {
         None
     };
@@ -642,20 +616,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         parent_sealed,
     );
 
-    let outcome = builder
-        .build_block(attrs)
-        .map_err(|e| format!("Block execution failed: {e}"))?;
+    let outcome = builder.build_block(attrs).map_err(|e| format!("Block execution failed: {e}"))?;
 
     eprintln!("  Computed state root: {:?}", outcome.header.state_root);
     eprintln!("  Expected state root: {:?}", block_response.state_root);
-    eprintln!(
-        "  Computed receipts root: {:?}",
-        outcome.header.receipts_root
-    );
-    eprintln!(
-        "  Expected receipts root: {:?}",
-        block_response.receipts_root
-    );
+    eprintln!("  Computed receipts root: {:?}", outcome.header.receipts_root);
+    eprintln!("  Expected receipts root: {:?}", block_response.receipts_root);
 
     // Verify execution results
     let mut validation_errors = Vec::new();
@@ -677,10 +643,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if validation_errors.is_empty() {
         eprintln!("  Execution successful - all roots match!");
     } else {
-        eprintln!(
-            "  Execution completed with {} validation warning(s)",
-            validation_errors.len()
-        );
+        eprintln!("  Execution completed with {} validation warning(s)", validation_errors.len());
         eprintln!("  Continuing to generate fixture with captured witness data...");
     }
 
@@ -691,11 +654,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let final_state = shared_caches.extract_state_cache();
     let final_codes = shared_caches.extract_code_cache();
 
-    eprintln!(
-        "  Final codes: {}, state nodes: {}",
-        final_codes.len(),
-        final_state.len()
-    );
+    eprintln!("  Final codes: {}, state nodes: {}", final_codes.len(), final_state.len());
 
     // Convert to HashMap<String, String> format for serialization
     let codes_map: HashMap<String, String> = final_codes
@@ -835,9 +794,7 @@ async fn fetch_raw_transaction(
         return Err(format!("RPC error {}: {}", error.code, error.message).into());
     }
 
-    response
-        .result
-        .ok_or_else(|| format!("Raw transaction not found: {tx_hash:?}").into())
+    response.result.ok_or_else(|| format!("Raw transaction not found: {tx_hash:?}").into())
 }
 
 /// Fetch execution witness using `debug_executionWitness` RPC.
@@ -867,9 +824,7 @@ async fn fetch_execution_witness(
         .into());
     }
 
-    response
-        .result
-        .ok_or_else(|| "Execution witness not found".into())
+    response.result.ok_or_else(|| "Execution witness not found".into())
 }
 
 /// Fetch an L1 block by hash.
@@ -952,17 +907,12 @@ async fn fetch_account_proof(
         return Err(format!("RPC error {}: {}", error.code, error.message).into());
     }
 
-    response
-        .result
-        .ok_or_else(|| "Account proof not found".into())
+    response.result.ok_or_else(|| "Account proof not found".into())
 }
 
 /// Extract L1 origin hash from L1 info deposit tx in the block.
 fn extract_l1_origin_hash(block: &L2BlockResponse) -> Result<B256, Box<dyn std::error::Error>> {
-    let first_tx = block
-        .transactions
-        .first()
-        .ok_or("Block has no transactions")?;
+    let first_tx = block.transactions.first().ok_or("Block has no transactions")?;
 
     let tx = OpTxEnvelope::decode_2718(&mut first_tx.as_ref())
         .map_err(|e| format!("Failed to decode deposit tx: {e}"))?;
@@ -1047,9 +997,7 @@ fn get_base_sepolia_rollup_config() -> kona_genesis::RollupConfig {
             },
             l2_time: 1695768288,
             system_config: Some(SystemConfig {
-                batcher_address: "0x6CDEbe940BC0F26850285cacA097C11c33103E47"
-                    .parse()
-                    .unwrap(),
+                batcher_address: "0x6CDEbe940BC0F26850285cacA097C11c33103E47".parse().unwrap(),
                 gas_limit: 25_000_000,
                 ..SystemConfig::default()
             }),
@@ -1062,15 +1010,9 @@ fn get_base_sepolia_rollup_config() -> kona_genesis::RollupConfig {
         granite_channel_timeout: 50,
 
         // Base Sepolia contract addresses
-        deposit_contract_address: "0x49f53e41452C74589E85cA1677426Ba426459e85"
-            .parse()
-            .unwrap(),
-        l1_system_config_address: "0xf272670eb55e895584501d564AfEB048bEd26194"
-            .parse()
-            .unwrap(),
-        batch_inbox_address: "0xfF00000000000000000000000000000000084532"
-            .parse()
-            .unwrap(),
+        deposit_contract_address: "0x49f53e41452C74589E85cA1677426Ba426459e85".parse().unwrap(),
+        l1_system_config_address: "0xf272670eb55e895584501d564AfEB048bEd26194".parse().unwrap(),
+        batch_inbox_address: "0xfF00000000000000000000000000000000084532".parse().unwrap(),
         protocol_versions_address: Address::ZERO,
         da_challenge_address: None,
         superchain_config_address: None,
@@ -1104,8 +1046,9 @@ fn get_base_sepolia_rollup_config() -> kona_genesis::RollupConfig {
 
 /// Get Sepolia L1 chain configuration.
 fn get_sepolia_l1_config() -> L1ChainConfig {
-    use alloy_eips::eip7840::BlobParams;
     use std::collections::BTreeMap;
+
+    use alloy_eips::eip7840::BlobParams;
 
     // Build the blob schedule with hardfork name -> BlobParams mapping
     let blob_schedule: BTreeMap<String, BlobParams> = BTreeMap::from([

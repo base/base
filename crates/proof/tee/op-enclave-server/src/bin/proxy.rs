@@ -3,23 +3,21 @@
 //! This is a small HTTP proxy that forwards requests to a vsock service,
 //! matching Go's `cmd/server/main.go`.
 
-use std::collections::VecDeque;
-use std::io::{Read, Write};
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use parking_lot::Mutex;
+use std::{
+    collections::VecDeque,
+    io::{Read, Write},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use http_body_util::{BodyExt, Full};
-use hyper::body::Bytes;
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
+use hyper::{
+    Method, Request, Response, StatusCode, body::Bytes, server::conn::http1, service::service_fn,
+};
 use hyper_util::rt::TokioIo;
-use tokio::net::TcpListener;
-
 use op_enclave_server::transport::{DEFAULT_PROXY_PORT, DEFAULT_VSOCK_CID, DEFAULT_VSOCK_PORT};
-
+use parking_lot::Mutex;
+use tokio::net::TcpListener;
 #[cfg(unix)]
 use vsock::{VsockAddr, VsockStream};
 
@@ -35,11 +33,7 @@ struct VsockPool {
 #[cfg(unix)]
 impl VsockPool {
     const fn new(cid: u32, port: u32) -> Self {
-        Self {
-            connections: Mutex::new(VecDeque::new()),
-            cid,
-            port,
-        }
+        Self { connections: Mutex::new(VecDeque::new()), cid, port }
     }
 
     /// Get a connection from the pool or create a new one.
@@ -189,10 +183,10 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
             Ok(n) => {
                 response.extend_from_slice(&buffer[..n]);
                 // Check if we have a complete JSON response
-                if let Ok(s) = std::str::from_utf8(&response) {
-                    if serde_json::from_str::<serde_json::Value>(s).is_ok() {
-                        break;
-                    }
+                if let Ok(s) = std::str::from_utf8(&response)
+                    && serde_json::from_str::<serde_json::Value>(s).is_ok()
+                {
+                    break;
                 }
             }
         }
