@@ -9911,8 +9911,6 @@ dependencies = [
  "clap",
  "hex",
  "hex-literal",
- "kona-derive",
- "kona-driver",
  "kona-executor",
  "kona-genesis",
  "kona-mpt",
