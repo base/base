@@ -1,0 +1,25 @@
+[package]
+name = "op-enclave-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+op-enclave-core.workspace = true
+
+# Alloy types
+alloy-primitives.workspace = true
+
+# RPC
+jsonrpsee = { workspace = true, features = ["http-client"] }
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# TLS
+rustls = { workspace = true, features = ["std", "tls12"] }
+rustls-pki-types.workspace = true
+
+[lints]
+workspace = true

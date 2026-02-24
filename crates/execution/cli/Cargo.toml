@@ -78,6 +78,10 @@ dev = [
 	"reth-cli-commands/arbitrary",
 ]
 
-serde = [ "reth-optimism-chainspec/serde", "reth-optimism-primitives/serde" ]
+serde = [
+	"base-alloy-consensus?/serde",
+	"reth-optimism-chainspec/serde",
+	"reth-optimism-primitives/serde",
+]
 
 edge = [ "reth-cli-commands/edge", "reth-node-core/edge" ]
