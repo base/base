@@ -390,12 +390,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::boxed::Box;
 
     use alloy_primitives::uint;
     use revm::{
         context::{BlockEnv, CfgEnv, Context, TxEnv},
-        context_interface::result::InvalidTransaction,
         database::InMemoryDB,
         database_interface::EmptyDB,
         handler::EthFrame,
@@ -403,7 +401,6 @@ mod tests {
         primitives::{Address, B256, Bytes, bytes},
         state::AccountInfo,
     };
-    use rstest::rstest;
 
     use super::*;
     use crate::{

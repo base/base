@@ -1660,7 +1660,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "base-bundles",
- "base-primitives",
  "bytes",
  "futures",
  "metrics",
@@ -2005,7 +2004,7 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "rustls 0.21.12",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
@@ -2242,8 +2241,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
- "base-primitives",
  "base-revm",
+ "base-test-utils",
  "eyre",
  "reth-evm",
  "reth-optimism-chainspec",
@@ -2299,6 +2298,22 @@ dependencies = [
  "base-revm",
  "revm",
  "rstest",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "base-alloy-flashblocks"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "brotli",
+ "bytes",
+ "rstest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -2446,6 +2461,7 @@ dependencies = [
  "base-access-lists",
  "base-alloy-consensus",
  "base-alloy-evm",
+ "base-alloy-flashblocks",
  "base-alloy-flz",
  "base-alloy-network",
  "base-alloy-rpc-types",
@@ -2454,7 +2470,6 @@ dependencies = [
  "base-builder-publish",
  "base-bundles",
  "base-client-node",
- "base-primitives",
  "base-revm",
  "chrono",
  "clap",
@@ -2713,7 +2728,7 @@ dependencies = [
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
  "base-cli-utils",
- "base-primitives",
+ "base-test-utils",
  "chrono",
  "eyre",
  "futures-util",
@@ -2810,10 +2825,10 @@ dependencies = [
  "alloy-rpc-types-eth",
  "arc-swap",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
- "base-primitives",
  "base-revm",
  "derive_more",
  "futures-util",
@@ -2865,12 +2880,12 @@ dependencies = [
  "alloy-sol-macro",
  "alloy-sol-types",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-primitives",
  "criterion",
  "derive_more",
  "eyre",
@@ -2933,11 +2948,11 @@ dependencies = [
  "alloy-rpc-types-engine",
  "arc-swap",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-bundles",
  "base-client-node",
  "base-flashblocks",
- "base-primitives",
  "base-revm",
  "derive_more",
  "eyre",
@@ -2964,39 +2979,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-primitives"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-contract",
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-serde",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-macro",
- "alloy-sol-types",
- "base-alloy-consensus",
- "base-alloy-network",
- "base-alloy-rpc-types",
- "base-alloy-rpc-types-engine",
- "base-bundles",
- "brotli",
- "bytes",
- "eyre",
- "kona-genesis",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
 ]
 
 [[package]]
@@ -3088,6 +3070,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-test-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
+ "eyre",
+ "serde_json",
+]
+
+[[package]]
 name = "base-txpool-rpc"
 version = "0.0.0"
 dependencies = [
@@ -3115,7 +3116,6 @@ dependencies = [
  "base-client-node",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-primitives",
  "chrono",
  "derive_more",
  "eyre",
@@ -3192,7 +3192,7 @@ dependencies = [
  "anyhow",
  "basectl-cli",
  "clap",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "tokio",
 ]
 
@@ -3209,8 +3209,8 @@ dependencies = [
  "anyhow",
  "arboard",
  "base-alloy-consensus",
+ "base-alloy-flashblocks",
  "base-alloy-network",
- "base-primitives",
  "chrono",
  "crossterm 0.28.1",
  "dirs",
@@ -3615,7 +3615,7 @@ dependencies = [
  "num",
  "pin-project-lite",
  "rand 0.9.2",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs",
  "rustls-pemfile",
  "rustls-pki-types",
@@ -4962,6 +4962,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
+ "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-builder-core",
@@ -4969,7 +4970,6 @@ dependencies = [
  "base-consensus-rpc",
  "base-flashblocks",
  "base-flashblocks-node",
- "base-primitives",
  "base-protocol",
  "base-txpool-rpc",
  "base-txpool-tracing",
@@ -5942,7 +5942,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f2f12607f92c69b12ed746fabf9ca4f5c482cba46679c1a75b874ed7c26adb"
 dependencies = [
  "futures-io",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
 ]
 
@@ -6284,7 +6284,6 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
- "rayon",
  "serde",
  "serde_core",
 ]
@@ -6723,7 +6722,7 @@ dependencies = [
  "hyper 1.8.1",
  "hyper-util",
  "log",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
@@ -7125,8 +7124,8 @@ dependencies = [
  "anyhow",
  "audit-archiver-lib",
  "base-alloy-network",
+ "base-bundles",
  "base-cli-utils",
- "base-primitives",
  "clap",
  "dotenvy",
  "ingress-rpc-lib",
@@ -7153,7 +7152,6 @@ dependencies = [
  "base-alloy-network",
  "base-bundles",
  "base-cli-utils",
- "base-primitives",
  "base-revm",
  "clap",
  "jsonrpsee",
@@ -7406,9 +7404,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.88"
+version = "0.3.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7e709f3e3d22866f9c25b3aff01af289b18422cc8b4262fb19103ee80fe513d"
+checksum = "f4eacb0641a310445a4c513f2a5e23e19952e269c6a38887254d5f837a305506"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
@@ -7445,7 +7443,7 @@ dependencies = [
  "http 1.4.0",
  "jsonrpsee-core",
  "pin-project",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "rustls-platform-verifier 0.5.3",
  "soketto",
@@ -7498,7 +7496,7 @@ dependencies = [
  "hyper-util",
  "jsonrpsee-core",
  "jsonrpsee-types",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-platform-verifier 0.5.3",
  "serde",
  "serde_json",
@@ -8108,7 +8106,7 @@ dependencies = [
  "base-alloy-rpc-types-engine",
  "derive_more",
  "notify",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -8539,7 +8537,7 @@ dependencies = [
  "quinn",
  "rand 0.8.5",
  "ring",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
@@ -8621,7 +8619,7 @@ dependencies = [
  "libp2p-identity",
  "rcgen",
  "ring",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-webpki 0.103.9",
  "thiserror 2.0.18",
  "x509-parser",
@@ -8677,7 +8675,7 @@ checksum = "3d0b95e02c851351f877147b7deea7b1afb1df71b63aa5f8270716e0c5720616"
 dependencies = [
  "bitflags 2.11.0",
  "libc",
- "redox_syscall 0.7.1",
+ "redox_syscall 0.7.2",
 ]
 
 [[package]]
@@ -8698,9 +8696,9 @@ dependencies = [
 
 [[package]]
 name = "libz-sys"
-version = "1.1.23"
+version = "1.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15d118bbf3771060e7311cc7bb0545b01d08a8b4a7de949198dec1fa0ca1c0f7"
+checksum = "4735e9cbde5aac84a5ce588f6b23a90b9b0b528f6c5a8db8a4aff300463a0839"
 dependencies = [
  "cc",
  "libc",
@@ -11006,7 +11004,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "socket2 0.6.2",
  "thiserror 2.0.18",
  "tokio",
@@ -11027,7 +11025,7 @@ dependencies = [
  "rand 0.9.2",
  "ring",
  "rustc-hash",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "slab",
  "thiserror 2.0.18",
@@ -11337,9 +11335,9 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35985aa610addc02e24fc232012c86fd11f14111180f902b67e2d5331f8ebf2b"
+checksum = "6d94dd2f7cd932d4dc02cc8b2b50dfd38bd079a4e5d79198b99743d7fcf9a4b4"
 dependencies = [
  "bitflags 2.11.0",
 ]
@@ -11417,9 +11415,9 @@ checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.9"
+version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
+checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "regress"
@@ -11461,7 +11459,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs",
  "rustls-pki-types",
  "serde",
@@ -11508,7 +11506,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "rustls-platform-verifier 0.6.2",
  "serde",
@@ -13584,7 +13582,6 @@ dependencies = [
  "bytes",
  "derive_more",
  "eyre",
- "hashbrown 0.16.1",
  "metrics",
  "mockall",
  "parking_lot",
@@ -15231,9 +15228,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.36"
+version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c665f33d38cea657d9614f766881e4d510e0eda4239891eea56b4cadcf01801b"
+checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -15287,7 +15284,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.9",
@@ -15308,7 +15305,7 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki 0.103.9",
@@ -16333,7 +16330,6 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-network",
  "base-bundles",
- "base-primitives",
  "bytes",
  "clap",
  "dashmap",
@@ -16392,9 +16388,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.25.0"
+version = "3.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0136791f7c95b1f6dd99f9cc786b91bb81c3800b639b3478e561ddb7be95e5f1"
+checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
 dependencies = [
  "fastrand",
  "getrandom 0.4.1",
@@ -16799,7 +16795,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "tokio",
 ]
 
@@ -16823,7 +16819,7 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.4",
@@ -16840,7 +16836,7 @@ dependencies = [
  "futures-util",
  "log",
  "native-tls",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "tokio",
  "tokio-native-tls",
@@ -17289,7 +17285,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.2",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
@@ -17309,7 +17305,7 @@ dependencies = [
  "log",
  "native-tls",
  "rand 0.9.2",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
@@ -17454,7 +17450,7 @@ dependencies = [
  "base64 0.22.1",
  "log",
  "percent-encoding",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "ureq-proto",
  "utf-8",
@@ -17684,9 +17680,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.111"
+version = "0.2.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec1adf1535672f5b7824f817792b1afd731d7e843d2d04ec8f27e8cb51edd8ac"
+checksum = "05d7d0fce354c88b7982aec4400b3e7fcf723c32737cef571bd165f7613557ee"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -17697,9 +17693,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.61"
+version = "0.4.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe88540d1c934c4ec8e6db0afa536876c5441289d7f9f9123d4f065ac1250a6b"
+checksum = "ee85afca410ac4abba5b584b12e77ea225db6ee5471d0aebaae0861166f9378a"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -17711,9 +17707,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.111"
+version = "0.2.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19e638317c08b21663aed4d2b9a2091450548954695ff4efa75bff5fa546b3b1"
+checksum = "55839b71ba921e4f75b674cb16f843f4b1f3b26ddfcb3454de1cf65cc021ec0f"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -17721,9 +17717,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.111"
+version = "0.2.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c64760850114d03d5f65457e96fc988f11f01d38fbaa51b254e4ab5809102af"
+checksum = "caf2e969c2d60ff52e7e98b7392ff1588bffdd1ccd4769eba27222fd3d621571"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -17734,9 +17730,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.111"
+version = "0.2.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60eecd4fe26177cfa3339eb00b4a36445889ba3ad37080c2429879718e20ca41"
+checksum = "0861f0dcdf46ea819407495634953cdcc8a8c7215ab799a7a7ce366be71c7b30"
 dependencies = [
  "unicode-ident",
 ]
@@ -17804,9 +17800,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.88"
+version = "0.3.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d6bb20ed2d9572df8584f6dc81d68a41a625cadc6f15999d649a70ce7e3597a"
+checksum = "10053fbf9a374174094915bbce141e87a6bf32ecd9a002980db4b638405e8962"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

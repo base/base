@@ -360,11 +360,9 @@ mod tests {
     use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
     use base_revm::{
-        DefaultOp, L1BlockInfo, OpBuilder, OpSpecId,
-        constants::{
-            BASE_FEE_SCALAR_OFFSET, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
-            L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, OPERATOR_FEE_SCALARS_SLOT,
-        },
+        BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
+        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
+        OPERATOR_FEE_SCALARS_SLOT, OpBuilder, OpSpecId,
     };
     use revm::{
         Context,

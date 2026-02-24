@@ -110,7 +110,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{DefaultOp, OpBuilder, OpTransaction};
+    use crate::{DefaultOp, OpBuilder};
 
     #[rstest]
     #[case::empty(&[], 0)]
@@ -164,7 +164,7 @@ mod tests {
         let native_val = flz_compress_len(&input);
 
         let mut evm =
-            Context::op().with_db(BenchmarkDB::new_bytecode(contract_bytecode.clone())).build_op();
+            Context::op().with_db(BenchmarkDB::new_bytecode(contract_bytecode)).build_op();
 
         let tx = OpTransaction::builder()
             .base(

@@ -34,7 +34,6 @@ reth-metrics = { workspace = true, features = ["common"], optional = true }
 
 # ethereum
 alloy-primitives.workspace = true
-hashbrown.workspace = true
 alloy-eips.workspace = true
 
 # async

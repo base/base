@@ -7,11 +7,11 @@ pub use alloy_primitives::{Address, B256, TxKind, U256};
 pub use alloy_sol_types::SolCall;
 use base_access_lists::FBALBuilderDb;
 pub use base_access_lists::FlashblockAccessList;
+pub use base_revm::OpTransaction;
 pub use base_test_utils::{
     AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
     build_test_genesis,
 };
-pub use base_revm::OpTransaction;
 pub use eyre::Result;
 use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::OpChainSpec;
