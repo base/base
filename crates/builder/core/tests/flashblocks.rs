@@ -337,6 +337,30 @@ async fn test_no_tx_pool_with_compute_state_root_on_finalize() -> eyre::Result<(
 }
 
 #[tokio::test]
+async fn smoke_dynamic_incremental_trie_cache() -> eyre::Result<()> {
+    let flashblocks =
+        FlashblocksConfig::for_tests().with_fixed(false).with_enable_incremental_trie_cache(true);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    for _ in 0..10 {
+        for _ in 0..5 {
+            let _ = driver.create_transaction().random_valid_transfer().send().await?;
+        }
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
+        assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert_eq!(110, flashblocks.len());
+
+    flashblocks_listener.stop().await
+}
+
+#[tokio::test]
 async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
     let flashblocks = FlashblocksConfig::for_tests()
         .with_fixed(false)

@@ -2510,6 +2510,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_builder",
+ "criterion",
  "ctor",
  "dashmap",
  "derive_more",

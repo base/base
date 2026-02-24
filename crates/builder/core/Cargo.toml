@@ -220,3 +220,4 @@ nanoid.workspace = true
 tempfile.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
+criterion.workspace = true

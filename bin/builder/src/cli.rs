@@ -224,7 +224,9 @@ impl TryFrom<&Args> for FlashblocksConfig {
             compute_state_root_on_finalize: args
                 .flashblocks
                 .flashblocks_compute_state_root_on_finalize,
-            enable_incremental_trie_cache: args.flashblocks.flashblocks_enable_incremental_trie_cache,
+            enable_incremental_trie_cache: args
+                .flashblocks
+                .flashblocks_enable_incremental_trie_cache,
         })
     }
 }

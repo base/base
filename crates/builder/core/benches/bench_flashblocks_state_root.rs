@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! Benchmark comparing flashblocks state root calculation with and without incremental trie caching.
 //!
 //! This benchmark simulates building 10 sequential flashblocks, measuring the total time
@@ -10,26 +12,24 @@
 //! cargo bench -p op-rbuilder --bench bench_flashblocks_state_root
 //! ```
 
-use alloy_primitives::{keccak256, Address, B256, U256};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use std::{collections::HashMap, time::Instant};
+
+use alloy_primitives::{Address, B256, U256, keccak256};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use reth_chainspec::MAINNET;
 use reth_primitives_traits::Account;
 use reth_provider::{
-    test_utils::create_test_provider_factory_with_chain_spec, DatabaseProviderFactory,
-    HashingWriter, StateRootProvider,
+    DatabaseProviderFactory, HashingWriter, StateRootProvider,
+    test_utils::create_test_provider_factory_with_chain_spec,
 };
 use reth_trie::{HashedPostState, HashedStorage, TrieInput};
-use std::{collections::HashMap, time::Instant};
 
 const SEED: u64 = 42;
 
-/// Generate random accounts and storage for initial database state
-fn generate_test_data(
-    num_accounts: usize,
-    storage_per_account: usize,
-    seed: u64,
-) -> (Vec<(Address, Account)>, HashMap<Address, Vec<(B256, U256)>>) {
+type TestData = (Vec<(Address, Account)>, HashMap<Address, Vec<(B256, U256)>>);
+
+fn generate_test_data(num_accounts: usize, storage_per_account: usize, seed: u64) -> TestData {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut accounts = Vec::with_capacity(num_accounts);
     let mut storage = HashMap::new();
@@ -104,12 +104,11 @@ fn setup_database(
     provider_factory
 }
 
-/// Generate a flashblock's worth of state changes
 fn generate_flashblock_changes(
     base_accounts: &[(Address, Account)],
     change_size: usize,
     seed: u64,
-) -> (Vec<(Address, Account)>, HashMap<Address, Vec<(B256, U256)>>) {
+) -> TestData {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut accounts = Vec::with_capacity(change_size);
     let mut storage = HashMap::new();
@@ -147,7 +146,7 @@ fn generate_flashblock_changes(
     (accounts, storage)
 }
 
-/// Convert to HashedPostState for state root calculation
+/// Convert to `HashedPostState` for state root calculation
 fn to_hashed_post_state(
     accounts: &[(Address, Account)],
     storage: &HashMap<Address, Vec<(B256, U256)>>,
@@ -240,10 +239,10 @@ fn bench_flashblocks_state_root(c: &mut Criterion) {
 
     // Test different flashblock sizes (transactions per flashblock)
     for txs_per_flashblock in [50, 100, 200] {
-        let mut group = c.benchmark_group(format!("flashblocks_{}_txs", txs_per_flashblock));
+        let mut group = c.benchmark_group(format!("flashblocks_{txs_per_flashblock}_txs"));
         group.sample_size(10);
 
-        println!("--- Testing with {} transactions per flashblock ---", txs_per_flashblock);
+        println!("--- Testing with {txs_per_flashblock} transactions per flashblock ---");
 
         // Generate 10 flashblocks worth of changes
         let mut flashblock_changes = Vec::new();
@@ -266,17 +265,18 @@ fn bench_flashblocks_state_root(c: &mut Criterion) {
 
         // Manual comparison run for detailed output
         println!("\n📊 Manual timing comparison:");
-        let (total_without, times_without) = bench_without_cache(&provider_factory, &flashblock_changes);
-        println!("  WITHOUT cache: {} μs total", total_without);
-        println!("    Per-flashblock: {:?} μs", times_without);
+        let (total_without, times_without) =
+            bench_without_cache(&provider_factory, &flashblock_changes);
+        println!("  WITHOUT cache: {total_without} μs total");
+        println!("    Per-flashblock: {times_without:?} μs");
 
         let (total_with, times_with) = bench_with_cache(&provider_factory, &flashblock_changes);
-        println!("  WITH cache: {} μs total", total_with);
-        println!("    Per-flashblock: {:?} μs", times_with);
+        println!("  WITH cache: {total_with} μs total");
+        println!("    Per-flashblock: {times_with:?} μs");
 
         let speedup = total_without as f64 / total_with as f64;
         let improvement = ((total_without - total_with) as f64 / total_without as f64) * 100.0;
-        println!("  ⚡ Speedup: {:.2}x ({:.1}% faster)", speedup, improvement);
+        println!("  ⚡ Speedup: {speedup:.2}x ({improvement:.1}% faster)");
         println!();
 
         group.finish();
