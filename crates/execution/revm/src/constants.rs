@@ -24,7 +24,7 @@ pub const DA_FOOTPRINT_GAS_SCALAR_OFFSET: usize = 18;
 
 /// The fixed point decimal scaling factor associated with the operator fee scalar.
 ///
-/// Allows users to use 6 decimal points of precision when specifying the operator_fee_scalar.
+/// Allows users to use 6 decimal points of precision when specifying the `operator_fee_scalar`.
 pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = 1_000_000;
 
 /// The Jovian multiplier applied to the operator fee scalar component.
@@ -37,19 +37,19 @@ pub const L1_OVERHEAD_SLOT: U256 = U256::from_limbs([5u64, 0, 0, 0]);
 /// The L1 scalar slot.
 pub const L1_SCALAR_SLOT: U256 = U256::from_limbs([6u64, 0, 0, 0]);
 
-/// [ECOTONE_L1_BLOB_BASE_FEE_SLOT] was added in the Ecotone upgrade and stores the L1 blobBaseFee attribute.
+/// [`ECOTONE_L1_BLOB_BASE_FEE_SLOT`] was added in the Ecotone upgrade and stores the L1 blobBaseFee attribute.
 pub const ECOTONE_L1_BLOB_BASE_FEE_SLOT: U256 = U256::from_limbs([7u64, 0, 0, 0]);
 
 /// As of the ecotone upgrade, this storage slot stores the 32-bit basefeeScalar and blobBaseFeeScalar attributes at
-/// offsets [BASE_FEE_SCALAR_OFFSET] and [BLOB_BASE_FEE_SCALAR_OFFSET] respectively.
+/// offsets [`BASE_FEE_SCALAR_OFFSET`] and [`BLOB_BASE_FEE_SCALAR_OFFSET`] respectively.
 pub const ECOTONE_L1_FEE_SCALARS_SLOT: U256 = U256::from_limbs([3u64, 0, 0, 0]);
 
 /// This storage slot stores the 32-bit operatorFeeScalar and operatorFeeConstant attributes at
-/// offsets [OPERATOR_FEE_SCALAR_OFFSET] and [OPERATOR_FEE_CONSTANT_OFFSET] respectively.
+/// offsets [`OPERATOR_FEE_SCALAR_OFFSET`] and [`OPERATOR_FEE_CONSTANT_OFFSET`] respectively.
 pub const OPERATOR_FEE_SCALARS_SLOT: U256 = U256::from_limbs([8u64, 0, 0, 0]);
 
 /// As of the Jovian upgrade, this storage slot stores the 16-bit daFootprintGasScalar attribute at
-/// offset [DA_FOOTPRINT_GAS_SCALAR_OFFSET].
+/// offset [`DA_FOOTPRINT_GAS_SCALAR_OFFSET`].
 pub const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = U256::from_limbs([8u64, 0, 0, 0]);
 
 /// An empty 64-bit set of scalar values.
@@ -64,5 +64,5 @@ pub const OPERATOR_FEE_RECIPIENT: Address = address!("0x420000000000000000000000
 /// The address of the base fee recipient.
 pub const BASE_FEE_RECIPIENT: Address = address!("0x4200000000000000000000000000000000000019");
 
-/// The address of the L1Block contract.
+/// The address of the `L1Block` contract.
 pub const L1_BLOCK_CONTRACT: Address = address!("0x4200000000000000000000000000000000000015");

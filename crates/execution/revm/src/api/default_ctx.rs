@@ -7,7 +7,7 @@ use revm::{
 
 use crate::{L1BlockInfo, OpSpecId, OpTransaction};
 
-/// Type alias for the default context type of the OpEvm.
+/// Type alias for the default context type of the `OpEvm`.
 pub type OpContext<DB> =
     Context<BlockEnv, OpTransaction<TxEnv>, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
 

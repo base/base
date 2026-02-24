@@ -10,11 +10,11 @@ use revm::{
 
 use crate::{L1BlockInfo, OpSpecId, evm::OpEvm, precompiles::OpPrecompiles, transaction::OpTxTr};
 
-/// Type alias for default OpEvm
+/// Type alias for default `OpEvm`
 pub type DefaultOpEvm<CTX, INSP = ()> =
     OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles>;
 
-/// Trait that allows for optimism OpEvm to be built.
+/// Trait that allows for optimism `OpEvm` to be built.
 pub trait OpBuilder: Sized {
     /// Type of the context.
     type Context;

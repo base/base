@@ -5,8 +5,7 @@ use std::sync::OnceLock;
 
 use alloy_primitives::{Bytes, address};
 use base_revm::{
-    OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-    precompiles::OpPrecompiles,
+    OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction, OpTransactionError,
 };
 use reth_db::test_utils::create_test_rw_db;
 use reth_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};

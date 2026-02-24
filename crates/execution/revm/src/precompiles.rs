@@ -25,7 +25,7 @@ pub struct OpPrecompiles {
 }
 
 impl OpPrecompiles {
-    /// Create a new precompile provider with the given OpSpec.
+    /// Create a new precompile provider with the given `OpSpec`.
     #[inline]
     pub fn new_with_spec(spec: OpSpecId) -> Self {
         let precompiles = match spec {
@@ -44,7 +44,7 @@ impl OpPrecompiles {
 
     /// Precompiles getter.
     #[inline]
-    pub fn precompiles(&self) -> &'static Precompiles {
+    pub const fn precompiles(&self) -> &'static Precompiles {
         self.inner.precompiles
     }
 }
@@ -200,7 +200,7 @@ pub mod bn254_pair {
     }
 }
 
-/// Bls12_381 precompile.
+/// `Bls12_381` precompile.
 pub mod bls12_381 {
     use revm::precompile::bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS};
 

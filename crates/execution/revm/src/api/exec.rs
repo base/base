@@ -44,7 +44,7 @@ impl<T> OpContextTr for T where
 {
 }
 
-/// Type alias for the error type of the OpEvm.
+/// Type alias for the error type of the `OpEvm`.
 pub type OpError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, OpTransactionError>;
 
 impl<CTX, INSP, PRECOMPILE> ExecuteEvm

@@ -47,7 +47,7 @@ impl OpSpecId {
     }
 
     /// Checks if the [`OpSpecId`] is enabled in the other [`OpSpecId`].
-    pub const fn is_enabled_in(self, other: OpSpecId) -> bool {
+    pub const fn is_enabled_in(self, other: Self) -> bool {
         other as u8 <= self as u8
     }
 }
@@ -63,17 +63,17 @@ impl FromStr for OpSpecId {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            name::BEDROCK => Ok(OpSpecId::BEDROCK),
-            name::REGOLITH => Ok(OpSpecId::REGOLITH),
-            name::CANYON => Ok(OpSpecId::CANYON),
-            name::ECOTONE => Ok(OpSpecId::ECOTONE),
-            name::FJORD => Ok(OpSpecId::FJORD),
-            name::GRANITE => Ok(OpSpecId::GRANITE),
-            name::HOLOCENE => Ok(OpSpecId::HOLOCENE),
-            name::ISTHMUS => Ok(OpSpecId::ISTHMUS),
-            name::JOVIAN => Ok(OpSpecId::JOVIAN),
-            name::INTEROP => Ok(OpSpecId::INTEROP),
-            eth_name::OSAKA => Ok(OpSpecId::OSAKA),
+            name::BEDROCK => Ok(Self::BEDROCK),
+            name::REGOLITH => Ok(Self::REGOLITH),
+            name::CANYON => Ok(Self::CANYON),
+            name::ECOTONE => Ok(Self::ECOTONE),
+            name::FJORD => Ok(Self::FJORD),
+            name::GRANITE => Ok(Self::GRANITE),
+            name::HOLOCENE => Ok(Self::HOLOCENE),
+            name::ISTHMUS => Ok(Self::ISTHMUS),
+            name::JOVIAN => Ok(Self::JOVIAN),
+            name::INTEROP => Ok(Self::INTEROP),
+            eth_name::OSAKA => Ok(Self::OSAKA),
             _ => Err(UnknownHardfork),
         }
     }

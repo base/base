@@ -53,7 +53,7 @@ impl<EVM, ERROR, FRAME> Default for OpHandler<EVM, ERROR, FRAME> {
 
 /// Trait to check if the error is a transaction error.
 ///
-/// Used in cache_error handler to catch deposit transaction that was halted.
+/// Used in `cache_error` handler to catch deposit transaction that was halted.
 pub trait IsTxError {
     /// Check if the error is a transaction error.
     fn is_tx_error(&self) -> bool;
@@ -61,7 +61,7 @@ pub trait IsTxError {
 
 impl<DB, TX> IsTxError for EVMError<DB, TX> {
     fn is_tx_error(&self) -> bool {
-        matches!(self, EVMError::Transaction(_))
+        matches!(self, Self::Transaction(_))
     }
 }
 
@@ -207,11 +207,10 @@ where
             } else if is_deposit && tx.is_system_transaction() {
                 gas.erase_cost(tx_gas_limit);
             }
-        } else if instruction_result.is_revert() {
-            if !is_deposit || is_regolith {
+        } else if instruction_result.is_revert()
+            && (!is_deposit || is_regolith) {
                 gas.erase_cost(remaining);
             }
-        }
         Ok(())
     }
 

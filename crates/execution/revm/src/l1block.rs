@@ -32,7 +32,7 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct L1BlockInfo {
     /// The L2 block number. If not same as the one in the context,
-    /// L1BlockInfo is not valid and will be reloaded from the database.
+    /// `L1BlockInfo` is not valid and will be reloaded from the database.
     pub l2_block: Option<U256>,
     /// The base fee of the L1 origin block.
     pub l1_base_fee: U256,
@@ -133,11 +133,11 @@ impl L1BlockInfo {
         db: &mut DB,
         l2_block: U256,
         spec_id: OpSpecId,
-    ) -> Result<L1BlockInfo, DB::Error> {
+    ) -> Result<Self, DB::Error> {
         // Ensure the L1 Block account is loaded into the cache.
         let _ = db.basic(L1_BLOCK_CONTRACT)?;
 
-        let mut out = L1BlockInfo {
+        let mut out = Self {
             l2_block: Some(l2_block),
             l1_base_fee: db.storage(L1_BLOCK_CONTRACT, L1_BASE_FEE_SLOT)?,
             ..Default::default()
@@ -248,11 +248,11 @@ impl L1BlockInfo {
     }
 
     /// Clears the cached L1 cost of the transaction.
-    pub fn clear_tx_l1_cost(&mut self) {
+    pub const fn clear_tx_l1_cost(&mut self) {
         self.tx_l1_cost = None;
     }
 
-    /// Calculate additional transaction cost with OpTxTr.
+    /// Calculate additional transaction cost with `OpTxTr`.
     ///
     /// Internally calls [`L1BlockInfo::tx_cost`].
     pub fn tx_cost_with_tx(&mut self, tx: impl OpTxTr, spec: OpSpecId) -> Option<U256> {
@@ -277,7 +277,7 @@ impl L1BlockInfo {
         additional_cost
     }
 
-    /// Calculate the gas cost of a transaction based on L1 block data posted on L2, depending on the [OpSpecId] passed.
+    /// Calculate the gas cost of a transaction based on L1 block data posted on L2, depending on the [`OpSpecId`] passed.
     pub fn calculate_tx_l1_cost(&mut self, input: &[u8], spec_id: OpSpecId) -> U256 {
         if let Some(tx_l1_cost) = self.tx_l1_cost {
             return tx_l1_cost;
@@ -309,7 +309,7 @@ impl L1BlockInfo {
 
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, post-Ecotone.
     ///
-    /// [OpSpecId::ECOTONE] L1 cost function:
+    /// [`OpSpecId::ECOTONE`] L1 cost function:
     /// `(calldataGas/16)*(l1BaseFee*16*l1BaseFeeScalar + l1BlobBaseFee*l1BlobBaseFeeScalar)/1e6`
     ///
     /// We divide "calldataGas" by 16 to change from units of calldata gas to "estimated # of bytes when compressed".
@@ -335,7 +335,7 @@ impl L1BlockInfo {
 
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, post-Fjord.
     ///
-    /// [OpSpecId::FJORD] L1 cost function:
+    /// [`OpSpecId::FJORD`] L1 cost function:
     /// `estimatedSize*(baseFeeScalar*l1BaseFee*16 + blobFeeScalar*l1BlobBaseFee)/1e12`
     fn calculate_tx_l1_cost_fjord(&self, input: &[u8]) -> U256 {
         let l1_fee_scaled = self.calculate_l1_fee_scaled_ecotone();

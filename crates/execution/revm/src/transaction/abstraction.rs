@@ -87,7 +87,7 @@ impl<TX: Transaction + SystemCallTx> SystemCallTx for OpTransaction<TX> {
         system_contract_address: Address,
         data: Bytes,
     ) -> Self {
-        let mut tx = OpTransaction::new(TX::new_system_tx_with_caller(
+        let mut tx = Self::new(TX::new_system_tx_with_caller(
             caller,
             system_contract_address,
             data,
@@ -226,7 +226,7 @@ impl OpTransactionBuilder {
         }
     }
 
-    /// Set the base transaction builder based for TxEnvBuilder.
+    /// Set the base transaction builder based for `TxEnvBuilder`.
     pub fn base(mut self, base: TxEnvBuilder) -> Self {
         self.base = base;
         self
@@ -239,25 +239,25 @@ impl OpTransactionBuilder {
     }
 
     /// Set the source hash of the deposit transaction.
-    pub fn source_hash(mut self, source_hash: B256) -> Self {
+    pub const fn source_hash(mut self, source_hash: B256) -> Self {
         self.deposit.source_hash = source_hash;
         self
     }
 
     /// Set the mint of the deposit transaction.
-    pub fn mint(mut self, mint: u128) -> Self {
+    pub const fn mint(mut self, mint: u128) -> Self {
         self.deposit.mint = Some(mint);
         self
     }
 
     /// Set the deposit transaction to be a system transaction.
-    pub fn is_system_transaction(mut self) -> Self {
+    pub const fn is_system_transaction(mut self) -> Self {
         self.deposit.is_system_transaction = true;
         self
     }
 
     /// Set the deposit transaction to not be a system transaction.
-    pub fn not_system_transaction(mut self) -> Self {
+    pub const fn not_system_transaction(mut self) -> Self {
         self.deposit.is_system_transaction = false;
         self
     }
@@ -348,7 +348,7 @@ pub enum OpBuildError {
 
 impl From<TxEnvBuildError> for OpBuildError {
     fn from(error: TxEnvBuildError) -> Self {
-        OpBuildError::Base(error)
+        Self::Base(error)
     }
 }
 

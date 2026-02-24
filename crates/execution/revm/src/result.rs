@@ -20,7 +20,7 @@ impl From<HaltReason> for OpHaltReason {
 impl TryFrom<OpHaltReason> for HaltReason {
     type Error = OpHaltReason;
 
-    fn try_from(value: OpHaltReason) -> Result<HaltReason, OpHaltReason> {
+    fn try_from(value: OpHaltReason) -> Result<Self, OpHaltReason> {
         match value {
             OpHaltReason::Base(reason) => Ok(reason),
             OpHaltReason::FailedDeposit => Err(value),

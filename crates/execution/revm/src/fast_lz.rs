@@ -1,6 +1,6 @@
 //! Contains the `[flz_compress_len]` function.
 
-/// Returns the length of the data after compression through FastLZ, based on
+/// Returns the length of the data after compression through `FastLZ`, based on
 /// <https://github.com/Vectorized/solady/blob/5315d937d79b335c668896d7533ac603adac5315/js/solady.js>
 ///
 /// The u32s match op-geth's Go port:
@@ -56,7 +56,7 @@ pub(crate) fn flz_compress_len(input: &[u8]) -> u32 {
     literals(input.len() as u32 - anchor, size)
 }
 
-fn literals(r: u32, size: u32) -> u32 {
+const fn literals(r: u32, size: u32) -> u32 {
     let size = size + 0x21 * (r / 0x20);
     let r = r % 0x20;
     if r != 0 { size + r + 1 } else { size }
@@ -74,7 +74,7 @@ fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
     l
 }
 
-fn flz_match(l: u32, size: u32) -> u32 {
+const fn flz_match(l: u32, size: u32) -> u32 {
     let l = l - 1;
     let size = size + (3 * (l / 262));
     if l % 262 >= 6 { size + 3 } else { size + 2 }
@@ -85,7 +85,7 @@ fn set_next_hash(htab: &mut [u32; 8192], input: &[u8], idx: u32) -> u32 {
     idx + 1
 }
 
-fn hash(v: u32) -> u16 {
+const fn hash(v: u32) -> u16 {
     let hash = (v as u64 * 2654435769) >> 19;
     hash as u16 & 0x1fff
 }
