@@ -28,10 +28,10 @@ alloy-network.workspace = true
 alloy-signer.workspace = true
 alloy-eips.workspace = true
 
-# OP Alloy
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
-op-alloy-network.workspace = true
+# Base Alloy
+base-alloy-rpc-types.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
+base-alloy-network.workspace = true
 
 # Enclave
 op-enclave-client.workspace = true

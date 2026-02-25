@@ -3100,6 +3100,104 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
+||||||| parent of 24de30cb (migration(proposer): update op-alloy crates to base-alloy ones)
+name = "base-proposer"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "alloy-transport-http",
+ "async-trait",
+ "axum",
+ "backon",
+ "base-cli-utils",
+ "bytes",
+ "clap",
+ "eyre",
+ "futures",
+ "hex",
+ "humantime",
+ "jsonrpsee",
+ "metrics",
+ "moka",
+ "op-alloy-consensus",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
+ "op-enclave-client",
+ "op-enclave-core",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
+]
+
+[[package]]
+=======
+name = "base-proposer"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "alloy-transport-http",
+ "async-trait",
+ "axum",
+ "backon",
+ "base-alloy-consensus",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
+ "base-cli-utils",
+ "bytes",
+ "clap",
+ "eyre",
+ "futures",
+ "hex",
+ "humantime",
+ "jsonrpsee",
+ "metrics",
+ "moka",
+ "op-enclave-client",
+ "op-enclave-core",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
+]
+
+[[package]]
+>>>>>>> 24de30cb (migration(proposer): update op-alloy crates to base-alloy ones)
 name = "base-protocol"
 version = "0.0.0"
 dependencies = [

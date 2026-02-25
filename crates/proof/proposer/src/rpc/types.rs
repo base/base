@@ -12,10 +12,10 @@ where
     Option::<Vec<T>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
-/// OP Stack block type with Optimism-specific transactions.
+/// OP Stack block type with Base-specific transactions.
 ///
-/// Uses `op_alloy_rpc_types::Transaction` which can deserialize deposit transactions (type 0x7E).
-pub type OpBlock = alloy_rpc_types_eth::Block<op_alloy_rpc_types::Transaction>;
+/// Uses `base_alloy_rpc_types::Transaction` which can deserialize deposit transactions (type 0x7E).
+pub type OpBlock = alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction>;
 
 /// L1 block reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
