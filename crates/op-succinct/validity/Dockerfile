@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     git \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 
@@ -15,7 +16,7 @@ WORKDIR /build
 
 # Install SP1
 RUN curl -L https://sp1.succinct.xyz | bash && \
-    ~/.sp1/bin/sp1up -v 5.2.4 && \
+    ~/.sp1/bin/sp1up -v 6.0.1 && \
     ~/.sp1/bin/cargo-prove prove --version
 
 # Copy only what's needed for the build
@@ -47,7 +48,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install SP1
 RUN curl -L https://sp1.succinct.xyz | bash && \
-    ~/.sp1/bin/sp1up -v 5.2.4 && \
+    ~/.sp1/bin/sp1up -v 6.0.1 && \
     ~/.sp1/bin/cargo-prove prove --version
 
 # Copy only the built binaries from builder

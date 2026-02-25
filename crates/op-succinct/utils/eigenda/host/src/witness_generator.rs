@@ -1,6 +1,6 @@
 use std::{
     env,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use anyhow::Result;
@@ -25,15 +25,30 @@ use op_succinct_host_utils::witness_generation::{
     DefaultOracleBase, WitnessGenerator,
 };
 use rkyv::to_bytes;
-use sp1_core_executor::SP1ReduceProof;
-use sp1_prover::InnerSC;
-use sp1_sdk::{ProverClient, SP1Stdin};
+use sp1_core_executor::SP1RecursionProof;
+use sp1_hypercube::SP1PcsProofInner;
+use sp1_primitives::SP1GlobalContext;
+use sp1_sdk::{blocking::Prover as BlockingProver, Elf, ProvingKey, SP1Stdin, SP1VerifyingKey};
 
 type WitnessExecutor = EigenDAWitnessExecutor<
     PreimageWitnessCollector<DefaultOracleBase>,
     OnlineBlobStore<OracleBlobProvider<DefaultOracleBase>>,
     OracleEigenDAPreimageProvider<DefaultOracleBase>,
 >;
+
+/// Cached canoe verifying key. The canoe ELF is a compile-time constant, so the
+/// resulting vkey is deterministic and only needs to be computed once. Uses a
+/// separate thread to avoid nested tokio runtime panics.
+static CANOE_VK: LazyLock<SP1VerifyingKey> = LazyLock::new(|| {
+    std::thread::spawn(|| {
+        let client = sp1_sdk::blocking::ProverClient::from_env();
+        let pk =
+            client.setup(Elf::Static(canoe_sp1_cc_host::ELF)).expect("Failed to setup canoe ELF");
+        pk.verifying_key().clone()
+    })
+    .join()
+    .expect("Canoe VK setup thread panicked")
+});
 
 pub struct EigenDAWitnessGenerator {}
 
@@ -47,7 +62,7 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
     }
 
     fn get_sp1_stdin(&self, mut witness: Self::WitnessData) -> Result<SP1Stdin> {
-        let mut stdin = SP1Stdin::new();
+        let mut stdin = SP1Stdin::default();
 
         // If eigenda blob witness data is present, write the canoe proof to stdin
         if let Some(eigenda_data) = &witness.eigenda_data {
@@ -58,16 +73,10 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
 
             // Take the canoe proof bytes from the witness data
             if let Some(proof_bytes) = eigenda_witness.canoe_proof_bytes.take() {
-                // Get the canoe SP1 CC client ELF and setup verification key
-                // The ELF is included in the canoe-sp1-cc-host crate
-                const CANOE_ELF: &[u8] = canoe_sp1_cc_host::ELF;
-                let client = ProverClient::from_env();
-                let (_pk, canoe_vk) = client.setup(CANOE_ELF);
-
-                let reduced_proof: SP1ReduceProof<InnerSC> =
+                let reduced_proof: SP1RecursionProof<SP1GlobalContext, SP1PcsProofInner> =
                     serde_cbor::from_slice(&proof_bytes)
                         .map_err(|e| anyhow::anyhow!("Failed to deserialize canoe proof: {}", e))?;
-                stdin.write_proof(reduced_proof, canoe_vk.vk.clone());
+                stdin.write_proof(reduced_proof, CANOE_VK.vk.clone());
 
                 // Re-serialize the witness data without the proof
                 witness.eigenda_data = Some(serde_cbor::to_vec(&eigenda_witness).map_err(|e| {

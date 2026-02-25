@@ -22,7 +22,8 @@ use sp1_sdk::{
         proto::types::{ExecutionStatus, FulfillmentStatus},
         NetworkMode,
     },
-    HashableKey, NetworkProver, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues,
+    Elf, HashableKey, NetworkProver, Prover, ProverClient, ProvingKey, SP1Proof,
+    SP1ProofWithPublicValues,
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -97,13 +98,15 @@ where
             requester_config.agg_proof_strategy,
         )?;
         let network_prover = Arc::new(
-            ProverClient::builder().network_for(network_mode).signer(network_signer).build(),
+            ProverClient::builder().network_for(network_mode).signer(network_signer).build().await,
         );
 
-        let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
+        let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+        let range_vk = range_pk.verifying_key().clone();
 
-        let (agg_pk, agg_vk) = network_prover.setup(AGGREGATION_ELF);
-        let multi_block_vkey_u8 = u32_to_u8(range_vk.vk.hash_u32());
+        let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
+        let agg_vk = agg_pk.verifying_key().clone();
+        let multi_block_vkey_u8 = u32_to_u8(range_vk.hash_u32());
         let range_vkey_commitment = B256::from(multi_block_vkey_u8);
         let agg_vkey_hash = B256::from_str(&agg_vk.bytes32())?;
 

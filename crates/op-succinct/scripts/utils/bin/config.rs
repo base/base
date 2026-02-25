@@ -6,22 +6,24 @@ use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_scripts::ConfigArgs;
-use sp1_sdk::{utils, HashableKey, Prover, ProverClient};
+use sp1_sdk::{utils, Elf, HashableKey, Prover, ProverClient, ProvingKey};
 
 // Get the verification keys for the ELFs and check them against the contract.
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = ConfigArgs::parse();
 
-    let prover = ProverClient::builder().cpu().build();
+    let prover = ProverClient::builder().cpu().build().await;
 
-    let (_, range_vk) = prover.setup(get_range_elf_embedded());
+    let range_pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+    let range_vk = range_pk.verifying_key();
 
-    // Get the 32 byte commitment to the vkey from vkey.vk.hash_u32()
-    let range_vk_hash = B256::from(u32_to_u8(range_vk.vk.hash_u32()));
+    // Get the 32 byte commitment to the vkey from hash_u32()
+    let range_vk_hash = B256::from(u32_to_u8(range_vk.hash_u32()));
     println!("Range Verification Key Hash: {range_vk_hash}");
 
-    let (_, agg_vk) = prover.setup(AGGREGATION_ELF);
+    let agg_pk = prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
+    let agg_vk = agg_pk.verifying_key();
     println!("Aggregation Verification Key Hash: {}", agg_vk.bytes32());
 
     if let Some(env_file) = args.env_file {

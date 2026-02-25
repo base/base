@@ -108,15 +108,15 @@ hana-host = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
 hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
 
 # hokulea
-hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-canoe-sp1-cc-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
-canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.4" }
+hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+canoe-sp1-cc-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -198,16 +198,18 @@ revm = { version = "33.1.0", default-features = false, features = [
 revm-precompile = { version = "31.0.0", default-features = false }
 op-revm = { version = "14.1.0", default-features = false }
 
-# SP1
-sp1-sdk = { version = "=5.2.4", default-features = false, features = ["network"] }
-sp1-lib = { version = "=5.2.4", features = ["verify"] }
-sp1-zkvm = { version = "=5.2.4", features = ["verify"] }
-sp1-build = { version = "=5.2.4" }
-sp1-prover = { version = "=5.2.4" }
-sp1-core-executor = { version = "=5.2.4" }
+# SP1 v6.0.1 (Hypercube)
+sp1-sdk = { version = "=6.0.1", features = ["network", "blocking", "profiling"] }
+sp1-lib = { version = "=6.0.1", features = ["verify"] }
+sp1-zkvm = { version = "=6.0.1", features = ["verify"] }
+sp1-build = "=6.0.1"
+sp1-prover = "=6.0.1"
+sp1-core-executor = "=6.0.1"
+sp1-hypercube = "=6.0.1"
+sp1-primitives = "=6.0.1"
 
 # kzg
-kzg-rs = { version = "0.2.6", features = ["rkyv", "serde"] }
+kzg-rs = { version = "0.2.8", features = ["rkyv", "serde"] }
 c-kzg = { version = "2.0.0", default-features = false }
 
 # Cloud dependencies
@@ -220,15 +222,15 @@ codegen-units = 1
 lto = "fat"
 
 [patch.crates-io]
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-4.0.0" }
-substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0" }
-sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
-p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-5.0.0" }
-k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-5.0.0" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.0.0" }
+sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.0.0" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.0.0-substrate-bn" }
+p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.0.0" }
+k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }
 
 # Note: alloy-tx-macros crates.io version must match alloy-consensus version
-# Both are now at 1.4.x for hokulea v1.1.4 compatibility
+# Both are now at 1.4.x for hokulea v1.1.6 compatibility
 
 
 # Note: vergen-lib conflict fixed by pinning vergen=9.0.4, vergen-git2=1.0.5 in Cargo.lock

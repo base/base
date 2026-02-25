@@ -1,10 +1,7 @@
 use std::env;
 
 use anyhow::{anyhow, Context, Result};
-use sp1_sdk::{
-    network::{FulfillmentStrategy, NetworkMode},
-    NetworkSigner,
-};
+use sp1_sdk::network::{signer::NetworkSigner, FulfillmentStrategy, NetworkMode};
 
 /// Parse a fulfillment strategy from a string.
 pub fn parse_fulfillment_strategy(value: String) -> FulfillmentStrategy {

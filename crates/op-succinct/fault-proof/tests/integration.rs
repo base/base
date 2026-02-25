@@ -1006,7 +1006,7 @@ mod integration {
         // ═══════════════════════════════════════════════════════════════════════
 
         // Compute vkeys from ELFs - these match what proposer will use
-        let (original_agg_vkey, original_range_vkey) = compute_vkeys();
+        let (original_agg_vkey, original_range_vkey) = compute_vkeys().await?;
 
         let env = TestEnvironment::setup().await?;
         let factory = env.factory()?;

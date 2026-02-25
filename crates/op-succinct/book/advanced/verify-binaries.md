@@ -16,7 +16,7 @@ Anything that changes these programs requires reproducing the binaries. This inc
 Ensure you have the [`cargo prove`](https://docs.succinct.xyz/docs/sp1/getting-started/install#option-1-prebuilt-binaries-recommended) CLI tool installed and have the latest version of the toolchain by running:
 
 ```bash
-sp1up -v 5.2.4
+sp1up -v 6.0.1
 ```
 
 and

@@ -30,7 +30,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::{Signer, SignerLock};
-use sp1_sdk::{HashableKey, Prover, ProverClient};
+use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, ProvingKey};
 use tokio::task::JoinHandle;
 use tracing::{info, Level};
 
@@ -88,19 +88,21 @@ impl Drop for TestEnvironment {
 /// Compute vkeys from ELF programs.
 /// Returns (aggregation_vkey, range_vkey_commitment) as B256 values.
 /// Uses the same computation as `proposer.rs` and `config_common.rs`.
-pub fn compute_vkeys() -> (B256, B256) {
-    let prover = ProverClient::builder().cpu().build();
+pub async fn compute_vkeys() -> anyhow::Result<(B256, B256)> {
+    let prover = ProverClient::builder().cpu().build().await;
 
-    let (_, agg_vk) = prover.setup(AGGREGATION_ELF);
+    let agg_pk = prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
+    let agg_vk = agg_pk.verifying_key();
     let aggregation_vkey = {
         let hex_str = agg_vk.bytes32();
         B256::from_slice(&hex::decode(hex_str.trim_start_matches("0x")).unwrap())
     };
 
-    let (_, range_vk) = prover.setup(get_range_elf_embedded());
-    let range_vkey_commitment = B256::from(u32_to_u8(range_vk.vk.hash_u32()));
+    let range_pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+    let range_vk = range_pk.verifying_key();
+    let range_vkey_commitment = B256::from(u32_to_u8(range_vk.hash_u32()));
 
-    (aggregation_vkey, range_vkey_commitment)
+    Ok((aggregation_vkey, range_vkey_commitment))
 }
 
 /// The test configuration, used for integration tests.
@@ -140,7 +142,7 @@ impl TestEnvironment {
         init_logging();
 
         // Compute vkeys from ELFs - these will match the proposer's computed vkeys
-        let (aggregation_vkey, range_vkey_commitment) = compute_vkeys();
+        let (aggregation_vkey, range_vkey_commitment) = compute_vkeys().await?;
 
         // Get environment variables
         let mut rpc_config = get_rpcs_from_env();
@@ -195,7 +197,7 @@ impl TestEnvironment {
         init_logging();
 
         // Compute vkeys from ELFs - these will match the proposer's computed vkeys
-        let (aggregation_vkey, range_vkey_commitment) = compute_vkeys();
+        let (aggregation_vkey, range_vkey_commitment) = compute_vkeys().await?;
 
         let mut rpc_config = get_rpcs_from_env();
         let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;

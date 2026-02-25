@@ -40,17 +40,34 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check SP1 version consistency
+        run: |
+          SP1_VERSION=$(grep 'sp1-sdk' Cargo.toml | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "Expected SP1 version from Cargo.toml: $SP1_VERSION"
+          MISMATCHES=$(grep -rn 'sp1up -v' --include='Dockerfile*' | grep -v "$SP1_VERSION" || true)
+          MISMATCHES+=$(grep -rn 'sp1up -v' .github/workflows/ --exclude='lint.yml' | grep -v "$SP1_VERSION" || true)
+          MISMATCHES+=$(grep -n -- '--tag v' justfile | grep -v "$SP1_VERSION" || true)
+          if [ -n "$MISMATCHES" ]; then
+            echo "::error::SP1 version mismatch found. Expected $SP1_VERSION (from Cargo.toml):"
+            echo "$MISMATCHES"
+            exit 1
+          fi
+          echo "SP1 version consistency check passed"
+
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           components: rustfmt, clippy
-      
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Install SP1 toolchain
         run: |
           curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up -v 5.2.4
+          ~/.sp1/bin/sp1up -v 6.0.1
           ~/.sp1/bin/cargo-prove prove --version
           source ~/.bashrc
 

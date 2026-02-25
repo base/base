@@ -9,7 +9,7 @@ fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String
         elf_name: Some(elf_name.to_string()),
         output_directory: Some("../../elf".to_string()),
         docker: true,
-        tag: "v5.2.4".to_string(),
+        tag: "v6.0.1".to_string(),
         workspace_directory: Some("../../".to_string()),
         ..Default::default()
     };
@@ -28,7 +28,6 @@ fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String
 /// programs.
 pub fn build_all() {
     // build_program("aggregation", "aggregation-elf", None);
-    // build_program("range/ethereum", "range-elf-bump", None);
     // build_program("range/ethereum", "range-elf-embedded", Some(vec!["embedded".to_string()]));
     // build_program(
     //     "range/celestia",
