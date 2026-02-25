@@ -346,7 +346,7 @@ mod tests {
                                     });
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to accept: {e}");
+                                    eprintln!("Failed to accept: {e}");
                                     break;
                                 }
                             }
@@ -366,7 +366,7 @@ mod tests {
             let ws_stream = match accept_async(stream).await {
                 Ok(ws_stream) => ws_stream,
                 Err(e) => {
-                    tracing::error!("Failed to accept websocket: {e}");
+                    eprintln!("Failed to accept websocket: {e}");
                     return;
                 }
             };
@@ -384,7 +384,7 @@ mod tests {
                         match msg {
                             Ok(text) => {
                                 if let Err(e) = ws_sender.send(Message::Text(text.into())).await {
-                                    tracing::error!("Error sending message: {e}");
+                                    eprintln!("Error sending message: {e}");
                                     break;
                                 }
                             }
