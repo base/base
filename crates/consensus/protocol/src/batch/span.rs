@@ -1357,7 +1357,9 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("failed to fetch L2 block number 40: Block not found"));
+        assert!(
+            logs[0].contains("Failed to fetch L2 block") && logs[0].contains("Block not found")
+        );
     }
 
     #[tokio::test]
@@ -2097,7 +2099,9 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("failed to fetch block number 41: L2 Block not found"));
+        assert!(
+            logs[0].contains("Failed to fetch block") && logs[0].contains("L2 Block not found")
+        );
     }
 
     #[tokio::test]

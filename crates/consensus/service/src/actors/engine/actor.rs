@@ -79,7 +79,7 @@ where
                         Ok(())
                     }
                     Err(err) => {
-                        error!(target: "engine", err = ?err, task_name, "Task failed");
+                        error!(target: "engine", error = ?err, task_name, "Task failed");
                         Err(err)
                     }
                 }
