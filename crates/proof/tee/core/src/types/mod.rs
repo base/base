@@ -1,4 +1,4 @@
-//! Core type definitions for op-enclave.
+//! Core type definitions for the enclave.
 
 pub mod account;
 pub mod config;

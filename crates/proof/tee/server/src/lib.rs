@@ -1,4 +1,4 @@
-//! op-enclave server implementation.
+//! Enclave server implementation.
 //!
 //! This crate provides the server-side enclave logic for AWS Nitro Enclaves,
 //! including:
@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use op_enclave_server::Server;
+//! use base_enclave_server::Server;
 //!
 //! let server = Server::new().expect("failed to create server");
 //! println!("Signer address: {}", server.signer_address());
@@ -47,6 +47,7 @@ pub mod transport;
 pub use attestation::{
     AttestationDocument, VerificationResult, verify_attestation, verify_attestation_with_pcr0,
 };
+pub use base_enclave::*;
 pub use crypto::{
     SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, build_signing_data, decrypt_pkcs1v15,
     encrypt_pkcs1v15, generate_rsa_key, generate_signer, pkix_to_public_key, private_key_bytes,
@@ -55,6 +56,5 @@ pub use crypto::{
 };
 pub use error::{AttestationError, CryptoError, NsmError, ProposalError, Result, ServerError};
 pub use nsm::{NsmRng, NsmSession};
-pub use op_enclave_core::*;
 // Re-export server
 pub use server::Server;

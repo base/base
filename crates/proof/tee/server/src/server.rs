@@ -6,13 +6,13 @@
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
-use kona_genesis::{L1ChainConfig, RollupConfig};
-use op_enclave_core::{
+use base_enclave::{
     Proposal, ProposalParams,
     executor::{ExecutionWitness, execute_stateless as core_execute_stateless},
     output_root_v0,
     types::account::AccountResult,
 };
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use parking_lot::RwLock;
 #[cfg(test)]
 use rand_08::rngs::OsRng;

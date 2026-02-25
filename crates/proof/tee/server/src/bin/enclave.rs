@@ -5,12 +5,12 @@
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use jsonrpsee::server::{ServerBuilder, ServerConfig};
-use op_enclave_server::{
+use base_enclave_server::{
     Server,
     rpc::{EnclaveApiServer, RpcServerImpl},
     transport::TransportConfig,
 };
+use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use serde_json::value::RawValue;
 use tracing::{debug, info, warn};
 

@@ -1,4 +1,4 @@
-//! Error types for op-enclave operations.
+//! Error types for enclave operations.
 
 use alloy_primitives::B256;
 use thiserror::Error;

@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
+use base_enclave::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},
     rpc_params,
 };
-use op_enclave_core::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 
 use crate::client_error::ClientError;
 
