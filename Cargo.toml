@@ -197,7 +197,6 @@ reth-optimism-payload-builder = { path = "crates/execution/payload" }
 based = { path = "crates/infra/based" }
 basectl-cli = { path = "crates/infra/basectl" }
 audit-archiver-lib = { path = "crates/infra/audit" }
-system-tests = { path = "crates/infra/system-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
@@ -444,8 +443,6 @@ axum = { version = "0.8.3", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 libc = "0.2"
 arbitrary = { version = "1", default-features = false }
-indicatif = "0.17"
-rand_chacha = "0.9"
 serial_test = "3"
 mockall = "0.13"
 wiremock = { version = "0.6.2", default-features = false }

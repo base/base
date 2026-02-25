@@ -66,8 +66,8 @@ devnet-tests: install-nextest build-contracts
 devnet-tests-ci: install-nextest build-contracts
     cargo nextest run -p devnet --cargo-profile ci
 
-# Pre-pulls Docker images needed for system tests
-system-tests-pull-images:
+# Pre-pulls Docker images needed for devnet tests
+devnet-pull-images:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.10.2
     docker pull sigp/lighthouse:v8.0.1

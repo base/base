@@ -271,8 +271,8 @@ jobs:
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - run: just check-deny
 
-  system-tests:
-    name: System Tests
+  devnet-tests:
+    name: Devnet Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -324,7 +324,7 @@ jobs:
           key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'etc/docker/Dockerfile.devnet') }}
 
       - name: Pre-pull docker images
-        run: just system-tests-pull-images
+        run: just devnet-pull-images
 
       - name: Run devnet tests
         run: just devnet-tests-ci
