@@ -52,7 +52,7 @@ install-nextest:
 
 # Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build-contracts
