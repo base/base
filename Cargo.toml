@@ -263,11 +263,6 @@ alloy-network-primitives = { version = "1.5.2", default-features = false }
 alloy-evm = { version = "0.27.0", default-features = false }
 alloy-primitives = { version = "1.5.0", default-features = false }
 
-# op-alloy
-op-alloy-network = "0.23.1"
-op-alloy-consensus = "0.23.1"
-op-alloy-rpc-types = "0.23.1"
-
 # reth
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }

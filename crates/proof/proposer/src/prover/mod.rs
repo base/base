@@ -11,8 +11,8 @@ use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionReceipt;
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_rpc_types::Transaction as OpTransaction;
+use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_rpc_types::Transaction as OpTransaction;
 use op_enclave_client::ExecuteStatelessRequest;
 use op_enclave_core::{
     AggregateRequest, ChainConfig, L2_TO_L1_MESSAGE_PASSER, Proposal, l2_block_to_block_info,
@@ -375,7 +375,7 @@ where
 /// This handles both standard Ethereum transactions and OP Stack deposit transactions (type 0x7E).
 fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, ProposerError> {
     // Extract the inner OpTxEnvelope from the RPC transaction
-    // op_alloy_rpc_types::Transaction.inner is alloy_rpc_types::Transaction<OpTxEnvelope>
+    // base_alloy_rpc_types::Transaction.inner is alloy_rpc_types::Transaction<OpTxEnvelope>
     // Calling into_inner() on that returns the OpTxEnvelope
     // Clone required: into_inner() consumes, and we only have a reference.
     let envelope: OpTxEnvelope = tx.clone().inner.into_inner();
