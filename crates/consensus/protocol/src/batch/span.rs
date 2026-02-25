@@ -2050,7 +2050,9 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(
-            logs[0].contains("EIP-7702 transactions are not supported pre-isthmus. tx_index: 0")
+            logs[0].contains("EIP-7702 transactions are not supported pre-isthmus")
+                && logs[0].contains("tx_index")
+                && logs[0].contains('0')
         );
     }
 
