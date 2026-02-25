@@ -67,11 +67,7 @@ pub struct ProposerArgs {
     pub l2_eth_rpc: Url,
 
     /// Use reth-specific RPC calls for L2.
-    #[arg(
-        long = "l2-reth",
-        env = "BASE_PROPOSER_L2_RETH",
-        default_value = "false"
-    )]
+    #[arg(long = "l2-reth", env = "BASE_PROPOSER_L2_RETH", default_value = "false")]
     pub l2_reth: bool,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
@@ -137,19 +133,11 @@ pub struct ProposerArgs {
     pub skip_tls_verify: bool,
 
     /// Wait for node sync before starting.
-    #[arg(
-        long = "wait-node-sync",
-        env = "BASE_PROPOSER_WAIT_NODE_SYNC",
-        default_value = "false"
-    )]
+    #[arg(long = "wait-node-sync", env = "BASE_PROPOSER_WAIT_NODE_SYNC", default_value = "false")]
     pub wait_node_sync: bool,
 
     /// Maximum number of retry attempts for RPC operations.
-    #[arg(
-        long = "rpc-max-retries",
-        env = "BASE_PROPOSER_RPC_MAX_RETRIES",
-        default_value = "5"
-    )]
+    #[arg(long = "rpc-max-retries", env = "BASE_PROPOSER_RPC_MAX_RETRIES", default_value = "5")]
     pub rpc_max_retries: u32,
 
     /// Initial delay for exponential backoff (e.g., "100ms", "1s").
@@ -333,10 +321,7 @@ mod tests {
     #[test]
     fn test_parse_address_valid() {
         let addr = parse_address("0x1234567890123456789012345678901234567890").unwrap();
-        assert_eq!(
-            addr.to_string(),
-            "0x1234567890123456789012345678901234567890"
-        );
+        assert_eq!(addr.to_string(), "0x1234567890123456789012345678901234567890");
     }
 
     #[test]
@@ -393,10 +378,7 @@ mod tests {
 
         // Check retry defaults
         assert_eq!(cli.proposer.rpc_max_retries, 5);
-        assert_eq!(
-            cli.proposer.rpc_retry_initial_delay,
-            Duration::from_millis(100)
-        );
+        assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
 
         // Check signing defaults (all None)

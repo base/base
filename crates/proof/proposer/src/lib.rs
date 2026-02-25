@@ -1,40 +1,58 @@
-//! Proposer library for TEE-based output proposal generation for OP Stack chains.
-//!
-//! This crate provides the core functionality for the proposer, including:
-//! - Contract bindings for on-chain verification
-//! - RPC clients for L1, L2, and rollup nodes
-//! - Enclave client for TEE proof generation
-//! - Driver loop for coordinating proposal generation
-//! - Metrics collection and exposition
-//! - CLI argument parsing and configuration validation
+#![doc = include_str!("../README.md")]
+#![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-#![warn(missing_docs)]
-#![warn(unreachable_pub)]
-#![deny(unused_must_use)]
-#![deny(rust_2018_idioms)]
+mod cli;
+pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
 
-pub mod cli;
-pub mod config;
-pub mod constants;
-pub mod contracts;
-pub mod driver;
-pub mod enclave;
-pub mod error;
-pub mod health;
-pub mod metrics;
-pub mod prover;
-pub mod rpc;
+mod config;
+pub use config::{
+    ConfigError, MetricsConfig, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig,
+};
+
+mod constants;
+pub use constants::*;
+
+mod contracts;
+pub use contracts::{
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorRoot,
+    AnchorStateRegistryClient, AnchorStateRegistryContractClient, DisputeGameFactoryClient,
+    DisputeGameFactoryContractClient, GameAtIndex, GameInfo, LocalOutputProposer, OutputProposer,
+    RemoteOutputProposer, build_proof_data, create_output_proposer, encode_create_calldata,
+    encode_extra_data, game_already_exists_selector, is_game_already_exists,
+};
+
+mod driver;
+pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl};
+
+mod enclave;
+pub use enclave::{
+    EnclaveClient, EnclaveClientTrait, PerChainConfig, Proposal, create_enclave_client,
+    rollup_config_to_per_chain_config,
+};
+
+mod error;
+pub use error::*;
+
+mod health;
+pub use health::serve;
+
+mod metrics;
+pub use metrics::{
+    ACCOUNT_BALANCE_WEI, CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL, INFO, L2_OUTPUT_PROPOSALS_TOTAL,
+    LABEL_CACHE_NAME, LABEL_VERSION, PROOF_QUEUE_DEPTH, UP, record_startup_metrics,
+};
+
+mod prover;
+pub use prover::{Prover, ProverProposal};
+
+mod rpc;
+pub use rpc::{
+    CacheMetrics, GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L1Client, L1ClientConfig,
+    L1ClientImpl, L2BlockRef, L2Client, L2ClientConfig, L2ClientImpl, L2HttpProvider, MeteredCache,
+    OpBlock, ProofCacheKey, RethExecutionWitness, RethL2Client, RollupClient, RollupClientConfig,
+    RollupClientImpl, RpcError, RpcResult, SyncStatus, create_l2_client,
+};
 
 #[cfg(test)]
-mod test_utils;
-
-pub use cli::Cli;
-pub use config::{ConfigError, MetricsConfig, ProposerConfig, RpcServerConfig, SigningConfig};
-pub use constants::*;
-pub use contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
-    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
-    OutputProposer, create_output_proposer,
-};
-pub use driver::{DriverHandle, ProposerDriverControl};
-pub use error::*;
+pub mod test_utils;

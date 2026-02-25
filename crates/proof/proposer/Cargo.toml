@@ -1,83 +1,75 @@
 [package]
 name = "base-proposer"
+description = "Base Proposer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors.workspace = true
 license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 # Alloy
-alloy.workspace = true
+alloy-transport-http.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-signer-local.workspace = true
+alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+alloy-consensus.workspace = true
+alloy-rpc-types.workspace = true
+alloy-transport.workspace = true
 alloy-contract.workspace = true
 alloy-provider.workspace = true
-alloy-transport.workspace = true
-alloy-transport-http.workspace = true
-alloy-rpc-types.workspace = true
-alloy-rpc-types-eth.workspace = true
 alloy-network.workspace = true
-alloy-consensus.workspace = true
+alloy-signer.workspace = true
 alloy-eips.workspace = true
 
 # OP Alloy
+op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
 
-# Async runtime
-tokio.workspace = true
+# Enclave
+op-enclave-client.workspace = true
+op-enclave-core.workspace = true
+
+# Async
+async-trait.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
-async-trait.workspace = true
+tokio.workspace = true
+
+# Tracing
+tracing-subscriber.workspace = true
+tracing.workspace = true
 
 # Serialization
-serde.workspace = true
 serde_json.workspace = true
-
-# Logging/Tracing
-tracing.workspace = true
-tracing-subscriber.workspace = true
+serde.workspace = true
 
 # Error handling
 thiserror.workspace = true
 eyre.workspace = true
 
-# Duration parsing
-humantime.workspace = true
-
-# RPC
-jsonrpsee.workspace = true
-
-# Caching
-moka.workspace = true
-
-# Enclave client
-op-enclave-client.workspace = true
-op-enclave-core.workspace = true
-
-# Retry
-backon.workspace = true
-
-# HTTP server (health + admin)
-axum.workspace = true
+# CLI
+base-cli-utils.workspace = true
+clap.workspace = true
 
 # Misc
+humantime.workspace = true
+jsonrpsee.workspace = true
+metrics.workspace = true
+backon.workspace = true
 bytes.workspace = true
+moka = { workspace = true, features = ["future"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
 hex.workspace = true
 url.workspace = true
 
-# Metrics
-metrics.workspace = true
-
-# CLI
-clap.workspace = true
-base-cli-utils.workspace = true
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-reqwest.workspace = true
-
-[lints]
-workspace = true
+reqwest = { workspace = true, features = ["json"] }

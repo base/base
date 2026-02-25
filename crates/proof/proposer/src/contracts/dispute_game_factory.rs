@@ -2,10 +2,9 @@
 //!
 //! Used to create new dispute games and query existing ones.
 
-use alloy::primitives::{Address, B256, Bytes, U256};
-use alloy::providers::RootProvider;
-use alloy::sol;
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::RootProvider;
+use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
 use crate::ProposerError;
@@ -107,12 +106,10 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     }
 
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ProposerError> {
-        let result = self
-            .contract
-            .gameAtIndex(U256::from(index))
-            .call()
-            .await
-            .map_err(|e| ProposerError::Contract(format!("gameAtIndex({index}) failed: {e}")))?;
+        let result =
+            self.contract.gameAtIndex(U256::from(index)).call().await.map_err(|e| {
+                ProposerError::Contract(format!("gameAtIndex({index}) failed: {e}"))
+            })?;
 
         Ok(GameAtIndex {
             game_type: result.gameType,

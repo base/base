@@ -10,30 +10,32 @@
 //! semantics through the [`ProposerDriverControl`] trait, which is consumed
 //! by the admin JSON-RPC server.
 
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use eyre::Result;
-use tokio::sync::Mutex as TokioMutex;
-use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::contracts::anchor_state_registry::AnchorStateRegistryClient;
-use crate::contracts::dispute_game_factory::DisputeGameFactoryClient;
-use crate::contracts::output_proposer::{OutputProposer, is_game_already_exists};
-use crate::enclave::EnclaveClientTrait;
-use crate::metrics as proposer_metrics;
-use crate::prover::{Prover, ProverProposal};
-use crate::rpc::{L1Client, L2Client, RollupClient};
 use crate::{
     AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, NO_PARENT_INDEX,
     PROPOSAL_TIMEOUT, ProposerError,
+    contracts::{
+        AnchorStateRegistryClient, DisputeGameFactoryClient, OutputProposer, is_game_already_exists,
+    },
+    enclave::EnclaveClientTrait,
+    metrics as proposer_metrics,
+    prover::{Prover, ProverProposal},
+    rpc::{L1Client, L2Client, RollupClient},
 };
 
 /// Driver configuration.
@@ -184,12 +186,8 @@ where
         output_root: B256,
         l2_block_number: u64,
     ) {
-        self.parent_game_state = ParentGameState {
-            initialized: true,
-            game_index,
-            output_root,
-            l2_block_number,
-        };
+        self.parent_game_state =
+            ParentGameState { initialized: true, game_index, output_root, l2_block_number };
     }
 
     /// Starts the driver loop.
@@ -249,13 +247,9 @@ where
         let intermediate_roots = self.cached_intermediate_roots.clone();
 
         // Check if we have enough proofs to aggregate and propose.
-        match self
-            .next_output(starting_block_number, starting_root, &intermediate_roots)
-            .await
-        {
+        match self.next_output(starting_block_number, starting_root, &intermediate_roots).await {
             Ok(Some(proposal)) => {
-                self.propose_output(&proposal, parent_index, &intermediate_roots)
-                    .await;
+                self.propose_output(&proposal, parent_index, &intermediate_roots).await;
             }
             Ok(None) => {}
             Err(e) => {
@@ -280,10 +274,7 @@ where
             if let Some(p) = self.pending.iter().find(|p| p.to.number == target_block) {
                 roots.push(p.output.output_root);
             } else {
-                debug!(
-                    target_block,
-                    "Intermediate root block not yet in pending queue"
-                );
+                debug!(target_block, "Intermediate root block not yet in pending queue");
             }
         }
         roots
@@ -292,22 +283,19 @@ where
     /// Generates single-block proofs, filling the pending queue.
     async fn generate_outputs(&mut self, starting_block_number: u64) -> Result<(), ProposerError> {
         // Clear pending if not contiguous with starting point.
-        if let Some(front) = self.pending.front() {
-            if front.from.number.saturating_sub(1) != starting_block_number {
-                warn!(
-                    starting = starting_block_number,
-                    pending_from = front.from.number.saturating_sub(1),
-                    "Pending outputs not contiguous with starting point, clearing"
-                );
-                self.pending.clear();
-            }
+        if let Some(front) = self.pending.front()
+            && front.from.number.saturating_sub(1) != starting_block_number
+        {
+            warn!(
+                starting = starting_block_number,
+                pending_from = front.from.number.saturating_sub(1),
+                "Pending outputs not contiguous with starting point, clearing"
+            );
+            self.pending.clear();
         }
 
         // Determine what block to generate next.
-        let next_number = self
-            .pending
-            .back()
-            .map_or(starting_block_number, |back| back.to.number);
+        let next_number = self.pending.back().map_or(starting_block_number, |back| back.to.number);
 
         // Generate proofs up to the target block for this interval.
         let target_block = starting_block_number + self.config.block_interval;
@@ -408,16 +396,9 @@ where
 
             // Only include intermediate roots in the final aggregation round.
             let is_final_batch = count == batch_length;
-            let batch_roots = if is_final_batch {
-                intermediate_roots.to_vec()
-            } else {
-                vec![]
-            };
+            let batch_roots = if is_final_batch { intermediate_roots.to_vec() } else { vec![] };
 
-            match self
-                .prover
-                .aggregate(starting_root, prev_block_number, batch, batch_roots)
-                .await
+            match self.prover.aggregate(starting_root, prev_block_number, batch, batch_roots).await
             {
                 Ok(aggregated) => {
                     info!(
@@ -450,11 +431,7 @@ where
         }
 
         // Reorg detection: verify the proposal's block hash matches the canonical chain.
-        match self
-            .l2_client
-            .header_by_number(Some(proposal.to.number))
-            .await
-        {
+        match self.l2_client.header_by_number(Some(proposal.to.number)).await {
             Ok(canonical_header) => {
                 if proposal.to.hash != canonical_header.hash {
                     warn!(
@@ -537,16 +514,12 @@ where
 
         match tokio::time::timeout(
             PROPOSAL_TIMEOUT,
-            self.output_proposer
-                .propose_output(proposal, parent_index, intermediate_roots),
+            self.output_proposer.propose_output(proposal, parent_index, intermediate_roots),
         )
         .await
         {
             Ok(Ok(())) => {
-                info!(
-                    l2_block_number = proposal.to.number,
-                    "Dispute game created successfully"
-                );
+                info!(l2_block_number = proposal.to.number, "Dispute game created successfully");
                 metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
 
                 // TODO: This uses `game_count - 1` to infer the new game's index,
@@ -587,10 +560,7 @@ where
             }
             Ok(Err(e)) => {
                 if is_game_already_exists(&e) {
-                    info!(
-                        l2_block_number = proposal.to.number,
-                        "Game already exists, continuing"
-                    );
+                    info!(l2_block_number = proposal.to.number, "Game already exists, continuing");
                     // The game was created (likely by a previous run). Try to
                     // recover the parent state so we continue the chain.
                     self.pending.clear();
@@ -768,25 +738,29 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
 
     use alloy_primitives::{B256, Bytes};
     use async_trait::async_trait;
     use op_enclave_client::{ClientError, ExecuteStatelessRequest};
-    use op_enclave_core::Proposal;
-    use op_enclave_core::types::config::RollupConfig;
+    use op_enclave_core::{Proposal, types::config::RollupConfig};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::enclave::EnclaveClientTrait;
-    use crate::prover::Prover;
-    use crate::prover::types::test_helpers::test_proposal;
-    use crate::rpc::SyncStatus;
-    use crate::test_utils::{
-        MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
-        MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,
+    use crate::{
+        enclave::EnclaveClientTrait,
+        prover::{Prover, types::test_helpers::test_proposal},
+        rpc::SyncStatus,
+        test_utils::{
+            MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
+            MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,
+        },
     };
 
     // ---- Mock infrastructure ----
@@ -852,13 +826,8 @@ mod tests {
         cancel: CancellationToken,
     ) -> Driver<MockL1, MockL2, E, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
     {
-        let l1 = Arc::new(MockL1 {
-            latest_block_number: l1_block_number,
-        });
-        let l2 = Arc::new(MockL2 {
-            block_not_found: true,
-            canonical_hash,
-        });
+        let l1 = Arc::new(MockL1 { latest_block_number: l1_block_number });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash });
         let prover = Arc::new(Prover::new(
             test_per_chain_config(),
             RollupConfig::default(),
@@ -869,9 +838,8 @@ mod tests {
             B256::ZERO,
         ));
         let rollup = Arc::new(MockRollupClient { sync_status });
-        let anchor_registry = Arc::new(MockAnchorStateRegistry {
-            anchor_root: test_anchor_root(0),
-        });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
         let factory = Arc::new(MockDisputeGameFactory { game_count: 1 });
 
         Driver::new(
@@ -902,10 +870,7 @@ mod tests {
     > {
         test_driver_custom(
             MockEnclave,
-            DriverConfig {
-                block_interval: 10,
-                ..Default::default()
-            },
+            DriverConfig { block_interval: 10, ..Default::default() },
             l1_block_number,
             sync_status,
             canonical_hash,
@@ -1071,10 +1036,7 @@ mod tests {
 
         let mut driver = test_driver_custom(
             MockEnclaveForAggregation,
-            DriverConfig {
-                block_interval: 3,
-                ..Default::default()
-            },
+            DriverConfig { block_interval: 3, ..Default::default() },
             400,
             sync_status,
             Some(canonical_hash),
@@ -1092,10 +1054,7 @@ mod tests {
         let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         let proposal = result.unwrap();
-        assert!(
-            proposal.is_some(),
-            "expected Some(proposal) after aggregation"
-        );
+        assert!(proposal.is_some(), "expected Some(proposal) after aggregation");
         let proposal = proposal.unwrap();
         assert_eq!(proposal.from.number, 101);
         assert_eq!(proposal.to.number, 103);
@@ -1124,16 +1083,11 @@ mod tests {
 
         let canonical_hash = B256::repeat_byte(0x30);
         let sync_status = test_sync_status(200, canonical_hash);
-        let tracking = Arc::new(TrackingOutputProposer {
-            called: AtomicBool::new(false),
-        });
+        let tracking = Arc::new(TrackingOutputProposer { called: AtomicBool::new(false) });
 
         let mut driver = test_driver_custom(
             MockEnclave,
-            DriverConfig {
-                block_interval: 10,
-                ..Default::default()
-            },
+            DriverConfig { block_interval: 10, ..Default::default() },
             1000,
             sync_status,
             Some(canonical_hash),
@@ -1400,11 +1354,7 @@ mod tests {
         driver.pending.push_back(p10);
 
         let roots = driver.extract_intermediate_roots(100);
-        assert_eq!(
-            roots.len(),
-            1,
-            "should have exactly one root when intervals match"
-        );
+        assert_eq!(roots.len(), 1, "should have exactly one root when intervals match");
         assert_eq!(roots[0], final_root);
     }
 }

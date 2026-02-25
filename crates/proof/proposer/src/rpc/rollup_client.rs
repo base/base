@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use alloy::providers::{Provider, RootProvider};
-use alloy::rpc::client::RpcClient;
-use alloy::transports::http::{Http, reqwest::Client};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
+use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use op_enclave_core::types::config::RollupConfig;
@@ -98,10 +98,7 @@ impl RollupClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        Ok(Self {
-            provider,
-            retry_config: config.retry_config,
-        })
+        Ok(Self { provider, retry_config: config.retry_config })
     }
 }
 

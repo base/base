@@ -3,9 +3,9 @@
 //! Used to query individual dispute game instances and read the
 //! `BLOCK_INTERVAL` from the implementation contract at startup.
 
-use alloy::primitives::{Address, B256, U256};
-use alloy::providers::RootProvider;
-use alloy::sol;
+use alloy_primitives::{Address, B256, U256};
+use alloy_provider::RootProvider;
+use alloy_sol_types::sol;
 use async_trait::async_trait;
 
 use crate::ProposerError;
@@ -22,7 +22,7 @@ sol! {
         /// Returns the L2 block number this game proposes.
         function l2SequenceNumber() external pure returns (uint256);
 
-        /// Returns the current game status (0=IN_PROGRESS, 1=CHALLENGER_WINS, 2=DEFENDER_WINS).
+        /// Returns the current game status (`0=IN_PROGRESS`, `1=CHALLENGER_WINS`, `2=DEFENDER_WINS`).
         function status() external view returns (uint8);
 
         /// Returns the address that provided a TEE proof.
@@ -111,11 +111,8 @@ impl AggregateVerifierContractClient {
     ) -> Result<u64, ProposerError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
-        let interval_u256: U256 = contract
-            .INTERMEDIATE_BLOCK_INTERVAL()
-            .call()
-            .await
-            .map_err(|e| {
+        let interval_u256: U256 =
+            contract.INTERMEDIATE_BLOCK_INTERVAL().call().await.map_err(|e| {
                 ProposerError::Contract(format!("INTERMEDIATE_BLOCK_INTERVAL failed: {e}"))
             })?;
 
@@ -161,10 +158,6 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .await
             .map_err(|e| ProposerError::Contract(format!("parentIndex failed: {e}")))?;
 
-        Ok(GameInfo {
-            root_claim,
-            l2_block_number,
-            parent_index,
-        })
+        Ok(GameInfo { root_claim, l2_block_number, parent_index })
     }
 }

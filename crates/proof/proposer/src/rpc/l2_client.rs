@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use alloy::eips::BlockNumberOrTag;
-use alloy::providers::{Provider, RootProvider};
-use alloy::rpc::client::RpcClient;
-use alloy::transports::http::{Http, reqwest::Client};
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::{BlockId, Header};
+use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use op_enclave_core::{AccountResult, executor::ExecutionWitness};
@@ -20,8 +20,7 @@ use super::{
     traits::L2Client,
     types::OpBlock,
 };
-use crate::config::RetryConfig;
-use crate::constants::DEFAULT_CACHE_SIZE;
+use crate::{config::RetryConfig, constants::DEFAULT_CACHE_SIZE};
 
 /// Cache key for account proofs (address + block hash).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -35,10 +34,7 @@ pub struct ProofCacheKey {
 impl ProofCacheKey {
     /// Creates a new proof cache key.
     pub const fn new(address: Address, block_hash: B256) -> Self {
-        Self {
-            address,
-            block_hash,
-        }
+        Self { address, block_hash }
     }
 }
 
@@ -208,10 +204,7 @@ impl L2Client for L2ClientImpl {
 
         let proof: AccountResult = (|| async {
             self.provider
-                .raw_request(
-                    "eth_getProof".into(),
-                    (address, empty_keys.clone(), block_hash),
-                )
+                .raw_request("eth_getProof".into(), (address, empty_keys.clone(), block_hash))
                 .await
                 .map_err(RpcError::from)
         })
@@ -229,25 +222,21 @@ impl L2Client for L2ClientImpl {
     }
 
     async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        let block_id: BlockId = number
-            .map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number)
-            .into();
+        let block_id: BlockId =
+            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
-        let block = (|| async {
-            self.provider
-                .get_block(block_id)
-                .await
-                .map_err(RpcError::from)
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::header_by_number");
-        })
-        .await?
-        .ok_or_else(|| RpcError::HeaderNotFound(format!("Header not found for {block_id:?}")))?;
+        let block = (|| async { self.provider.get_block(block_id).await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::header_by_number");
+            })
+            .await?
+            .ok_or_else(|| {
+                RpcError::HeaderNotFound(format!("Header not found for {block_id:?}"))
+            })?;
 
         let header = block.header;
 
@@ -258,18 +247,13 @@ impl L2Client for L2ClientImpl {
     }
 
     async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
-        let block_id: BlockId = number
-            .map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number)
-            .into();
+        let block_id: BlockId =
+            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
         let block = (|| async {
-            self.provider
-                .get_block(block_id)
-                .full()
-                .await
-                .map_err(RpcError::from)
+            self.provider.get_block(block_id).full().await.map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -280,12 +264,8 @@ impl L2Client for L2ClientImpl {
         .ok_or_else(|| RpcError::BlockNotFound(format!("Block not found for {block_id:?}")))?;
 
         // Cache by hash
-        self.blocks_cache
-            .insert(block.header.hash, block.clone())
-            .await;
-        self.headers_cache
-            .insert(block.header.hash, block.header.clone())
-            .await;
+        self.blocks_cache.insert(block.header.hash, block.clone()).await;
+        self.headers_cache.insert(block.header.hash, block.header.clone()).await;
 
         Ok(block)
     }
@@ -299,11 +279,7 @@ impl L2Client for L2ClientImpl {
         let backoff = self.retry_config.to_backoff_builder();
 
         let block = (|| async {
-            self.provider
-                .get_block(BlockId::Hash(hash.into()))
-                .full()
-                .await
-                .map_err(RpcError::from)
+            self.provider.get_block(BlockId::Hash(hash.into())).full().await.map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
