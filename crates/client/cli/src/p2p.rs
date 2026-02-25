@@ -530,7 +530,7 @@ mod tests {
     use clap::Parser;
     use kona_peers::NodeRecord;
 
-    use super::*;
+    use super::P2PArgs;
 
     /// A mock command that uses the `P2PArgs`.
     #[derive(Parser, Debug, Clone)]

@@ -193,7 +193,7 @@ mod tests {
     use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
     use kona_peers::EnrValidation;
 
-    use super::*;
+    use super::{Discv5Builder, LocalNode};
 
     #[test]
     fn test_builds_valid_enr() {

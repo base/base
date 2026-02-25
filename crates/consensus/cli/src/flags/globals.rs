@@ -53,7 +53,7 @@ mod tests {
     use clap::Parser;
     use rstest::rstest;
 
-    use super::*;
+    use super::GlobalArgs;
 
     #[rstest]
     #[case::numeric_optimism("10", 10)]

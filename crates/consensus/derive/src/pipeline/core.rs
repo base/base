@@ -232,8 +232,11 @@ mod tests {
     use base_protocol::{L2BlockInfo, OpAttributesWithParent};
     use kona_genesis::{RollupConfig, SystemConfig};
 
-    use super::*;
-    use crate::{DerivationPipeline, test_utils::*};
+    use super::{ActivationSignal, DerivationPipeline, Signal, StepResult};
+    use crate::{
+        errors::{PipelineError, PipelineErrorKind},
+        test_utils::{TestL2ChainProvider, TestNextAttributes, new_test_pipeline},
+    };
 
     fn default_test_payload_attributes() -> OpAttributesWithParent {
         OpAttributesWithParent {

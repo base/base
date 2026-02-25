@@ -134,7 +134,12 @@ impl BaseFeeConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        BASE_MAINNET_BASE_FEE_CONFIG, BASE_MAINNET_BASE_FEE_PARAMS,
+        BASE_MAINNET_BASE_FEE_PARAMS_CANYON, BASE_SEPOLIA_BASE_FEE_CONFIG,
+        BASE_SEPOLIA_BASE_FEE_PARAMS, BASE_SEPOLIA_BASE_FEE_PARAMS_CANYON, BASE_SEPOLIA_CHAIN_ID,
+        BaseFeeConfig, base_fee_config, base_fee_params, base_fee_params_canyon,
+    };
     use crate::BASE_MAINNET_CHAIN_ID;
 
     #[test]

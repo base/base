@@ -451,7 +451,7 @@ mod tests {
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_payload_primitives::EngineApiMessageVersion;
 
-    use super::*;
+    use super::payload_id_optimism;
     use crate::OpPayloadAttributes;
 
     #[test]

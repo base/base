@@ -80,7 +80,7 @@ mod test {
 
     use alloy_primitives::address;
 
-    use super::*;
+    use super::SpanBatchPrefix;
 
     #[test]
     fn test_span_batch_prefix_encoding_roundtrip() {

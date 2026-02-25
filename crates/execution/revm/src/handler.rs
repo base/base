@@ -393,23 +393,29 @@ mod tests {
 
     use alloy_primitives::uint;
     use revm::{
-        context::{BlockEnv, CfgEnv, Context, TxEnv},
+        Context,
+        context::{BlockEnv, CfgEnv, TxEnv},
+        context_interface::journaled_state::account::JournaledAccountTr,
+        context_interface::{ContextTr, JournalTr, result::EVMError},
         database::InMemoryDB,
         database_interface::EmptyDB,
-        handler::EthFrame,
-        interpreter::{CallOutcome, InstructionResult, InterpreterResult},
+        handler::{EthFrame, EvmTr, FrameResult, Handler},
+        interpreter::{
+            CallOutcome, Gas, InstructionResult, InterpreterResult, interpreter::EthInterpreter,
+        },
         primitives::{Address, B256, Bytes, bytes},
         state::AccountInfo,
     };
 
-    use super::*;
+    use super::OpHandler;
     use crate::{
-        DefaultOp, OpBuilder, OpContext, OpTransaction,
+        DefaultOp, L1BlockInfo, OpBuilder, OpContext, OpSpecId, OpTransaction, OpTransactionError,
         constants::{
             BASE_FEE_SCALAR_OFFSET, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
             L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, OPERATOR_FEE_SCALARS_SLOT,
         },
     };
+    use alloy_primitives::U256;
 
     /// Creates frame result.
     fn call_last_frame_return(
@@ -544,8 +550,8 @@ mod tests {
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         // Check the account balance is updated.
-        let account = evm.ctx().journal_mut().load_account(caller).unwrap();
-        assert_eq!(account.info.balance, U256::from(1010));
+        let account = evm.ctx().journal_mut().load_account_with_code_mut(caller).unwrap();
+        assert_eq!(account.data.account().info.balance, U256::from(1010));
     }
 
     #[test]
@@ -585,8 +591,8 @@ mod tests {
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         // Check the account balance is updated.
-        let account = evm.ctx().journal_mut().load_account(caller).unwrap();
-        assert_eq!(account.info.balance, U256::from(10)); // 1058 - 1048 = 10
+        let account = evm.ctx().journal_mut().load_account_with_code_mut(caller).unwrap();
+        assert_eq!(account.data.account().info.balance, U256::from(10)); // 1058 - 1048 = 10
     }
 
     #[test]

@@ -43,7 +43,7 @@ impl BatchTransaction {
 mod test {
     use alloc::vec;
 
-    use super::*;
+    use super::BatchTransaction;
 
     #[test]
     fn test_batch_transaction() {

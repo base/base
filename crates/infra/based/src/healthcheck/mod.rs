@@ -239,13 +239,17 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 mod tests {
     use std::{
         net::UdpSocket,
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, atomic::Ordering},
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
     use async_trait::async_trait;
     use cadence::{StatsdClient, UdpMetricSink};
 
-    use super::*;
+    use super::{
+        BlockProductionHealthChecker, EthClient, HeaderSummary, HealthState, HealthcheckConfig,
+        HealthcheckMetrics, Node,
+    };
 
     #[derive(Clone)]
     struct MockClient {

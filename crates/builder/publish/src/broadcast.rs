@@ -99,13 +99,21 @@ impl BroadcastLoop {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use futures::StreamExt;
     use rstest::rstest;
     use tokio::net::TcpListener;
-    use tokio_tungstenite::{accept_async, connect_async};
+    use tokio::sync::broadcast;
+    use tokio_tungstenite::{
+        accept_async, connect_async,
+        tungstenite::{Message, Utf8Bytes},
+    };
+    use tokio_util::sync::CancellationToken;
 
-    use super::*;
+    use super::BroadcastLoop;
+    use crate::PublisherMetrics;
 
     struct MockMetrics {
         sent: AtomicU64,

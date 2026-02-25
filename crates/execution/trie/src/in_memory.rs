@@ -834,11 +834,16 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
 #[cfg(test)]
 mod tests {
     use alloy_eips::NumHash;
-    use alloy_primitives::U256;
+    use alloy_eips::eip1898::BlockWithParent;
+    use alloy_primitives::{B256, U256};
     use reth_primitives_traits::Account;
+    use reth_trie::HashedPostStateSorted;
+    use reth_trie::updates::TrieUpdatesSorted;
 
-    use super::*;
-    use crate::OpProofsStorageError;
+    use super::InMemoryProofsStorage;
+    use crate::{
+        OpProofsInitialStateStore, OpProofsStorageError, OpProofsStore, api::BlockStateDiff,
+    };
 
     #[test]
     fn test_in_memory_storage_basic_operations() -> Result<(), OpProofsStorageError> {

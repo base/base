@@ -658,7 +658,7 @@ mod tests {
     use reth_primitives_traits::RecoveredBlock;
     use reth_trie::{HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted};
 
-    use super::*;
+    use super::OpProofsExEx;
 
     // -------------------------------------------------------------------------
     // Helpers: deterministic blocks and deterministic Chain with precomputed updates

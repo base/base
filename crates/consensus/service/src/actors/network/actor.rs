@@ -260,7 +260,7 @@ mod tests {
     use base_alloy_rpc_types_engine::OpExecutionPayload;
     use rand::Rng;
 
-    use super::*;
+    use super::{NetworkActor, NetworkInboundData};
 
     #[test]
     fn test_payload_signature_roundtrip_v1() {

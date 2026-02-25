@@ -170,9 +170,9 @@ mod test {
     use alloy_provider::network::eip2718::Decodable2718;
     use alloy_rlp::{Decodable, Encodable};
 
-    use super::*;
+    use super::OrderedListWalker;
     use crate::{
-        NoopTrieProvider, ordered_trie_with_encoder,
+        NoopTrieProvider, TrieNode, ordered_trie_with_encoder,
         test_util::{
             TrieNodeProvider, get_live_derivable_receipts_list,
             get_live_derivable_transactions_list,

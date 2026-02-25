@@ -72,7 +72,10 @@ mod tests {
     use rand_08::rngs::OsRng;
     use rsa::traits::PublicKeyParts;
 
-    use super::*;
+    use super::{
+        RSA_KEY_BITS, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, pkix_to_public_key,
+        private_to_public, public_key_to_pkix,
+    };
 
     #[test]
     fn test_generate_rsa_key() {

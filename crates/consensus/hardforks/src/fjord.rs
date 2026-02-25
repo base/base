@@ -123,7 +123,7 @@ impl Hardfork for Fjord {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use super::Fjord;
     use crate::test_utils::check_deployment_code;
 
     #[test]

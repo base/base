@@ -106,7 +106,7 @@ mod tests {
     use rdkafka::config::ClientConfig;
     use tokio::time::{Duration, Instant};
 
-    use super::*;
+    use super::{KafkaMessageQueue, MessageQueue};
 
     fn create_test_bundle() -> Bundle {
         Bundle::default()

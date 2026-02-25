@@ -72,8 +72,13 @@ mod tests {
         handler::NodeContact,
     };
 
-    use super::*;
-    use crate::utils::peer_id_to_secp256k1_pubkey;
+    use discv5::multiaddr::{Multiaddr, Protocol};
+
+    use super::BootNode;
+    use crate::{
+        NodeRecord,
+        utils::{local_id_to_p2p_id, peer_id_to_secp256k1_pubkey},
+    };
 
     #[test]
     fn test_derive_bootnode_enode_multiaddr() {

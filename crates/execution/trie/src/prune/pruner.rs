@@ -181,10 +181,11 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_eips::{BlockHashOrNumber, NumHash};
+    use alloy_eips::{BlockHashOrNumber, NumHash, eip1898::BlockWithParent};
     use alloy_primitives::{B256, BlockNumber, U256, keccak256};
     use mockall::mock;
     use reth_primitives_traits::Account;
+    use reth_provider::BlockHashReader;
     use reth_storage_errors::provider::ProviderResult;
     use reth_trie::{
         BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
@@ -194,8 +195,11 @@ mod tests {
     };
     use tempfile::TempDir;
 
-    use super::*;
-    use crate::{BlockStateDiff, db::MdbxProofsStorage};
+    use super::OpProofStoragePruner;
+    use crate::{
+        BlockStateDiff, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
+        prune::error::PrunerOutput,
+    };
 
     mock! (
         #[derive(Debug)]

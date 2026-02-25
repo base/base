@@ -30,7 +30,7 @@ pub struct Roles {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
-    use super::*;
+    use super::Roles;
 
     #[test]
     fn test_roles_serde() {

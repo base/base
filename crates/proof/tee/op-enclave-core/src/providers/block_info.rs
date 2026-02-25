@@ -148,7 +148,9 @@ impl BlockInfoWrapper {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloy_primitives::{Address, B256};
+
+    use super::BlockInfoWrapper;
     use crate::providers::test_utils::test_header;
 
     #[test]

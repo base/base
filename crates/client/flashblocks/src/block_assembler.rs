@@ -139,7 +139,7 @@ mod tests {
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
     };
 
-    use super::*;
+    use super::BlockAssembler;
     use crate::ProtocolError;
 
     fn create_test_flashblock(index: u64, with_base: bool) -> Flashblock {

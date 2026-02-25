@@ -72,12 +72,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeMap;
     use alloc::vec::Vec;
 
     use alloy_consensus::{Eip658Value, Receipt};
-    use alloy_primitives::{Log, address};
+    use alloy_primitives::{B256, Log, U256, address};
 
-    use super::*;
+    use super::{OpFlashblockPayloadMetadata, OpReceipt};
 
     fn sample_metadata() -> OpFlashblockPayloadMetadata {
         let mut balances = BTreeMap::new();

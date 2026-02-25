@@ -30,7 +30,7 @@
 //! - **Error Handling**: Comprehensive error types for batch processing failures
 
 mod r#type;
-pub use r#type::*;
+pub use r#type::{BatchType, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE};
 
 mod reader;
 pub use reader::{BatchReader, DecompressionError};

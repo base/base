@@ -137,7 +137,7 @@ mod tests {
     use reth_optimism_evm::OpEvmConfig;
     use revm::database::InMemoryDB;
 
-    use super::*;
+    use super::ReceiptBuilder;
 
     fn create_legacy_tx() -> Recovered<OpTxEnvelope> {
         let tx = alloy_consensus::TxLegacy {

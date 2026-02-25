@@ -57,8 +57,9 @@ impl BlockNumberHash {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use reth_db::table::{Compress, Decompress};
 
-    use super::*;
+    use super::BlockNumberHash;
 
     #[test]
     fn test_block_number_hash_roundtrip() {

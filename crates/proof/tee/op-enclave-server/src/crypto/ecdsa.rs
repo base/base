@@ -64,9 +64,13 @@ pub const fn signer_address(signer: &PrivateKeySigner) -> Address {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Address;
     use rand_08::rngs::OsRng;
 
-    use super::*;
+    use super::{
+        generate_signer, private_key_bytes, public_key_bytes, signer_address, signer_from_bytes,
+        signer_from_hex,
+    };
 
     #[test]
     fn test_generate_signer() {

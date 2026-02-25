@@ -1,27 +1,30 @@
-mod apis;
-mod contracts;
-mod driver;
-mod external;
-mod instance;
-mod txs;
-mod utils;
+pub mod apis;
+pub mod contracts;
+pub mod driver;
+pub mod external;
+pub mod instance;
+pub mod txs;
+pub mod utils;
 
 use alloy_network::TxSignerSync;
 use alloy_primitives::B256;
 pub use alloy_signer_local::PrivateKeySigner;
-pub use apis::*;
+pub use apis::{Address, EngineApi, Http, Ipc, Protocol, generate_genesis};
 use base_alloy_consensus::OpTypedTransaction;
-pub use contracts::*;
-pub use driver::*;
-pub use external::*;
-pub use instance::*;
+pub use contracts::flashblocks_number_contract;
+pub use driver::ChainDriver;
+pub use external::ExternalNode;
+pub use instance::{FlashblocksListener, LocalInstance, clear_otel_env_vars, default_node_config};
 use k256::sha2::{Digest, Sha256};
 use reth_node_builder::NodeConfig;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
-pub use txs::*;
-pub use utils::*;
+pub use txs::{TransactionBuilder, TransactionPoolObserver};
+pub use utils::{
+    AsTxs, BlockTransactionsExt, ChainDriverExt, TransactionBuilderExt, builder_signer,
+    create_test_db, flashblocks_number_signer, funded_signer, get_available_port,
+};
 
 use crate::BuilderConfig;
 

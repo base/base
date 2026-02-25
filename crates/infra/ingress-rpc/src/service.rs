@@ -315,16 +315,22 @@ mod tests {
         str::FromStr,
     };
 
+    use alloy_primitives::{B256, Bytes};
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
-    use base_bundles::test_utils::create_test_meter_bundle_response;
+    use base_alloy_network::Base;
+    use base_bundles::{
+        Bundle, MeterBundleResponse, test_utils::create_test_meter_bundle_response,
+    };
     use base_cli_utils::{LogFormat, LogLevel};
+    use reth_rpc_eth_types::EthApiError;
     use tokio::sync::{broadcast, mpsc};
+    use tokio::time::{Duration, timeout};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
-    use super::*;
+    use super::{IngressApiServer, IngressService, Providers};
     use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
     struct MockQueue;
 

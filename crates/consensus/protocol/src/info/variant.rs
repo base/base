@@ -392,13 +392,21 @@ impl L1BlockInfoTx {
 mod test {
     use alloc::{string::ToString, vec::Vec};
 
-    use alloy_primitives::{address, b256};
+    use alloy_eips::{BlockNumHash, eip7840::BlobParams};
+    use alloy_primitives::{U256, address, b256};
     use kona_genesis::HardForkConfig;
     use kona_registry::L1Config;
     use rstest::rstest;
 
-    use super::*;
-    use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};
+    use super::L1BlockInfoTx;
+    use crate::{
+        DecodeError,
+        info::{
+            L1BlockInfoBedrock, L1BlockInfoBedrockBaseFields, L1BlockInfoEcotone,
+            L1BlockInfoIsthmus,
+        },
+        test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
+    };
 
     #[test]
     fn test_l1_block_info_missing_selector() {

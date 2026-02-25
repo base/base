@@ -38,7 +38,10 @@ pub use eip1559::{
 };
 
 mod source;
-pub use source::*;
+pub use source::{
+    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
+    UserDepositSource,
+};
 
 mod size;
 

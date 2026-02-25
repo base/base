@@ -98,7 +98,7 @@ mod tests {
     use base_client_node::test_utils::{Account as BaseAccount, SignerSync};
     use revm_bytecode::eip7702::Eip7702Bytecode;
 
-    use super::*;
+    use super::Transaction;
 
     fn create_account(nonce: u64, balance: U256) -> Account {
         Account { balance, nonce, bytecode_hash: None }

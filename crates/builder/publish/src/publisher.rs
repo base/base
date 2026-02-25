@@ -91,12 +91,16 @@ impl Debug for WebSocketPublisher {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
     use std::time::Duration;
 
     use futures::StreamExt;
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use tokio_tungstenite::{
+        connect_async,
+        tungstenite::{Message, Utf8Bytes},
+    };
 
-    use super::*;
+    use super::WebSocketPublisher;
 
     /// Binds an OS-assigned port, returns the address, then drops the listener
     /// so the publisher can rebind.

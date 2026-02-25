@@ -45,11 +45,14 @@ use {
 mod config;
 pub use config::{OpNextBlockEnvAttributes, revm_spec, revm_spec_by_timestamp_after_bedrock};
 mod execute;
-pub use execute::*;
+pub use execute::OpExecutorProvider;
 pub mod l1;
-pub use l1::*;
+pub use l1::{
+    RethL1BlockInfo, extract_l1_info, extract_l1_info_from_tx, parse_l1_info,
+    parse_l1_info_tx_bedrock,
+};
 mod receipts;
-pub use receipts::*;
+pub use receipts::OpRethReceiptBuilder;
 mod build;
 pub use build::OpBlockAssembler;
 
@@ -355,14 +358,15 @@ mod tests {
     use reth_optimism_primitives::{OpBlock, OpPrimitives, OpReceipt};
     use reth_primitives_traits::{Account, RecoveredBlock};
     use revm::{
+        context::{BlockEnv, CfgEnv},
         database::{BundleState, CacheDB},
         database_interface::EmptyDBTyped,
         inspector::NoOpInspector,
-        primitives::Log,
+        primitives::{Log, U256},
         state::AccountInfo,
     };
 
-    use super::*;
+    use super::OpEvmConfig;
 
     fn test_evm_config() -> OpEvmConfig {
         OpEvmConfig::optimism(BASE_MAINNET.clone())

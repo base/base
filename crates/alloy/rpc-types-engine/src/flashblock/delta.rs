@@ -48,7 +48,10 @@ pub struct OpFlashblockPayloadDelta {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use alloy_eips::eip4895::Withdrawal;
+    use alloy_primitives::{B256, Bloom, Bytes};
+
+    use super::OpFlashblockPayloadDelta;
 
     #[test]
     #[cfg(feature = "serde")]

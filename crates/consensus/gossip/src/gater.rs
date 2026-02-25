@@ -388,7 +388,7 @@ impl ConnectionGate for ConnectionGater {
 mod tests {
     use std::str::FromStr;
 
-    use super::*;
+    use super::{ConnectionGater, GaterConfig, IpNet};
 
     #[test]
     fn test_check_ip_in_blocked_subnets_ipv4() {

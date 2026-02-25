@@ -15,7 +15,7 @@ extern crate alloc;
 pub use base_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 
 pub mod transaction;
-pub use transaction::*;
+pub use transaction::{OpTransaction, OpTransactionSigned, OpTxType, OpTypedTransaction};
 
 mod receipt;
 pub use base_alloy_consensus::OpReceipt;

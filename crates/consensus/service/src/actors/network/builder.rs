@@ -182,7 +182,7 @@ mod tests {
     use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
     use libp2p::gossipsub::IdentTopic;
 
-    use super::*;
+    use super::NetworkBuilder;
 
     #[derive(Debug)]
     struct NetworkBuilderParams {

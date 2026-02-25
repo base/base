@@ -24,7 +24,7 @@ mod tests {
     use rstest::rstest;
     use serde::de::Error as _;
 
-    use super::*;
+    use super::FlashblockDecodeError;
 
     #[rstest]
     #[case::payload_parse(FlashblockDecodeError::PayloadParse(serde_json::Error::custom("test")))]

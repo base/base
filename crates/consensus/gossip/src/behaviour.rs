@@ -96,7 +96,7 @@ mod tests {
     use kona_genesis::RollupConfig;
     use libp2p::gossipsub::{IdentTopic, TopicHash};
 
-    use super::*;
+    use super::Behaviour;
     use crate::{config, handler::BlockHandler};
 
     fn op_mainnet_topics() -> Vec<TopicHash> {

@@ -84,7 +84,7 @@ mod tests {
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
     use reth_optimism_forks::OpHardfork;
 
-    use super::*;
+    use super::{compute_jovian_base_fee, decode_holocene_base_fee};
     use crate::{BASE_SEPOLIA, OpChainSpec};
 
     const JOVIAN_TIMESTAMP: u64 = 1900000000;

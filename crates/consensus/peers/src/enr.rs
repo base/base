@@ -123,9 +123,13 @@ impl Decodable for OpStackEnr {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, bytes};
+    use alloy_rlp::Decodable;
     use discv5::enr::CombinedKey;
 
-    use super::*;
+    use alloy_rlp::Encodable;
+    use discv5::Enr;
+
+    use super::{EnrValidation, OpStackEnr};
 
     #[test]
     #[cfg(feature = "arbitrary")]

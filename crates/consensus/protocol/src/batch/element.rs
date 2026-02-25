@@ -37,7 +37,7 @@ impl From<SingleBatch> for SpanBatchElement {
 mod tests {
     use proptest::{collection::vec, prelude::any, proptest};
 
-    use super::*;
+    use super::SpanBatchElement;
 
     proptest! {
         #[test]

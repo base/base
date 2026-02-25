@@ -256,7 +256,7 @@ mod tests {
 
     use serde_json::{Value, json};
 
-    use super::*;
+    use super::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
 
     // <https://github.com/alloy-rs/op-alloy/issues/18>
     #[test]

@@ -125,7 +125,9 @@ pub mod name {
 mod tests {
     use std::vec;
 
-    use super::*;
+    use revm::primitives::hardfork::SpecId;
+
+    use super::OpSpecId;
 
     #[test]
     fn test_op_spec_id_eth_spec_compatibility() {

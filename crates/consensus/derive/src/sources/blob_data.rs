@@ -169,7 +169,12 @@ impl BlobData {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloc::{boxed::Box, vec};
+
+    use alloy_eips::eip4844::Blob;
+    use alloy_primitives::Bytes;
+
+    use super::{BLOB_ENCODING_VERSION, BlobData, BlobDecodingError, VERSIONED_HASH_VERSION_KZG};
 
     #[test]
     fn test_reassemble_bytes() {

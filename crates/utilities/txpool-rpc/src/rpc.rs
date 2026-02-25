@@ -156,7 +156,7 @@ mod tests {
     };
     use serde_json::{self, json};
 
-    use super::*;
+    use super::TransactionStatusApiImpl;
 
     #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {

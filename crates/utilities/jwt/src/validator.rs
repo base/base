@@ -175,7 +175,7 @@ impl JwtValidator {
 mod tests {
     use url::Url;
 
-    use super::*;
+    use super::{JwtValidationError, JwtValidator};
 
     #[test]
     fn normalize_http_url_unchanged() {

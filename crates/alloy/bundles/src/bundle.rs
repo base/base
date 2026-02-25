@@ -61,7 +61,7 @@ pub struct Bundle {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Bundle;
 
     #[test]
     fn test_bundle_default() {

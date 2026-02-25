@@ -142,7 +142,7 @@ mod tests {
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
-    use super::*;
+    use super::BlockMeter;
 
     fn create_block_with_transactions(
         harness: &TestHarness,

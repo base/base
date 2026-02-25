@@ -78,9 +78,9 @@ impl AddressList {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::address;
+    use alloy_primitives::{Address, address};
 
-    use super::*;
+    use super::AddressList;
 
     #[test]
     fn zero_proof_addresses() {

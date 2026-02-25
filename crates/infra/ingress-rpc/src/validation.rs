@@ -155,15 +155,17 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
-    use alloy_primitives::{Bytes, bytes};
+    use alloy_primitives::{Address, B256, Bytes, U256, bytes};
     use alloy_signer_local::PrivateKeySigner;
     use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_network::{
         TxSignerSync,
         eip2718::{Decodable2718, Encodable2718},
     };
+    use base_bundles::Bundle;
+    use reth_rpc_eth_types::EthApiError;
 
-    use super::*;
+    use super::validate_bundle;
 
     #[tokio::test]
     async fn test_err_bundle_max_timestamp_too_far_in_the_future() {

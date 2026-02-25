@@ -157,7 +157,7 @@ impl SpanBatchBits {
 mod test {
     use proptest::{collection::vec, prelude::any, proptest};
 
-    use super::*;
+    use super::SpanBatchBits;
 
     proptest! {
         #[test]

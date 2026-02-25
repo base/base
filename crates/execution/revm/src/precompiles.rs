@@ -6,10 +6,7 @@ use revm::{
     context_interface::ContextTr,
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
-    precompile::{
-        self, Precompile, PrecompileError, PrecompileId, PrecompileResult, Precompiles, bn254,
-        secp256r1,
-    },
+    precompile::{self, Precompiles, bn254, secp256r1},
     primitives::{Address, OnceLock, hardfork::SpecId},
 };
 
@@ -159,7 +156,7 @@ impl Default for OpPrecompiles {
 
 /// Bn254 pair precompile.
 pub mod bn254_pair {
-    use super::*;
+    use revm::precompile::{Precompile, PrecompileError, PrecompileId, PrecompileResult, bn254};
 
     /// Max input size for the bn254 pair precompile.
     pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
@@ -202,9 +199,10 @@ pub mod bn254_pair {
 
 /// `Bls12_381` precompile.
 pub mod bls12_381 {
-    use revm::precompile::bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS};
-
-    use super::*;
+    use revm::precompile::{
+        self, Precompile, PrecompileError, PrecompileId, PrecompileResult,
+        bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS},
+    };
 
     /// Max input size for the g1 msm precompile.
     pub const ISTHMUS_G1_MSM_MAX_INPUT_SIZE: usize = 513760;
@@ -310,16 +308,19 @@ mod tests {
     use std::vec;
 
     use revm::{
-        precompile::{PrecompileError, bls12_381_const},
+        precompile::{PrecompileError, Precompiles, bls12_381_const, bn254},
         primitives::{Bytes, hex},
     };
 
-    use super::*;
-    use crate::precompiles::bls12_381::{
-        ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM_MAX_INPUT_SIZE,
-        ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM_MAX_INPUT_SIZE,
-        JOVIAN_PAIRING_MAX_INPUT_SIZE, run_g1_msm_isthmus, run_g1_msm_jovian, run_g2_msm_isthmus,
-        run_g2_msm_jovian,
+    use super::{OpPrecompiles, bls12_381, bn254_pair, fjord, granite, isthmus, jovian};
+    use crate::{
+        OpSpecId,
+        precompiles::bls12_381::{
+            ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM_MAX_INPUT_SIZE,
+            ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
+            JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_PAIRING_MAX_INPUT_SIZE, run_g1_msm_isthmus,
+            run_g1_msm_jovian, run_g2_msm_isthmus, run_g2_msm_jovian,
+        },
     };
 
     #[test]

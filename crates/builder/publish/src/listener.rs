@@ -99,15 +99,22 @@ impl Listener {
 mod tests {
     use std::{
         net::SocketAddr,
+        sync::Arc,
         sync::atomic::{AtomicU64, Ordering},
         time::Duration,
     };
 
     use futures::StreamExt;
+    use tokio::net::TcpListener;
     use tokio::sync::broadcast;
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use tokio_tungstenite::{
+        connect_async,
+        tungstenite::{Message, Utf8Bytes},
+    };
+    use tokio_util::sync::CancellationToken;
 
-    use super::*;
+    use super::Listener;
+    use crate::PublisherMetrics;
 
     struct MockMetrics {
         opened: AtomicU64,

@@ -145,7 +145,10 @@ mod test {
     use reth_trie::{HashedStorage, test_utils::storage_root_prehashed};
     use reth_trie_common::HashedPostState;
 
-    use super::*;
+    use super::{
+        ensure_withdrawals_storage_root_is_some, verify_withdrawals_root, withdrawals_root,
+        withdrawals_root_prehashed,
+    };
 
     #[test]
     fn l2tol1_message_passer_no_withdrawals() {

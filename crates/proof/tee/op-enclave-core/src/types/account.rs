@@ -152,9 +152,9 @@ impl Encodable for Account {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Bytes, U256, address, b256};
 
-    use super::*;
+    use super::{AccountResult, StorageProof};
 
     fn sample_account_result() -> AccountResult {
         AccountResult {

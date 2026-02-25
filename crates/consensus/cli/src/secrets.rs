@@ -128,7 +128,7 @@ mod tests {
 
     use alloy_primitives::b256;
 
-    use super::*;
+    use super::{SecretKey, SecretKeyLoader};
 
     #[test]
     fn test_parse() {

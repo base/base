@@ -142,9 +142,9 @@ impl RateLimit for InMemoryRateLimit {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{net::IpAddr, str::FromStr, sync::Arc};
 
-    use super::*;
+    use super::{InMemoryRateLimit, RateLimit};
 
     const GLOBAL_LIMIT: usize = 3;
     const PER_IP_LIMIT: usize = 2;

@@ -220,10 +220,11 @@ where
 mod test {
     use alloc::vec;
 
-    use alloy_primitives::{B256, LogData, address, b256, hex};
+    use alloy_consensus::{Eip658Value, Receipt};
+    use alloy_primitives::{Address, B64, B256, Log, LogData, U256, address, b256, hex};
 
-    use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, HardForkConfig};
+    use super::SystemConfig;
+    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, HardForkConfig, RollupConfig};
 
     #[test]
     #[cfg(feature = "serde")]

@@ -187,7 +187,7 @@ mod test {
     use metrics_exporter_prometheus::PrometheusBuilder;
     use rstest::rstest;
 
-    use super::*;
+    use super::EngineState;
 
     impl EngineState {
         /// Set the unsafe head.

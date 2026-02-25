@@ -29,12 +29,12 @@ impl DefaultOp for OpContext<EmptyDB> {
 #[cfg(test)]
 mod test {
     use revm::{
-        ExecuteEvm,
+        Context, ExecuteEvm,
         inspector::{InspectEvm, NoOpInspector},
     };
 
-    use super::*;
-    use crate::OpBuilder;
+    use super::DefaultOp;
+    use crate::{OpBuilder, OpTransaction};
 
     #[test]
     fn default_run_op() {

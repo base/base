@@ -127,7 +127,10 @@ pub fn get_default_ca_root() -> Result<&'static AwsCaRoot, ServerError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+
+    use super::{AwsCaRoot, DEFAULT_CA_ROOTS, DEFAULT_CA_ROOTS_SHA256, get_default_ca_root};
 
     #[test]
     fn test_load_default_ca_roots() {

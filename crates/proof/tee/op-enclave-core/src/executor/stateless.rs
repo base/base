@@ -313,7 +313,9 @@ pub const fn validate_sequencer_drift(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloy_primitives::address;
+
+    use super::{L2_TO_L1_MESSAGE_PASSER, MAX_SEQUENCER_DRIFT_FJORD, validate_sequencer_drift};
 
     #[test]
     fn test_validate_sequencer_drift_no_txs() {

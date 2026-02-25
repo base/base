@@ -137,7 +137,7 @@ pub const fn verbosity_to_level_filter(verbosity: u8) -> LevelFilter {
 mod tests {
     use rstest::rstest;
 
-    use super::*;
+    use super::verbosity_to_level_filter;
 
     #[rstest]
     #[case::error(1, LevelFilter::ERROR)]

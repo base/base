@@ -89,7 +89,9 @@ impl<DBError> From<OpTransactionError> for EVMError<DBError, OpTransactionError>
 mod test {
     use std::string::ToString;
 
-    use super::*;
+    use revm::context_interface::result::InvalidTransaction;
+
+    use super::OpTransactionError;
 
     #[test]
     fn test_display_op_errors() {

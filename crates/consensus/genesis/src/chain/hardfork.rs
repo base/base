@@ -106,7 +106,7 @@ impl HardForkConfig {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
-    use super::*;
+    use super::HardForkConfig;
 
     #[test]
     fn test_hardforks_deserialize_json() {

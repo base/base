@@ -398,7 +398,7 @@ mod tests {
     use alloy_primitives::{Bytes, Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::{Decodable, Encodable};
 
-    use super::*;
+    use super::{OpDepositReceipt, OpDepositReceiptWithBloom};
 
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]

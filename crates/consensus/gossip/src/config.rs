@@ -124,7 +124,11 @@ fn compute_message_id(msg: &Message) -> MessageId {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        DEFAULT_MESH_D, DEFAULT_MESH_DHI, DEFAULT_MESH_DLAZY, DEFAULT_MESH_DLO, GOSSIP_HEARTBEAT,
+        MAX_GOSSIP_SIZE, MIN_GOSSIP_SIZE, PEER_SCORE_INSPECT_FREQUENCY, default_config,
+        default_config_builder,
+    };
 
     #[test]
     fn test_constructs_default_config() {

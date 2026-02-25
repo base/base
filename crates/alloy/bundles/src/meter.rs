@@ -65,9 +65,9 @@ pub struct MeterBundleResponse {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::address;
+    use alloy_primitives::{B256, U256, address};
 
-    use super::*;
+    use super::{MeterBundleResponse, TransactionResult};
 
     #[test]
     fn test_transaction_result_serialization() {

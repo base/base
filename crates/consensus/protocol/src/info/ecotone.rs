@@ -225,7 +225,7 @@ impl L1BlockInfoEcotone {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use super::L1BlockInfoEcotone;
 
     #[test]
     fn test_decode_calldata_ecotone_invalid_length() {

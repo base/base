@@ -205,9 +205,13 @@ fn decode_hex(hex_str: &str) -> Result<Vec<u8>, ExecutorError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use alloy_consensus::Header;
     use alloy_primitives::b256;
 
-    use super::*;
+    use super::{ExecutionWitness, decode_hex, transform_witness};
+    use crate::error::ExecutorError;
 
     fn test_header() -> Header {
         Header {

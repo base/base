@@ -262,7 +262,7 @@ mod test {
 
     use alloy_primitives::{LogData, U64, U128, address, b256, hex};
 
-    use super::*;
+    use super::{DEPOSIT_EVENT_ABI_HASH, DepositError, decode_deposit};
 
     #[test]
     fn test_decode_deposit_invalid_first_topic() {

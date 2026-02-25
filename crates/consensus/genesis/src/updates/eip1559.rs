@@ -63,8 +63,10 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex};
 
-    use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use super::Eip1559Update;
+    use crate::{
+        CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, EIP1559UpdateError, SystemConfigLog,
+    };
 
     #[test]
     fn test_eip1559_update_try_from() {

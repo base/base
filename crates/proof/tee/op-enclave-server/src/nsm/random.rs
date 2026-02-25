@@ -146,7 +146,9 @@ impl CryptoRng for NsmRng {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use rand_08::RngCore;
+
+    use super::NsmRng;
 
     #[test]
     fn test_nsm_rng_fill_bytes() {

@@ -762,7 +762,7 @@ mod tests {
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::*;
+    use super::SpanBatch;
     use crate::test_utils::{CollectingLayer, TestBatchValidator, TraceStorage};
 
     fn gen_l1_blocks(

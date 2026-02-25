@@ -66,13 +66,17 @@ where
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use alloy_primitives::{Bytes, map::HashMap};
-    use alloy_rlp::Encodable;
-    use alloy_trie::{HashBuilder, proof::ProofRetainer};
-    use kona_mpt::NoopTrieHinter;
+    use alloy_consensus::Header;
+    use alloy_primitives::{B256, Bytes, U256, keccak256};
+    use alloy_rlp::{Decodable, Encodable};
+    use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
+    use kona_mpt::{NoopTrieHinter, TrieNode, TrieNodeError, TrieProvider};
     use rstest::rstest;
 
-    use super::*;
+    use super::{HASHED_HISTORY_STORAGE_ADDRESS, HISTORY_SERVE_WINDOW, eip_2935_history_lookup};
+    use crate::errors::OracleProviderError;
+
+    type HashMap<K, V> = alloy_trie::HashMap<K, V>;
 
     // Mock TrieProvider implementation for testing EIP-2935 history lookup
     #[derive(Default, Clone)]

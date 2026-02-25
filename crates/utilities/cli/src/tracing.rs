@@ -177,7 +177,7 @@ pub fn init_test_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::init_test_tracing;
 
     #[test]
     fn init_test_tracing_idempotent() {

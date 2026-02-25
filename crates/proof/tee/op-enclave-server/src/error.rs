@@ -185,7 +185,7 @@ pub type Result<T> = std::result::Result<T, ServerError>;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AttestationError, CryptoError, NsmError, ProposalError, ServerError};
 
     fn assert_send_sync<T: Send + Sync>() {}
 

@@ -158,9 +158,12 @@ impl Decode for ProofWindowKey {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::B256;
+    use reth_db::table::{Decode, Encode};
     use reth_trie::Nibbles;
+    use reth_trie_common::StoredNibbles;
 
-    use super::*;
+    use super::{HashedStorageKey, ProofWindowKey, StorageTrieKey};
 
     #[test]
     fn test_storage_branch_subkey_encode_decode() {

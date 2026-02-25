@@ -23,7 +23,11 @@ pub mod engine;
 pub use engine::OpEngineTypes;
 
 pub mod node;
-pub use node::*;
+pub use node::{
+    BaseLocalPayloadAttributesBuilder, OpAddOns, OpAddOnsBuilder, OpConsensusBuilder,
+    OpEngineValidatorBuilder, OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder,
+    OpNetworkPrimitives, OpNode, OpNodeComponentBuilder, OpNodeTypes, OpPoolBuilder,
+};
 
 pub mod rpc;
 pub use rpc::OpEngineApiBuilder;
@@ -39,7 +43,12 @@ pub mod proof_history;
 pub mod utils;
 
 use base_revm as _;
-pub use reth_optimism_evm::*;
+pub use reth_optimism_evm::{
+    L1BlockInfoError, OpBlockAssembler, OpBlockExecutionCtx, OpBlockExecutionError,
+    OpBlockExecutorFactory, OpEvm, OpEvmConfig, OpEvmFactory, OpExecutorProvider,
+    OpNextBlockEnvAttributes, OpRethReceiptBuilder, extract_l1_info, extract_l1_info_from_tx,
+    parse_l1_info, parse_l1_info_tx_bedrock, revm_spec, revm_spec_by_timestamp_after_bedrock,
+};
 pub use reth_optimism_payload_builder::{
     self as payload, OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilder,
     OpPayloadBuilderAttributes, OpPayloadPrimitives, OpPayloadTypes, config::OpDAConfig,

@@ -269,7 +269,7 @@ mod tests {
     use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
-    use super::*;
+    use super::Meter;
 
     fn create_parsed_bundle(txs: Vec<OpTransactionSigned>) -> eyre::Result<ParsedBundle> {
         let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();

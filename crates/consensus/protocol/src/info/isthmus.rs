@@ -233,7 +233,7 @@ impl L1BlockInfoIsthmus {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use super::L1BlockInfoIsthmus;
 
     #[test]
     fn test_decode_calldata_isthmus_invalid_length() {

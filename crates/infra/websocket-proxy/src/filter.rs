@@ -248,7 +248,7 @@ impl FilterType {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{FilterType, MatchMode};
 
     fn get_test_payload() -> Vec<u8> {
         let data = r#"

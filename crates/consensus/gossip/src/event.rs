@@ -67,7 +67,7 @@ impl From<()> for Event {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Event;
 
     #[test]
     fn test_event_conversion() {

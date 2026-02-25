@@ -198,7 +198,7 @@ mod tests {
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::*;
+    use super::SingleBatch;
     use crate::test_utils::{CollectingLayer, TraceStorage};
 
     #[test]

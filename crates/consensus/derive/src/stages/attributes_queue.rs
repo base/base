@@ -213,9 +213,15 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, b256};
     use alloy_rpc_types_engine::PayloadAttributes;
 
-    use super::*;
+    use base_protocol::{BlockInfo, OpAttributesWithParent, SingleBatch};
+    use kona_genesis::RollupConfig;
+
+    use super::{
+        AttributesQueue, OpPayloadAttributes, PipelineError, PipelineResult, ResetError, Signal,
+    };
     use crate::{
-        errors::{BuilderError, PipelineErrorKind},
+        PipelineErrorKind,
+        errors::BuilderError,
         test_utils::{TestAttributesBuilder, TestAttributesProvider, new_test_attributes_provider},
         types::ResetSignal,
     };

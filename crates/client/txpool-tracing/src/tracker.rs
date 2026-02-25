@@ -264,7 +264,7 @@ mod tests {
     use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
     use tokio::time;
 
-    use super::*;
+    use super::Tracker;
 
     #[test]
     fn test_transaction_inserted_pending() {

@@ -147,7 +147,7 @@ impl Future for WriteFuture<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{FileChannel, FileDescriptor};
 
     #[test]
     fn test_get_read_handle() {

@@ -647,7 +647,7 @@ pub(crate) mod serde_bincode_compat {
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
-        use super::*;
+        use super::super::OpTxEnvelope;
 
         /// Tests a bincode round-trip for [`OpTxEnvelope`] using an arbitrary instance.
         #[test]
@@ -682,10 +682,11 @@ pub(crate) mod serde_bincode_compat {
 mod tests {
     use alloc::vec;
 
-    use alloy_consensus::{SignableTransaction, Transaction};
+    use alloy_consensus::{Sealable, SignableTransaction, Transaction};
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex};
 
-    use super::*;
+    use super::{OpTxEnvelope, TxDeposit, TxEip1559};
 
     #[test]
     fn test_tx_gas_limit() {

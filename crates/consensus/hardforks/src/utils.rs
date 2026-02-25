@@ -16,7 +16,7 @@ pub(crate) fn upgrade_to_calldata(addr: Address) -> Bytes {
 mod tests {
     use alloy_primitives::keccak256;
 
-    use super::*;
+    use super::{UPGRADE_TO_FUNC_BYTES_4, upgrade_to_calldata};
     use crate::{Ecotone, Fjord, Isthmus};
 
     #[test]

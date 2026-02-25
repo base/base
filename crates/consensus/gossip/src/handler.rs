@@ -144,7 +144,7 @@ mod tests {
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
     use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
 
-    use super::*;
+    use super::{BlockHandler, Handler, HandlerEncodeError};
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
 
     #[test]

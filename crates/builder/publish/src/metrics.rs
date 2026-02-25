@@ -114,7 +114,9 @@ impl PublisherMetrics for PublishingMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::time::Duration;
+
+    use super::{NoopPublisherMetrics, PublisherMetrics, PublishingMetrics};
 
     #[test]
     fn noop_publisher_metrics_can_be_constructed_and_called() {

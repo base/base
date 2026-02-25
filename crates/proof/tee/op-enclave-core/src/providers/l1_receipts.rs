@@ -93,9 +93,10 @@ impl L1ReceiptsFetcher {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::B256;
     use alloy_trie::EMPTY_ROOT_HASH;
 
-    use super::*;
+    use super::{L1ReceiptsFetcher, ProviderError};
     use crate::providers::test_utils::test_header;
 
     #[test]

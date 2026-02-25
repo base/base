@@ -266,7 +266,7 @@ mod test {
     use alloy_eips::NumHash;
     use rstest::rstest;
 
-    use super::*;
+    use super::{L1OriginSelector, L1OriginSelectorProvider, OriginSelector};
 
     /// A mock [`OriginSelectorProvider`] with a local set of [`BlockInfo`]s available.
     #[derive(Default, Debug, Clone)]

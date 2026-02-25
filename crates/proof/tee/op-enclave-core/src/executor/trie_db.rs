@@ -183,9 +183,12 @@ impl TrieDBProvider for EnclaveTrieDB {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
+    use std::collections::HashMap;
 
-    use super::*;
+    use alloy_consensus::Header;
+    use alloy_primitives::{Bytes, b256};
+
+    use super::{EnclaveTrieDB, ExecutorError};
 
     fn test_header() -> Header {
         Header {

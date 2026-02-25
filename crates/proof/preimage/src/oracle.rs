@@ -144,8 +144,11 @@ mod test {
     use alloy_primitives::keccak256;
     use tokio::sync::Mutex;
 
-    use super::*;
-    use crate::{PreimageKeyType, native_channel::BidirectionalChannel};
+    use super::OracleReader;
+    use crate::{
+        PreimageKey, PreimageKeyType, PreimageOracleError, PreimageOracleResult,
+        native_channel::BidirectionalChannel, traits::PreimageFetcher,
+    };
 
     struct TestFetcher {
         preimages: Arc<Mutex<HashMap<PreimageKey, Vec<u8>>>>,

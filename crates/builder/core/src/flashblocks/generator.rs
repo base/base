@@ -505,7 +505,7 @@ mod tests {
         time::{Duration, sleep},
     };
 
-    use super::*;
+    use super::{BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, WaitForValue};
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {

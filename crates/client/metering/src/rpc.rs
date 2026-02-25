@@ -408,7 +408,7 @@ mod tests {
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use url::Url;
 
-    use super::*;
+    use super::RpcClient;
     use crate::{MeteringConfig, MeteringExtension};
 
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {

@@ -17,7 +17,7 @@ pub mod io;
 #[cfg(feature = "tracing")]
 mod fpvm_tracing;
 #[cfg(feature = "tracing")]
-pub use fpvm_tracing::*;
+pub use fpvm_tracing::FpvmTracingSubscriber;
 
 pub mod malloc;
 

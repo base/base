@@ -414,7 +414,10 @@ mod tests {
     use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use uuid::Uuid;
 
-    use super::*;
+    use super::{
+        BundleHistory, BundleHistoryEvent, TransactionMetadata, update_bundle_history_transform,
+        update_transaction_metadata_transform,
+    };
     use crate::{
         reader::Event,
         types::{BundleEvent, DropReason},
@@ -441,10 +444,10 @@ mod tests {
         match &bundle_history.history[0] {
             BundleHistoryEvent::Received { key, timestamp: ts, bundle: b } => {
                 assert_eq!(key, "test-key");
-                assert_eq!(*ts, 1234567890);
+                assert_eq!(ts, &1234567890);
                 assert_eq!(b.block_number, bundle.block_number);
             }
-            _ => panic!("Expected Created event"),
+            _ => panic!("Expected Received event"),
         }
     }
 

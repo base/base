@@ -140,7 +140,7 @@ impl SpanBatchPayload {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use super::SpanBatchPayload;
 
     #[test]
     fn test_decode_origin_bits() {

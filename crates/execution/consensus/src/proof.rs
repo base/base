@@ -85,7 +85,7 @@ mod tests {
     use reth_optimism_chainspec::BASE_SEPOLIA;
     use reth_optimism_primitives::OpReceipt;
 
-    use super::*;
+    use super::{calculate_receipt_root_no_memo_optimism, calculate_receipt_root_optimism};
 
     /// Tests that the receipt root is computed correctly for the regolith block.
     /// This was implemented due to a minor bug in op-geth and op-erigon where in

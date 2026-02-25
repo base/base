@@ -309,7 +309,7 @@ mod test {
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
-    use super::*;
+    use super::OpEngineTypes;
     use crate::engine;
 
     macro_rules! assert_invalid_params_error {

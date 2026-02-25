@@ -85,7 +85,7 @@ mod tests {
     };
     use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
 
-    use super::*;
+    use super::Registry;
     use crate::test_utils;
 
     #[test]

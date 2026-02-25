@@ -139,7 +139,9 @@ fn build_l1_info_deposit_tx(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloy_primitives::{B256, address};
+
+    use super::{DEPOSIT_EVENT_TOPIC, L1_ATTRIBUTES_DEPOSITOR, L1_ATTRIBUTES_PREDEPLOYED};
 
     #[test]
     fn test_deposit_event_topic() {

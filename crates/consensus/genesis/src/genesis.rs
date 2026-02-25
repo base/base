@@ -40,7 +40,7 @@ impl<'a> arbitrary::Arbitrary<'a> for ChainGenesis {
 mod tests {
     use alloy_primitives::{address, b256, uint};
 
-    use super::*;
+    use super::ChainGenesis;
 
     const fn ref_genesis() -> ChainGenesis {
         ChainGenesis {

@@ -27,7 +27,7 @@ impl DepositTransactionParts {
 mod tests {
     use revm::primitives::b256;
 
-    use super::*;
+    use super::DepositTransactionParts;
 
     #[test]
     fn serialize_deserialize_json_deposit_tx_parts() {

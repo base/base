@@ -224,9 +224,9 @@ impl<'a, Storage: OpProofsStore> BytecodeReader for OpProofsStateProviderRef<'a,
 
 #[cfg(all(test, not(feature = "metrics")))]
 mod tests {
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{StateProvider, noop::NoopProvider};
 
-    use super::*;
+    use super::OpProofsStateProviderRef;
     use crate::InMemoryProofsStorage;
 
     #[test]

@@ -85,8 +85,9 @@ mod tests {
     use alloc::{collections::BTreeMap, vec};
 
     use alloy_primitives::{B256, Bloom, Bytes, U256, address};
+    use alloy_rpc_types_engine::PayloadId;
 
-    use super::*;
+    use super::OpFlashblockPayload;
     use crate::flashblock::{
         OpFlashblockPayloadBase, OpFlashblockPayloadDelta, OpFlashblockPayloadMetadata,
     };

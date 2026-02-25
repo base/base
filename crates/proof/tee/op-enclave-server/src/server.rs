@@ -508,7 +508,15 @@ impl Server {
 mod tests {
     use std::slice;
 
-    use super::*;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use op_enclave_core::{Proposal, ProposalParams};
+
+    use super::Server;
+    use crate::crypto::{
+        build_signing_data, encrypt_pkcs1v15, pkix_to_public_key, private_key_bytes,
+        sign_proposal_data_sync,
+    };
+    use crate::error::{ProposalError, ServerError};
 
     #[test]
     fn test_server_new_local_mode() {

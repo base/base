@@ -52,7 +52,7 @@ impl Hardforks {
 mod tests {
     use alloc::vec::Vec;
 
-    use super::*;
+    use super::Hardforks;
     use crate::Hardfork;
 
     #[test]

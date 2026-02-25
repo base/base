@@ -303,10 +303,13 @@ fn extract_addr(header: &HeaderValue, fallback: IpAddr) -> IpAddr {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr};
 
-    use super::*;
-    use crate::filter::FilterType;
+    use http::HeaderValue;
+
+    use super::{
+        FilterQuery, FilterType, create_filter_from_query, extract_addr, parse_comma_separated,
+    };
 
     #[test]
     fn test_parse_comma_separated() {

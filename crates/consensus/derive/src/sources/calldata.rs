@@ -101,10 +101,13 @@ impl<CP: ChainProvider + Send> DataAvailabilityProvider for CalldataSource<CP> {
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use alloy_consensus::{Signed, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy};
-    use alloy_primitives::{Address, Signature, TxKind, address};
+    use alloy_consensus::{
+        Signed, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy,
+    };
+    use alloy_primitives::{Address, Bytes, Signature, TxKind, address};
+    use base_protocol::BlockInfo;
 
-    use super::*;
+    use super::{CalldataSource, DataAvailabilityProvider, PipelineError, PipelineResult};
     use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};
 
     pub(crate) fn test_legacy_tx(to: Address) -> TxEnvelope {

@@ -122,7 +122,7 @@ impl OpGasLimitConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig};
 
     #[test]
     fn test_da() {

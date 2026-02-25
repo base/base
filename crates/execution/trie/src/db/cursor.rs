@@ -404,6 +404,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::{B256, U256};
     use reth_db::{
         DatabaseEnv,
         mdbx::{DatabaseArguments, init_db_for},
@@ -413,11 +414,20 @@ mod tests {
         cursor::DbDupCursorRW,
         transaction::{DbTx, DbTxMut},
     };
-    use reth_trie::{BranchNodeCompact, Nibbles, StoredNibbles};
+    use reth_primitives_traits::Account;
+    use reth_trie::{
+        BranchNodeCompact, Nibbles, StoredNibbles, hashed_cursor::HashedCursor,
+        trie_cursor::TrieCursor,
+    };
     use tempfile::TempDir;
 
-    use super::*;
-    use crate::db::{StorageValue, models};
+    use super::{
+        BlockNumberVersionedCursor, Dup, MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+    };
+    use crate::db::{
+        AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey,
+        MaybeDeleted, StorageTrieHistory, StorageTrieKey, StorageValue, VersionedValue, models,
+    };
 
     fn setup_db() -> DatabaseEnv {
         let tmp = TempDir::new().expect("create tmpdir");

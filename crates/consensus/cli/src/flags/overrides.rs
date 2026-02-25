@@ -71,7 +71,7 @@ impl OverrideArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::OverrideArgs;
 
     /// A mock command that uses the override args.
     #[derive(Parser, Debug, Clone)]

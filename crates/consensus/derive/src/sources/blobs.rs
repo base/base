@@ -221,9 +221,11 @@ pub(crate) mod tests {
     use alloy_consensus::Blob;
     use alloy_rlp::Decodable;
 
-    use super::*;
+    use alloy_primitives::Address;
+
+    use super::{BlobData, BlobProviderError, BlobSource, PipelineError};
     use crate::{
-        errors::PipelineErrorKind,
+        PipelineErrorKind,
         test_utils::{TestBlobProvider, TestChainProvider},
     };
 

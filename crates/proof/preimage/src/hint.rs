@@ -117,12 +117,16 @@ where
 
 #[cfg(all(test, feature = "std"))]
 mod test {
-    use alloc::{sync::Arc, vec::Vec};
+    use alloc::{string::String, sync::Arc, vec::Vec};
 
     use tokio::sync::Mutex;
 
-    use super::*;
-    use crate::native_channel::BidirectionalChannel;
+    use super::HintWriter;
+    use crate::{
+        errors::{PreimageOracleError, PreimageOracleResult},
+        native_channel::BidirectionalChannel,
+        traits::HintRouter,
+    };
 
     struct TestRouter {
         incoming_hints: Arc<Mutex<Vec<String>>>,

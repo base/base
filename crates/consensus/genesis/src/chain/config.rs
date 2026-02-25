@@ -148,7 +148,7 @@ impl ChainConfig {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
-    use super::*;
+    use super::ChainConfig;
 
     #[test]
     fn test_chain_config_json() {

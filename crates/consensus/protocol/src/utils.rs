@@ -141,7 +141,7 @@ mod tests {
     use alloy_primitives::{U256, address, bytes, uint};
     use kona_genesis::{ChainGenesis, HardForkConfig};
 
-    use super::*;
+    use super::to_system_config;
     use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};
 
     #[test]

@@ -32,7 +32,7 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<OpChainSpec>, eyre::Error
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{OpChainSpecParser, chain_value_parser};
 
     #[test]
     fn parse_known_chain_spec() {

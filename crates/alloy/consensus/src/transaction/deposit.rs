@@ -420,10 +420,12 @@ pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::hex;
-    use alloy_rlp::BytesMut;
+    use alloy_consensus::Transaction;
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
+    use alloy_rlp::{BytesMut, Decodable, Encodable};
 
-    use super::*;
+    use super::{DepositTransaction, TxDeposit};
 
     #[test]
     fn test_deposit_transaction_trait() {

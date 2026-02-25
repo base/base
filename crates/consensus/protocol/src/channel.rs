@@ -201,7 +201,7 @@ mod test {
         vec,
     };
 
-    use super::*;
+    use super::Channel;
 
     struct FrameValidityTestCase {
         #[allow(dead_code)]

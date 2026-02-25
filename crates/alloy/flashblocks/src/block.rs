@@ -67,10 +67,14 @@ mod tests {
     use std::io::Write;
 
     use alloy_primitives::{Address, B256, Bloom, Bytes as PrimitiveBytes, U256};
+    use alloy_rpc_types_engine::PayloadId;
+    use bytes::Bytes;
     use rstest::rstest;
     use serde_json::json;
 
-    use super::*;
+    use super::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, FlashblocksPayloadV1,
+    };
 
     #[rstest]
     #[case::plain(encode_plain)]

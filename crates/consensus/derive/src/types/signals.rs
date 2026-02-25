@@ -92,7 +92,9 @@ impl ActivationSignal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use kona_genesis::SystemConfig;
+
+    use super::{ActivationSignal, ResetSignal, Signal};
 
     #[test]
     fn test_reset_signal() {

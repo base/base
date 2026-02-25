@@ -639,13 +639,17 @@ impl PayloadHash {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
     #[cfg(feature = "std")]
     use alloy_primitives::hex;
+    use alloy_primitives::{B256, b256, keccak256};
     #[cfg(feature = "std")]
     use ssz::{Decode, Encode};
 
-    use super::*;
+    use super::{
+        OpExecutionData, OpExecutionPayloadEnvelope, OpFlashblockPayload, OpNetworkPayloadEnvelope,
+        PayloadEnvelopeEncodeError, PayloadHash,
+    };
+    use crate::OpFlashblockError;
 
     #[test]
     #[cfg(feature = "std")]

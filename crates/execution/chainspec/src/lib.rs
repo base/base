@@ -28,7 +28,7 @@ use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
 pub use base::BASE_MAINNET;
 pub use base_sepolia::BASE_SEPOLIA;
-pub use basefee::*;
+pub use basefee::{compute_jovian_base_fee, decode_holocene_base_fee};
 use derive_more::{Constructor, Deref, From, Into};
 pub use dev::OP_DEV;
 use reth_chainspec::{
@@ -486,7 +486,9 @@ mod tests {
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
     use reth_optimism_forks::{OpHardfork, OpHardforks};
 
-    use crate::*;
+    use crate::{
+        BASE_MAINNET, BASE_SEPOLIA, OP_DEV, OpChainSpec, OpChainSpecBuilder, make_op_genesis_header,
+    };
 
     #[test]
     fn test_storage_root_consistency() {

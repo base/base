@@ -66,7 +66,7 @@ impl TryFrom<AnyRpcTransaction> for OpTxEnvelope {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AnyRpcTransaction, AnyTxEnvelope, OpTxEnvelope, TxDeposit, UnknownTxEnvelope};
 
     #[test]
     fn test_conversion() {

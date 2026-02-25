@@ -415,7 +415,8 @@ mod tests {
     #[cfg(feature = "serde")]
     use alloy_primitives::{U256, b256};
 
-    use super::*;
+    use super::{FJORD_MAX_SEQUENCER_DRIFT, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, RollupConfig};
+    use crate::ChainGenesis;
 
     #[test]
     #[cfg(feature = "arbitrary")]

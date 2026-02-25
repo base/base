@@ -163,13 +163,16 @@ impl<F: ChainProvider + Send> SignalReceiver for IndexedTraversal<F> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::{sync::Arc, vec};
 
     use alloy_consensus::Receipt;
-    use alloy_primitives::{B256, Bytes, Log, LogData, address, b256, hex};
-    use kona_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, b256, hex};
+    use base_protocol::BlockInfo;
+    use kona_genesis::{
+        CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, RollupConfig, SystemConfig,
+    };
 
-    use super::*;
+    use super::{ActivationSignal, IndexedTraversal, ResetSignal, Signal};
     use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};
 
     const L1_SYS_CONFIG_ADDR: Address = address!("1337000000000000000000000000000000000000");

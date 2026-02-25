@@ -253,11 +253,11 @@ impl<Tx> TryFrom<Extended<OpTxEnvelope, Tx>> for OpPooledTransaction {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Transaction;
-    use alloy_primitives::{address, hex};
+    use alloy_eips::eip2718::Decodable2718;
+    use alloy_primitives::{Bytes, address, hex};
     use alloy_rlp::Decodable;
-    use bytes::Bytes;
 
-    use super::*;
+    use super::OpPooledTransaction;
 
     #[test]
     fn invalid_legacy_pooled_decoding_input_too_short() {

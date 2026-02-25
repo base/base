@@ -36,7 +36,9 @@ pub struct OpFlashblockPayloadBase {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use alloy_primitives::{Address, B256, Bytes, U256};
+
+    use super::OpFlashblockPayloadBase;
 
     #[test]
     #[cfg(feature = "serde")]

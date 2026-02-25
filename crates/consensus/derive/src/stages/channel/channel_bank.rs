@@ -241,14 +241,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{vec, vec::Vec};
+    use alloc::{sync::Arc, vec, vec::Vec};
 
-    use kona_genesis::HardForkConfig;
+    use base_protocol::BlockInfo;
+    use kona_genesis::{HardForkConfig, RollupConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::*;
+    use super::{Channel, ChannelBank, ChannelId, Signal};
     use crate::{
+        PipelineError,
         test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage},
         types::ResetSignal,
     };

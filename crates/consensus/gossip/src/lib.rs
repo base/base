@@ -72,4 +72,4 @@ pub use driver::GossipDriver;
 mod block_validity;
 pub use block_validity::BlockInvalidError;
 #[cfg(test)]
-pub(crate) use block_validity::tests::*;
+pub(crate) use block_validity::tests::{v2_valid_block, v3_valid_block, v4_valid_block};

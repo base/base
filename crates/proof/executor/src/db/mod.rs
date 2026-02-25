@@ -358,11 +358,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Sealable;
-    use alloy_primitives::b256;
+    use alloy_consensus::{EMPTY_ROOT_HASH, Header, Sealable};
+    use alloy_primitives::{B256, b256};
     use kona_mpt::NoopTrieHinter;
+    use revm::{Database, primitives::BLOCK_HASH_HISTORY};
 
-    use super::*;
+    use super::{NoopTrieDBProvider, TrieDB};
 
     fn new_test_db() -> TrieDB<NoopTrieDBProvider, NoopTrieHinter> {
         TrieDB::new(Header::default().seal_slow(), NoopTrieDBProvider, NoopTrieHinter)

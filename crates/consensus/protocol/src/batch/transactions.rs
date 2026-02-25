@@ -358,7 +358,7 @@ mod tests {
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702};
     use alloy_primitives::{Signature, TxKind, address};
 
-    use super::*;
+    use super::SpanBatchTransactions;
 
     #[test]
     fn test_span_batch_transactions_add_empty_txs() {

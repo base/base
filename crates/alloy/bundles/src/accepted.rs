@@ -117,7 +117,7 @@ mod tests {
     use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
 
-    use super::*;
+    use super::{AcceptedBundle, ParsedBundle};
     use crate::{
         Bundle,
         test_utils::{create_test_meter_bundle_response, create_transaction},

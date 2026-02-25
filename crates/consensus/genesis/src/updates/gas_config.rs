@@ -77,8 +77,10 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex, uint};
 
-    use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use super::GasConfigUpdate;
+    use crate::{
+        CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, GasConfigUpdateError, SystemConfigLog,
+    };
 
     #[test]
     fn test_gas_config_update_try_from() {

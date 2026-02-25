@@ -73,7 +73,7 @@ mod tests {
     use alloy_primitives::{Bytes, U256};
     use serde::{Deserialize, Serialize};
 
-    use super::*;
+    use super::{bytes_hex, u256_hex};
 
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct TestBytes {

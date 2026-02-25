@@ -465,21 +465,27 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::{sync::Arc, vec};
 
     use alloy_consensus::Header;
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
     use alloy_rlp::{BytesMut, Encodable};
     use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
-    use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
-    use kona_genesis::{ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD};
+    use base_protocol::{
+        Batch, BatchReader, BatchWithInclusionBlock, BlockInfo, L1BlockInfoBedrock, L1BlockInfoTx,
+        L2BlockInfo, SingleBatch,
+    };
+    use kona_genesis::{
+        ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
+    };
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::*;
-    use crate::test_utils::{
-        CollectingLayer, TestL2ChainProvider, TestNextBatchProvider, TraceStorage,
+    use super::{BatchQueue, NextBatchProvider};
+    use crate::{
+        test_utils::{CollectingLayer, TestL2ChainProvider, TestNextBatchProvider, TraceStorage},
+        types::{ResetSignal, Signal},
     };
 
     fn new_batch_reader() -> BatchReader {

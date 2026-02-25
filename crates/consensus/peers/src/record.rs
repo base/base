@@ -183,7 +183,9 @@ impl FromStr for NodeRecord {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::net::{IpAddr, ToSocketAddrs};
+
+    use super::NodeRecord;
 
     #[test]
     fn test_url_parse_domain() {

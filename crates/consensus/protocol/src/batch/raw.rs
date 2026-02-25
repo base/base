@@ -98,7 +98,7 @@ impl RawSpanBatch {
 mod test {
     use alloy_primitives::FixedBytes;
 
-    use super::*;
+    use super::RawSpanBatch;
 
     #[test]
     fn test_try_from_span_batch_empty_batches_errors() {

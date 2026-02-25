@@ -219,7 +219,7 @@ mod tests {
     use reth_optimism_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
     use reth_optimism_primitives::OpReceipt;
 
-    use super::*;
+    use super::validate_body_against_header_op;
 
     const HOLOCENE_TIMESTAMP: u64 = 1700000000;
     const ISTHMUS_TIMESTAMP: u64 = 1750000000;

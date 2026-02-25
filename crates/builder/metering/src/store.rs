@@ -107,7 +107,7 @@ impl Default for MeteringStore {
 mod tests {
     use alloy_primitives::{B256, TxHash, U256};
 
-    use super::*;
+    use super::{MeterBundleResponse, MeteringStore};
 
     fn create_test_metering(gas_used: u64) -> MeterBundleResponse {
         MeterBundleResponse {

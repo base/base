@@ -370,7 +370,7 @@ mod tests {
     use alloy_primitives::{Log, LogData, address, b256, bytes, hex};
     use alloy_rlp::Encodable;
 
-    use super::*;
+    use super::{OpReceiptEnvelope, OpTxType};
 
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]

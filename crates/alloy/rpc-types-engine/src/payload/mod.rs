@@ -757,7 +757,7 @@ impl OpExecutionPayload {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ExecutionPayloadV2, ExecutionPayloadV3, OpExecutionPayload, OpExecutionPayloadV4};
 
     #[test]
     #[cfg(feature = "serde")]

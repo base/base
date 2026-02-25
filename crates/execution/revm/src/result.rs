@@ -32,7 +32,7 @@ impl TryFrom<OpHaltReason> for HaltReason {
 mod tests {
     use revm::context_interface::result::OutOfGasError;
 
-    use super::*;
+    use super::OpHaltReason;
 
     #[test]
     fn test_serialize_json_op_halt_reason() {

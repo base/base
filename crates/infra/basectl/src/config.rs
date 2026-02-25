@@ -283,7 +283,7 @@ impl ChainConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::ChainConfig;
 
     #[tokio::test]
     async fn test_builtin_configs() {

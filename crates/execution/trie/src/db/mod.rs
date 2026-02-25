@@ -6,7 +6,11 @@
 //! branches, accounts, and storage leaves.
 
 mod models;
-pub use models::*;
+pub use models::{
+    AccountTrieHistory, BlockChangeSet, BlockNumberHash, ChangeSet, HashedAccountHistory,
+    HashedStorageHistory, HashedStorageKey, IntoKV, MaybeDeleted, ProofWindow, ProofWindowKey,
+    StorageTrieHistory, StorageTrieKey, StorageValue, Tables, VersionedValue,
+};
 
 mod store;
 pub use store::MdbxProofsStorage;

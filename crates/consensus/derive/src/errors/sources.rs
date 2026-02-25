@@ -55,7 +55,7 @@ impl From<BlobProviderError> for PipelineErrorKind {
 mod tests {
     use core::error::Error;
 
-    use super::*;
+    use super::{BlobDecodingError, BlobProviderError, PipelineError, PipelineErrorKind};
 
     #[test]
     fn test_blob_decoding_error_source() {

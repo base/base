@@ -513,7 +513,8 @@ mod tests {
     use proptest_arbitrary_interop::arb;
     use reth_codecs::Compact;
 
-    use super::*;
+    use super::OpTxEnvelope;
+    use crate::OpTransactionSigned;
 
     proptest! {
         #[test]

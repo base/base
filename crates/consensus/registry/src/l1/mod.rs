@@ -268,7 +268,7 @@ impl Display for L1GenesisGetterErrors {
 mod tests {
     use alloy_hardforks::EthereumHardfork;
 
-    use super::*;
+    use super::{L1Config, L1GenesisGetterErrors, NamedChain};
 
     #[test]
     fn test_get_l1_genesis() {

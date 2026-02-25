@@ -365,9 +365,12 @@ impl L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use revm::primitives::{bytes, hex};
+    use revm::{
+        interpreter::Gas,
+        primitives::{U256, bytes, hex},
+    };
 
-    use super::*;
+    use super::{L1BlockInfo, OpSpecId};
 
     #[test]
     fn test_data_gas_non_zero_bytes() {

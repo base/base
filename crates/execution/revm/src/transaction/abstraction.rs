@@ -352,11 +352,12 @@ impl From<TxEnvBuildError> for OpBuildError {
 #[cfg(test)]
 mod tests {
     use revm::{
+        context::TxEnv,
         context_interface::Transaction,
         primitives::{Address, B256},
     };
 
-    use super::*;
+    use super::OpTransaction;
 
     #[test]
     fn test_deposit_transaction_fields() {

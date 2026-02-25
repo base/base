@@ -133,7 +133,7 @@ mod test {
         HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
     };
 
-    use super::*;
+    use super::BatchReader;
 
     fn new_compressed_batch_data() -> Bytes {
         let file_contents =

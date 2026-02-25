@@ -250,9 +250,9 @@ impl PerChainConfig {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{Address, B256, U256, address, b256};
 
-    use super::*;
+    use super::{BlockId, Genesis, GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig};
 
     fn sample_config() -> PerChainConfig {
         PerChainConfig {

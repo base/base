@@ -10,7 +10,7 @@ use crate::{EngineClient, EngineState};
 
 /// Error type for build and seal operations.
 #[derive(Debug, thiserror::Error)]
-pub(in crate::task_queue) enum BuildAndSealError {
+pub(crate) enum BuildAndSealError {
     /// An error occurred during the build phase.
     #[error(transparent)]
     Build(#[from] BuildTaskError),
@@ -35,7 +35,7 @@ pub(in crate::task_queue) enum BuildAndSealError {
 /// * `cfg` - The rollup configuration
 /// * `attributes` - The payload attributes to build
 /// * `is_attributes_derived` - Whether the attributes were derived or created by the sequencer
-pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
+pub(crate) async fn build_and_seal<EngineClient_: EngineClient>(
     state: &mut EngineState,
     engine: Arc<EngineClient_>,
     cfg: Arc<RollupConfig>,

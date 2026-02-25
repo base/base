@@ -312,7 +312,7 @@ impl<'de> serde::Deserialize<'de> for Direction {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Connectedness, Direction};
 
     #[test]
     fn test_connectedness_from_u8() {

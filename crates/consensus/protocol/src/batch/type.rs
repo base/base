@@ -59,7 +59,7 @@ impl Decodable for BatchType {
 mod test {
     use alloc::vec::Vec;
 
-    use super::*;
+    use super::BatchType;
 
     #[test]
     fn test_batch_type_rlp_roundtrip() {

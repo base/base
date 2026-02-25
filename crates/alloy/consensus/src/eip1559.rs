@@ -144,7 +144,12 @@ pub enum EIP1559ParamError {
 mod tests {
     use core::str::FromStr;
 
-    use super::*;
+    use alloy_primitives::{B64, Bytes};
+
+    use super::{
+        BaseFeeParams, EIP1559ParamError, decode_holocene_extra_data, decode_jovian_extra_data,
+        encode_eip_1559_params, encode_holocene_extra_data, encode_jovian_extra_data,
+    };
 
     #[test]
     fn test_get_extra_data_post_holocene() {

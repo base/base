@@ -255,17 +255,20 @@ async fn derive_deposits(
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::{sync::Arc, vec};
 
     use alloy_consensus::Header;
-    use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_protocol::{BlockInfo, DepositError};
-    use kona_genesis::{HardForkConfig, SystemConfig};
+    use alloy_consensus::{Eip658Value, Receipt};
+    use alloy_eips::BlockNumHash;
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData, U64, U256, address};
+    use base_protocol::{BlockInfo, DepositError, L2BlockInfo};
+    use kona_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use kona_registry::L1Config;
 
-    use super::*;
+    use super::{DEPOSIT_EVENT_ABI_HASH, StatefulAttributesBuilder, derive_deposits};
     use crate::{
-        errors::ResetError,
+        PipelineErrorKind,
+        errors::{BuilderError, ResetError},
         test_utils::{TestChainProvider, TestSystemConfigL2Fetcher},
     };
 

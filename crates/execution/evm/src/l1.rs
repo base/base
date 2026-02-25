@@ -383,7 +383,7 @@ mod tests {
     use reth_optimism_forks::OpHardforks;
     use reth_optimism_primitives::OpTransactionSigned;
 
-    use super::*;
+    use super::{L1BlockInfo, extract_l1_info};
 
     #[test]
     fn sanity_l1_block() {

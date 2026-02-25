@@ -56,9 +56,13 @@ impl table::Decompress for ChangeSet {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_db::table::{Compress, Decompress};
+    use reth_db::{
+        DatabaseError,
+        table::{Compress, Decode, Decompress, Encode},
+    };
+    use reth_trie_common::StoredNibbles;
 
-    use super::*;
+    use super::{ChangeSet, HashedStorageKey, StorageTrieKey};
 
     #[test]
     fn test_encode_decode_empty_change_set() {

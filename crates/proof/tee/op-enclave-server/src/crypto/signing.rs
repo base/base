@@ -155,11 +155,14 @@ pub fn verify_proposal_signature(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{B256, U256, address, b256};
     use rand_08::rngs::OsRng;
 
-    use super::*;
-    use crate::crypto::generate_signer;
+    use super::{
+        SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, build_signing_data, sign_proposal_data_sync,
+        verify_proposal_signature,
+    };
+    use crate::{crypto::generate_signer, error::ProposalError};
 
     fn test_signing_data() -> Vec<u8> {
         build_signing_data(

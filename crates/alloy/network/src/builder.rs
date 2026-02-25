@@ -170,7 +170,7 @@ mod tests {
     use alloy_primitives::B256;
     use rstest::rstest;
 
-    use super::*;
+    use super::{OpTxType, OpTypedTransaction};
 
     /// Returns a minimal valid EIP-1559 [`OpTransactionRequest`].
     fn complete_eip1559_request() -> OpTransactionRequest {

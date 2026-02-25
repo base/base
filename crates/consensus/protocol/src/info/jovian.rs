@@ -185,7 +185,7 @@ mod tests {
 
     use alloy_primitives::keccak256;
 
-    use super::*;
+    use super::L1BlockInfoJovian;
 
     #[test]
     fn test_decode_calldata_jovian_invalid_length() {

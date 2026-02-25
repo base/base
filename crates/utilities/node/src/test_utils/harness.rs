@@ -248,7 +248,7 @@ mod tests {
     use alloy_primitives::U256;
     use alloy_provider::Provider;
 
-    use super::*;
+    use super::TestHarness;
     use crate::test_utils::Account;
 
     #[tokio::test]

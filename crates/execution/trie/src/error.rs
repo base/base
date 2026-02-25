@@ -145,9 +145,11 @@ pub type OpProofsStorageResult<T> = Result<T, OpProofsStorageError>;
 
 #[cfg(test)]
 mod test {
-    use reth_execution_errors::BlockValidationError;
+    use reth_db::DatabaseError;
+    use reth_execution_errors::{BlockExecutionError, BlockValidationError};
+    use reth_provider::ProviderError;
 
-    use super::*;
+    use super::OpProofsStorageError;
 
     #[test]
     fn test_op_proofs_store_error_to_db_error() {

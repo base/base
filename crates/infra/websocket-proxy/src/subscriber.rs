@@ -304,15 +304,17 @@ mod tests {
     };
 
     use axum::http::Uri;
-    use futures::SinkExt;
+    use futures::{SinkExt, StreamExt};
     use tokio::{
         net::{TcpListener, TcpStream},
+        select,
         sync::broadcast,
         time::{Duration, sleep, timeout},
     };
     use tokio_tungstenite::{accept_async, tungstenite::Message};
+    use tokio_util::sync::CancellationToken;
 
-    use super::*;
+    use super::{SubscriberOptions, WebsocketSubscriber};
     use crate::metrics::Metrics;
 
     struct MockServer {

@@ -349,7 +349,7 @@ pub(crate) mod tests {
     use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
     use kona_genesis::RollupConfig;
 
-    use super::*;
+    use super::{BlockInvalidError, BlockValidity};
 
     fn valid_block() -> Block<OpTxEnvelope> {
         // Simulate some random data

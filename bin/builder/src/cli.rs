@@ -221,7 +221,7 @@ impl TryFrom<&Args> for FlashblocksConfig {
 mod tests {
     use rstest::rstest;
 
-    use super::*;
+    use super::Args;
 
     fn convert(args: Args) -> BuilderConfig {
         BuilderConfig::try_from(args).expect("conversion should succeed")

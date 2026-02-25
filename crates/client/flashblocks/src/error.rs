@@ -147,7 +147,7 @@ pub type Result<T> = std::result::Result<T, StateProcessorError>;
 mod tests {
     use rstest::rstest;
 
-    use super::*;
+    use super::ProtocolError;
 
     #[rstest]
     #[case::invalid_sequence(

@@ -224,10 +224,11 @@ mod test {
     use alloc::vec;
     use core::str::FromStr;
 
-    use alloy_primitives::{Address, B256, FixedBytes, address, b64, b256, bytes};
+    use alloy_eips::eip1559::BaseFeeParams;
+    use alloy_primitives::{Address, B64, B256, Bytes, FixedBytes, address, b64, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
 
-    use super::*;
+    use super::{EIP1559ParamError, OpPayloadAttributes, PayloadId};
 
     #[test]
     fn test_payload_id_parity_op_geth() {

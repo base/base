@@ -124,7 +124,7 @@ impl Default for RollupArgs {
 mod tests {
     use clap::{Args, Parser};
 
-    use super::*;
+    use super::RollupArgs;
 
     /// A helper type to parse Args more easily
     #[derive(Parser)]

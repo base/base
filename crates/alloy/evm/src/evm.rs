@@ -138,15 +138,17 @@ mod tests {
     use alloc::vec;
 
     use alloy_evm::{
-        EvmFactory, EvmInternals,
+        EvmEnv, EvmFactory, EvmInternals,
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
-    use base_revm::{bls12_381, bn254_pair};
-    use revm::{context::CfgEnv, database::EmptyDB};
+    use base_revm::{OpSpecId, bls12_381, bn254_pair};
+    use revm::{
+        context::{BlockEnv, CfgEnv},
+        database::EmptyDB,
+    };
     use rstest::rstest;
 
-    use super::*;
     use crate::OpEvmFactory;
 
     #[rstest]

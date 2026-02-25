@@ -115,7 +115,7 @@ mod tests {
     use discv5::{Enr, enr::EnrPublicKey};
     use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
 
-    use super::*;
+    use super::{BootNode, BootNodes, OP_RAW_BOOTNODES, OP_RAW_TESTNET_BOOTNODES};
 
     #[test]
     fn test_validate_bootnode_lens() {

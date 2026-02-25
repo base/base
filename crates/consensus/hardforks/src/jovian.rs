@@ -169,7 +169,7 @@ impl Hardfork for Jovian {
 mod tests {
     use alloy_primitives::b256;
 
-    use super::*;
+    use super::Jovian;
     use crate::test_utils::check_deployment_code;
 
     #[test]

@@ -468,19 +468,28 @@ impl<C> InitTable for StoragesTrieInit<C> {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_primitives::{Address, U256, keccak256};
+    use alloy_eips::BlockNumHash;
+    use alloy_primitives::{Address, B256, U256, keccak256};
     use reth_db::{
-        Database, cursor::DbCursorRW, test_utils::create_test_rw_db, transaction::DbTxMut,
+        Database,
+        cursor::DbCursorRW,
+        tables,
+        test_utils::create_test_rw_db,
+        transaction::{DbTx, DbTxMut},
     };
-    use reth_primitives_traits::Account;
+    use reth_primitives_traits::{Account, StorageEntry};
     use reth_trie::{
         BranchNodeCompact, StorageTrieEntry, StoredNibbles, StoredNibblesSubKey, TrieMask,
         hashed_cursor::HashedCursor, trie_cursor::TrieCursor,
     };
+    use reth_trie_common::Nibbles;
     use tempfile::TempDir;
 
-    use super::*;
-    use crate::MdbxProofsStorage;
+    use super::InitializationJob;
+    use crate::{
+        MdbxProofsStorage, OpProofsInitialStateStore, OpProofsStore,
+        db::{HashedStorageKey, StorageTrieKey},
+    };
 
     /// Helper function to create a key
     fn k(b: u8) -> B256 {

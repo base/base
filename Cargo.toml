@@ -70,6 +70,7 @@ implicit-clone = "warn"
 or-fun-call = "warn"
 
 # === Code Style ===
+wildcard-imports = "warn"
 use-self = "warn"
 option-if-let-else = "warn"
 uninlined-format-args = "warn"

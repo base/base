@@ -86,11 +86,11 @@ mod tests {
 
     use alloy_consensus::TxEnvelope;
     use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::{Address, address};
+    use alloy_primitives::{Address, Bytes, address};
     use base_protocol::BlockInfo;
     use kona_genesis::{HardForkConfig, RollupConfig, SystemConfig};
 
-    use super::*;
+    use super::{BlobSource, CalldataSource, EthereumDataSource};
     use crate::{
         BlobData,
         test_utils::{TestBlobProvider, TestChainProvider},

@@ -89,7 +89,7 @@ mod tests {
 
     use clap::Parser;
 
-    use super::*;
+    use super::MetricsArgs;
 
     /// Helper struct to parse `MetricsArgs` within a test CLI structure.
     #[derive(Parser, Debug)]

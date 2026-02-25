@@ -361,7 +361,11 @@ pub fn verify_execution_result(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloy_primitives::{Address, B256, U256};
+    use kona_mpt::TrieHinter;
+
+    use super::{BlockExecutionResult, EnclaveTrieHinter, verify_execution_result};
+    use crate::error::ExecutorError;
 
     #[test]
     fn test_enclave_trie_hinter() {

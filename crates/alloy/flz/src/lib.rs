@@ -144,7 +144,7 @@ fn u24(input: &[u8], idx: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{data_gas_fjord, flz_compress_len, tx_estimated_size_fjord_bytes};
 
     #[test]
     fn test_flz_compress_len_empty() {

@@ -70,7 +70,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
 
-    use super::*;
+    use super::SyncStatus;
 
     #[test]
     fn test_sync_status_default() {

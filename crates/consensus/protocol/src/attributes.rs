@@ -96,7 +96,7 @@ impl OpAttributesWithParent {
 mod tests {
     use alloc::vec;
 
-    use super::*;
+    use super::OpAttributesWithParent;
 
     #[test]
     fn test_op_attributes_with_parent() {

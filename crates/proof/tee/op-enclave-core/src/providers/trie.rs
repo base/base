@@ -125,8 +125,9 @@ mod tests {
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
     use alloy_primitives::{Bloom, Log, b256};
+    use base_alloy_consensus::OpReceiptEnvelope;
 
-    use super::*;
+    use super::{EMPTY_ROOT_HASH, compute_receipt_root, compute_tx_root, encode_index};
 
     /// Creates a test receipt for use in test vectors.
     ///

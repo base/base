@@ -182,7 +182,7 @@ impl BatchValidity {
 mod tests {
     use alloc::format;
 
-    use super::*;
+    use super::{BatchDropReason, BatchValidity};
 
     #[test]
     fn test_batch_validity() {

@@ -19,6 +19,9 @@ use crate::{
     error::{AttestationError, ServerError},
 };
 
+/// Allowed clock skew for certificate validity checking (in seconds).
+pub(super) const ALLOWED_CLOCK_SKEW_SECS: i64 = 0;
+
 /// An attestation document from a Nitro Enclave.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttestationDocument {
@@ -79,7 +82,10 @@ impl VerifyOptions {
 /// Verify that a certificate is valid at the given time.
 ///
 /// Checks that the current time is between notBefore and notAfter.
-fn check_certificate_validity(cert: &X509, check_time: &Asn1Time) -> Result<(), ServerError> {
+pub(super) fn check_certificate_validity(
+    cert: &X509,
+    check_time: &Asn1Time,
+) -> Result<(), ServerError> {
     let not_before = cert.not_before();
     let not_after = cert.not_after();
 
@@ -300,20 +306,23 @@ pub fn extract_public_key(document: &AttestationDocument) -> Result<Vec<u8>, Ser
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use openssl::{
+        asn1::Asn1Time,
         bn::BigNum,
         hash::MessageDigest,
         pkey::PKey,
         rsa::Rsa,
         x509::{
-            X509Builder, X509NameBuilder,
+            X509, X509Builder, X509NameBuilder,
             extension::{BasicConstraints, KeyUsage},
         },
     };
 
-    use super::*;
+    use crate::error::{AttestationError, ServerError};
+
+    use super::{ALLOWED_CLOCK_SKEW_SECS, VerifyOptions, check_certificate_validity};
 
     /// Helper to create a self-signed test certificate with custom validity period
     fn create_test_cert_with_times(not_before: Asn1Time, not_after: Asn1Time) -> X509 {

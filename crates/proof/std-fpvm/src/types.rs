@@ -41,7 +41,7 @@ impl From<FileDescriptor> for i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::FileDescriptor;
 
     #[test]
     fn test_file_descriptor_into_usize() {

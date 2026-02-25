@@ -353,7 +353,7 @@ mod tests {
     use alloc::{string::ToString, vec};
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
-    use alloy_eips::eip2718::WithEncoded;
+    use alloy_eips::eip2718::{Encodable2718, WithEncoded};
     use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
@@ -373,8 +373,11 @@ mod tests {
         state::AccountInfo,
     };
 
-    use super::*;
-    use crate::{OpAlloyReceiptBuilder, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
+    use crate::{
+        OpAlloyReceiptBuilder, OpBlockExecutionCtx, OpBlockExecutionError, OpBlockExecutor,
+        OpBlockExecutorFactory, OpEvm, OpEvmFactory,
+    };
+    use alloy_evm::block::{BlockExecutionError, BlockExecutor, BlockValidationError};
 
     #[test]
     fn test_with_encoded() {

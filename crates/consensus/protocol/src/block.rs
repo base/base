@@ -246,7 +246,7 @@ mod tests {
     use alloy_primitives::b256;
     use base_alloy_consensus::OpBlock;
 
-    use super::*;
+    use super::{BlockInfo, FromBlockError, L2BlockInfo};
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
 
     #[test]

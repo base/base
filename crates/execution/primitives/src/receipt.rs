@@ -158,12 +158,13 @@ pub(super) mod serde_bincode_compat {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Receipt, ReceiptWithBloom};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
+    use alloy_primitives::{Bloom, Bytes, Log, address, b256, bytes, hex_literal::hex};
     use alloy_rlp::Encodable;
     use reth_codecs::Compact;
 
-    use super::*;
+    use super::{OpDepositReceipt, OpReceipt};
 
     #[test]
     fn test_decode_receipt() {

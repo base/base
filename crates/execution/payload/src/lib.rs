@@ -23,7 +23,7 @@ mod traits;
 use reth_optimism_primitives::OpPrimitives;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
 use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
-pub use traits::*;
+pub use traits::{OpAttributes, OpPayloadPrimitives};
 pub mod validator;
 pub use validator::OpExecutionPayloadValidator;
 

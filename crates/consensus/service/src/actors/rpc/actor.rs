@@ -158,7 +158,7 @@ where
 mod tests {
     use std::net::SocketAddr;
 
-    use super::*;
+    use super::{RpcActor, RpcContext};
 
     #[tokio::test]
     async fn test_launch_no_modules() {

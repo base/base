@@ -28,7 +28,7 @@ pub struct OpExecutionPayloadEnvelopeV3 {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
-    use super::*;
+    use super::OpExecutionPayloadEnvelopeV3;
 
     #[test]
     fn serde_roundtrip_execution_payload_envelope_v3() {

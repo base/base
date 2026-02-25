@@ -201,13 +201,16 @@ where
 
 #[cfg(test)]
 mod test {
-    use alloc::vec;
+    use alloc::{sync::Arc, vec};
 
-    use kona_genesis::HardForkConfig;
+    use alloy_primitives::Bytes;
+    use base_protocol::Batch;
+    use kona_genesis::{HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig};
 
-    use super::*;
+    use super::{BatchReader, ChannelReader, ChannelReaderProvider, Signal};
     use crate::{
-        errors::PipelineErrorKind, test_utils::TestChannelReaderProvider, types::ResetSignal,
+        PipelineError, errors::PipelineErrorKind, test_utils::TestChannelReaderProvider,
+        types::ResetSignal,
     };
 
     fn new_compressed_batch_data() -> Bytes {

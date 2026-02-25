@@ -351,7 +351,7 @@ mod test {
     use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
 
-    use super::*;
+    use super::{OpReceiptConverter, OpReceiptFieldsBuilder};
 
     /// OP Mainnet transaction at index 0 in block 124665056.
     ///

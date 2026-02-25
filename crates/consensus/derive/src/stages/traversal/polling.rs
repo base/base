@@ -187,9 +187,13 @@ pub(crate) mod tests {
     use alloc::vec;
 
     use alloy_primitives::{address, b256};
+    use base_protocol::BlockInfo;
+    use kona_genesis::SystemConfig;
 
-    use super::*;
-    use crate::{errors::PipelineErrorKind, test_utils::TraversalTestHelper};
+    use super::{ActivationSignal, PollingTraversal, ResetSignal, Signal};
+    use crate::{
+        PipelineError, ResetError, errors::PipelineErrorKind, test_utils::TraversalTestHelper,
+    };
 
     #[test]
     fn test_l1_traversal_batcher_address() {

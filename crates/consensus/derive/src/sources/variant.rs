@@ -40,12 +40,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AsyncIterator, BlobSource, CalldataSource, EthereumDataSourceVariant, PipelineResult};
     use crate::test_utils::TestChainProvider;
     use base_protocol::BlockInfo;
 
     use crate::{
-        BlobData, EthereumDataSourceVariant,
+        BlobData,
         test_utils::TestBlobProvider,
     };
 

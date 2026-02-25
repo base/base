@@ -107,7 +107,13 @@ impl Authentication {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Authentication,
+        AuthenticationParseError::{
+            DuplicateAPIKeyArgument, DuplicateApplicationArgument, MissingAPIKeyArgument,
+            MissingApplicationArgument, NoData, TooManyComponents,
+        },
+    };
 
     #[test]
     fn test_parsing() {

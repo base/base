@@ -140,9 +140,13 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::Bytes;
+    use base_protocol::BlockInfo;
 
-    use super::*;
-    use crate::test_utils::{TestDAP, TraversalTestHelper};
+    use super::{ActivationSignal, L1Retrieval, ResetSignal, Signal};
+    use crate::{
+        PipelineError,
+        test_utils::{TestDAP, TraversalTestHelper},
+    };
 
     #[tokio::test]
     async fn test_l1_retrieval_flush_channel() {

@@ -62,7 +62,7 @@ mod test {
 
     use alloy_rlp::{Decodable, Encodable};
 
-    use super::*;
+    use super::SpanBatchEip1559TransactionData;
     use crate::SpanBatchTransactionData;
 
     #[test]

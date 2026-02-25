@@ -17,7 +17,7 @@ pub struct SafeHeadResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::SafeHeadResponse;
 
     // <https://github.com/alloy-rs/op-alloy/issues/155>
     #[test]

@@ -70,7 +70,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use super::*;
+    use super::RpcArgs;
 
     #[rstest]
     #[case::disable_rpc(&["--rpc.disabled"], |args: &mut RpcArgs| { args.rpc_disabled = true; })]

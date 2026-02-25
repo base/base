@@ -105,7 +105,8 @@ impl TryFrom<&OtherFields> for OpBaseFeeInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{OpBaseFeeInfo, OpChainInfo, OpGenesisInfo};
+    use alloy_serde::OtherFields;
 
     #[test]
     fn test_extract_op_chain_genesis_info() {

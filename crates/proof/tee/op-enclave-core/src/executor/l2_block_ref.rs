@@ -88,9 +88,10 @@ pub fn l2_block_to_block_info(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_consensus::Header;
+    use alloy_primitives::{Bytes, address, b256};
 
-    use super::*;
+    use super::l2_block_to_block_info;
     use crate::config::default_rollup_config;
 
     fn test_header(number: u64, timestamp: u64) -> Header {

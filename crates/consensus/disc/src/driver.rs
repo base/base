@@ -382,9 +382,10 @@ mod tests {
         handler::NodeContact,
     };
     use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
+    use kona_peers::{BootNode, BootNodes, BootStoreFile, EnrValidation};
     use tempfile::tempdir;
 
-    use super::*;
+    use super::Discv5Driver;
     use crate::LocalNode;
 
     #[tokio::test]
@@ -446,7 +447,7 @@ mod tests {
         let testnet = BootNodes::testnet();
         let testnet: Vec<CombinedPublicKey> = testnet
             .iter()
-            .filter_map(|node| match node {
+            .filter_map(|node: &BootNode| match node {
                 BootNode::Enr(enr) => {
                     if EnrValidation::validate(enr, BASE_SEPOLIA_CHAIN_ID).is_invalid() {
                         return None;
@@ -487,7 +488,7 @@ mod tests {
         let mainnet = BootNodes::mainnet();
         let mainnet: Vec<CombinedPublicKey> = mainnet
             .iter()
-            .filter_map(|node| match node {
+            .filter_map(|node: &BootNode| match node {
                 BootNode::Enr(enr) => {
                     if EnrValidation::validate(enr, BASE_MAINNET_CHAIN_ID).is_invalid() {
                         return None;

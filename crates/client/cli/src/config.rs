@@ -115,7 +115,7 @@ impl L2ConfigFile {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{L1ConfigFile, L2ConfigFile};
 
     #[test]
     fn test_l1_config_file_default() {

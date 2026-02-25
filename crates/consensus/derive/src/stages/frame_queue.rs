@@ -206,10 +206,12 @@ where
 pub(crate) mod tests {
     use alloc::vec;
 
+    use alloy_primitives::Bytes;
+    use base_protocol::BlockInfo;
     use kona_genesis::HardForkConfig;
 
-    use super::*;
-    use crate::{test_utils::TestFrameQueueProvider, types::ResetSignal};
+    use super::{Frame, FrameQueue, FrameQueueProvider, Signal};
+    use crate::{PipelineError, test_utils::TestFrameQueueProvider, types::ResetSignal};
 
     #[tokio::test]
     async fn test_frame_queue_reset() {

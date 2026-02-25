@@ -1,3 +1,4 @@
+allowed-wildcard-imports = ["rayon::prelude", "ratatui::prelude", "httpmock::prelude"]
 allow-dbg-in-tests = true
 allow-print-in-tests = true
 too-large-for-stack = 256

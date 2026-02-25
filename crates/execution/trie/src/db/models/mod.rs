@@ -6,18 +6,18 @@
 //! accounts, and storage leaves.
 
 mod block;
-pub use block::*;
+pub use block::BlockNumberHash;
 mod version;
-pub use version::*;
+pub use version::{MaybeDeleted, VersionedValue};
 mod storage;
-pub use storage::*;
+pub use storage::{HashedStorageKey, ProofWindowKey, StorageTrieKey, StorageValue};
 mod change_set;
 pub(crate) mod kv;
 use std::fmt;
 
 use alloy_primitives::B256;
-pub use change_set::*;
-pub use kv::*;
+pub use change_set::ChangeSet;
+pub use kv::IntoKV;
 use reth_db::{
     TableSet, TableType, TableViewer,
     table::{DupSort, TableInfo},
@@ -39,7 +39,7 @@ tables! {
 
     /// Stores historical branch nodes for the storage trie of each account.
     ///
-    /// Each entry is identified by a composite key combining the account’s hashed address and the
+    /// Each entry is identified by a composite key combining the account's hashed address and the
     /// compact-encoded trie path. Versions are tracked using block numbers as subkeys.
     table StorageTrieHistory {
         type Key = StorageTrieKey;

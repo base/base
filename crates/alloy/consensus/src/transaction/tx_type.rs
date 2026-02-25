@@ -43,7 +43,7 @@ mod tests {
 
     use alloy_rlp::{Decodable, Encodable};
 
-    use super::*;
+    use super::OpTxType;
 
     #[test]
     fn test_all_tx_types() {

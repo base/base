@@ -18,7 +18,7 @@ pub(crate) const fn from_ret(value: usize) -> IOResult<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{IOError, from_ret};
 
     #[test]
     fn test_from_ret_io_error() {

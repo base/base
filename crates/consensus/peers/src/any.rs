@@ -71,8 +71,10 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_primitives::b512;
+    use discv5::Enr;
 
-    use super::*;
+    use super::{AnyNode, DialOpts, DialOptsError};
+    use crate::{NodeRecord, PeerId};
 
     #[test]
     fn test_into_dial_opts() {

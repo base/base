@@ -251,7 +251,7 @@ mod tests {
 
     use alloy_primitives::b256;
 
-    use super::*;
+    use super::Isthmus;
     use crate::test_utils::check_deployment_code;
 
     #[test]

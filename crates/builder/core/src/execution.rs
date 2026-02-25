@@ -4,7 +4,9 @@
 
 use core::fmt::Debug;
 
-use ExecutionMeteringLimitExceeded::*;
+use ExecutionMeteringLimitExceeded::{
+    BlockStateRootTime, FlashblockExecutionTime, TransactionExecutionTime, TransactionStateRootTime,
+};
 use alloy_primitives::{Address, U256};
 use base_revm::OpTransactionError;
 use derive_more::Display;
@@ -358,7 +360,7 @@ impl ExecutionInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{ExecutionInfo, ResourceLimits, TxResources, TxnExecutionError};
 
     /// Helper to create default limits with block gas limit set
     fn default_limits() -> ResourceLimits {

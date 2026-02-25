@@ -214,10 +214,15 @@ const fn is_fork_active_but_not_activation(fork_time: Option<u64>, l2_time: u64)
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256, hex};
+    use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
+    use base_protocol::L1BlockInfoTx;
 
-    use super::*;
-    use crate::{config::default_rollup_config, providers::test_utils::test_header};
+    use super::{
+        L2SystemConfigFetcher, is_fork_active_but_not_activation, is_jovian_but_not_first_block,
+    };
+    use crate::{
+        config::default_rollup_config, error::ProviderError, providers::test_utils::test_header,
+    };
 
     // Test vectors from kona-protocol crate - these are real L1BlockInfo calldata bytes
     // from mainnet/testnet blocks.

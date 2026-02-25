@@ -583,11 +583,12 @@ pub(crate) mod serde_bincode_compat {
 mod tests {
     use alloc::vec;
 
+    use alloy_consensus::TxReceipt;
     use alloy_eips::Encodable2718;
-    use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
-    use alloy_rlp::Encodable;
+    use alloy_primitives::{Bloom, Bytes, address, b256, bytes, hex_literal::hex};
+    use alloy_rlp::{Decodable, Encodable};
 
-    use super::*;
+    use super::{Eip658Value, Log, OpDepositReceipt, OpReceipt, Receipt, ReceiptWithBloom};
 
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]

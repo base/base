@@ -2,6 +2,7 @@ use std::{ops::RangeBounds, path::Path};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+#[cfg(feature = "metrics")]
 use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
@@ -18,6 +19,7 @@ use reth_trie_common::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
     updates::{StorageTrieUpdates, TrieUpdates},
 };
+#[cfg(feature = "metrics")]
 use tracing::error;
 
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
@@ -1161,24 +1163,36 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
 
 #[cfg(test)]
 mod tests {
-    use alloy_eips::NumHash;
-    use alloy_primitives::B256;
+    use alloy_eips::{NumHash, eip1898::BlockWithParent};
+    use alloy_primitives::{B256, U256};
     use reth_db::{
-        DatabaseError,
-        cursor::DbDupCursorRO,
+        Database, DatabaseError,
+        cursor::{DbCursorRO, DbCursorRW, DbDupCursorRO},
         transaction::{DbTx, DbTxMut},
     };
+    use reth_primitives_traits::Account;
     use reth_trie::{
-        BranchNodeCompact, HashedPostStateSorted, HashedStorage, Nibbles, StoredNibbles,
-        updates::{StorageTrieUpdates, TrieUpdatesSorted},
+        BranchNodeCompact, HashedPostState, HashedPostStateSorted, HashedStorage, Nibbles,
+        StoredNibbles,
+        updates::{StorageTrieUpdates, TrieUpdates, TrieUpdatesSorted},
     };
     use tempfile::TempDir;
 
-    use super::*;
-    use crate::db::{
-        StorageTrieKey,
-        models::{AccountTrieHistory, StorageTrieHistory},
+    use super::MdbxProofsStorage;
+    use crate::{
+        OpProofsInitialStateStore, OpProofsStorageError, OpProofsStore,
+        api::BlockStateDiff,
+        db::{
+            BlockChangeSet, BlockNumberHash, HashedStorageKey, ProofWindow, ProofWindowKey,
+            StorageTrieKey,
+            models::{
+                AccountTrieHistory, ChangeSet, HashedAccountHistory, HashedStorageHistory,
+                MaybeDeleted, StorageTrieHistory, StorageValue, VersionedValue,
+            },
+            store::WriteCounts,
+        },
     };
+    use alloy_eips::BlockNumHash;
 
     const B0: u64 = 0;
 

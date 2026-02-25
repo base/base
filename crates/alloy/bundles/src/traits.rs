@@ -69,11 +69,11 @@ impl BundleTxs for AcceptedBundle {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Keccak256, U256};
+    use alloy_primitives::{Keccak256, U256, keccak256};
     use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
 
-    use super::*;
+    use super::ParsedBundle;
     use crate::{
         Bundle,
         test_utils::{create_test_meter_bundle_response, create_transaction},

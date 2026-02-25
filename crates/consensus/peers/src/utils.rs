@@ -80,9 +80,11 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use alloy_primitives::hex::FromHex;
-    use discv5::enr::{CombinedKey, Enr, EnrKey};
+    use discv5::enr::{CombinedKey, Enr, EnrKey, EnrPublicKey};
 
-    use super::*;
+    use discv5::multiaddr::Protocol;
+
+    use super::{enr_to_multiaddr, local_id_to_p2p_id, peer_id_to_secp256k1_pubkey};
     use crate::PeerId;
 
     #[test]

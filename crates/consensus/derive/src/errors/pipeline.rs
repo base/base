@@ -375,7 +375,12 @@ pub enum PipelineEncodingError {
 mod tests {
     use core::error::Error;
 
-    use super::*;
+    use base_protocol::DepositError;
+    use base_protocol::SpanBatchError;
+
+    use super::{
+        BuilderError, PipelineEncodingError, PipelineError, PipelineErrorKind, ResetError,
+    };
 
     #[test]
     fn test_pipeline_error_kind_source() {

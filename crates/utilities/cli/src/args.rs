@@ -125,7 +125,7 @@ mod tests {
     use rstest::rstest;
     use tracing::level_filters::LevelFilter;
 
-    use super::*;
+    use super::LogArgs;
 
     #[derive(Parser)]
     struct TestCli {
@@ -248,7 +248,7 @@ mod tests {
     /// We test using CLI args (which clap parses the same way) to avoid test
     /// isolation issues with global environment variables.
     mod env_vars {
-        use super::*;
+        use super::TestCli;
 
         /// Verify that `LogArgs` fields have the expected env var names.
         /// This is done by checking the clap metadata.

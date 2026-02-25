@@ -100,16 +100,17 @@ fn u24(input: &[u8], idx: u32) -> u32 {
 mod tests {
     use std::vec::Vec;
 
+    use alloy_primitives::Bytes;
     use alloy_sol_types::{SolCall, sol};
     use revm::{
         Context, ExecuteEvm,
         bytecode::Bytecode,
         database::{BenchmarkDB, EEADDRESS, FFADDRESS},
-        primitives::{Bytes, TxKind, U256, bytes},
+        primitives::{TxKind, U256, bytes},
     };
     use rstest::rstest;
 
-    use super::*;
+    use super::flz_compress_len;
     use crate::{DefaultOp, OpBuilder};
 
     #[rstest]

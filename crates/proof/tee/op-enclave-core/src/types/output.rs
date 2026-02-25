@@ -44,9 +44,10 @@ pub fn output_root_v0(header: &Header, storage_root: B256) -> B256 {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::Header;
     use alloy_primitives::b256;
 
-    use super::*;
+    use super::output_root_v0;
 
     /// Creates a test header with known values for deterministic output.
     fn test_header_for_output() -> Header {

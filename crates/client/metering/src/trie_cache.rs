@@ -95,7 +95,7 @@ mod tests {
     use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use revm_database::states::BundleState;
 
-    use super::*;
+    use super::TrieCache;
 
     fn bundle_with_nonce(who: Address, from_nonce: u64, to_nonce: u64) -> BundleState {
         BundleState::new(

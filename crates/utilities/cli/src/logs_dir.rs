@@ -75,7 +75,7 @@ macro_rules! logs_dir {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::LogsDir;
 
     #[test]
     fn test_try_default_for_package_returns_some() {

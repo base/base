@@ -406,7 +406,7 @@ mod tests {
     use base_protocol::{BlockInfo, L2BlockInfo};
     use kona_registry::Registry;
 
-    use super::*;
+    use super::{AttributesMatch, AttributesMismatch};
     use crate::AttributesMismatch::EIP1559Parameters;
 
     fn default_attributes() -> OpAttributesWithParent {

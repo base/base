@@ -192,7 +192,7 @@ impl CanonicalBlockReconciler {
 mod tests {
     use rstest::rstest;
 
-    use super::*;
+    use super::{FlashblockSequenceValidator, SequenceValidationResult};
 
     // ==================== FlashblockSequenceValidator Tests ====================
 

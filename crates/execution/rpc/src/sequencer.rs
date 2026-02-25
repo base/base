@@ -185,7 +185,7 @@ struct SequencerClientInner {
 mod tests {
     use alloy_primitives::U64;
 
-    use super::*;
+    use super::SequencerClient;
 
     #[tokio::test]
     async fn test_http_body_str() {

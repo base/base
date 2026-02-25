@@ -178,7 +178,7 @@ fn default_genesis() -> ChainGenesis {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{default_rollup_config, l1_config_for_l2_chain_id};
 
     #[test]
     fn test_default_rollup_config_values() {

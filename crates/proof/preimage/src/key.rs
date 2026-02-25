@@ -150,7 +150,8 @@ impl core::fmt::Display for PreimageKey {
 mod test {
     use alloc::string::ToString;
 
-    use super::*;
+    use super::{PreimageKey, PreimageKeyType};
+    use alloy_primitives::{B256, U256};
 
     #[test]
     fn test_preimage_key_from_u8() {

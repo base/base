@@ -23,7 +23,7 @@ pub struct CancelBundle {
 mod tests {
     use alloy_primitives::b256;
 
-    use super::*;
+    use super::{BundleHash, CancelBundle};
 
     #[test]
     fn test_bundle_hash_serialization() {

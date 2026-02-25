@@ -126,7 +126,14 @@ impl OpHardfork {
 mod tests {
     use core::str::FromStr;
 
-    use super::*;
+    use alloy_chains::Chain;
+
+    use super::OpHardfork;
+    use crate::{
+        BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
+        BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_CANYON_TIMESTAMP,
+        BASE_SEPOLIA_ECOTONE_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
+    };
 
     extern crate alloc;
 

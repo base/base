@@ -258,7 +258,8 @@ mod tests {
     use httpmock::prelude::*;
     use serde_json::json;
 
-    use super::*;
+    use super::{IndexedBlobHash, OnlineBeaconClient, blob_versioned_hash};
+    use crate::blobs::BoxedBlobWithIndex;
 
     const TEST_BLOB_DATA: Blob = FixedBytes::repeat_byte(1);
     const TEST_BLOB_HASH_HEX: &str =

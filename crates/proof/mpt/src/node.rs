@@ -623,12 +623,12 @@ mod test {
 
     use alloy_primitives::{b256, bytes, hex, keccak256};
     use alloy_rlp::{Decodable, EMPTY_STRING_CODE, Encodable};
-    use alloy_trie::{HashBuilder, Nibbles};
+    use alloy_trie::{EMPTY_ROOT_HASH, HashBuilder, Nibbles};
     use rand::prelude::IteratorRandom;
 
-    use super::*;
+    use super::TrieNode;
     use crate::{
-        NoopTrieHinter, NoopTrieProvider, TrieNode, ordered_trie_with_encoder,
+        NoopTrieHinter, NoopTrieProvider, TrieProvider, ordered_trie_with_encoder,
         test_util::TrieNodeProvider,
     };
 

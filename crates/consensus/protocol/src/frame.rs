@@ -268,7 +268,7 @@ impl Frame {
 mod test {
     use alloc::vec;
 
-    use super::*;
+    use super::{DERIVATION_VERSION_0, Frame, FrameDecodingError, MAX_FRAME_LEN, parse_frames};
 
     #[test]
     fn test_encode_frame_roundtrip() {

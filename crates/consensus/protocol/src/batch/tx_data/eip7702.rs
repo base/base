@@ -71,7 +71,7 @@ mod test {
     use alloy_rlp::{Decodable, Encodable};
     use alloy_rpc_types_eth::Authorization;
 
-    use super::*;
+    use super::SpanBatchEip7702TransactionData;
     use crate::SpanBatchTransactionData;
 
     #[test]

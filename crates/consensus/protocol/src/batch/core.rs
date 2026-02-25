@@ -87,7 +87,7 @@ mod tests {
     use alloy_consensus::{Signed, TxEip2930, TxEnvelope};
     use alloy_primitives::{Bytes, Signature, TxKind, address, hex};
 
-    use super::*;
+    use super::Batch;
     use crate::{SpanBatchElement, SpanBatchError, SpanBatchTransactions};
 
     #[test]
