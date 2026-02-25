@@ -1405,7 +1405,13 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("parent block mismatch, expected: 40, received: 41"));
+        assert!(
+            logs[0].contains("Parent block mismatch")
+                && logs[0].contains("expected_block_num")
+                && logs[0].contains("40")
+                && logs[0].contains("received_block_num")
+                && logs[0].contains("41")
+        );
     }
 
     #[tokio::test]
