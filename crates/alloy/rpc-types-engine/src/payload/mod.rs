@@ -60,7 +60,6 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
                 use alloc::string::String;
 
                 use alloy_primitives::{U64, map::HashMap};
-                use alloy_rpc_types_engine::ExecutionPayloadV1;
 
                 enum Fields {
                     ParentHash,

@@ -1,6 +1,13 @@
 use alloc::vec::Vec;
 use core::ops::Index;
 
+// Production imports for hardfork implementations
+use EthereumHardfork::{
+    Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Cancun,
+    Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Osaka,
+    Paris, Petersburg, Prague, Shanghai, SpuriousDragon, Tangerine,
+};
+use OpHardfork::{Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
 
@@ -50,9 +57,6 @@ impl OpChainHardforks {
 
 impl EthereumHardforks for OpChainHardforks {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        use EthereumHardfork::{Cancun, Prague, Shanghai};
-        use OpHardfork::{Canyon, Ecotone, Isthmus};
-
         if self.forks.is_empty() {
             return ForkCondition::Never;
         }
@@ -82,10 +86,6 @@ impl Index<OpHardfork> for OpChainHardforks {
     type Output = ForkCondition;
 
     fn index(&self, hf: OpHardfork) -> &Self::Output {
-        use OpHardfork::{
-            Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
-        };
-
         match hf {
             Bedrock => &self.forks[Bedrock.idx()].1,
             Regolith => &self.forks[Regolith.idx()].1,
@@ -104,13 +104,6 @@ impl Index<EthereumHardfork> for OpChainHardforks {
     type Output = ForkCondition;
 
     fn index(&self, hf: EthereumHardfork) -> &Self::Output {
-        use EthereumHardfork::{
-            Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Cancun,
-            Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier,
-            Osaka, Paris, Petersburg, Prague, Shanghai, SpuriousDragon, Tangerine,
-        };
-        use OpHardfork::{Bedrock, Canyon, Ecotone, Isthmus};
-
         match hf {
             // Dao Hardfork is not needed for OpChainHardforks
             Dao | Osaka | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
@@ -132,6 +125,7 @@ impl Index<EthereumHardfork> for OpChainHardforks {
 
 #[cfg(test)]
 mod tests {
+    use OpHardfork::*;
     use alloy_hardforks::EthereumHardfork;
 
     use super::*;
@@ -139,8 +133,6 @@ mod tests {
 
     #[test]
     fn base_mainnet_fork_conditions() {
-        use OpHardfork::*;
-
         let base_mainnet_forks = OpChainHardforks::base_mainnet();
         assert_eq!(base_mainnet_forks[Bedrock], ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK));
         assert_eq!(
@@ -179,8 +171,6 @@ mod tests {
 
     #[test]
     fn base_sepolia_fork_conditions() {
-        use OpHardfork::*;
-
         let base_sepolia_forks = OpChainHardforks::base_sepolia();
         assert_eq!(base_sepolia_forks[Bedrock], ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK));
         assert_eq!(

@@ -749,7 +749,7 @@ impl SpanBatch {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
+    use alloc::{string::ToString, vec};
 
     use alloy_consensus::{Header, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
@@ -1505,7 +1505,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_batch_epoch_hash_mismatch() {
-        use crate::alloc::string::ToString;
         let trace_store: TraceStorage = Default::default();
         let layer = CollectingLayer::new(trace_store.clone());
         let subscriber = tracing_subscriber::Registry::default().with(layer);

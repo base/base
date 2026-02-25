@@ -237,9 +237,13 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        net::UdpSocket,
+        sync::{Arc, Mutex},
+    };
 
     use async_trait::async_trait;
+    use cadence::{StatsdClient, UdpMetricSink};
 
     use super::*;
 
@@ -265,9 +269,6 @@ mod tests {
     }
 
     fn mock_metrics() -> HealthcheckMetrics {
-        use std::net::UdpSocket;
-
-        use cadence::{StatsdClient, UdpMetricSink};
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         socket.set_nonblocking(true).unwrap();
         let sink = UdpMetricSink::from("127.0.0.1:8125", socket).unwrap();

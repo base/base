@@ -121,7 +121,7 @@ impl GlobalArgs {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
     use rstest::rstest;
     use tracing::level_filters::LevelFilter;
 
@@ -254,8 +254,6 @@ mod tests {
         /// This is done by checking the clap metadata.
         #[test]
         fn log_args_env_var_names() {
-            use clap::CommandFactory;
-
             let cmd = TestCli::command();
             let args: Vec<_> = cmd.get_arguments().collect();
 

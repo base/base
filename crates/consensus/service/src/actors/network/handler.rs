@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use alloy_primitives::Address;
 use discv5::Enr;
 use kona_disc::{Discv5Handler, HandlerRequest};
-use kona_gossip::{ConnectionGater, GossipDriver};
+use kona_gossip::{ConnectionGate, ConnectionGater, GossipDriver};
 use kona_sources::BlockSignerHandler;
 use tokio::sync::{mpsc, watch};
 
@@ -81,7 +81,6 @@ impl NetworkHandler {
                         }
 
                 if let Some(info) = self.gossip.peerstore.remove(&peer_to_remove) {
-                    use kona_gossip::ConnectionGate;
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
                     base_macros::inc!(gauge, kona_gossip::Metrics::BANNED_PEERS, "peer_id" => peer_to_remove.to_string(), "score" => score.to_string());

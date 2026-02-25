@@ -70,12 +70,12 @@ pub fn private_to_public(private_key: &RsaPrivateKey) -> RsaPublicKey {
 #[cfg(test)]
 mod tests {
     use rand_08::rngs::OsRng;
+    use rsa::traits::PublicKeyParts;
 
     use super::*;
 
     #[test]
     fn test_generate_rsa_key() {
-        use rsa::traits::PublicKeyParts;
         let mut rng = OsRng;
         let key = generate_rsa_key(&mut rng).expect("failed to generate key");
         assert_eq!(key.size() * 8, RSA_KEY_BITS);

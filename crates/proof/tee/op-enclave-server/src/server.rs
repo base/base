@@ -14,6 +14,8 @@ use op_enclave_core::{
     types::account::AccountResult,
 };
 use parking_lot::RwLock;
+#[cfg(test)]
+use rand_08::rngs::OsRng;
 use rsa::RsaPrivateKey;
 
 use crate::{
@@ -323,8 +325,6 @@ impl Server {
     /// The decryption key is NOT usable - do not use for actual encryption/decryption tests.
     #[cfg(test)]
     pub fn new_for_testing() -> Result<Self, ServerError> {
-        use rand_08::rngs::OsRng;
-
         let mut rng = OsRng;
 
         // Generate ECDSA signer (fast, ~1ms)

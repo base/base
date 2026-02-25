@@ -93,6 +93,8 @@ impl L1ReceiptsFetcher {
 
 #[cfg(test)]
 mod tests {
+    use alloy_trie::EMPTY_ROOT_HASH;
+
     use super::*;
     use crate::providers::test_utils::test_header;
 
@@ -131,8 +133,6 @@ mod tests {
 
     #[test]
     fn test_verify_receipts_empty() {
-        use alloy_trie::EMPTY_ROOT_HASH;
-
         let hash = B256::repeat_byte(0xAA);
         let mut header = test_header(12345, 1_700_000_000);
         header.receipts_root = EMPTY_ROOT_HASH;

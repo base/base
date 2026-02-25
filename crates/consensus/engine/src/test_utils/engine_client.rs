@@ -662,7 +662,8 @@ fn block_id_to_key(block_id: &BlockId) -> String {
 
 #[cfg(test)]
 mod tests {
-    use alloy_rpc_types_engine::PayloadStatusEnum;
+    use alloy_primitives::{Bytes, U256};
+    use alloy_rpc_types_engine::{ExecutionPayloadV1, PayloadStatusEnum};
 
     use super::*;
 
@@ -688,8 +689,6 @@ mod tests {
         mock.set_new_payload_v2_response(status.clone()).await;
 
         // Create a minimal ExecutionPayloadInputV2 for testing
-        use alloy_primitives::{Bytes, U256};
-        use alloy_rpc_types_engine::ExecutionPayloadV1;
         let payload = ExecutionPayloadInputV2 {
             execution_payload: ExecutionPayloadV1 {
                 parent_hash: B256::ZERO,
@@ -751,8 +750,6 @@ mod tests {
         assert_eq!(mock.cfg().block_time, cfg.block_time);
 
         // Create a minimal ExecutionPayloadInputV2 for testing
-        use alloy_primitives::{Bytes, U256};
-        use alloy_rpc_types_engine::ExecutionPayloadV1;
         let payload = ExecutionPayloadInputV2 {
             execution_payload: ExecutionPayloadV1 {
                 parent_hash: B256::ZERO,

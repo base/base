@@ -192,6 +192,7 @@ mod tests {
     use alloy_consensus::{SignableTransaction, TxEip1559, TxEip7702, TxEnvelope};
     use alloy_eips::eip2718::{Decodable2718, Encodable2718};
     use alloy_primitives::{Address, Sealed, Signature, TxKind, U256};
+    use alloy_rlp::{Decodable, Encodable};
     use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
     use kona_genesis::HardForkConfig;
     use tracing::Level;
@@ -328,7 +329,6 @@ mod tests {
 
     #[test]
     fn test_roundtrip_encoding() {
-        use alloy_rlp::{Decodable, Encodable};
         let batch = SingleBatch {
             parent_hash: BlockHash::from([0x01; 32]),
             epoch_num: 1,

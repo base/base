@@ -9,6 +9,7 @@ use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_evm::OpEvm;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_protocol::L1BlockInfoTx;
 // Re-export L1BlockInfo for use by callers
 pub use base_revm::L1BlockInfo;
 use base_revm::{
@@ -133,8 +134,6 @@ pub fn build_l1_block_info_from_deposit(
     prev_deposit_calldata: &Bytes,
     spec_id: OpSpecId,
 ) -> Result<L1BlockInfo, String> {
-    use base_protocol::L1BlockInfoTx;
-
     // Decode the L1BlockInfoTx from the calldata
     let l1_info_tx = L1BlockInfoTx::decode_calldata(prev_deposit_calldata)
         .map_err(|e| format!("Failed to decode L1BlockInfoTx: {e}"))?;

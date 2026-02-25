@@ -10,10 +10,13 @@
 //!
 //! For `RollupConfig`, we re-export from `kona_genesis` to maintain ecosystem compatibility.
 
+use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 // Re-export RollupConfig from kona_genesis for ecosystem compatibility
 pub use kona_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
+
+use crate::config::default_rollup_config;
 
 /// Version constant for binary serialization format.
 const VERSION_0: u64 = 0;
@@ -209,8 +212,6 @@ impl PerChainConfig {
     /// - `l1_system_config_address`
     #[must_use]
     pub fn to_rollup_config(&self) -> RollupConfig {
-        use crate::config::default_rollup_config;
-
         let mut cfg = default_rollup_config();
 
         // Overwrite chain-specific fields
@@ -225,8 +226,6 @@ impl PerChainConfig {
 
     /// Convert our Genesis to `kona_genesis::ChainGenesis`.
     const fn to_chain_genesis(&self) -> kona_genesis::ChainGenesis {
-        use alloy_eips::eip1898::BlockNumHash;
-
         kona_genesis::ChainGenesis {
             l1: BlockNumHash { hash: self.genesis.l1.hash, number: self.genesis.l1.number },
             l2: BlockNumHash { hash: self.genesis.l2.hash, number: self.genesis.l2.number },

@@ -230,9 +230,6 @@ mod tests {
 
     #[test]
     fn test_compute_receipt_root_single_receipt() {
-        use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
-        use alloy_primitives::Log;
-
         let inner_receipt = Receipt::<Log> {
             status: Eip658Value::Eip658(true),
             cumulative_gas_used: 21000,
@@ -256,9 +253,6 @@ mod tests {
 
     #[test]
     fn test_compute_receipt_root_multiple_receipts() {
-        use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
-        use alloy_primitives::Log;
-
         let receipts: Vec<OpReceiptEnvelope> = (0..3)
             .map(|i| {
                 let inner_receipt = Receipt::<Log> {

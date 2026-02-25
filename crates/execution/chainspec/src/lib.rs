@@ -303,7 +303,6 @@ impl OpHardforks for OpChainSpec {
 
 impl From<Genesis> for OpChainSpec {
     fn from(genesis: Genesis) -> Self {
-        use reth_optimism_forks::OpHardfork;
         let optimism_genesis_info = OpGenesisInfo::extract_from(&genesis);
         let genesis_info =
             optimism_genesis_info.optimism_chain_info.genesis_info.unwrap_or_default();
@@ -477,10 +476,12 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
 #[cfg(test)]
 mod tests {
     use alloc::string::{String, ToString};
+    use core::str::FromStr;
 
     use alloy_genesis::{ChainConfig, Genesis};
-    use alloy_primitives::{b256, hex};
+    use alloy_primitives::{B256, U256, b256, hex};
     use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
+    use base_alloy_rpc_types::OpBaseFeeInfo;
     use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, test_fork_ids};
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
     use reth_optimism_forks::{OpHardfork, OpHardforks};
@@ -489,10 +490,6 @@ mod tests {
 
     #[test]
     fn test_storage_root_consistency() {
-        use core::str::FromStr;
-
-        use alloy_primitives::{B256, U256};
-
         let k1 =
             B256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")
                 .unwrap();
@@ -852,8 +849,6 @@ mod tests {
 
     #[test]
     fn parse_genesis_optimism_with_variable_base_fee_params() {
-        use base_alloy_rpc_types::OpBaseFeeInfo;
-
         let geth_genesis = r#"
     {
       "config": {
@@ -928,8 +923,6 @@ mod tests {
 
     #[test]
     fn test_fork_order_optimism_mainnet() {
-        use reth_optimism_forks::OpHardfork;
-
         let genesis = Genesis {
             config: ChainConfig {
                 chain_id: 0,
