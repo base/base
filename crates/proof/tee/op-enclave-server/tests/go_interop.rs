@@ -521,8 +521,6 @@ fn test_rust_signature_verifiable() {
         .expect("verification should succeed");
     assert!(valid, "Rust should verify its own signature");
 
-    println!("Rust signature: {}", hex::encode(&signature));
-    println!("Public key: {}", hex::encode(&public_key));
 }
 
 /// Test signature format: 65 bytes (r: 32, s: 32, v: 1).

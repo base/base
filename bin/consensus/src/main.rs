@@ -8,11 +8,12 @@ pub mod metrics;
 
 fn main() {
     use clap::Parser;
+    use tracing::error;
 
     base_cli_utils::init_common!();
 
     if let Err(err) = cli::Cli::parse().run() {
-        eprintln!("Error: {err:?}");
+        error!(error = ?err, "consensus node failed");
         std::process::exit(1);
     }
 }
