@@ -1678,11 +1678,10 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "dropped batch, epoch is too old, minimum: {:?}",
-            l2_block.block_info.id(),
+        assert!(
+            logs[0].contains("Dropped batch, epoch is too old")
+                && logs[0].contains("minimum_epoch")
         );
-        assert!(logs[0].contains(&str));
     }
 
     #[tokio::test]
