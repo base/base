@@ -384,7 +384,7 @@ impl OpTxEnvelope {
         }
     }
 
-    /// Returns the [`TxEip1559`] variant if the transaction is an EIP-1559 transaction.
+    /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
     pub const fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
         match self {
             Self::Deposit(tx) => Some(tx),
