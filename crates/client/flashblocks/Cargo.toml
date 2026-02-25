@@ -63,7 +63,7 @@ futures-util.workspace = true
 
 # rpc
 serde = { workspace = true, features = ["std"] }
-jsonrpsee.workspace = true
+jsonrpsee = { workspace = true, features = ["http-client"] }
 jsonrpsee-types.workspace = true
 
 # metrics

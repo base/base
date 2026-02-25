@@ -184,6 +184,9 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&fb),
+                ctx.pool().clone(),
+                Vec::new(),
+                Arc::new(tokio::sync::Semaphore::new(10)),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

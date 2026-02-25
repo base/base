@@ -13,13 +13,17 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
+use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::OpTransactionRequest;
 use jsonrpsee::{
-    core::{RpcResult, async_trait},
+    core::{RpcResult, async_trait, client::ClientT},
+    http_client::HttpClient,
     proc_macros::rpc,
+    rpc_params,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
+use reth_primitives::transaction::SignedTransaction;
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
@@ -27,12 +31,12 @@ use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
-use tokio::{sync::broadcast::error::RecvError, time};
+use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
+use tokio::{
+    sync::{Semaphore, broadcast::error::RecvError},
+    time,
+};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
-use reth_transaction_pool::{TransactionPool, TransactionOrigin, PoolTransaction};
-use reth_primitives::transaction::SignedTransaction;
-use base_alloy_consensus::OpTxEnvelope;
-use url::Url;
 use tracing::{debug, trace, warn};
 
 use crate::{FlashblocksAPI, Metrics, PendingBlocksAPI};
@@ -123,7 +127,8 @@ pub trait EthApiOverride {
 
     /// Sends a raw transaction
     #[method(name = "sendRawTransaction")]
-    async fn send_raw_transaction(&self, transaction: alloy_primitives::Bytes) -> RpcResult<TxHash>;
+    async fn send_raw_transaction(&self, transaction: alloy_primitives::Bytes)
+    -> RpcResult<TxHash>;
 }
 
 /// Extended Eth API with flashblocks support.
@@ -133,14 +138,30 @@ pub struct EthApiExt<Eth: EthApiTypes, FB, Pool> {
     eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
     pool: Pool,
-    builder_rpc: Vec<Url>,
+    builder_clients: Vec<HttpClient>,
+    builder_rpc_semaphore: Arc<Semaphore>,
     metrics: Metrics,
 }
 
 impl<Eth: EthApiTypes, FB, Pool> EthApiExt<Eth, FB, Pool> {
     /// Creates a new extended Eth API instance with flashblocks support.
-    pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>, pool: Pool, builder_rpc: Vec<Url>) -> Self {
-        Self { eth_api, eth_filter, flashblocks_state, pool, builder_rpc, metrics: Metrics::default() }
+    pub fn new(
+        eth_api: Eth,
+        eth_filter: EthFilter<Eth>,
+        flashblocks_state: Arc<FB>,
+        pool: Pool,
+        builder_clients: Vec<HttpClient>,
+        builder_rpc_semaphore: Arc<Semaphore>,
+    ) -> Self {
+        Self {
+            eth_api,
+            eth_filter,
+            flashblocks_state,
+            pool,
+            builder_clients,
+            builder_rpc_semaphore,
+            metrics: Metrics::default(),
+        }
     }
 }
 
@@ -150,7 +171,8 @@ where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
     Pool: TransactionPool + 'static,
-    <Pool as TransactionPool>::Transaction: PoolTransaction<Pooled = base_alloy_consensus::OpPooledTransaction>,
+    <Pool as TransactionPool>::Transaction:
+        PoolTransaction<Pooled = base_alloy_consensus::OpPooledTransaction>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn block_by_number(
@@ -546,38 +568,59 @@ where
             .map_err(Into::into)
     }
 
-    async fn send_raw_transaction(&self, transaction: alloy_primitives::Bytes) -> RpcResult<TxHash> {
+    async fn send_raw_transaction(
+        &self,
+        transaction: alloy_primitives::Bytes,
+    ) -> RpcResult<TxHash> {
         debug!(
             message = "rpc::send_raw_transaction",
             transaction = ?transaction
         );
 
-        // Decode the transaction
+        // Decode the transaction with proper error handling
         let mut b = transaction.as_ref();
-        // TODO: no unwraps
-        let envelope = OpTxEnvelope::decode_2718(&mut b).unwrap();
-        let pooled = envelope.try_into_pooled().unwrap();
-        let recovered = pooled.try_into_recovered().unwrap();
+        let envelope = OpTxEnvelope::decode_2718(&mut b)
+            .map_err(|_| EthApiError::FailedToDecodeSignedTransaction)?;
+        let pooled =
+            envelope.try_into_pooled().map_err(|_| EthApiError::FailedToDecodeSignedTransaction)?;
+        let recovered =
+            pooled.try_into_recovered().map_err(|_| EthApiError::InvalidTransactionSignature)?;
 
         // Validate the transaction by adding it to the pool
         let pool_tx = <Pool as TransactionPool>::Transaction::from_pooled(recovered);
-        let tx_hash = pool_tx.hash().0.to_owned();
-        self.pool.add_transaction(TransactionOrigin::External, pool_tx).await
-            .map_err(|e| EthApiError::PoolError(e.into()).into())?;
+        let tx_hash = *pool_tx.hash();
+        self.pool
+            .add_transaction(TransactionOrigin::External, pool_tx)
+            .await
+            .map_err(|e| EthApiError::PoolError(e.into()))?;
 
-        // No errors, so the tx is valid
-        // Rollout 1: We call the builder's RPC endpoint to `eth_sendRawTransaction`
-        for builder_rpc in self.builder_rpc.iter() {
-            let client = JsonRpcClient::new(builder_rpc.clone());
-            let response = client.send_raw_transaction(transaction).await;
-            if response.is_ok() {
-                return Ok(TxHash::from(tx_hash));
-            }
+        // Fire-and-forget to all builder RPCs concurrently with rate limiting
+        for client in &self.builder_clients {
+            let client = client.clone();
+            let semaphore = Arc::clone(&self.builder_rpc_semaphore);
+            let tx_bytes = transaction.clone();
+
+            tokio::spawn(async move {
+                // Try to acquire permit, skip if rate limited
+                let _permit = match semaphore.try_acquire() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        warn!(message = "rate limited: skipping builder RPC forward");
+                        return;
+                    }
+                };
+
+                // Fire-and-forget RPC call to builder
+                if let Err(e) = client
+                    .request::<TxHash, _>("eth_sendRawTransaction", rpc_params![tx_bytes])
+                    .await
+                {
+                    warn!(message = "builder RPC forward failed", error = %e);
+                }
+            });
         }
 
-        
-
-        Ok(TxHash::from(tx_hash))
+        Ok(tx_hash)
     }
 }
 

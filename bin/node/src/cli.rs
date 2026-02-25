@@ -47,6 +47,6 @@ impl From<&Args> for Option<FlashblocksConfig> {
     fn from(args: &Args) -> Self {
         args.flashblocks_url
             .clone()
-            .map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
+            .and_then(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth, None).ok())
     }
 }
