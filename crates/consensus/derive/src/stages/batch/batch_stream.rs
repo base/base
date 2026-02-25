@@ -492,7 +492,11 @@ mod test {
 
         let logs = trace_store.get_by_level(tracing::Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("Extracting singular batches from span batch failed: Future batch L1 origin before safe head"));
+        assert!(
+            logs[0].contains("Extracting singular batches from span batch failed")
+                && logs[0].contains("error")
+                && logs[0].contains("Future batch L1 origin before safe head")
+        );
     }
 
     #[tokio::test]
