@@ -135,7 +135,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         .execute(state)
         .await
         .map_err(|e| {
-            warn!(target: "engine", ?e, "Apply safe head failed");
+            warn!(target: "engine", error = ?e, "Apply safe head failed");
             e
         })?;
 
@@ -238,7 +238,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                     .execute(state)
                     .await
                     .map_err(|e| {
-                        warn!(target: "engine", ?e, "Consolidation failed");
+                        warn!(target: "engine", error = ?e, "Consolidation failed");
                         e
                     })?;
 
@@ -259,7 +259,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 }
                 Err(e) => {
                     // Continue on to build the block since we failed to construct the block info.
-                    warn!(target: "engine", ?e, "Failed to construct L2BlockInfo, proceeding to build task");
+                    warn!(target: "engine", error = ?e, "Failed to construct L2BlockInfo, proceeding to build task");
                 }
             }
         }

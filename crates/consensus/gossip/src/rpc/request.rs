@@ -183,9 +183,9 @@ impl P2pRpcRequest {
 
     fn disconnect_peer<G: ConnectionGate>(peer_id: PeerId, gossip: &mut GossipDriver<G>) {
         if let Err(e) = gossip.swarm.disconnect_peer_id(peer_id) {
-            warn!(target: "p2p::rpc", peer_id = ?peer_id, error = ?e, "Failed to disconnect peer");
+            warn!(target: "p2p::rpc", peer_id = %peer_id, error = ?e, "Failed to disconnect peer");
         } else {
-            info!(target: "p2p::rpc", peer_id = ?peer_id, "Disconnected peer");
+            info!(target: "p2p::rpc", peer_id = %peer_id, "Disconnected peer");
             // Record the duration of the peer connection.
             if let Some(start_time) = gossip.peer_connection_start.remove(&peer_id) {
                 let _peer_duration = start_time.elapsed();
@@ -356,7 +356,7 @@ impl P2pRpcRequest {
             let node_to_peer_id: HashMap<NodeId, PeerId> = peer_ids.into_iter().filter_map(|id|
             {
                 let Ok(pubkey) = libp2p_identity::PublicKey::try_decode_protobuf(&id.to_bytes()[2..]) else {
-                    error!(target: "p2p::rpc", peer_id = ?id, "Failed to decode public key from peer id. This is a bug as all the peer ids should be decodable (because they come from secp256k1 public keys).");
+                    error!(target: "p2p::rpc", peer_id = %id, "Failed to decode public key from peer id. This is a bug as all the peer ids should be decodable (because they come from secp256k1 public keys).");
                     return None;
                 };
 
@@ -365,7 +365,7 @@ impl P2pRpcRequest {
                     |key| ecdsa::VerifyingKey::from_sec1_bytes(key.to_bytes().as_slice()).map_err(|err| err.to_string())
                 )    {                     Ok(key) => key,
                         Err(err) => {
-                            error!(target: "p2p::rpc", peer_id = ?id, err = ?err, "Failed to convert public key to secp256k1 public key. This is a bug.");
+                            error!(target: "p2p::rpc", peer_id = %id, error = ?err, "Failed to convert public key to secp256k1 public key. This is a bug.");
                             return None;
                         }};
                 let node_id = NodeId::from(key);

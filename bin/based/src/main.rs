@@ -117,7 +117,7 @@ async fn main() {
     tokio::select! {
         _ = checker.poll_for_health_checks() => {},
         _ = &mut shutdown_rx => {
-            info!(message = "Shutdown signal received, exiting");
+            info!("Shutdown signal received, exiting");
         }
     }
 }

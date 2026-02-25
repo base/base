@@ -189,9 +189,9 @@ impl<Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
                 let progress_pct = progress * 100.0;
                 info!(
                     name = %name,
-                    total_entries = total_entries,
+                    total_entries,
                     progress_pct = format_args!("{:.2}", progress_pct),
-                    estimated_total_time = estimated_total_time,
+                    estimated_total_time = format_args!("{:.1}", estimated_total_time),
                     "Processed entries"
                 );
             }

@@ -58,12 +58,12 @@ where
         if let Some(client) = self.raw_tx_forwarder().as_ref() {
             debug!(target: "rpc::eth", hash = %pool_transaction.hash(), "forwarding raw transaction to sequencer");
             let hash = client.forward_raw_transaction(&tx).await.inspect_err(|err| {
-                    debug!(target: "rpc::eth", %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
+                    debug!(target: "rpc::eth", error = %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
                 })?;
 
             // Retain tx in local tx pool after forwarding, for local RPC usage.
             let _ = self.inner.eth_api.add_pool_transaction(origin, pool_transaction).await.inspect_err(|err| {
-                warn!(target: "rpc::eth", %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
+                warn!(target: "rpc::eth", error = %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
             });
 
             return Ok(hash);

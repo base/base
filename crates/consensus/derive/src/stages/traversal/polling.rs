@@ -118,7 +118,7 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             }
             Ok(false) => { /* Ignore, no update applied */ }
             Err(err) => {
-                error!(target: "l1_traversal", err = ?err, block_number = next_l1_origin.number, "Failed to update system config");
+                error!(target: "l1_traversal", error = ?err, block_number = next_l1_origin.number, "Failed to update system config");
                 base_macros::set!(
                     gauge,
                     crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,

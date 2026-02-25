@@ -276,11 +276,11 @@ impl P2PArgs {
         let tcp_socket = std::net::TcpListener::bind((ip_addr, tcp_port));
         let udp_socket = std::net::UdpSocket::bind((ip_addr, udp_port));
         if let Err(e) = tcp_socket {
-            error!(target: "p2p::flags", tcp_port = tcp_port, error = %e, "Error binding TCP socket");
+            error!(target: "p2p::flags", tcp_port, error = %e, "Error binding TCP socket");
             eyre::bail!("Error binding TCP socket on port {tcp_port}: {e}");
         }
         if let Err(e) = udp_socket {
-            error!(target: "p2p::flags", udp_port = udp_port, error = %e, "Error binding UDP socket");
+            error!(target: "p2p::flags", udp_port, error = %e, "Error binding UDP socket");
             eyre::bail!("Error binding UDP socket on port {udp_port}: {e}");
         }
 
