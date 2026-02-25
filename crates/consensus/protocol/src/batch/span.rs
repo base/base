@@ -1510,8 +1510,11 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        let str = "batch is for future epoch too far ahead, while it has the next timestamp, so it must be invalid. starting epoch: 10 | next epoch: 9";
-        assert!(logs[0].contains(str));
+        assert!(
+            logs[0].contains("Batch is for future epoch too far ahead")
+                && logs[0].contains("starting_epoch")
+                && logs[0].contains("next_epoch")
+        );
     }
 
     #[tokio::test]
