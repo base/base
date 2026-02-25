@@ -111,4 +111,25 @@ pub struct Metrics {
     /// Size of bundle state being cloned (number of accounts).
     #[metric(describe = "Size of bundle state being cloned (number of accounts)")]
     pub bundle_state_clone_size: Histogram,
+
+    // Builder RPC metrics
+    /// Count of successful builder RPC forwards.
+    #[metric(describe = "Count of successful builder RPC forwards")]
+    pub builder_rpc_success: Counter,
+
+    /// Count of failed builder RPC forwards.
+    #[metric(describe = "Count of failed builder RPC forwards")]
+    pub builder_rpc_error: Counter,
+
+    /// Count of builder RPC forwards skipped due to rate limiting.
+    #[metric(describe = "Count of builder RPC forwards skipped due to rate limiting")]
+    pub builder_rpc_rate_limited: Counter,
+
+    /// Current adaptive concurrency soft limit for builder RPCs.
+    #[metric(describe = "Current adaptive concurrency soft limit for builder RPCs")]
+    pub builder_rpc_concurrency_limit: Gauge,
+
+    /// Current number of in-flight builder RPC requests.
+    #[metric(describe = "Current number of in-flight builder RPC requests")]
+    pub builder_rpc_in_flight: Gauge,
 }

@@ -69,6 +69,9 @@ impl BaseNodeExtension for FlashblocksExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&state_for_rpc),
+                ctx.pool().clone(),
+                cfg.builder_clients.clone(),
+                Arc::clone(&cfg.concurrency_limiter),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

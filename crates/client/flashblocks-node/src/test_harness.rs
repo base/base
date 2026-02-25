@@ -31,8 +31,8 @@ use base_client_node::{
     },
 };
 use base_flashblocks::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
-    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
+    AdaptiveConcurrencyLimiter, EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer,
+    FlashblocksAPI, FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
 };
 use derive_more::Deref;
 use eyre::Result;
@@ -184,6 +184,9 @@ impl BaseNodeExtension for FlashblocksTestExtension {
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&fb),
+                ctx.pool().clone(),
+                Vec::new(),
+                Arc::new(AdaptiveConcurrencyLimiter::new(10)),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

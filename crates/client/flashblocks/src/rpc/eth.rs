@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_eips::{BlockId, BlockNumberOrTag, Decodable2718};
 use alloy_primitives::{
     Address, TxHash, U256,
     map::foldhash::{HashSet, HashSetExt},
@@ -13,13 +13,17 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
+use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::OpTransactionRequest;
 use jsonrpsee::{
-    core::{RpcResult, async_trait},
+    core::{RpcResult, async_trait, client::ClientT},
+    http_client::HttpClient,
     proc_macros::rpc,
+    rpc_params,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
+use reth_primitives::transaction::SignedTransaction;
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
@@ -27,11 +31,14 @@ use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use reth_rpc_eth_types::EthApiError;
+use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::{FlashblocksAPI, Metrics, PendingBlocksAPI};
+use crate::{
+    AdaptiveConcurrencyLimiter, BuilderRpcStats, FlashblocksAPI, Metrics, PendingBlocksAPI,
+};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -116,29 +123,55 @@ pub trait EthApiOverride {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<Option<U256>>;
+
+    /// Sends a raw transaction
+    #[method(name = "sendRawTransaction")]
+    async fn send_raw_transaction(&self, transaction: alloy_primitives::Bytes)
+    -> RpcResult<TxHash>;
 }
 
 /// Extended Eth API with flashblocks support.
 #[derive(Debug)]
-pub struct EthApiExt<Eth: EthApiTypes, FB> {
+pub struct EthApiExt<Eth: EthApiTypes, FB, Pool> {
     eth_api: Eth,
     eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
+    pool: Pool,
+    builder_clients: Vec<(HttpClient, Arc<BuilderRpcStats>)>,
+    concurrency_limiter: Arc<AdaptiveConcurrencyLimiter>,
     metrics: Metrics,
 }
 
-impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
+impl<Eth: EthApiTypes, FB, Pool> EthApiExt<Eth, FB, Pool> {
     /// Creates a new extended Eth API instance with flashblocks support.
-    pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
-        Self { eth_api, eth_filter, flashblocks_state, metrics: Metrics::default() }
+    pub fn new(
+        eth_api: Eth,
+        eth_filter: EthFilter<Eth>,
+        flashblocks_state: Arc<FB>,
+        pool: Pool,
+        builder_clients: Vec<(HttpClient, Arc<BuilderRpcStats>)>,
+        concurrency_limiter: Arc<AdaptiveConcurrencyLimiter>,
+    ) -> Self {
+        Self {
+            eth_api,
+            eth_filter,
+            flashblocks_state,
+            pool,
+            builder_clients,
+            concurrency_limiter,
+            metrics: Metrics::default(),
+        }
     }
 }
 
 #[async_trait]
-impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
+impl<Eth, FB, Pool> EthApiOverrideServer for EthApiExt<Eth, FB, Pool>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
+    Pool: TransactionPool + 'static,
+    <Pool as TransactionPool>::Transaction:
+        PoolTransaction<Pooled = base_alloy_consensus::OpPooledTransaction>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn block_by_number(
@@ -533,12 +566,97 @@ where
             .map(|opt| opt.map(U256::from))
             .map_err(Into::into)
     }
+
+    async fn send_raw_transaction(
+        &self,
+        transaction: alloy_primitives::Bytes,
+    ) -> RpcResult<TxHash> {
+        debug!(
+            message = "rpc::send_raw_transaction",
+            transaction = ?transaction
+        );
+
+        // Decode the transaction with proper error handling
+        let mut b = transaction.as_ref();
+        let envelope = OpTxEnvelope::decode_2718(&mut b)
+            .map_err(|_| EthApiError::FailedToDecodeSignedTransaction)?;
+        let pooled =
+            envelope.try_into_pooled().map_err(|_| EthApiError::FailedToDecodeSignedTransaction)?;
+        let recovered =
+            pooled.try_into_recovered().map_err(|_| EthApiError::InvalidTransactionSignature)?;
+
+        // Validate the transaction by adding it to the pool
+        let pool_tx = <Pool as TransactionPool>::Transaction::from_pooled(recovered);
+        let tx_hash = *pool_tx.hash();
+        self.pool
+            .add_transaction(TransactionOrigin::External, pool_tx)
+            .await
+            .map_err(|e| EthApiError::PoolError(e.into()))?;
+
+        // Forward to all builder RPCs concurrently with adaptive rate limiting
+        for (client, stats) in &self.builder_clients {
+            let client = client.clone();
+            let stats = Arc::clone(stats);
+            let limiter = Arc::clone(&self.concurrency_limiter);
+            let tx_bytes = transaction.clone();
+            let metrics = self.metrics.clone();
+
+            tokio::spawn(async move {
+                // Try to acquire permit from adaptive limiter
+                let permit = match limiter.try_acquire() {
+                    Some(p) => p,
+                    None => {
+                        metrics.builder_rpc_rate_limited.increment(1);
+                        warn!(
+                            message = "rate limited: skipping builder RPC forward",
+                            url = %stats.url()
+                        );
+                        return;
+                    }
+                };
+
+                // Update in-flight metrics
+                metrics.builder_rpc_in_flight.set(limiter.in_flight() as f64);
+                metrics.builder_rpc_concurrency_limit.set(limiter.current_limit() as f64);
+
+                // Fire RPC call to builder
+                let result = client
+                    .request::<TxHash, _>("eth_sendRawTransaction", rpc_params![tx_bytes])
+                    .await;
+
+                match result {
+                    Ok(_) => {
+                        stats.on_success();
+                        limiter.on_success();
+                        metrics.builder_rpc_success.increment(1);
+                    }
+                    Err(e) => {
+                        stats.on_error();
+                        limiter.on_error();
+                        metrics.builder_rpc_error.increment(1);
+                        warn!(
+                            message = "builder RPC forward failed",
+                            url = %stats.url(),
+                            error = %e
+                        );
+                    }
+                }
+
+                // Permit dropped here, update in-flight
+                drop(permit);
+                metrics.builder_rpc_in_flight.set(limiter.in_flight() as f64);
+            });
+        }
+
+        Ok(tx_hash)
+    }
 }
 
-impl<Eth, FB> EthApiExt<Eth, FB>
+impl<Eth, FB, Pool> EthApiExt<Eth, FB, Pool>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
+    Pool: TransactionPool + 'static,
 {
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
