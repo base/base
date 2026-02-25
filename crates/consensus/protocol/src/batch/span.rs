@@ -1142,7 +1142,7 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].contains(
-            "overlapped block's tx count does not match, safe_block_txs: 0, batch_txs: 1"
+            "Overlapped block's tx count does not match, safe_block_txs: 0, batch_txs: 1"
         ));
     }
 
