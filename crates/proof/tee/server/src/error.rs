@@ -1,4 +1,4 @@
-//! Error types for op-enclave-server operations.
+//! Error types for enclave server operations.
 
 use thiserror::Error;
 

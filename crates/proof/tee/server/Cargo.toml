@@ -1,5 +1,5 @@
 [package]
-name = "op-enclave-server"
+name = "base-enclave-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +13,7 @@ name = "proxy"
 path = "src/bin/proxy.rs"
 
 [dependencies]
-op-enclave-core.workspace = true
+base-enclave.workspace = true
 
 # Cryptography
 rsa.workspace = true

@@ -2826,6 +2826,90 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-enclave"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "alloy-trie",
+ "base-alloy-consensus",
+ "base-alloy-evm",
+ "base-alloy-rpc-types-engine",
+ "base-protocol",
+ "base-revm",
+ "hex",
+ "hex-literal",
+ "kona-executor",
+ "kona-genesis",
+ "kona-mpt",
+ "revm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "base-enclave-client"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "base-enclave",
+ "jsonrpsee",
+ "rustls 0.23.37",
+ "rustls-pki-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "base-enclave-server"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "async-trait",
+ "aws-nitro-enclaves-cose",
+ "aws-nitro-enclaves-nsm-api",
+ "base-enclave",
+ "base64 0.22.1",
+ "ciborium",
+ "hex",
+ "http-body-util",
+ "hyper 1.8.1",
+ "hyper-util",
+ "jsonrpsee",
+ "k256",
+ "kona-genesis",
+ "openssl",
+ "parking_lot",
+ "rand 0.8.5",
+ "reqwest 0.13.2",
+ "rsa",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "spki",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "vsock",
+ "x509-cert",
+ "zip",
+]
+
+[[package]]
 name = "base-flashblocks"
 version = "0.0.0"
 dependencies = [
@@ -9853,90 +9937,6 @@ dependencies = [
  "sha2",
  "snap",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "op-enclave-client"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-trait",
- "jsonrpsee",
- "op-enclave-core",
- "rustls 0.23.37",
- "rustls-pki-types",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "op-enclave-core"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-eips",
- "alloy-evm",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "alloy-trie",
- "base-alloy-consensus",
- "base-alloy-evm",
- "base-alloy-rpc-types-engine",
- "base-protocol",
- "base-revm",
- "hex",
- "hex-literal",
- "kona-executor",
- "kona-genesis",
- "kona-mpt",
- "revm",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "op-enclave-server"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "async-trait",
- "aws-nitro-enclaves-cose",
- "aws-nitro-enclaves-nsm-api",
- "base64 0.22.1",
- "ciborium",
- "hex",
- "http-body-util",
- "hyper 1.8.1",
- "hyper-util",
- "jsonrpsee",
- "k256",
- "kona-genesis",
- "op-enclave-core",
- "openssl",
- "parking_lot",
- "rand 0.8.5",
- "reqwest 0.13.2",
- "rsa",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "spki",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber 0.3.22",
- "vsock",
- "x509-cert",
- "zip",
 ]
 
 [[package]]

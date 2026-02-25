@@ -4,8 +4,8 @@
 //! the Go `RPC` interface in `enclave/rpc.go`.
 
 use alloy_primitives::Bytes;
+use base_enclave::{ExecuteStatelessRequest, Proposal};
 use jsonrpsee::proc_macros::rpc;
-use op_enclave_core::{ExecuteStatelessRequest, Proposal};
 
 use super::types::AggregateRequest;
 

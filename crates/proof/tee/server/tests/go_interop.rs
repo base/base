@@ -16,7 +16,7 @@
 //!     ./bin/enclave &
 //!
 //! # Run integration tests
-//! cargo test --package op-enclave-server --test go_interop -- --ignored --test-threads=1
+//! cargo test --package base-enclave-server --test go_interop -- --ignored --test-threads=1
 //! ```
 
 use std::{
@@ -25,7 +25,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, U256, b256};
-use op_enclave_server::{
+use base_enclave_server::{
     Server,
     crypto::{
         build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key,
@@ -290,7 +290,7 @@ fn test_rust_encrypts_go_decrypts() {
     // Verify the new key matches what we expect
     let expected_signer =
         signer_from_hex(new_private_key_hex).expect("failed to create expected signer");
-    let expected_public_key = op_enclave_server::crypto::public_key_bytes(&expected_signer);
+    let expected_public_key = base_enclave_server::crypto::public_key_bytes(&expected_signer);
 
     assert_eq!(new_public_key, expected_public_key, "new public key should match expected");
 }

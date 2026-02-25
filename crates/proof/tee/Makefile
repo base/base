@@ -27,7 +27,7 @@ build-go-server:
 # Run integration tests (requires Go server to be running)
 # Start Go server first: OP_ENCLAVE_SIGNER_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 ../op-enclave/bin/enclave
 test-integration: build-go-server
-	cargo test --package op-enclave-server --test go_interop -- --ignored --test-threads=1
+	cargo test --package enclave-server --test go_interop -- --ignored --test-threads=1
 
 # Run tests with output
 test-verbose:
@@ -36,7 +36,7 @@ test-verbose:
 # Run the enclave server locally (HTTP mode on port 1234)
 run-server:
 	RUST_LOG=info OP_ENCLAVE_SIGNER_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-		cargo run --package op-enclave-server --bin enclave
+		cargo run --package enclave-server --bin enclave
 
 # Run clippy linter
 lint:
@@ -100,7 +100,7 @@ help:
 # EIF Build Targets
 # =============================================================================
 
-EIF_IMAGE_NAME := op-enclave-rust-eif
+EIF_IMAGE_NAME := enclave-rust-eif
 EIF_OUTPUT := eif.bin
 
 # Build EIF using Docker
@@ -114,7 +114,7 @@ build-eif:
 
 # Local musl release build (requires musl toolchain installed)
 musl-release:
-	OPENSSL_STATIC=1 cargo build --release --target x86_64-unknown-linux-musl --package op-enclave-server --bin enclave
+	OPENSSL_STATIC=1 cargo build --release --target x86_64-unknown-linux-musl --package enclave-server --bin enclave
 	@echo "Binary built at: target/x86_64-unknown-linux-musl/release/enclave"
 	@ls -lh target/x86_64-unknown-linux-musl/release/enclave
 

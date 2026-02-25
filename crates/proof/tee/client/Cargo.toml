@@ -1,11 +1,11 @@
 [package]
-name = "op-enclave-client"
+name = "base-enclave-client"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-op-enclave-core.workspace = true
+base-enclave.workspace = true
 
 # Alloy types
 alloy-primitives.workspace = true

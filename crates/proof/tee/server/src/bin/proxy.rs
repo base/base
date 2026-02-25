@@ -10,12 +10,12 @@ use std::{
     sync::Arc,
 };
 
+use base_enclave_server::transport::{DEFAULT_PROXY_PORT, DEFAULT_VSOCK_CID, DEFAULT_VSOCK_PORT};
 use http_body_util::{BodyExt, Full};
 use hyper::{
     Method, Request, Response, StatusCode, body::Bytes, server::conn::http1, service::service_fn,
 };
 use hyper_util::rt::TokioIo;
-use op_enclave_server::transport::{DEFAULT_PROXY_PORT, DEFAULT_VSOCK_CID, DEFAULT_VSOCK_PORT};
 use parking_lot::Mutex;
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};

@@ -20,9 +20,9 @@ members = [
     "crates/proof/preimage",
     "crates/proof/std-fpvm",
     "crates/proof/std-fpvm-proc",
-    "crates/proof/tee/op-enclave-core",
-    "crates/proof/tee/op-enclave-client",
-    "crates/proof/tee/op-enclave-server",
+    "crates/proof/tee/core",
+    "crates/proof/tee/client",
+    "crates/proof/tee/server",
     "crates/utilities/*",
     "crates/builder/*",
     "crates/infra/*",
@@ -209,9 +209,9 @@ kona-executor = { path = "crates/proof/executor", default-features = false }
 kona-preimage = { path = "crates/proof/preimage", default-features = false }
 kona-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
 kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
-op-enclave-core = { path = "crates/proof/tee/op-enclave-core" }
-op-enclave-client = { path = "crates/proof/tee/op-enclave-client" }
-op-enclave-server = { path = "crates/proof/tee/op-enclave-server" }
+base-enclave = { path = "crates/proof/tee/core" }
+base-enclave-client = { path = "crates/proof/tee/client" }
+base-enclave-server = { path = "crates/proof/tee/server" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }

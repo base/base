@@ -21,7 +21,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use op_enclave_core::executor::{execute_stateless, ExecutionWitness};
+//! use base_enclave::executor::{execute_stateless, ExecutionWitness};
 //!
 //! let result = execute_stateless(
 //!     &rollup_config,

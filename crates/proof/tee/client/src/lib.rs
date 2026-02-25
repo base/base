@@ -1,11 +1,11 @@
-//! op-enclave client implementation.
+//! Enclave client implementation.
 //!
 //! This crate provides a client for communicating with the enclave RPC server.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use op_enclave_client::EnclaveClient;
+//! use base_enclave_client::EnclaveClient;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,7 +26,7 @@
 mod client;
 mod client_error;
 
+// Re-export core types
+pub use base_enclave::*;
 pub use client::EnclaveClient;
 pub use client_error::ClientError;
-// Re-export core types
-pub use op_enclave_core::*;
