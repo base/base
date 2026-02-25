@@ -307,11 +307,12 @@ impl PendingBlocks {
     pub fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
         let mut logs = Vec::new();
 
-        // Iterate through all transaction receipts in pending state
-        for receipt in self.transaction_receipts.values() {
-            for log in receipt.inner.logs() {
-                if filter.matches(&log.inner) {
-                    logs.push(log.clone());
+        for tx in &self.transactions {
+            if let Some(receipt) = self.transaction_receipts.get(&tx.tx_hash()) {
+                for log in receipt.inner.logs() {
+                    if filter.matches(&log.inner) {
+                        logs.push(log.clone());
+                    }
                 }
             }
         }
