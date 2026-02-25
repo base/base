@@ -111,6 +111,12 @@ pub struct BuilderMetrics {
     /// Transactions rejected by gas limit (protocol-enforced)
     pub gas_limit_exceeded_total: Counter,
 
+    // === Block Uncompressed Size Limit Metrics ===
+    /// Transactions rejected by block uncompressed size limit
+    pub block_uncompressed_size_exceeded_total: Counter,
+    /// Cumulative uncompressed block size at end of block
+    pub block_uncompressed_size: Histogram,
+
     // === Execution Metering Limit Metrics (metering-service-dependent) ===
     /// Transactions that would be rejected by execution metering limits
     pub resource_limit_would_reject_total: Counter,
