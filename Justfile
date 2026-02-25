@@ -35,7 +35,7 @@ check-deny:
     cargo deny check bans --hide-inclusion-graph
 
 # Fixes formatting and clippy issues
-fix: format-fix clippy-fix zepter-fix
+fix: build-contracts format-fix clippy-fix zepter-fix
 
 # Runs zepter feature checks, installing zepter if necessary
 zepter:
@@ -106,7 +106,7 @@ check-format:
     cargo +nightly fmt --all -- --check
 
 # Fixes any formatting issues
-format-fix: build-contracts
+format-fix:
     cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 

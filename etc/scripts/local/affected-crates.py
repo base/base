@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 
 def get_changed_files(base_branch):
     """Get files changed between base branch and HEAD."""
