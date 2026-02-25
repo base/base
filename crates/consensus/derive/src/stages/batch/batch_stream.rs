@@ -95,9 +95,9 @@ where
         #[cfg(feature = "metrics")]
         {
             let batch_count = self.buffer.len() as f64;
-            kona_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_BUFFER, batch_count);
+            base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_BUFFER, batch_count);
             let batch_size = std::mem::size_of_val(&self.buffer) as f64;
-            kona_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_MEM, batch_size);
+            base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_MEM, batch_size);
         }
         Ok(())
     }
@@ -158,13 +158,13 @@ where
                             &mut self.fetcher,
                         )
                         .await;
-                    kona_macros::record!(
+                    base_macros::record!(
                         histogram,
                         crate::metrics::Metrics::PIPELINE_CHECK_BATCH_PREFIX,
                         start.elapsed().as_secs_f64()
                     );
 
-                    kona_macros::inc!(
+                    base_macros::inc!(
                         gauge,
                         crate::metrics::Metrics::PIPELINE_BATCH_VALIDITY,
                         "validity" => validity.to_string(),

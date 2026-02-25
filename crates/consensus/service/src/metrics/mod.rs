@@ -103,12 +103,12 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // L1 reorg reset count
-        kona_macros::set!(counter, Self::L1_REORG_COUNT, 0);
+        base_macros::set!(counter, Self::L1_REORG_COUNT, 0);
 
         // Derivation critical error
-        kona_macros::set!(counter, Self::DERIVATION_CRITICAL_ERROR, 0);
+        base_macros::set!(counter, Self::DERIVATION_CRITICAL_ERROR, 0);
 
         // Sequencer: reset total transactions sequenced
-        kona_macros::set!(counter, Self::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED, 0);
+        base_macros::set!(counter, Self::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED, 0);
     }
 }

@@ -166,7 +166,7 @@ kona-disc = { path = "crates/consensus/disc", default-features = false }
 kona-peers = { path = "crates/consensus/peers", default-features = false }
 kona-derive = { path = "crates/consensus/derive", default-features = false }
 kona-engine = { path = "crates/consensus/engine", default-features = false }
-kona-macros = { path = "crates/consensus/macros", default-features = false }
+base-macros = { path = "crates/utilities/macros", default-features = false }
 kona-gossip = { path = "crates/consensus/gossip", default-features = false }
 kona-sources = { path = "crates/consensus/sources", default-features = false }
 kona-genesis = { path = "crates/consensus/genesis", default-features = false }

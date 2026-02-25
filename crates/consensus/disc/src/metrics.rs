@@ -51,12 +51,12 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // Discovery Event
-        kona_macros::set!(gauge, Self::DISCOVERY_EVENT, "type", "discovered", 0);
-        kona_macros::set!(gauge, Self::DISCOVERY_EVENT, "type", "session_established", 0);
-        kona_macros::set!(gauge, Self::DISCOVERY_EVENT, "type", "unverifiable_enr", 0);
+        base_macros::set!(gauge, Self::DISCOVERY_EVENT, "type", "discovered", 0);
+        base_macros::set!(gauge, Self::DISCOVERY_EVENT, "type", "session_established", 0);
+        base_macros::set!(gauge, Self::DISCOVERY_EVENT, "type", "unverifiable_enr", 0);
 
         // Peer Counts
-        kona_macros::set!(gauge, Self::DISCOVERY_PEER_COUNT, 0);
-        kona_macros::set!(gauge, Self::FIND_NODE_REQUEST, 0);
+        base_macros::set!(gauge, Self::DISCOVERY_PEER_COUNT, 0);
+        base_macros::set!(gauge, Self::FIND_NODE_REQUEST, 0);
     }
 }

@@ -1,7 +1,7 @@
 [package]
-name = "kona-macros"
+name = "base-macros"
 version.workspace = true
-description = "Utility macros for kona crates"
+description = "Utility macros for base crates"
 
 edition.workspace = true
 license.workspace = true

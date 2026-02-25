@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # Protocol
-kona-macros.workspace = true
+base-macros.workspace = true
 kona-genesis.workspace = true
 base-protocol.workspace = true
 kona-hardforks.workspace = true

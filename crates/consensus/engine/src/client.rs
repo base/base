@@ -376,7 +376,7 @@ async fn record_call_time<T, Err>(
     #[cfg(feature = "metrics")]
     {
         let duration = start.elapsed();
-        kona_macros::record!(
+        base_macros::record!(
             histogram,
             Metrics::ENGINE_METHOD_REQUEST_DURATION,
             "method",

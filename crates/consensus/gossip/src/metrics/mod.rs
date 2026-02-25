@@ -123,85 +123,85 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // RPC Calls
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_self", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_peerCount", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_peers", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_peerStats", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_discoveryTable", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_blockPeer", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_listBlockedPeers", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_blockAddr", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_unblockAddr", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_listBlockedAddrs", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_blockSubnet", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_unblockSubnet", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_listBlockedSubnets", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_protectPeer", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_unprotectPeer", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_connectPeer", 0);
-        kona_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_disconnectPeer", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_self", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_peerCount", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_peers", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_peerStats", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_discoveryTable", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_blockPeer", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_listBlockedPeers", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_blockAddr", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_unblockAddr", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_listBlockedAddrs", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_blockSubnet", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_unblockSubnet", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_listBlockedSubnets", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_protectPeer", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_unprotectPeer", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_connectPeer", 0);
+        base_macros::set!(gauge, Self::RPC_CALLS, "method", "opp2p_disconnectPeer", 0);
 
         // Gossip Events
-        kona_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "message", 0);
-        kona_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "subscribed", 0);
-        kona_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "unsubscribed", 0);
-        kona_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "slow_peer", 0);
-        kona_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "not_supported", 0);
+        base_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "message", 0);
+        base_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "subscribed", 0);
+        base_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "unsubscribed", 0);
+        base_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "slow_peer", 0);
+        base_macros::set!(gauge, Self::GOSSIP_EVENT, "type", "not_supported", 0);
 
         // Peer dials
-        kona_macros::set!(gauge, Self::DIAL_PEER, 0);
-        kona_macros::set!(gauge, Self::DIAL_PEER_ERROR, 0);
+        base_macros::set!(gauge, Self::DIAL_PEER, 0);
+        base_macros::set!(gauge, Self::DIAL_PEER_ERROR, 0);
 
         // Unsafe Blocks
-        kona_macros::set!(gauge, Self::UNSAFE_BLOCK_PUBLISHED, 0);
+        base_macros::set!(gauge, Self::UNSAFE_BLOCK_PUBLISHED, 0);
 
         // Peer Counts
-        kona_macros::set!(gauge, Self::GOSSIP_PEER_COUNT, 0);
+        base_macros::set!(gauge, Self::GOSSIP_PEER_COUNT, 0);
 
         // Connection
-        kona_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "connected", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "outgoing_error", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "incoming_error", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "closed", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "connected", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "outgoing_error", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "incoming_error", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_CONNECTION, "type", "closed", 0);
 
         // Gossipsub Events
-        kona_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "subscribed", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "unsubscribed", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "gossipsub_not_supported", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "slow_peer", 0);
-        kona_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "message_received", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "subscribed", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "unsubscribed", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "gossipsub_not_supported", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "slow_peer", 0);
+        base_macros::set!(gauge, Self::GOSSIPSUB_EVENT, "type", "message_received", 0);
 
         // Banned Peers
-        kona_macros::set!(gauge, Self::BANNED_PEERS, 0);
+        base_macros::set!(gauge, Self::BANNED_PEERS, 0);
 
         // Block validation metrics
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_TOTAL, 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_SUCCESS, 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_TOTAL, 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_SUCCESS, 0);
 
         // Block validation failures by reason
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "timestamp_future", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "timestamp_past", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_hash", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_signature", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_signer", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "too_many_blocks", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "block_seen", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_block", 0);
-        kona_macros::set!(
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "timestamp_future", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "timestamp_past", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_hash", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_signature", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_signer", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "too_many_blocks", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "block_seen", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_block", 0);
+        base_macros::set!(
             counter,
             Self::BLOCK_VALIDATION_FAILED,
             "reason",
             "parent_beacon_root",
             0
         );
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "blob_gas_used", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "excess_blob_gas", 0);
-        kona_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "withdrawals_root", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "blob_gas_used", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "excess_blob_gas", 0);
+        base_macros::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "withdrawals_root", 0);
 
         // Block versions
-        kona_macros::set!(counter, Self::BLOCK_VERSION, "version", "v1", 0);
-        kona_macros::set!(counter, Self::BLOCK_VERSION, "version", "v2", 0);
-        kona_macros::set!(counter, Self::BLOCK_VERSION, "version", "v3", 0);
-        kona_macros::set!(counter, Self::BLOCK_VERSION, "version", "v4", 0);
+        base_macros::set!(counter, Self::BLOCK_VERSION, "version", "v1", 0);
+        base_macros::set!(counter, Self::BLOCK_VERSION, "version", "v2", 0);
+        base_macros::set!(counter, Self::BLOCK_VERSION, "version", "v3", 0);
+        base_macros::set!(counter, Self::BLOCK_VERSION, "version", "v4", 0);
     }
 }
