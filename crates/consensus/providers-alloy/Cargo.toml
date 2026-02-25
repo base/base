@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 # Kona
-kona-macros.workspace = true
+base-macros.workspace = true
 kona-genesis.workspace = true
 base-protocol.workspace = true
 kona-derive.workspace = true

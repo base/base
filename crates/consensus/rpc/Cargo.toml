@@ -15,7 +15,7 @@ workspace = true
 # Workspace
 kona-gossip.workspace = true
 kona-engine.workspace = true
-kona-macros.workspace = true
+base-macros.workspace = true
 kona-genesis = { workspace = true, features = ["serde", "std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 

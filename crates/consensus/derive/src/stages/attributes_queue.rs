@@ -92,7 +92,7 @@ where
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         let populated_attributes =
             OpAttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
-        kona_macros::record!(
+        base_macros::record!(
             histogram,
             crate::metrics::Metrics::PIPELINE_ATTRIBUTES_BUILD_DURATION,
             start.elapsed().as_secs_f64()

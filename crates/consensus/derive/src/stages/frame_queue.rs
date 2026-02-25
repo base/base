@@ -134,7 +134,7 @@ where
         self.queue.extend(frames);
 
         // Update metrics with last frame count
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_BUFFER,
             self.queue.len() as f64
@@ -142,7 +142,7 @@ where
         #[cfg(feature = "metrics")]
         {
             let queue_size = self.queue.iter().map(|f| f.size()).sum::<usize>() as f64;
-            kona_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM, queue_size);
+            base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM, queue_size);
         }
 
         // Prune frames if Holocene is active.

@@ -79,7 +79,7 @@ where
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
         if let Signal::Reset(ResetSignal { l1_origin, .. }) = signal {
-            kona_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, l1_origin.number);
+            base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
         }
@@ -106,7 +106,7 @@ where
                     let origin =
                         self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?.number;
 
-                    kona_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, origin);
+                    base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, origin);
                     debug!(target: "derivation", l1_block = origin, "Advanced L1 origin");
                 }
                 StepResult::OriginAdvanceErr(e) | StepResult::StepFailed(e) => {
@@ -162,7 +162,7 @@ where
                                         "L1 reorg detected! Expected: {expected} | New: {new}"
                                     );
 
-                                    kona_macros::inc!(counter, Metrics::L1_REORG_COUNT);
+                                    base_macros::inc!(counter, Metrics::L1_REORG_COUNT);
                                 }
                                 self.engine_client.reset_engine_forkchoice().await.map_err(|e| {
                                     error!(target: "derivation", ?e, "Failed to send reset request");
@@ -175,7 +175,7 @@ where
                         }
                         PipelineErrorKind::Critical(_) => {
                             error!(target: "derivation", "Critical derivation error: {e}");
-                            kona_macros::inc!(counter, Metrics::DERIVATION_CRITICAL_ERROR);
+                            base_macros::inc!(counter, Metrics::DERIVATION_CRITICAL_ERROR);
                             return Err(e.into());
                         }
                     }

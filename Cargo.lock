@@ -2808,6 +2808,7 @@ dependencies = [
  "backon",
  "base-alloy-rpc-jsonrpsee",
  "base-alloy-rpc-types-engine",
+ "base-macros",
  "base-protocol",
  "getrandom 0.3.4",
  "ipnet",
@@ -2815,7 +2816,6 @@ dependencies = [
  "kona-engine",
  "kona-genesis",
  "kona-gossip",
- "kona-macros",
  "libp2p",
  "metrics",
  "serde",
@@ -2948,6 +2948,10 @@ dependencies = [
  "tracing",
  "url",
 ]
+
+[[package]]
+name = "base-macros"
+version = "0.0.0"
 
 [[package]]
 name = "base-metering"
@@ -7676,10 +7680,10 @@ dependencies = [
  "async-trait",
  "base-alloy-consensus",
  "base-alloy-rpc-types-engine",
+ "base-macros",
  "base-protocol",
  "kona-genesis",
  "kona-hardforks",
- "kona-macros",
  "kona-registry",
  "metrics",
  "proptest",
@@ -7698,11 +7702,11 @@ version = "0.0.0"
 dependencies = [
  "alloy-rlp",
  "backon",
+ "base-macros",
  "derive_more",
  "discv5",
  "kona-cli",
  "kona-genesis",
- "kona-macros",
  "kona-peers",
  "libp2p",
  "metrics",
@@ -7755,11 +7759,11 @@ dependencies = [
  "base-alloy-provider",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
+ "base-macros",
  "base-protocol",
  "derive_more",
  "http-body-util",
  "kona-genesis",
- "kona-macros",
  "kona-registry",
  "metrics",
  "metrics-exporter-prometheus",
@@ -7843,13 +7847,13 @@ dependencies = [
  "arbitrary",
  "base-alloy-consensus",
  "base-alloy-rpc-types-engine",
+ "base-macros",
  "derive_more",
  "discv5",
  "futures",
  "ipnet",
  "kona-disc",
  "kona-genesis",
- "kona-macros",
  "kona-peers",
  "lazy_static",
  "libp2p",
@@ -7880,10 +7884,6 @@ dependencies = [
  "base-revm",
  "revm",
 ]
-
-[[package]]
-name = "kona-macros"
-version = "0.0.0"
 
 [[package]]
 name = "kona-mpt"
@@ -7931,6 +7931,7 @@ dependencies = [
  "base-alloy-provider",
  "base-alloy-rpc-types-engine",
  "base-consensus-rpc",
+ "base-macros",
  "base-protocol",
  "derive_more",
  "discv5",
@@ -7943,7 +7944,6 @@ dependencies = [
  "kona-engine",
  "kona-genesis",
  "kona-gossip",
- "kona-macros",
  "kona-peers",
  "kona-providers-alloy",
  "kona-sources",
@@ -8060,13 +8060,13 @@ dependencies = [
  "async-trait",
  "base-alloy-consensus",
  "base-alloy-network",
+ "base-macros",
  "base-protocol",
  "c-kzg",
  "http-body-util",
  "httpmock",
  "kona-derive",
  "kona-genesis",
- "kona-macros",
  "lru 0.16.3",
  "metrics",
  "serde",

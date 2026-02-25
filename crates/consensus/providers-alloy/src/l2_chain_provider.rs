@@ -112,7 +112,7 @@ impl AlloyL2ChainProvider {
             BlockId::Hash(_) => "l2_block_ref_by_hash",
         };
 
-        kona_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_REQUESTS, "method" => method_name);
+        base_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_REQUESTS, "method" => method_name);
 
         let result = async {
             let block = match id {
@@ -152,7 +152,7 @@ impl AlloyL2ChainProvider {
 
         #[cfg(feature = "metrics")]
         if result.is_err() {
-            kona_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_ERRORS, "method" => method_name);
+            base_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_ERRORS, "method" => method_name);
         }
 
         result
@@ -233,7 +233,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             return Ok(block.clone());
         }
 
-        kona_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_REQUESTS, "method" => "l2_block_ref_by_number");
+        base_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_REQUESTS, "method" => "l2_block_ref_by_number");
 
         let block = self
             .inner
@@ -241,7 +241,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             .full()
             .await
             .map_err(|e| {
-                kona_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_ERRORS, "method" => "l2_block_ref_by_number");
+                base_macros::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_ERRORS, "method" => "l2_block_ref_by_number");
                 AlloyL2ChainProviderError::Transport(e)
             })?
             .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?

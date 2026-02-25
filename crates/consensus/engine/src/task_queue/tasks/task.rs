@@ -208,7 +208,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
         while let Err(e) = self.execute_inner(state).await {
             let severity = e.severity();
 
-            kona_macros::inc!(
+            base_macros::inc!(
                 counter,
                 crate::Metrics::ENGINE_TASK_FAILURE,
                 self.task_metrics_label() => severity.to_string()
@@ -238,7 +238,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
             }
         }
 
-        kona_macros::inc!(counter, crate::Metrics::ENGINE_TASK_SUCCESS, self.task_metrics_label());
+        base_macros::inc!(counter, crate::Metrics::ENGINE_TASK_SUCCESS, self.task_metrics_label());
 
         Ok(())
     }

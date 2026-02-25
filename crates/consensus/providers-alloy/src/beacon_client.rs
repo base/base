@@ -197,7 +197,7 @@ impl BeaconClient for OnlineBeaconClient {
     type Error = BeaconClientError;
 
     async fn slot_interval(&self) -> Result<APIConfigResponse, Self::Error> {
-        kona_macros::inc!(gauge, Metrics::BEACON_CLIENT_REQUESTS, "method" => "spec");
+        base_macros::inc!(gauge, Metrics::BEACON_CLIENT_REQUESTS, "method" => "spec");
 
         // Use the l1 slot duration if provided
         if let Some(l1_slot_duration) = self.l1_slot_duration {
@@ -211,14 +211,14 @@ impl BeaconClient for OnlineBeaconClient {
         .await;
 
         if result.is_err() {
-            kona_macros::inc!(gauge, Metrics::BEACON_CLIENT_ERRORS, "method" => "spec");
+            base_macros::inc!(gauge, Metrics::BEACON_CLIENT_ERRORS, "method" => "spec");
         }
 
         Ok(result?)
     }
 
     async fn genesis_time(&self) -> Result<APIGenesisResponse, Self::Error> {
-        kona_macros::inc!(gauge, Metrics::BEACON_CLIENT_REQUESTS, "method" => "genesis");
+        base_macros::inc!(gauge, Metrics::BEACON_CLIENT_REQUESTS, "method" => "genesis");
 
         let result = async {
             let first = self.inner.get(format!("{}/{}", self.base, GENESIS_METHOD)).send().await?;
@@ -227,7 +227,7 @@ impl BeaconClient for OnlineBeaconClient {
         .await;
 
         if result.is_err() {
-            kona_macros::inc!(gauge, Metrics::BEACON_CLIENT_ERRORS, "method" => "genesis");
+            base_macros::inc!(gauge, Metrics::BEACON_CLIENT_ERRORS, "method" => "genesis");
         }
 
         Ok(result?)
@@ -238,13 +238,13 @@ impl BeaconClient for OnlineBeaconClient {
         slot: u64,
         blob_hashes: &[IndexedBlobHash],
     ) -> Result<Vec<BoxedBlobWithIndex>, BeaconClientError> {
-        kona_macros::inc!(gauge, Metrics::BEACON_CLIENT_REQUESTS, "method" => "blobs");
+        base_macros::inc!(gauge, Metrics::BEACON_CLIENT_REQUESTS, "method" => "blobs");
 
         // Try to get the blobs from the blobs endpoint.
         let result = self.filtered_beacon_blobs(slot, blob_hashes).await;
 
         if result.is_err() {
-            kona_macros::inc!(gauge, Metrics::BEACON_CLIENT_ERRORS, "method" => "blobs");
+            base_macros::inc!(gauge, Metrics::BEACON_CLIENT_ERRORS, "method" => "blobs");
         }
 
         result

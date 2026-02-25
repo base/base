@@ -66,7 +66,7 @@ impl<F: ChainProvider> IndexedTraversal<F> {
     fn update_origin(&mut self, block: BlockInfo) {
         self.done = false;
         self.block = Some(block);
-        kona_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
+        base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
     }
 
     /// Update the origin block in the traversal stage.
@@ -105,13 +105,13 @@ impl<F: ChainProvider> IndexedTraversal<F> {
         match self.system_config.update_with_receipts(&receipts[..], addr, active) {
             Ok(true) => {
                 let next = block_info.number as f64;
-                kona_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next);
+                base_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next);
                 info!(target: "traversal", "System config updated at block {next}.");
             }
             Ok(false) => { /* Ignore, no update applied */ }
             Err(err) => {
                 error!(target: "traversal", ?err, "Failed to update system config at block {}", block_info.number);
-                kona_macros::set!(
+                base_macros::set!(
                     gauge,
                     crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,
                     block_info.number as f64
