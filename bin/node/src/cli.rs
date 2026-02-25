@@ -27,7 +27,16 @@ pub struct Args {
     )]
     pub max_pending_blocks_depth: u64,
 
+    /// Enable transaction forwarding to builder RPCs (mempool node only).
+    ///
+    /// When enabled, transactions submitted via `eth_sendRawTransaction` will be
+    /// forwarded to builder RPC endpoints specified by `--builder-rpc-urls`.
+    #[arg(long = "enable-mempool-tx-forwarding")]
+    pub enable_mempool_tx_forwarding: bool,
+
     /// URLs of builder RPC endpoints to forward transactions to.
+    ///
+    /// Requires `--enable-mempool-tx-forwarding` to be set for forwarding to occur.
     #[arg(long = "builder-rpc-urls", value_name = "BUILDER_RPC_URL", num_args = 1..)]
     pub builder_rpc_urls: Option<Vec<Url>>,
 
@@ -61,7 +70,11 @@ impl From<&Args> for Option<FlashblocksConfig> {
             FlashblocksConfig::new(
                 url,
                 args.max_pending_blocks_depth,
-                args.builder_rpc_urls.clone(),
+                if args.enable_mempool_tx_forwarding {
+                    args.builder_rpc_urls.clone()
+                } else {
+                    None
+                },
                 Some(args.max_builder_in_flight_req),
             )
             .ok()
