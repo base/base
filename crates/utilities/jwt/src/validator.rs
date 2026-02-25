@@ -1,6 +1,7 @@
 //! JWT validation utilities.
 
 use alloy_rpc_types_engine::JwtSecret;
+use tracing::debug;
 
 #[cfg(feature = "engine-validation")]
 use crate::JwtValidationError;
