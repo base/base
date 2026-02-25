@@ -125,7 +125,7 @@ build-node:
 
 # Build the contracts used for tests
 build-contracts:
-    cd crates/shared/test-utils/contracts && forge soldeer install && forge build
+    cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
 
 # Cleans the workspace
 clean:
