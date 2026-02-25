@@ -7,7 +7,7 @@ rust-version.workspace = true
 [dependencies]
 # EVM
 revm = { workspace = true, features = ["std"] }
-op-revm.workspace = true
+base-revm = { workspace = true, features = ["std"] }
 
 # Alloy
 alloy-rlp.workspace = true

@@ -61,7 +61,7 @@ base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 base-alloy-rpc-jsonrpsee.workspace = true
 base-alloy-consensus.workspace = true
 revm.workspace = true
-op-revm.workspace = true
+base-revm.workspace = true
 
 # async
 serde.workspace = true

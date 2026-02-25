@@ -15,9 +15,8 @@ use alloy_evm::{
 use alloy_primitives::Address;
 use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_hardforks::OpHardforks;
-use op_revm::{
-    L1BlockInfo, constants::L1_BLOCK_CONTRACT, estimate_tx_compressed_size,
-    transaction::deposit::DEPOSIT_TRANSACTION_TYPE,
+use base_revm::{
+    DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, estimate_tx_compressed_size,
 };
 use revm::{
     Database as _, DatabaseCommit,
@@ -360,12 +359,10 @@ mod tests {
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
-    use op_revm::{
-        DefaultOp, L1BlockInfo, OpBuilder, OpSpecId,
-        constants::{
-            BASE_FEE_SCALAR_OFFSET, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
-            L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, OPERATOR_FEE_SCALARS_SLOT,
-        },
+    use base_revm::{
+        BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
+        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
+        OPERATOR_FEE_SCALARS_SLOT, OpBuilder, OpSpecId,
     };
     use revm::{
         Context,

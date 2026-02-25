@@ -29,11 +29,11 @@ base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 
 # revm
 revm.workspace = true
-op-revm.workspace = true
+base-revm.workspace = true
 
 # alloy-evm
 base-alloy-evm.workspace = true
-alloy-evm = { workspace = true, features = ["op"] }
+alloy-evm.workspace = true
 
 # General
 tracing.workspace = true

@@ -2,9 +2,8 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
-use op_revm::{
-    OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-    precompiles::OpPrecompiles,
+use base_revm::{
+    OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction, OpTransactionError,
 };
 use revm::{
     ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
@@ -18,11 +17,11 @@ use revm::{
 ///
 /// This is a wrapper type around the `revm` evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
-/// [`OpEvm`](op_revm::OpEvm) type.
+/// [`OpEvm`](base_revm::OpEvm) type.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
 pub struct OpEvm<DB: Database, I, P = OpPrecompiles> {
     pub(crate) inner:
-        op_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     pub(crate) inspect: bool,
 }
 
@@ -42,9 +41,9 @@ impl<DB: Database, I, P> OpEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`OpEvm`](op_revm::OpEvm) should be invoked on [`Evm::transact`].
+    /// [`OpEvm`](base_revm::OpEvm) should be invoked on [`Evm::transact`].
     pub const fn new(
-        evm: op_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        evm: base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
         inspect: bool,
     ) -> Self {
         Self { inner: evm, inspect }
@@ -143,7 +142,7 @@ mod tests {
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
-    use op_revm::precompiles::{bls12_381, bn254_pair};
+    use base_revm::{bls12_381, bn254_pair};
     use revm::{context::CfgEnv, database::EmptyDB};
     use rstest::rstest;
 

@@ -6,6 +6,7 @@ use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
+use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
 use reth_basic_payload_builder::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
@@ -14,7 +15,6 @@ use reth_evm::{
     execute::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
-    op_revm::{L1BlockInfo, constants::L1_BLOCK_CONTRACT},
 };
 use reth_execution_types::BlockExecutionOutput;
 use reth_optimism_forks::OpHardforks;

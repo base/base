@@ -1,6 +1,6 @@
 use alloy_consensus::BlockHeader;
 use base_alloy_hardforks::OpHardforks;
-use op_revm::OpSpecId;
+use base_revm::OpSpecId;
 
 /// Map the latest active hardfork at the given header to a revm [`OpSpecId`].
 pub fn spec(chain_spec: impl OpHardforks, header: impl BlockHeader) -> OpSpecId {

@@ -145,6 +145,9 @@ base-alloy-flz = { path = "crates/alloy/flz", default-features = false }
 base-alloy-consensus = { path = "crates/alloy/consensus", default-features = false }
 base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine", default-features = false }
 
+# base-revm
+base-revm = { path = "crates/execution/revm", default-features = false }
+
 # Builder
 base-builder-core = { path = "crates/builder/core" }
 base-builder-publish = { path = "crates/builder/publish" }
@@ -218,9 +221,6 @@ base-txpool-rpc = { path = "crates/utilities/txpool-rpc" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
-
-# op-revm
-op-revm = { version = "15.0.0", default-features = false }
 
 # revm
 revm = { version = "34.0.0", default-features = false }
@@ -389,6 +389,7 @@ uuid = "1.19.0"
 hyper = "1.7.0"
 eyre = "0.6.12"
 backon = "1.6.0"
+hashbrown = { version = "0.16", features = ["rayon"] }
 brotli = { version = "8.0.2", default-features = false }
 bytes = "1.11.1"
 rstest = "0.26.1"

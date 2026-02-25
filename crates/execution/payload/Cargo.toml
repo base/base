@@ -32,6 +32,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-forks.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-txpool.workspace = true
+base-revm.workspace = true
 
 # ethereum
 revm.workspace = true

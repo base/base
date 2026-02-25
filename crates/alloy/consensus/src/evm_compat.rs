@@ -6,7 +6,7 @@
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::{Address, Bytes};
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use base_revm::{DepositTransactionParts, OpTransaction};
 use revm::context::TxEnv;
 
 use crate::{OpTxEnvelope, TxDeposit};
@@ -71,10 +71,26 @@ impl FromRecoveredTx<OpTxEnvelope> for OpTransaction<TxEnv> {
 impl FromTxWithEncoded<OpTxEnvelope> for OpTransaction<TxEnv> {
     fn from_encoded_tx(tx: &OpTxEnvelope, caller: Address, encoded: Bytes) -> Self {
         match tx {
-            OpTxEnvelope::Legacy(tx) => Self::from_encoded_tx(tx, caller, encoded),
-            OpTxEnvelope::Eip1559(tx) => Self::from_encoded_tx(tx, caller, encoded),
-            OpTxEnvelope::Eip2930(tx) => Self::from_encoded_tx(tx, caller, encoded),
-            OpTxEnvelope::Eip7702(tx) => Self::from_encoded_tx(tx, caller, encoded),
+            OpTxEnvelope::Legacy(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            OpTxEnvelope::Eip1559(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            OpTxEnvelope::Eip2930(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            OpTxEnvelope::Eip7702(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
             OpTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }
