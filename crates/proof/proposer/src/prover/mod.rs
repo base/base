@@ -5,10 +5,7 @@
 
 pub(crate) mod types;
 
-pub use types::ProverProposal;
-
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
@@ -17,11 +14,11 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_rpc_types::Transaction as OpTransaction;
 use op_enclave_client::ExecuteStatelessRequest;
-use op_enclave_core::types::config::RollupConfig;
 use op_enclave_core::{
     AggregateRequest, ChainConfig, L2_TO_L1_MESSAGE_PASSER, Proposal, l2_block_to_block_info,
-    output_root_v0,
+    output_root_v0, types::config::RollupConfig,
 };
+pub use types::ProverProposal;
 
 use crate::{
     ProposerError,
@@ -145,11 +142,9 @@ where
             l1_receipts_result,
         ) = tokio::join!(
             self.l2_client.execution_witness(block.header.number),
-            self.l2_client
-                .get_proof(L2_TO_L1_MESSAGE_PASSER, block_hash),
+            self.l2_client.get_proof(L2_TO_L1_MESSAGE_PASSER, block_hash),
             self.l2_client.block_by_hash(block.header.parent_hash),
-            self.l2_client
-                .get_proof(L2_TO_L1_MESSAGE_PASSER, block.header.parent_hash),
+            self.l2_client.get_proof(L2_TO_L1_MESSAGE_PASSER, block.header.parent_hash),
             self.l1_client.header_by_hash(l1_origin_hash),
             self.l1_client.block_receipts(l1_origin_hash),
         );
@@ -221,9 +216,7 @@ where
                         }
 
                         let preimage = self.l2_client.db_get(missing_hash).await?;
-                        witness
-                            .state
-                            .insert(key, format!("0x{}", hex::encode(preimage)));
+                        witness.state.insert(key, format!("0x{}", hex::encode(preimage)));
                         repairs += 1;
 
                         tracing::warn!(
@@ -290,10 +283,7 @@ where
             number: block.header.number,
             parent_hash: block.header.parent_hash,
             timestamp: block.header.inner.timestamp,
-            l1origin: L1BlockId {
-                hash: l1_origin_hash,
-                number: l1_origin_number,
-            },
+            l1origin: L1BlockId { hash: l1_origin_hash, number: l1_origin_number },
             sequence_number: l2_block_info.seq_num,
         };
 
@@ -352,12 +342,7 @@ where
             )
             .await?;
 
-        Ok(ProverProposal {
-            output,
-            from,
-            to,
-            has_withdrawals,
-        })
+        Ok(ProverProposal { output, from, to, has_withdrawals })
     }
 
     /// Low-level enclave aggregation call.
@@ -430,10 +415,7 @@ fn is_deposit_tx(tx: &OpTransaction) -> bool {
 /// This converts the RPC `ReceiptEnvelope<Log>` to consensus `ReceiptEnvelope`
 /// by mapping the log types.
 fn convert_receipts(receipts: Vec<TransactionReceipt>) -> Vec<ReceiptEnvelope> {
-    receipts
-        .into_iter()
-        .map(|r| convert_receipt_envelope(r.inner))
-        .collect()
+    receipts.into_iter().map(|r| convert_receipt_envelope(r.inner)).collect()
 }
 
 /// Converts an RPC receipt envelope to a consensus receipt envelope.
@@ -441,10 +423,8 @@ fn convert_receipt_envelope(
     receipt: alloy_consensus::ReceiptEnvelope<alloy_rpc_types_eth::Log>,
 ) -> ReceiptEnvelope {
     // Map the receipt to convert logs from RPC Log to consensus Log
-    receipt.map_logs(|log| alloy_primitives::Log {
-        address: log.inner.address,
-        data: log.inner.data,
-    })
+    receipt
+        .map_logs(|log| alloy_primitives::Log { address: log.inner.address, data: log.inner.data })
 }
 
 /// Checks if a block has withdrawals by examining the logs bloom.
@@ -453,9 +433,7 @@ fn convert_receipt_envelope(
 /// appears in the logs bloom filter.
 fn check_withdrawals(header: &Header) -> bool {
     use alloy_primitives::BloomInput;
-    header
-        .logs_bloom
-        .contains_input(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()))
+    header.logs_bloom.contains_input(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()))
 }
 
 /// Builds the `kona_genesis::ChainConfig` envelope expected by enclave RPC.
@@ -466,9 +444,6 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
         public_rpc: String::new(),
         sequencer_rpc: String::new(),
         explorer: String::new(),
-        superchain_level: Default::default(),
-        governed_by_optimism: false,
-        superchain_time: None,
         data_availability_type: "eth-da".to_string(),
         chain_id: rollup_config.l2_chain_id.id(),
         batch_inbox_addr: rollup_config.batch_inbox_address,
@@ -476,9 +451,9 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
         seq_window_size: rollup_config.seq_window_size,
         max_sequencer_drift: rollup_config.max_sequencer_drift,
         gas_paying_token: None,
+        protocol_versions_addr: Some(rollup_config.protocol_versions_address),
         hardfork_config: rollup_config.hardforks,
         optimism: Some(rollup_config.chain_op_config),
-        alt_da: rollup_config.alt_da_config.clone(),
         genesis: rollup_config.genesis,
         roles: None,
         addresses: Some(Default::default()),
@@ -512,10 +487,7 @@ fn extract_missing_header_hash(err: &str) -> Option<B256> {
             break;
         }
     }
-    let candidate = suffix
-        .get(..end)?
-        .trim_end_matches('"')
-        .trim_end_matches(',');
+    let candidate = suffix.get(..end)?.trim_end_matches('"').trim_end_matches(',');
     if !candidate.starts_with("0x") {
         return None;
     }
@@ -536,10 +508,7 @@ fn extract_missing_trie_hash(err: &str) -> Option<B256> {
             break;
         }
     }
-    let candidate = suffix
-        .get(..end)?
-        .trim_end_matches('"')
-        .trim_end_matches(',');
+    let candidate = suffix.get(..end)?.trim_end_matches('"').trim_end_matches(',');
     if !candidate.starts_with("0x") {
         return None;
     }
@@ -553,18 +522,14 @@ mod tests {
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
     use async_trait::async_trait;
     use op_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use types::test_helpers::test_proposal;
 
     use super::*;
-    use crate::enclave::EnclaveClientTrait;
-    use crate::test_utils::test_prover;
-    use types::test_helpers::test_proposal;
+    use crate::{enclave::EnclaveClientTrait, test_utils::test_prover};
 
     #[test]
     fn test_check_withdrawals_empty_bloom() {
-        let header = Header {
-            logs_bloom: Default::default(),
-            ..Default::default()
-        };
+        let header = Header { logs_bloom: Default::default(), ..Default::default() };
         assert!(!check_withdrawals(&header));
     }
 
@@ -617,10 +582,7 @@ mod tests {
     fn test_check_withdrawals_with_message_passer() {
         let mut bloom = Bloom::default();
         bloom.accrue(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()));
-        let header = Header {
-            logs_bloom: bloom,
-            ..Default::default()
-        };
+        let header = Header { logs_bloom: bloom, ..Default::default() };
         assert!(check_withdrawals(&header));
     }
 
@@ -630,10 +592,7 @@ mod tests {
         let other_address =
             alloy_primitives::address!("0x1111111111111111111111111111111111111111");
         bloom.accrue(BloomInput::Raw(other_address.as_slice()));
-        let header = Header {
-            logs_bloom: bloom,
-            ..Default::default()
-        };
+        let header = Header { logs_bloom: bloom, ..Default::default() };
         assert!(!check_withdrawals(&header));
     }
 
@@ -646,23 +605,15 @@ mod tests {
         let log_address = alloy_primitives::address!("0x2222222222222222222222222222222222222222");
         let log_data = alloy_primitives::LogData::new_unchecked(vec![], Bytes::from(vec![0x42]));
         let rpc_log = alloy_rpc_types_eth::Log {
-            inner: alloy_primitives::Log {
-                address: log_address,
-                data: log_data.clone(),
-            },
+            inner: alloy_primitives::Log { address: log_address, data: log_data.clone() },
             ..Default::default()
         };
 
-        let receipt = Receipt {
-            status: true.into(),
-            cumulative_gas_used: 21000,
-            logs: vec![rpc_log],
-        };
+        let receipt =
+            Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![rpc_log] };
 
-        let envelope = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt,
-            logs_bloom: Default::default(),
-        });
+        let envelope =
+            ReceiptEnvelope::Legacy(ReceiptWithBloom { receipt, logs_bloom: Default::default() });
 
         let converted = convert_receipt_envelope(envelope);
 
@@ -713,12 +664,7 @@ mod tests {
 
         let result = prover.aggregate(B256::ZERO, 0, vec![], vec![]).await;
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("no proposals to aggregate")
-        );
+        assert!(result.unwrap_err().to_string().contains("no proposals to aggregate"));
     }
 
     #[tokio::test]
@@ -736,9 +682,7 @@ mod tests {
         });
 
         let single = test_proposal(5, 5, true);
-        let result = prover
-            .aggregate(B256::ZERO, 0, vec![single.clone()], vec![])
-            .await;
+        let result = prover.aggregate(B256::ZERO, 0, vec![single.clone()], vec![]).await;
         let agg = result.unwrap();
 
         // Single proposal is returned as-is
@@ -759,9 +703,7 @@ mod tests {
             prev_output_root: B256::repeat_byte(0xDD),
             config_hash: B256::repeat_byte(0xEE),
         };
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: agg_output.clone(),
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
 
         let proposals = vec![
             test_proposal(10, 15, false),
@@ -769,10 +711,7 @@ mod tests {
             test_proposal(21, 25, false),
         ];
 
-        let result = prover
-            .aggregate(B256::ZERO, 0, proposals, vec![])
-            .await
-            .unwrap();
+        let result = prover.aggregate(B256::ZERO, 0, proposals, vec![]).await.unwrap();
 
         assert_eq!(result.from.number, 10);
         assert_eq!(result.to.number, 25);
@@ -792,9 +731,7 @@ mod tests {
         };
 
         // [F, F, F] → F
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: agg_output.clone(),
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
         let result = prover
             .aggregate(
                 B256::ZERO,
@@ -811,9 +748,7 @@ mod tests {
         assert!(!result.has_withdrawals);
 
         // [T, F, F] → T
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: agg_output.clone(),
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
         let result = prover
             .aggregate(
                 B256::ZERO,
@@ -830,9 +765,7 @@ mod tests {
         assert!(result.has_withdrawals);
 
         // [F, T, F] → T
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: agg_output.clone(),
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
         let result = prover
             .aggregate(
                 B256::ZERO,
@@ -849,9 +782,7 @@ mod tests {
         assert!(result.has_withdrawals);
 
         // [F, F, T] → T
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: agg_output.clone(),
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
         let result = prover
             .aggregate(
                 B256::ZERO,
@@ -868,9 +799,7 @@ mod tests {
         assert!(result.has_withdrawals);
 
         // [T, T, T] → T
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: agg_output,
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output });
         let result = prover
             .aggregate(
                 B256::ZERO,
@@ -901,9 +830,7 @@ mod tests {
             unimplemented!()
         }
         async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
-            Err(ClientError::ClientCreation(
-                "enclave aggregate failed".into(),
-            ))
+            Err(ClientError::ClientCreation("enclave aggregate failed".into()))
         }
     }
 
@@ -968,9 +895,6 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("timed out"),
-            "expected timeout error, got: {err}"
-        );
+        assert!(err.contains("timed out"), "expected timeout error, got: {err}");
     }
 }

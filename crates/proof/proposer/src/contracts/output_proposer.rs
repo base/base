@@ -6,28 +6,30 @@
 //! - **Local**: Signs with an in-process private key via [`EthereumWallet`].
 //! - **Remote**: Calls a signer sidecar's `eth_signTransaction` JSON-RPC method.
 
-use std::future::Future;
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
-use alloy::primitives::{Address, B256, Bytes, U256};
-use alloy::providers::{Provider, RootProvider};
-use alloy::signers::local::PrivateKeySigner;
 use alloy_eips::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
+use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
 use tokio::sync::OnceCell;
 use tracing::info;
 use url::Url;
 
-use crate::ProposerError;
-use crate::config::{RetryConfig, SigningConfig};
-use crate::constants::{
-    ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
-    GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
+use crate::{
+    ProposerError,
+    config::{RetryConfig, SigningConfig},
+    constants::{
+        ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
+        GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
+    },
+    contracts::dispute_game_factory::{encode_create_calldata, encode_extra_data},
+    prover::ProverProposal,
 };
-use crate::contracts::dispute_game_factory::{encode_create_calldata, encode_extra_data};
-use crate::prover::ProverProposal;
 
 /// Applies a 120% safety margin to a gas estimate using integer arithmetic.
 const fn apply_gas_margin(estimated: u64) -> u64 {
@@ -73,6 +75,7 @@ pub fn build_proof_data(proposal: &ProverProposal) -> Result<Bytes, ProposerErro
 ///
 /// The `sign_tx` closure parameterizes the signing step so that both local and
 /// remote signing modes can reuse the same transaction-building code.
+#[allow(clippy::too_many_arguments)]
 async fn submit_proposal<F, Fut>(
     provider: &RootProvider,
     from_address: Address,
@@ -84,7 +87,7 @@ async fn submit_proposal<F, Fut>(
     sign_tx: F,
 ) -> Result<(), ProposerError>
 where
-    F: FnOnce(alloy::rpc::types::TransactionRequest) -> Fut,
+    F: FnOnce(TransactionRequest) -> Fut,
     Fut: Future<Output = Result<Bytes, ProposerError>>,
 {
     let nonce = provider
@@ -106,10 +109,10 @@ where
         .await
         .map_err(|e| ProposerError::Contract(format!("estimate_eip1559_fees failed: {e}")))?;
 
-    let mut tx = alloy::rpc::types::TransactionRequest::default()
+    let mut tx = TransactionRequest::default()
         .from(from_address)
         .to(factory_address)
-        .input(alloy::rpc::types::TransactionInput::new(calldata))
+        .input(TransactionInput::new(calldata))
         .nonce(nonce)
         .value(init_bond)
         .max_fee_per_gas(fees.max_fee_per_gas)
@@ -138,9 +141,7 @@ where
         .map_err(|e| ProposerError::Contract(format!("get_receipt failed: {e}")))?;
 
     if !receipt.status() {
-        return Err(ProposerError::Contract(format!(
-            "transaction {tx_hash} reverted"
-        )));
+        return Err(ProposerError::Contract(format!("transaction {tx_hash} reverted")));
     }
 
     info!(
@@ -154,10 +155,10 @@ where
 
 /// Returns true if the error is retryable (not a revert, not `GameAlreadyExists`).
 fn is_retryable(e: &ProposerError) -> bool {
-    if let ProposerError::Contract(msg) = e {
-        if msg.contains("reverted") || msg.contains("GameAlreadyExists") {
-            return false;
-        }
+    if let ProposerError::Contract(msg) = e
+        && (msg.contains("reverted") || msg.contains("GameAlreadyExists"))
+    {
+        return false;
     }
     true
 }
@@ -267,7 +268,7 @@ impl OutputProposer for LocalOutputProposer {
                 l2_block_number,
                 &self.chain_id,
                 |tx| async {
-                    let envelope = <alloy::rpc::types::TransactionRequest as TransactionBuilder<
+                    let envelope = <TransactionRequest as TransactionBuilder<
                         alloy_network::Ethereum,
                     >>::build(tx, &self.wallet)
                     .await
@@ -344,8 +345,7 @@ impl OutputProposer for RemoteOutputProposer {
         parent_index: u32,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
-        use jsonrpsee::core::client::ClientT;
-        use jsonrpsee::core::params::ArrayParams;
+        use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 
         let proof_data = build_proof_data(proposal)?;
         let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
@@ -382,13 +382,10 @@ impl OutputProposer for RemoteOutputProposer {
                         ProposerError::Contract(format!("failed to serialize tx: {e}"))
                     })?;
 
-                    let signed: Bytes = self
-                        .signer_client
-                        .request("eth_signTransaction", params)
-                        .await
-                        .map_err(|e| {
-                            ProposerError::Contract(format!("eth_signTransaction failed: {e}"))
-                        })?;
+                    let signed: Bytes =
+                        self.signer_client.request("eth_signTransaction", params).await.map_err(
+                            |e| ProposerError::Contract(format!("eth_signTransaction failed: {e}")),
+                        )?;
                     Ok(signed)
                 },
             )
@@ -543,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_create_output_proposer_local() {
-        use alloy::signers::k256::ecdsa::SigningKey;
+        use alloy_signer::k256::ecdsa::SigningKey;
 
         let key_bytes =
             hex::decode("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")

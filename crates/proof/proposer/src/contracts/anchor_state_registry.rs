@@ -3,9 +3,9 @@
 //! Provides the anchor state (latest finalized output root) used as the starting
 //! point when no pending dispute games exist.
 
-use alloy::primitives::{Address, B256};
-use alloy::providers::RootProvider;
-use alloy::sol;
+use alloy_primitives::{Address, B256};
+use alloy_provider::RootProvider;
+use alloy_sol_types::sol;
 use async_trait::async_trait;
 
 use crate::ProposerError;
@@ -17,7 +17,7 @@ sol! {
         /// Returns the current anchor root and its L2 sequence number.
         function getAnchorRoot() external view returns (bytes32 root, uint256 l2SequenceNumber);
 
-        /// Returns the address of the DisputeGameFactory.
+        /// Returns the address of the `DisputeGameFactory`.
         function disputeGameFactory() external view returns (address);
 
         /// Returns the respected game type.
@@ -91,9 +91,6 @@ impl AnchorStateRegistryClient for AnchorStateRegistryContractClient {
             "Read anchor root from AnchorStateRegistry"
         );
 
-        Ok(AnchorRoot {
-            root: result.root,
-            l2_block_number,
-        })
+        Ok(AnchorRoot { root: result.root, l2_block_number })
     }
 }

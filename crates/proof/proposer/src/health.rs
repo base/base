@@ -10,15 +10,21 @@
 //! - `admin_stopProposer`   — stop the driver loop
 //! - `admin_proposerRunning` — query whether the driver is running
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -96,21 +102,11 @@ struct JsonRpcError {
 
 impl JsonRpcResponse {
     const fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            result: Some(result),
-            error: None,
-            id,
-        }
+        Self { jsonrpc: "2.0", result: Some(result), error: None, id }
     }
 
     const fn error(id: serde_json::Value, code: i32, message: String) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            result: None,
-            error: Some(JsonRpcError { code, message }),
-            id,
-        }
+        Self { jsonrpc: "2.0", result: None, error: Some(JsonRpcError { code, message }), id }
     }
 }
 
@@ -180,9 +176,7 @@ pub async fn serve(
     let has_admin = driver.is_some();
     let state = ServerState { ready, driver };
 
-    let mut app = Router::new()
-        .route("/healthz", get(liveness))
-        .route("/readyz", get(readiness));
+    let mut app = Router::new().route("/healthz", get(liveness)).route("/readyz", get(readiness));
 
     if has_admin {
         app = app.route("/", post(admin_rpc));
@@ -204,9 +198,13 @@ pub async fn serve(
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::{
+        net::SocketAddr,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
 
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
@@ -221,9 +219,7 @@ mod tests {
 
     impl MockDriverControl {
         fn new() -> Self {
-            Self {
-                running: AtomicBool::new(false),
-            }
+            Self { running: AtomicBool::new(false) }
         }
     }
 
@@ -263,9 +259,8 @@ mod tests {
         let has_admin = driver.is_some();
         let state = ServerState { ready, driver };
 
-        let mut app = Router::new()
-            .route("/healthz", get(liveness))
-            .route("/readyz", get(readiness));
+        let mut app =
+            Router::new().route("/healthz", get(liveness)).route("/readyz", get(readiness));
         if has_admin {
             app = app.route("/", post(admin_rpc));
         }
@@ -287,9 +282,7 @@ mod tests {
         let ready = Arc::new(AtomicBool::new(false));
         let (addr, cancel) = start_test_server(ready, None).await;
 
-        let resp = reqwest::get(format!("http://{addr}/healthz"))
-            .await
-            .unwrap();
+        let resp = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
         assert_eq!(resp.status(), 200);
 
         cancel.cancel();
@@ -416,12 +409,7 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(body["error"]["code"], -32601);
-        assert!(
-            body["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("method not found")
-        );
+        assert!(body["error"]["message"].as_str().unwrap().contains("method not found"));
 
         cancel.cancel();
     }

@@ -2,12 +2,13 @@
 
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
-
 pub use op_enclave_client::EnclaveClient;
 use op_enclave_client::{ClientError, ExecuteStatelessRequest};
-use op_enclave_core::AggregateRequest;
-use op_enclave_core::types::config::{BlockId, Genesis, GenesisSystemConfig, RollupConfig};
-pub use op_enclave_core::{Proposal, executor::ExecutionWitness, types::config::PerChainConfig};
+use op_enclave_core::{
+    AggregateRequest,
+    types::config::{BlockId, Genesis, GenesisSystemConfig, RollupConfig},
+};
+pub use op_enclave_core::{Proposal, types::config::PerChainConfig};
 
 use crate::ProposerError;
 
@@ -56,28 +57,15 @@ pub fn rollup_config_to_per_chain_config(
     let l1_system_config_address = cfg.l1_system_config_address;
 
     let (batcher_addr, scalar, gas_limit) =
-        cfg.genesis
-            .system_config
-            .as_ref()
-            .map_or((Address::ZERO, B256::ZERO, 30_000_000), |sc| {
-                (
-                    sc.batcher_address,
-                    B256::from(sc.scalar.to_be_bytes::<32>()),
-                    sc.gas_limit,
-                )
-            });
+        cfg.genesis.system_config.as_ref().map_or((Address::ZERO, B256::ZERO, 30_000_000), |sc| {
+            (sc.batcher_address, B256::from(sc.scalar.to_be_bytes::<32>()), sc.gas_limit)
+        });
 
     Ok(PerChainConfig {
         chain_id: U256::from(cfg.l2_chain_id.id()),
         genesis: Genesis {
-            l1: BlockId {
-                hash: cfg.genesis.l1.hash,
-                number: cfg.genesis.l1.number,
-            },
-            l2: BlockId {
-                hash: cfg.genesis.l2.hash,
-                number: cfg.genesis.l2.number,
-            },
+            l1: BlockId { hash: cfg.genesis.l1.hash, number: cfg.genesis.l1.number },
+            l2: BlockId { hash: cfg.genesis.l2.hash, number: cfg.genesis.l2.number },
             l2_time: cfg.genesis.l2_time,
             system_config: GenesisSystemConfig {
                 batcher_addr,

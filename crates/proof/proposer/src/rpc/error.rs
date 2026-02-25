@@ -54,10 +54,7 @@ impl RpcError {
     /// are considered retryable. Application-level errors (not found, invalid data)
     /// are not retryable.
     pub const fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::Transport(_) | Self::Timeout(_) | Self::Connection(_)
-        )
+        matches!(self, Self::Transport(_) | Self::Timeout(_) | Self::Connection(_))
     }
 }
 

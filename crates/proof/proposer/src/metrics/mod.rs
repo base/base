@@ -1,9 +1,3 @@
-//! Prometheus metric definitions for the proposer.
-//!
-//! The `metrics` crate uses a global recorder pattern — calling `metrics::gauge!()` /
-//! `metrics::counter!()` anywhere records to the globally installed recorder. If no
-//! recorder is installed (e.g. in tests), calls are silent no-ops.
-
 /// Gauge: proposer build info, labelled with `version`.
 pub const INFO: &str = "base_proposer_info";
 

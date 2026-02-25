@@ -3,8 +3,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{Header, TransactionReceipt};
 use async_trait::async_trait;
-use op_enclave_core::types::config::RollupConfig;
-use op_enclave_core::{AccountResult, executor::ExecutionWitness};
+use op_enclave_core::{AccountResult, executor::ExecutionWitness, types::config::RollupConfig};
 
 use super::{
     error::RpcResult,

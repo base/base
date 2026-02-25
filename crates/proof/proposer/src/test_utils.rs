@@ -4,20 +4,24 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
-use op_enclave_core::types::config::{
-    BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig,
+use op_enclave_core::{
+    AccountResult,
+    executor::ExecutionWitness,
+    types::config::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig},
 };
-use op_enclave_core::{AccountResult, executor::ExecutionWitness};
 
-use crate::ProposerError;
-use crate::contracts::anchor_state_registry::{AnchorRoot, AnchorStateRegistryClient};
-use crate::contracts::dispute_game_factory::{DisputeGameFactoryClient, GameAtIndex};
-use crate::contracts::output_proposer::OutputProposer;
-use crate::enclave::EnclaveClientTrait;
-use crate::prover::{Prover, ProverProposal};
-use crate::rpc::{
-    L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, RollupClient, RpcError,
-    RpcResult, SyncStatus,
+use crate::{
+    ProposerError,
+    contracts::{
+        AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
+        OutputProposer,
+    },
+    enclave::EnclaveClientTrait,
+    prover::{Prover, ProverProposal},
+    rpc::{
+        L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, RollupClient, RpcError,
+        RpcResult, SyncStatus,
+    },
 };
 
 /// Mock L1 client with configurable `block_number()` return.
@@ -71,10 +75,7 @@ impl L2Client for MockL2 {
     }
     async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
         let hash = self.canonical_hash.unwrap_or(B256::repeat_byte(0x30));
-        Ok(alloy_rpc_types_eth::Header {
-            hash,
-            ..Default::default()
-        })
+        Ok(alloy_rpc_types_eth::Header { hash, ..Default::default() })
     }
     async fn block_by_number(&self, _: Option<u64>) -> RpcResult<OpBlock> {
         if self.block_not_found {
@@ -147,14 +148,8 @@ pub(crate) fn test_per_chain_config() -> PerChainConfig {
     PerChainConfig {
         chain_id: U256::from(1),
         genesis: Genesis {
-            l1: BlockId {
-                hash: B256::ZERO,
-                number: 0,
-            },
-            l2: BlockId {
-                hash: B256::ZERO,
-                number: 0,
-            },
+            l1: BlockId { hash: B256::ZERO, number: 0 },
+            l2: BlockId { hash: B256::ZERO, number: 0 },
             l2_time: 0,
             system_config: GenesisSystemConfig {
                 batcher_addr: Address::ZERO,
@@ -174,13 +169,8 @@ pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, M
     Prover::new(
         test_per_chain_config(),
         RollupConfig::default(),
-        Arc::new(MockL1 {
-            latest_block_number: 0,
-        }),
-        Arc::new(MockL2 {
-            block_not_found: false,
-            canonical_hash: None,
-        }),
+        Arc::new(MockL1 { latest_block_number: 0 }),
+        Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
         enclave,
         Address::ZERO,
         B256::ZERO,
@@ -188,12 +178,7 @@ pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, M
 }
 
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
-    L1BlockRef {
-        hash: B256::ZERO,
-        number,
-        parent_hash: B256::ZERO,
-        timestamp: 1_000_000 + number,
-    }
+    L1BlockRef { hash: B256::ZERO, number, parent_hash: B256::ZERO, timestamp: 1_000_000 + number }
 }
 
 pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
@@ -202,10 +187,7 @@ pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
         number,
         parent_hash: B256::ZERO,
         timestamp: 1_000_000 + number,
-        l1origin: L1BlockId {
-            hash: B256::ZERO,
-            number: 100 + number,
-        },
+        l1origin: L1BlockId { hash: B256::ZERO, number: 100 + number },
         sequence_number: 0,
     }
 }
@@ -227,10 +209,7 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
 }
 
 pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
-    AnchorRoot {
-        root: B256::ZERO,
-        l2_block_number: block_number,
-    }
+    AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).

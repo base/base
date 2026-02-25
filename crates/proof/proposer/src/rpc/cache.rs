@@ -7,8 +7,7 @@ use std::{
 
 use moka::future::Cache;
 
-use crate::constants::DEFAULT_CACHE_SIZE;
-use crate::metrics as proposer_metrics;
+use crate::{constants::DEFAULT_CACHE_SIZE, metrics as proposer_metrics};
 
 /// Cache metrics for tracking hit/miss rates.
 #[derive(Debug, Default)]
@@ -22,10 +21,7 @@ pub struct CacheMetrics {
 impl CacheMetrics {
     /// Creates a new cache metrics instance.
     pub const fn new() -> Self {
-        Self {
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
-        }
+        Self { hits: AtomicU64::new(0), misses: AtomicU64::new(0) }
     }
 
     /// Records a cache hit.
@@ -90,11 +86,7 @@ where
 
     /// Creates a new metered cache with the given name and capacity.
     pub fn with_capacity(name: impl Into<String>, capacity: usize) -> Self {
-        Self {
-            cache: Cache::new(capacity as u64),
-            metrics: CacheMetrics::new(),
-            name: name.into(),
-        }
+        Self { cache: Cache::new(capacity as u64), metrics: CacheMetrics::new(), name: name.into() }
     }
 
     /// Gets a value from the cache, returning `None` if not present.

@@ -19,9 +19,10 @@ pub struct ProverProposal {
 
 #[cfg(test)]
 pub(crate) mod test_helpers {
+    use alloy_primitives::{B256, Bytes, U256};
+
     use super::*;
     use crate::rpc::L1BlockId;
-    use alloy_primitives::{B256, Bytes, U256};
 
     /// Creates a test `ProverProposal` with the given from/to block numbers and withdrawal flag.
     pub(crate) fn test_proposal(
@@ -44,10 +45,7 @@ pub(crate) mod test_helpers {
                 number: from_number,
                 parent_hash: B256::repeat_byte(0x11),
                 timestamp: 1_000_000 + from_number,
-                l1origin: L1BlockId {
-                    hash: B256::repeat_byte(0x20),
-                    number: 100 + from_number,
-                },
+                l1origin: L1BlockId { hash: B256::repeat_byte(0x20), number: 100 + from_number },
                 sequence_number: 0,
             },
             to: L2BlockRef {
@@ -55,10 +53,7 @@ pub(crate) mod test_helpers {
                 number: to_number,
                 parent_hash: B256::repeat_byte(0x31),
                 timestamp: 1_000_000 + to_number,
-                l1origin: L1BlockId {
-                    hash: B256::repeat_byte(0x40),
-                    number: 100 + to_number,
-                },
+                l1origin: L1BlockId { hash: B256::repeat_byte(0x40), number: 100 + to_number },
                 sequence_number: 0,
             },
             has_withdrawals,

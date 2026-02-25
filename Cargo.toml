@@ -20,6 +20,7 @@ members = [
     "crates/proof/preimage",
     "crates/proof/std-fpvm",
     "crates/proof/std-fpvm-proc",
+    "crates/proof/proposer",
     "crates/proof/tee/op-enclave-core",
     "crates/proof/tee/op-enclave-client",
     "crates/proof/tee/op-enclave-server",
@@ -205,6 +206,7 @@ kona-executor = { path = "crates/proof/executor", default-features = false }
 kona-preimage = { path = "crates/proof/preimage", default-features = false }
 kona-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
 kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
+base-proposer = { path = "crates/proof/proposer" }
 op-enclave-core = { path = "crates/proof/tee/op-enclave-core" }
 op-enclave-client = { path = "crates/proof/tee/op-enclave-client" }
 op-enclave-server = { path = "crates/proof/tee/op-enclave-server" }
@@ -260,6 +262,11 @@ alloy-rpc-types-engine = { version = "1.5.2", default-features = false }
 alloy-network-primitives = { version = "1.5.2", default-features = false }
 alloy-evm = { version = "0.27.0", default-features = false }
 alloy-primitives = { version = "1.5.0", default-features = false }
+
+# op-alloy
+op-alloy-network = "0.23.1"
+op-alloy-consensus = "0.23.1"
+op-alloy-rpc-types = "0.23.1"
 
 # reth
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.1" }

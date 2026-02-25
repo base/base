@@ -14,23 +14,23 @@
 //! 10. Wait for SIGTERM or SIGINT
 //! 11. Graceful shutdown in reverse order
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use base_proposer::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
-    Cli, DisputeGameFactoryClient, DisputeGameFactoryContractClient, DriverHandle, ProposerConfig,
-    ProposerDriverControl, SigningConfig, create_output_proposer,
-    driver::{Driver, DriverConfig},
-    enclave::{create_enclave_client, rollup_config_to_per_chain_config},
-    prover::Prover,
-    rpc::{
-        L1Client, L1ClientConfig, L1ClientImpl, L2ClientConfig, RollupClient, RollupClientConfig,
-        RollupClientImpl, create_l2_client,
-    },
+    Cli, DisputeGameFactoryClient, DisputeGameFactoryContractClient, Driver, DriverConfig,
+    DriverHandle, L1Client, L1ClientConfig, L1ClientImpl, L2ClientConfig, ProposerConfig,
+    ProposerDriverControl, Prover, RollupClient, RollupClientConfig, RollupClientImpl,
+    SigningConfig, create_enclave_client, create_l2_client, create_output_proposer,
+    rollup_config_to_per_chain_config,
 };
 use clap::Parser;
 use eyre::Result;
@@ -59,7 +59,7 @@ async fn balance_monitor<L1: L1Client>(
                     Ok(balance) => {
                         // U256 -> f64 conversion: safe enough for gauge display.
                         let balance_f64: f64 = balance.to_string().parse().unwrap_or(f64::MAX);
-                        metrics::gauge!(base_proposer::metrics::ACCOUNT_BALANCE_WEI).set(balance_f64);
+                        metrics::gauge!(base_proposer::ACCOUNT_BALANCE_WEI).set(balance_f64);
                     }
                     Err(e) => {
                         debug!(error = %e, "Failed to fetch account balance");
@@ -95,9 +95,7 @@ fn setup_signal_handler(cancel: CancellationToken) {
 
         #[cfg(not(unix))]
         {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to listen for SIGINT");
+            tokio::signal::ctrl_c().await.expect("failed to listen for SIGINT");
             info!("Received SIGINT");
         }
 
@@ -191,7 +189,7 @@ async fn main() -> Result<()> {
     }
 
     // Record startup metrics (no-ops if no recorder installed).
-    base_proposer::metrics::record_startup_metrics(env!("CARGO_PKG_VERSION"));
+    base_proposer::record_startup_metrics(env!("CARGO_PKG_VERSION"));
 
     // ── 4. Create RPC clients ────────────────────────────────────────────
     let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
@@ -251,9 +249,8 @@ async fn main() -> Result<()> {
         ));
     }
     let block_interval = verifier_client.read_block_interval(impl_address).await?;
-    let intermediate_block_interval = verifier_client
-        .read_intermediate_block_interval(impl_address)
-        .await?;
+    let intermediate_block_interval =
+        verifier_client.read_intermediate_block_interval(impl_address).await?;
     if block_interval < 2 {
         return Err(eyre::eyre!(
             "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
@@ -366,17 +363,14 @@ async fn main() -> Result<()> {
         let ready_flag = Arc::clone(&ready);
         let health_cancel = cancel.clone();
         tokio::spawn(async move {
-            base_proposer::health::serve(addr, ready_flag, admin_driver, health_cancel).await
+            base_proposer::serve(addr, ready_flag, admin_driver, health_cancel).await
         })
     };
 
     // ── 9. Start balance monitor (if metrics enabled) ────────────────────
     let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled {
-        let handle = tokio::spawn(balance_monitor(
-            Arc::clone(&l1_client),
-            proposer_address,
-            cancel.clone(),
-        ));
+        let handle =
+            tokio::spawn(balance_monitor(Arc::clone(&l1_client), proposer_address, cancel.clone()));
         info!(%proposer_address, "Balance monitor started");
         Some(handle)
     } else {
@@ -384,10 +378,7 @@ async fn main() -> Result<()> {
     };
 
     // ── 10. Start the driver loop ────────────────────────────────────────
-    driver_handle
-        .start_proposer()
-        .await
-        .map_err(|e| eyre::eyre!(e))?;
+    driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
     ready.store(true, Ordering::SeqCst);
     info!(
@@ -404,10 +395,10 @@ async fn main() -> Result<()> {
     // ── 12. Graceful shutdown (reverse initialisation order) ─────────────
     ready.store(false, Ordering::SeqCst);
 
-    if driver_handle.is_running() {
-        if let Err(e) = driver_handle.stop_proposer().await {
-            warn!(error = e, "Error stopping proposer driver");
-        }
+    if driver_handle.is_running()
+        && let Err(e) = driver_handle.stop_proposer().await
+    {
+        warn!(error = e, "Error stopping proposer driver");
     }
 
     if let Some(handle) = balance_handle {

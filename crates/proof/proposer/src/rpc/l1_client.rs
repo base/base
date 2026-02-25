@@ -2,14 +2,14 @@
 
 use std::time::Duration;
 
-use alloy::eips::BlockNumberOrTag;
-use alloy::providers::{Provider, RootProvider};
-use alloy::rpc::client::RpcClient;
-use alloy::transports::http::{Http, reqwest::Client};
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::{
     BlockId, Header, TransactionInput, TransactionReceipt, TransactionRequest,
 };
+use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use url::Url;
@@ -20,8 +20,7 @@ use super::{
     error::{RpcError, RpcResult},
     traits::L1Client,
 };
-use crate::config::RetryConfig;
-use crate::constants::DEFAULT_CACHE_SIZE;
+use crate::{config::RetryConfig, constants::DEFAULT_CACHE_SIZE};
 
 /// Configuration for the L1 client.
 #[derive(Debug, Clone)]
@@ -142,40 +141,31 @@ impl L1Client for L1ClientImpl {
     async fn block_number(&self) -> RpcResult<u64> {
         let backoff = self.retry_config.to_backoff_builder();
 
-        (|| async {
-            self.provider
-                .get_block_number()
-                .await
-                .map_err(RpcError::from)
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::block_number");
-        })
-        .await
+        (|| async { self.provider.get_block_number().await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::block_number");
+            })
+            .await
     }
 
     async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        let block_id: BlockId = number
-            .map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number)
-            .into();
+        let block_id: BlockId =
+            number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
 
         let backoff = self.retry_config.to_backoff_builder();
 
-        let block = (|| async {
-            self.provider
-                .get_block(block_id)
-                .await
-                .map_err(RpcError::from)
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::header_by_number");
-        })
-        .await?
-        .ok_or_else(|| RpcError::HeaderNotFound(format!("Header not found for {block_id:?}")))?;
+        let block = (|| async { self.provider.get_block(block_id).await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::header_by_number");
+            })
+            .await?
+            .ok_or_else(|| {
+                RpcError::HeaderNotFound(format!("Header not found for {block_id:?}"))
+            })?;
 
         let header = block.header;
 
@@ -194,10 +184,7 @@ impl L1Client for L1ClientImpl {
         let backoff = self.retry_config.to_backoff_builder();
 
         let block = (|| async {
-            self.provider
-                .get_block(BlockId::Hash(hash.into()))
-                .await
-                .map_err(RpcError::from)
+            self.provider.get_block(BlockId::Hash(hash.into())).await.map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -253,11 +240,7 @@ impl L1Client for L1ClientImpl {
         let backoff = self.retry_config.to_backoff_builder();
 
         (|| async {
-            self.provider
-                .get_code_at(address)
-                .block_id(block_id)
-                .await
-                .map_err(RpcError::from)
+            self.provider.get_code_at(address).block_id(block_id).await.map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -280,14 +263,9 @@ impl L1Client for L1ClientImpl {
         let backoff = self.retry_config.to_backoff_builder();
 
         (|| async {
-            let req = TransactionRequest::default()
-                .to(to)
-                .input(TransactionInput::new(data.clone()));
-            self.provider
-                .call(req)
-                .block(block_id)
-                .await
-                .map_err(RpcError::from)
+            let req =
+                TransactionRequest::default().to(to).input(TransactionInput::new(data.clone()));
+            self.provider.call(req).block(block_id).await.map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -300,18 +278,13 @@ impl L1Client for L1ClientImpl {
     async fn get_balance(&self, address: Address) -> RpcResult<U256> {
         let backoff = self.retry_config.to_backoff_builder();
 
-        (|| async {
-            self.provider
-                .get_balance(address)
-                .await
-                .map_err(RpcError::from)
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::get_balance");
-        })
-        .await
+        (|| async { self.provider.get_balance(address).await.map_err(RpcError::from) })
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L1Client::get_balance");
+            })
+            .await
     }
 }
 

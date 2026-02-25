@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
-use alloy::eips::BlockNumberOrTag;
-use alloy::providers::Provider;
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_provider::Provider;
 use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use backon::Retryable;
@@ -34,18 +34,14 @@ pub struct RethL2Client {
 
 impl std::fmt::Debug for RethL2Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RethL2Client")
-            .field("inner", &self.inner)
-            .finish()
+        f.debug_struct("RethL2Client").field("inner", &self.inner).finish()
     }
 }
 
 impl RethL2Client {
     /// Creates a new Reth L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
-        Ok(Self {
-            inner: L2ClientImpl::new(config)?,
-        })
+        Ok(Self { inner: L2ClientImpl::new(config)? })
     }
 
     /// Returns a reference to the inner L2 client.
@@ -79,11 +75,7 @@ impl RethL2Client {
         // Convert RPC headers to consensus headers (extract inner from RPC wrapper).
         let headers = reth_witness.headers.into_iter().map(|h| h.inner).collect();
 
-        ExecutionWitness {
-            state,
-            codes,
-            headers,
-        }
+        ExecutionWitness { state, codes, headers }
     }
 
     /// Validates that headers form a valid chain by checking `parent_hash` linkage.
@@ -141,15 +133,10 @@ impl RethL2Client {
             return Ok(witness);
         }
 
-        tracing::debug!(
-            block_number,
-            history,
-            "Fetching parent headers for BLOCKHASH support"
-        );
+        tracing::debug!(block_number, history, "Fetching parent headers for BLOCKHASH support");
 
-        let block_numbers: Vec<u64> = (1..=history as u64)
-            .map(|offset| block_number - offset)
-            .collect();
+        let block_numbers: Vec<u64> =
+            (1..=history as u64).map(|offset| block_number - offset).collect();
 
         // Fetch all headers in parallel with bounded concurrency
         // Using `buffered` instead of `buffer_unordered` to preserve order
@@ -245,7 +232,7 @@ impl L2Client for RethL2Client {
 
 #[cfg(test)]
 mod tests {
-    use alloy::consensus::Header as ConsensusHeader;
+    use alloy_consensus::Header as ConsensusHeader;
     use alloy_primitives::{B256, Bytes};
 
     use super::*;
@@ -253,11 +240,7 @@ mod tests {
     fn make_header(number: u64, hash: B256, parent_hash: B256) -> Header {
         Header {
             hash,
-            inner: ConsensusHeader {
-                number,
-                parent_hash,
-                ..Default::default()
-            },
+            inner: ConsensusHeader { number, parent_hash, ..Default::default() },
             ..Default::default()
         }
     }
@@ -330,10 +313,7 @@ mod tests {
         assert_eq!(witness.codes.len(), 1);
         let hex_key = format!("{expected_hash:#x}");
         assert!(witness.codes.contains_key(&hex_key));
-        assert_eq!(
-            witness.codes.get(&hex_key),
-            Some(&format!("0x{}", hex::encode(&code)))
-        );
+        assert_eq!(witness.codes.get(&hex_key), Some(&format!("0x{}", hex::encode(&code))));
     }
 
     #[test]
@@ -353,20 +333,13 @@ mod tests {
         assert_eq!(witness.state.len(), 1);
         let hex_key = format!("{expected_hash:#x}");
         assert!(witness.state.contains_key(&hex_key));
-        assert_eq!(
-            witness.state.get(&hex_key),
-            Some(&format!("0x{}", hex::encode(&state_entry)))
-        );
+        assert_eq!(witness.state.get(&hex_key), Some(&format!("0x{}", hex::encode(&state_entry))));
     }
 
     #[test]
     fn test_convert_reth_witness_empty() {
-        let reth_witness = RethExecutionWitness {
-            headers: vec![],
-            codes: vec![],
-            state: vec![],
-            keys: vec![],
-        };
+        let reth_witness =
+            RethExecutionWitness { headers: vec![], codes: vec![], state: vec![], keys: vec![] };
 
         let witness = RethL2Client::convert_reth_witness(reth_witness);
 

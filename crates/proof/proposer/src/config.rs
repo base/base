@@ -2,9 +2,9 @@
 
 use std::{net::IpAddr, time::Duration};
 
-use alloy::signers::k256::ecdsa::SigningKey;
-use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::{Address, B256};
+use alloy_signer::k256::ecdsa::SigningKey;
+use alloy_signer_local::PrivateKeySigner;
 use backon::ExponentialBuilder;
 use base_cli_utils::LogConfig;
 use thiserror::Error;
@@ -64,10 +64,9 @@ pub enum SigningConfig {
 impl std::fmt::Debug for SigningConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Local { signer } => f
-                .debug_struct("Local")
-                .field("address", &signer.address())
-                .finish(),
+            Self::Local { signer } => {
+                f.debug_struct("Local").field("address", &signer.address()).finish()
+            }
             Self::Remote { endpoint, address } => f
                 .debug_struct("Remote")
                 .field("endpoint", endpoint)
@@ -190,17 +189,11 @@ impl ProposerConfig {
 /// Validate that a URL has a scheme and host.
 fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
     if url.scheme().is_empty() {
-        return Err(ConfigError::InvalidUrl {
-            field,
-            reason: "missing scheme".to_string(),
-        });
+        return Err(ConfigError::InvalidUrl { field, reason: "missing scheme".to_string() });
     }
 
     if url.host().is_none() {
-        return Err(ConfigError::InvalidUrl {
-            field,
-            reason: "missing host".to_string(),
-        });
+        return Err(ConfigError::InvalidUrl { field, reason: "missing host".to_string() });
     }
 
     Ok(())
@@ -226,10 +219,7 @@ fn build_signing_config(
         }
         (None, Some(endpoint), Some(address)) => {
             validate_url(endpoint, "signer-endpoint")?;
-            Ok(SigningConfig::Remote {
-                endpoint: endpoint.clone(),
-                address: *address,
-            })
+            Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
         }
         (None, None, None) => Err(ConfigError::Signing(
             "one of --private-key or (--signer-endpoint + --signer-address) must be provided"
@@ -239,12 +229,12 @@ fn build_signing_config(
             "--private-key is mutually exclusive with --signer-endpoint/--signer-address"
                 .to_string(),
         )),
-        (None, Some(_), None) => Err(ConfigError::Signing(
-            "--signer-endpoint requires --signer-address".to_string(),
-        )),
-        (None, None, Some(_)) => Err(ConfigError::Signing(
-            "--signer-address requires --signer-endpoint".to_string(),
-        )),
+        (None, Some(_), None) => {
+            Err(ConfigError::Signing("--signer-endpoint requires --signer-address".to_string()))
+        }
+        (None, None, Some(_)) => {
+            Err(ConfigError::Signing("--signer-address requires --signer-endpoint".to_string()))
+        }
     }
 }
 
@@ -255,16 +245,10 @@ impl From<LogArgs> for LogConfig {
         let stdout_logs = if args.stdout_quiet {
             None
         } else {
-            Some(StdoutLogConfig {
-                format: args.stdout_format,
-            })
+            Some(StdoutLogConfig { format: args.stdout_format })
         };
 
-        Self {
-            global_level: verbosity_to_level_filter(args.level),
-            stdout_logs,
-            file_logs: None,
-        }
+        Self { global_level: verbosity_to_level_filter(args.level), stdout_logs, file_logs: None }
     }
 }
 
@@ -281,21 +265,13 @@ pub struct MetricsConfig {
 
 impl From<MetricsArgs> for MetricsConfig {
     fn from(args: MetricsArgs) -> Self {
-        Self {
-            enabled: args.enabled,
-            addr: args.addr,
-            port: args.port,
-        }
+        Self { enabled: args.enabled, addr: args.addr, port: args.port }
     }
 }
 
 impl Default for MetricsConfig {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            addr: "0.0.0.0".parse().unwrap(),
-            port: 7300,
-        }
+        Self { enabled: false, addr: "0.0.0.0".parse().unwrap(), port: 7300 }
     }
 }
 
@@ -312,21 +288,13 @@ pub struct RpcServerConfig {
 
 impl From<RpcServerArgs> for RpcServerConfig {
     fn from(args: RpcServerArgs) -> Self {
-        Self {
-            enable_admin: args.enable_admin,
-            addr: args.addr,
-            port: args.port,
-        }
+        Self { enable_admin: args.enable_admin, addr: args.addr, port: args.port }
     }
 }
 
 impl Default for RpcServerConfig {
     fn default() -> Self {
-        Self {
-            enable_admin: false,
-            addr: "127.0.0.1".parse().unwrap(),
-            port: 8545,
-        }
+        Self { enable_admin: false, addr: "127.0.0.1".parse().unwrap(), port: 8545 }
     }
 }
 
@@ -379,9 +347,8 @@ impl RetryConfig {
 mod tests {
     use base_cli_utils::LogFormat;
 
-    use crate::cli::{Cli, ProposerArgs};
-
     use super::*;
+    use crate::cli::{Cli, ProposerArgs};
 
     fn minimal_cli() -> Cli {
         Cli {
@@ -414,16 +381,8 @@ mod tests {
                 signer_endpoint: None,
                 signer_address: None,
             },
-            logging: LogArgs {
-                level: 3,
-                stdout_quiet: false,
-                stdout_format: LogFormat::Full,
-            },
-            metrics: MetricsArgs {
-                enabled: false,
-                addr: "0.0.0.0".parse().unwrap(),
-                port: 7300,
-            },
+            logging: LogArgs { level: 3, stdout_quiet: false, stdout_format: LogFormat::Full },
+            metrics: MetricsArgs { enabled: false, addr: "0.0.0.0".parse().unwrap(), port: 7300 },
             rpc: RpcServerArgs {
                 enable_admin: false,
                 addr: "127.0.0.1".parse().unwrap(),
@@ -447,13 +406,7 @@ mod tests {
         let mut cli = minimal_cli();
         cli.proposer.poll_interval = Duration::ZERO;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange {
-                field: "poll-interval",
-                ..
-            })
-        ));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
     }
 
     #[test]
@@ -499,33 +452,21 @@ mod tests {
         use tracing::level_filters::LevelFilter;
 
         // Test verbosity level 4 (DEBUG)
-        let args = LogArgs {
-            level: 4,
-            stdout_quiet: false,
-            stdout_format: LogFormat::Json,
-        };
+        let args = LogArgs { level: 4, stdout_quiet: false, stdout_format: LogFormat::Json };
         let config = LogConfig::from(args);
         assert_eq!(config.global_level, LevelFilter::DEBUG);
         assert!(config.stdout_logs.is_some());
         assert!(config.file_logs.is_none());
 
         // Test stdout_quiet suppresses stdout logging
-        let args = LogArgs {
-            level: 3,
-            stdout_quiet: true,
-            stdout_format: LogFormat::Full,
-        };
+        let args = LogArgs { level: 3, stdout_quiet: true, stdout_format: LogFormat::Full };
         let config = LogConfig::from(args);
         assert!(config.stdout_logs.is_none());
     }
 
     #[test]
     fn test_metrics_config_from_args() {
-        let args = MetricsArgs {
-            enabled: true,
-            addr: "127.0.0.1".parse().unwrap(),
-            port: 9090,
-        };
+        let args = MetricsArgs { enabled: true, addr: "127.0.0.1".parse().unwrap(), port: 9090 };
         let config = MetricsConfig::from(args);
         assert!(config.enabled);
         assert_eq!(config.port, 9090);
@@ -533,11 +474,8 @@ mod tests {
 
     #[test]
     fn test_rpc_server_config_from_args() {
-        let args = RpcServerArgs {
-            enable_admin: true,
-            addr: "0.0.0.0".parse().unwrap(),
-            port: 8080,
-        };
+        let args =
+            RpcServerArgs { enable_admin: true, addr: "0.0.0.0".parse().unwrap(), port: 8080 };
         let config = RpcServerConfig::from(args);
         assert!(config.enable_admin);
         assert_eq!(config.port, 8080);
@@ -548,21 +486,13 @@ mod tests {
         // Create URL that parses but has no host (file:// URLs for instance)
         let url = Url::parse("file:///some/path").unwrap();
         let result = validate_url(&url, "test-field");
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidUrl {
-                field: "test-field",
-                ..
-            })
-        ));
+        assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "test-field", .. })));
     }
 
     #[test]
     fn test_config_error_display() {
-        let error = ConfigError::InvalidUrl {
-            field: "enclave-rpc",
-            reason: "missing host".to_string(),
-        };
+        let error =
+            ConfigError::InvalidUrl { field: "enclave-rpc", reason: "missing host".to_string() };
         assert_eq!(error.to_string(), "invalid enclave-rpc URL: missing host");
 
         let error = ConfigError::OutOfRange {
@@ -570,22 +500,13 @@ mod tests {
             constraint: "greater than 0",
             value: "0".to_string(),
         };
-        assert_eq!(
-            error.to_string(),
-            "poll-interval must be greater than 0, got 0"
-        );
+        assert_eq!(error.to_string(), "poll-interval must be greater than 0, got 0");
 
         let error = ConfigError::Metrics("port must be non-zero".to_string());
-        assert_eq!(
-            error.to_string(),
-            "invalid metrics config: port must be non-zero"
-        );
+        assert_eq!(error.to_string(), "invalid metrics config: port must be non-zero");
 
         let error = ConfigError::Rpc("RPC port must be non-zero".to_string());
-        assert_eq!(
-            error.to_string(),
-            "invalid RPC config: RPC port must be non-zero"
-        );
+        assert_eq!(error.to_string(), "invalid RPC config: RPC port must be non-zero");
 
         let error = ConfigError::Signing("missing key".to_string());
         assert_eq!(error.to_string(), "invalid signing config: missing key");
@@ -603,11 +524,8 @@ mod tests {
         let mut cli = minimal_cli();
         cli.proposer.private_key = None;
         cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
-        cli.proposer.signer_address = Some(
-            "0x1234567890123456789012345678901234567890"
-                .parse()
-                .unwrap(),
-        );
+        cli.proposer.signer_address =
+            Some("0x1234567890123456789012345678901234567890".parse().unwrap());
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert!(matches!(config.signing, SigningConfig::Remote { .. }));
     }
