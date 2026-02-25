@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-cli"
+name = "base-execution-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,16 +17,16 @@ reth-rpc-server-types.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
 reth-provider.workspace = true
 reth-node-core.workspace = true
-reth-optimism-node.workspace = true
+base-execution-node.workspace = true
 
 # so jemalloc metrics can be included
 reth-node-metrics.workspace = true
 
 ## optimism
-reth-optimism-primitives.workspace = true
-reth-optimism-chainspec.workspace = true
-reth-optimism-consensus.workspace = true
-reth-optimism-trie.workspace = true
+base-execution-primitives.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-consensus.workspace = true
+base-execution-trie.workspace = true
 
 reth-chainspec.workspace = true
 reth-cli-runner.workspace = true
@@ -48,7 +48,7 @@ base-alloy-consensus = { workspace = true, optional = true }
 tempfile.workspace = true
 
 [build-dependencies]
-reth-optimism-chainspec = { workspace = true, features = ["std"] }
+base-execution-chainspec = { workspace = true, features = ["std"] }
 
 [features]
 default = []
@@ -57,11 +57,11 @@ default = []
 otlp = [ "reth-node-core/otlp", "reth-tracing/otlp" ]
 otlp-logs = [ "reth-node-core/otlp-logs", "reth-tracing/otlp-logs" ]
 
-asm-keccak = [ "reth-node-core/asm-keccak", "reth-optimism-node/asm-keccak" ]
+asm-keccak = [ "base-execution-node/asm-keccak", "reth-node-core/asm-keccak" ]
 
 keccak-cache-global = [
+	"base-execution-node/keccak-cache-global",
 	"reth-node-core/keccak-cache-global",
-	"reth-optimism-node/keccak-cache-global",
 ]
 
 # Jemalloc feature for vergen to generate correct env vars
@@ -80,8 +80,8 @@ dev = [
 
 serde = [
 	"base-alloy-consensus?/serde",
-	"reth-optimism-chainspec/serde",
-	"reth-optimism-primitives/serde",
+	"base-execution-chainspec/serde",
+	"base-execution-primitives/serde",
 ]
 
 edge = [ "reth-cli-commands/edge", "reth-node-core/edge" ]

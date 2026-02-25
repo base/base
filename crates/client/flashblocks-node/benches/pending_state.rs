@@ -12,10 +12,10 @@ use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_client_node::test_utils::{Account, LocalNodeProvider, TestHarness};
+use base_execution_primitives::{OpBlock, OpTransactionSigned};
 use base_flashblocks::{FlashblocksAPI, FlashblocksReceiver, FlashblocksState};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_optimism_primitives::{OpBlock, OpTransactionSigned};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::BlockReader;
 use reth_transaction_pool::test_utils::TransactionBuilder;

@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-evm"
+name = "base-execution-evm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -31,10 +31,10 @@ base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 alloy-consensus.workspace = true
 
 # Optimism
-reth-optimism-chainspec.workspace = true
-reth-optimism-consensus.workspace = true
-reth-optimism-forks.workspace = true
-reth-optimism-primitives.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-consensus.workspace = true
+base-execution-forks.workspace = true
+base-execution-primitives.workspace = true
 
 # revm
 revm.workspace = true
@@ -47,7 +47,7 @@ thiserror.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
 alloy-genesis.workspace = true
-reth-optimism-primitives = { workspace = true, features = ["arbitrary"] }
+base-execution-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = [ "std" ]
@@ -60,15 +60,15 @@ std = [
 	"base-alloy-consensus/std",
 	"base-alloy-evm/std",
 	"base-alloy-rpc-types-engine/std",
+	"base-execution-chainspec/std",
+	"base-execution-consensus/std",
+	"base-execution-forks/std",
+	"base-execution-primitives/std",
 	"base-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",
 	"reth-execution-errors/std",
 	"reth-execution-types/std",
-	"reth-optimism-chainspec/std",
-	"reth-optimism-consensus/std",
-	"reth-optimism-forks/std",
-	"reth-optimism-primitives/std",
 	"reth-primitives-traits/std",
 	"reth-revm/std",
 	"reth-storage-errors/std",
@@ -78,7 +78,7 @@ std = [
 portable = [ "base-revm/portable", "reth-revm/portable", "revm/portable" ]
 rpc = [
 	"alloy-evm/rpc",
-	"reth-optimism-primitives/reth-codec",
-	"reth-optimism-primitives/serde",
+	"base-execution-primitives/reth-codec",
+	"base-execution-primitives/serde",
 	"reth-rpc-eth-api",
 ]

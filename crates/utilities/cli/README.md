@@ -24,7 +24,7 @@ base-cli-utils = { git = "https://github.com/base/base" }
 ### Example
 
 ```rust,ignore
-use reth_optimism_cli::Cli;
+use base_execution_cli::Cli;
 
 fn main() {
     // Initialize Reth version metadata for P2P identification

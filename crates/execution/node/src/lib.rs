@@ -1,4 +1,4 @@
-//! Standalone crate for Optimism-specific Reth configuration and builder types.
+#![doc = include_str!("../README.md")]
 //!
 //! # features
 //! - `js-tracer`: Enable the `JavaScript` tracer for the `debug_trace` endpoints
@@ -29,7 +29,7 @@ pub mod rpc;
 pub use rpc::OpEngineApiBuilder;
 
 pub mod version;
-pub use reth_optimism_txpool as txpool;
+pub use base_execution_txpool as txpool;
 pub use version::OP_NAME_CLIENT;
 
 pub mod proof_history;
@@ -38,13 +38,13 @@ pub mod proof_history;
 #[cfg(feature = "test-utils")]
 pub mod utils;
 
-use base_revm as _;
-pub use reth_optimism_evm::*;
-pub use reth_optimism_payload_builder::{
+pub use base_execution_evm::*;
+pub use base_execution_payload_builder::{
     self as payload, OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilder,
     OpPayloadBuilderAttributes, OpPayloadPrimitives, OpPayloadTypes, config::OpDAConfig,
 };
-pub use reth_optimism_storage::OpStorage;
+pub use base_execution_storage::OpStorage;
+use base_revm as _;
 #[cfg(feature = "test-utils")]
 use reth_tasks as _;
 use revm as _;

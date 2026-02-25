@@ -1,5 +1,4 @@
-//! Optimism Consensus implementation.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -18,6 +17,8 @@ use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use alloy_primitives::B64;
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::DepositReceipt;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
@@ -26,8 +27,6 @@ use reth_consensus_common::validation::{
     validate_header_extra_data, validate_header_gas,
 };
 use reth_execution_types::BlockExecutionResult;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::DepositReceipt;
 use reth_primitives_traits::{
     Block, BlockBody, BlockHeader, GotExpected, NodePrimitives, RecoveredBlock, SealedBlock,
     SealedHeader,
@@ -240,10 +239,10 @@ mod tests {
     use base_alloy_consensus::{
         OpTypedTransaction, encode_holocene_extra_data, encode_jovian_extra_data,
     };
+    use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
+    use base_execution_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
     use reth_chainspec::BaseFeeParams;
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
-    use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
-    use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
 

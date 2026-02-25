@@ -209,6 +209,9 @@ impl TestHarness {
             break;
         }
         assert!(drained);
+        // Give client tasks time to process messages through the WebSocket connection
+        // after the broadcast channel is empty.
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     fn messages_for_client(&self, client_id: usize) -> Vec<String> {

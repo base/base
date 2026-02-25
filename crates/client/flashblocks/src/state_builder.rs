@@ -9,11 +9,11 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::OpPrimitives;
+use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use base_revm::L1BlockInfo;
 use reth_evm::{Evm, FromRecoveredTx};
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::OpPrimitives;
-use reth_optimism_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
 

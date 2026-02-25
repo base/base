@@ -13,6 +13,9 @@ use base_builder_core::{
     BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, test_utils::get_available_port,
 };
 use base_client_node::BaseNode;
+use base_execution_chainspec::OpChainSpec;
+use base_execution_node::{args::RollupArgs, node::OpPoolBuilder};
+use base_execution_txpool::OpPooledTransaction;
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{
@@ -26,9 +29,6 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::{args::RollupArgs, node::OpPoolBuilder};
-use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use tracing::warn;
 use url::Url;
@@ -132,8 +132,8 @@ impl InProcessBuilder {
 
         let addons: base_client_node::BaseAddOns<
             _,
-            reth_optimism_rpc::OpEthApiBuilder,
-            reth_optimism_node::OpEngineValidatorBuilder,
+            base_execution_rpc::OpEthApiBuilder,
+            base_execution_node::OpEngineValidatorBuilder,
         > = base_node
             .add_ons_builder()
             .with_sequencer(rollup_args.sequencer.clone())

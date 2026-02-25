@@ -3,7 +3,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
-use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
+use base_execution_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
 use reth_trie_common::HashedStorage;
 use revm::database::BundleState;
@@ -133,9 +133,9 @@ mod test {
     use alloy_chains::Chain;
     use alloy_consensus::Header;
     use alloy_primitives::{B256, U256, keccak256};
+    use base_execution_chainspec::OpChainSpecBuilder;
+    use base_execution_node::OpNode;
     use reth_db_common::init::init_genesis;
-    use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_node::OpNode;
     use reth_provider::{
         StateWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_node_types,

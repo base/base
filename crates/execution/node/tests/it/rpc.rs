@@ -1,13 +1,13 @@
 //! RPC integration tests.
 
+use base_execution_chainspec::BASE_MAINNET;
+use base_execution_node::OpNode;
 use reth_network::types::NatResolver;
 use reth_node_builder::{NodeBuilder, NodeHandle};
 use reth_node_core::{
     args::{NetworkArgs, RpcServerArgs},
     node_config::NodeConfig,
 };
-use reth_optimism_chainspec::BASE_MAINNET;
-use reth_optimism_node::OpNode;
 use reth_rpc_api::servers::AdminApiServer;
 use reth_tasks::Runtime;
 

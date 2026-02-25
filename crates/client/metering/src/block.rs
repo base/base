@@ -4,11 +4,11 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
 use alloy_primitives::B256;
+use base_execution_chainspec::OpChainSpec;
+use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_primitives::OpBlock;
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
@@ -138,7 +138,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Signature};
     use base_client_node::test_utils::{Account, TestHarness};
-    use reth_optimism_primitives::{OpBlockBody, OpTransactionSigned};
+    use base_execution_primitives::{OpBlockBody, OpTransactionSigned};
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 

@@ -1,5 +1,4 @@
-//! `ExEx` unique for OP-Reth. See also [`reth_exex`] for more op-reth execution extensions.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -12,13 +11,13 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
+use base_execution_trie::{
+    OpProofStoragePrunerTask, OpProofsStorage, OpProofsStore, live::LiveTrieCollector,
+};
 use futures_util::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
-use reth_optimism_trie::{
-    OpProofStoragePrunerTask, OpProofsStorage, OpProofsStore, live::LiveTrieCollector,
-};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 use reth_trie::{HashedPostStateSorted, SortedTrieData, updates::TrieUpdatesSorted};
 use tokio::{sync::watch, task, time};
@@ -122,10 +121,10 @@ where
 /// use reth_db::test_utils::create_test_rw_db;
 /// use reth_node_api::NodeTypesWithDBAdapter;
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
-/// use reth_optimism_chainspec::BASE_MAINNET;
-/// use reth_optimism_exex::OpProofsExEx;
-/// use reth_optimism_node::{OpNode, args::RollupArgs};
-/// use reth_optimism_trie::{InMemoryProofsStorage, OpProofsStorage, db::MdbxProofsStorage};
+/// use base_execution_chainspec::BASE_MAINNET;
+/// use base_execution_exex::OpProofsExEx;
+/// use base_execution_node::{OpNode, args::RollupArgs};
+/// use base_execution_trie::{InMemoryProofsStorage, OpProofsStorage, db::MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
@@ -649,12 +648,12 @@ mod tests {
 
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+    use base_execution_trie::{
+        BlockStateDiff, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
+    };
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};
     use reth_execution_types::{Chain, ExecutionOutcome};
-    use reth_optimism_trie::{
-        BlockStateDiff, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
-    };
     use reth_primitives_traits::RecoveredBlock;
     use reth_trie::{HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted};
 

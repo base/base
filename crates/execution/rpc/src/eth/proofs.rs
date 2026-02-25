@@ -7,10 +7,10 @@ use alloy_primitives::Address;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_serde::JsonStorageKey;
 use async_trait::async_trait;
+use base_execution_trie::{OpProofsStorage, OpProofsStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
-use reth_optimism_trie::{OpProofsStorage, OpProofsStore};
 use reth_provider::StateProofProvider;
 use reth_rpc_api::eth::helpers::FullEthApi;
 

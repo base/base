@@ -24,8 +24,8 @@ base-proofs-extension.workspace = true
 
 # reth
 reth-cli-util.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-cli = { workspace = true, features = ["otlp"] }
+base-execution-node.workspace = true
+base-execution-cli = { workspace = true, features = ["otlp"] }
 
 # cli
 clap.workspace = true
@@ -33,4 +33,4 @@ url.workspace = true
 
 [features]
 default = [ "jemalloc" ]
-jemalloc = [ "reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc" ]
+jemalloc = [ "base-execution-cli/jemalloc", "reth-cli-util/jemalloc" ]

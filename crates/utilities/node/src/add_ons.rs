@@ -1,5 +1,17 @@
 use std::marker::PhantomData;
 
+use base_execution_forks::OpHardforks;
+use base_execution_node::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
+use base_execution_payload_builder::{
+    OpAttributes, OpPayloadPrimitives,
+    config::{OpDAConfig, OpGasLimitConfig},
+};
+use base_execution_rpc::{
+    eth::OpEthApiBuilder,
+    miner::{MinerApiExtServer, OpMinerExtApi},
+    witness::OpDebugWitnessApi,
+};
+use base_execution_txpool::OpPooledTx;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
@@ -10,18 +22,6 @@ use reth_node_builder::{
         RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_node::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
-use reth_optimism_payload_builder::{
-    OpAttributes, OpPayloadPrimitives,
-    config::{OpDAConfig, OpGasLimitConfig},
-};
-use reth_optimism_rpc::{
-    eth::OpEthApiBuilder,
-    miner::{MinerApiExtServer, OpMinerExtApi},
-    witness::OpDebugWitnessApi,
-};
-use reth_optimism_txpool::OpPooledTx;
 use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
@@ -208,7 +208,7 @@ where
     ) -> eyre::Result<Self::Handle> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
 
-        let builder = reth_optimism_payload_builder::OpPayloadBuilder::new(
+        let builder = base_execution_payload_builder::OpPayloadBuilder::new(
             ctx.node.pool().clone(),
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),

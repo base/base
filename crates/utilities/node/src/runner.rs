@@ -1,8 +1,8 @@
 //! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
 
+use base_execution_node::args::RollupArgs;
 use eyre::Result;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
-use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
 use tracing::info;
 

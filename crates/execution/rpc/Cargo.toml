@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-rpc"
+name = "base-execution-rpc"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -34,13 +34,13 @@ reth-payload-util.workspace = true
 reth-provider.workspace = true
 
 # op-reth
-reth-optimism-evm.workspace = true
-reth-optimism-payload-builder.workspace = true
-reth-optimism-txpool.workspace = true
+base-execution-evm.workspace = true
+base-execution-payload-builder.workspace = true
+base-execution-txpool.workspace = true
 # TODO remove node-builder import
-reth-optimism-primitives = { workspace = true, features = ["reth-codec", "serde-bincode-compat", "serde"] }
-reth-optimism-forks.workspace = true
-reth-optimism-trie.workspace = true
+base-execution-primitives = { workspace = true, features = ["reth-codec", "serde-bincode-compat", "serde"] }
+base-execution-forks.workspace = true
+base-execution-trie.workspace = true
 
 # ethereum
 alloy-eips.workspace = true
@@ -88,7 +88,7 @@ metrics.workspace = true
 strum.workspace = true
 
 [dev-dependencies]
-reth-optimism-chainspec.workspace = true
+base-execution-chainspec.workspace = true
 base-alloy-hardforks.workspace = true
 
 [features]

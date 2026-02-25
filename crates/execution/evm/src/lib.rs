@@ -1,5 +1,4 @@
-//! EVM config for vanilla optimism.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -18,14 +17,14 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_consensus::EIP1559ParamError;
 use base_alloy_evm::{OpReceiptBuilder, OpTxEnv};
+use base_execution_chainspec::OpChainSpec;
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::{DepositReceipt, OpPrimitives};
 use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
 use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 use revm::context::{BlockEnv, TxEnv};
 #[allow(unused_imports)]
@@ -345,14 +344,14 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
+    use base_execution_chainspec::{BASE_MAINNET, OpChainSpec};
+    use base_execution_primitives::{OpBlock, OpPrimitives, OpReceipt};
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
-    use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec};
-    use reth_optimism_primitives::{OpBlock, OpPrimitives, OpReceipt};
     use reth_primitives_traits::{Account, RecoveredBlock};
     use revm::{
         database::{BundleState, CacheDB},

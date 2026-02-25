@@ -7,11 +7,11 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_alloy_consensus::{OpReceipt, OpTransaction};
 use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
+use base_execution_evm::RethL1BlockInfo;
+use base_execution_forks::OpHardforks;
 use base_revm::estimate_tx_compressed_size;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
-use reth_optimism_evm::RethL1BlockInfo;
-use reth_optimism_forks::OpHardforks;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_eth_api::{
     RpcConvert,
@@ -73,7 +73,7 @@ where
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
-        let mut l1_block_info = match reth_optimism_evm::extract_l1_info(block.body()) {
+        let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
             Err(err) => {
                 let genesis_number =
@@ -347,8 +347,8 @@ mod test {
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_alloy_consensus::OpTypedTransaction;
     use base_alloy_hardforks::{BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP};
-    use reth_optimism_chainspec::BASE_MAINNET;
-    use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
+    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
 
     use super::*;
@@ -411,7 +411,7 @@ mod test {
         };
 
         let mut l1_block_info =
-            reth_optimism_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
         assert!(OpHardforks::is_fjord_active_at_timestamp(
@@ -547,7 +547,7 @@ mod test {
             ..Default::default()
         };
         let mut l1_block_info =
-            reth_optimism_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // https://basescan.org/tx/0xf9420cbaf66a2dda75a015488d37262cbfd4abd0aad7bb2be8a63e14b1fa7a94
         let tx = hex!(

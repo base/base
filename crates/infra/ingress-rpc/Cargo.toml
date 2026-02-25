@@ -21,7 +21,7 @@ base-bundles.workspace = true
 base-alloy-network.workspace = true
 audit-archiver-lib.workspace = true
 alloy-signer-local.workspace = true
-reth-optimism-evm.workspace = true
+base-execution-evm.workspace = true
 reth-rpc-eth-types.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 tokio = { workspace = true, features = ["full"] }

@@ -1,3 +1,3 @@
-# reth-optimism-forks
+# `base-execution-forks`
 
-Optimism hardfork definitions for reth, derived from `base-alloy-hardforks`.
+Hardfork definitions for Base/OP Stack.

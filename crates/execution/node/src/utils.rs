@@ -3,11 +3,11 @@ use std::sync::Arc;
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_execution_chainspec::OpChainSpecBuilder;
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_api::NodeTypesWithDBAdapter;
-use reth_optimism_chainspec::OpChainSpecBuilder;
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use tokio::sync::Mutex;
