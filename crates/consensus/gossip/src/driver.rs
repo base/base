@@ -152,16 +152,16 @@ where
                     return;
                 };
 
-                info!(target: "gossip", "Received a sync request from {peer_id}, spawning a new task to handle it");
+                info!(target: "gossip", peer_id = %peer_id, "Received a sync request, spawning a new task to handle it");
 
                 tokio::spawn(async move {
                     let mut buffer = Vec::new();
                     let Ok(bytes_received) = inbound_stream.read_to_end(&mut buffer).await else {
-                        error!(target: "gossip", "Failed to read the sync request from {peer_id}");
+                        error!(target: "gossip", peer_id = %peer_id, "Failed to read the sync request");
                         return;
                     };
 
-                    debug!(target: "gossip", bytes_received = bytes_received, peer_id = ?peer_id, payload = ?buffer, "Received inbound sync request");
+                    debug!(target: "gossip", bytes_received, peer_id = %peer_id, payload = ?buffer, "Received inbound sync request");
 
                     // We return: not found (1), version (0). `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
                     // Response format: <response> = <res><version><payload>
@@ -170,11 +170,11 @@ where
 
                     // We only write that we're not supporting the sync request.
                     if let Err(e) = inbound_stream.write_all(&OUTPUT).await {
-                        error!(target: "gossip", err = ?e, "Failed to write the sync response to {peer_id}");
+                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write the sync response");
                         return;
                     };
 
-                    debug!(target: "gossip", bytes_sent = OUTPUT.len(), peer_id = ?peer_id, "Sent outbound sync response");
+                    debug!(target: "gossip", bytes_sent = OUTPUT.len(), peer_id = %peer_id, "Sent outbound sync response");
                 });
             }
         });
@@ -196,7 +196,7 @@ where
                     self.swarm.select_next_some().await
                     && id == listener_id
                 {
-                    info!(target: "gossip", "Swarm now listening on: {address}");
+                    info!(target: "gossip", address = %address, "Listening on address");
 
                     self.addr = address.clone();
 
@@ -204,7 +204,7 @@ where
                 }
             },
             Err(err) => {
-                error!(target: "gossip", "Fail to listen on {}: {err}", self.addr);
+                error!(target: "gossip", address = %self.addr, error = %err, "Failed to listen on address");
                 Err(err)
             }
         }
@@ -234,11 +234,11 @@ where
     pub fn dial(&mut self, enr: Enr) {
         let validation = EnrValidation::validate(&enr, self.handler.rollup_config.l2_chain_id.id());
         if validation.is_invalid() {
-            trace!(target: "gossip", "Invalid OP Stack ENR for chain id {}: {}", self.handler.rollup_config.l2_chain_id.id(), validation);
+            trace!(target: "gossip", chain_id = %self.handler.rollup_config.l2_chain_id.id(), validation = %validation, "Invalid OP Stack ENR");
             return;
         }
         let Some(multiaddr) = enr_to_multiaddr(&enr) else {
-            debug!(target: "gossip", "Failed to extract tcp socket from enr: {:?}", enr);
+            debug!(target: "gossip", enr = ?enr, "Failed to extract tcp socket from enr");
             base_macros::inc!(gauge, crate::Metrics::DIAL_PEER_ERROR, "type" => "invalid_enr");
             return;
         };
@@ -277,7 +277,7 @@ where
                 base_macros::inc!(gauge, crate::Metrics::DIAL_PEER, "peer" => peer_id.to_string());
             }
             Err(e) => {
-                error!(target: "gossip", "Failed to connect to peer: {:?}", e);
+                error!(target: "gossip", error = ?e, "Failed to connect to peer");
                 self.connection_gate.remove_dial(&peer_id);
                 base_macros::inc!(gauge, crate::Metrics::DIAL_PEER_ERROR, "type" => "connection_error", "error" => e.to_string(), "peer" => peer_id.to_string());
             }
@@ -331,17 +331,17 @@ where
     fn handle_identify_event(&mut self, event: libp2p::identify::Event) {
         match event {
             libp2p::identify::Event::Received { connection_id, peer_id, info } => {
-                debug!(target: "gossip", ?connection_id, ?peer_id, ?info, "Received identify info from peer");
+                debug!(target: "gossip", ?connection_id, peer_id = %peer_id, ?info, "Received identify info from peer");
                 self.peerstore.insert(peer_id, info);
             }
             libp2p::identify::Event::Sent { connection_id, peer_id } => {
-                debug!(target: "gossip", ?connection_id, ?peer_id, "Sent identify info to peer");
+                debug!(target: "gossip", ?connection_id, peer_id = %peer_id, "Sent identify info to peer");
             }
             libp2p::identify::Event::Pushed { connection_id, peer_id, info } => {
-                debug!(target: "gossip", ?connection_id, ?peer_id, ?info, "Pushed identify info to peer");
+                debug!(target: "gossip", ?connection_id, peer_id = %peer_id, ?info, "Pushed identify info to peer");
             }
             libp2p::identify::Event::Error { connection_id, peer_id, error } => {
-                error!(target: "gossip", ?connection_id, ?peer_id, ?error, "Error raised while attempting to identify remote");
+                error!(target: "gossip", ?connection_id, peer_id = %peer_id, ?error, "Error raised while attempting to identify remote");
             }
         }
     }
@@ -357,7 +357,7 @@ where
                 message_id: id,
                 message,
             } => {
-                trace!(target: "gossip", "Received message with topic: {}", message.topic);
+                trace!(target: "gossip", topic = %message.topic, "Received message");
                 base_macros::inc!(gauge, crate::Metrics::GOSSIP_EVENT, "type" => "message", "topic" => message.topic.to_string());
                 if self.handler.topics().contains(&message.topic) {
                     let (status, payload) = self.handler.handle(message);
@@ -370,19 +370,19 @@ where
                 }
             }
             libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {
-                trace!(target: "gossip", "Peer: {:?} subscribed to topic: {:?}", peer_id, topic);
+                trace!(target: "gossip", peer_id = %peer_id, topic = ?topic, "Peer subscribed");
                 base_macros::inc!(gauge, crate::Metrics::GOSSIP_EVENT, "type" => "subscribed", "topic" => topic.to_string());
             }
             libp2p::gossipsub::Event::Unsubscribed { peer_id, topic } => {
-                trace!(target: "gossip", "Peer: {:?} unsubscribed from topic: {:?}", peer_id, topic);
+                trace!(target: "gossip", peer_id = %peer_id, topic = ?topic, "Peer unsubscribed");
                 base_macros::inc!(gauge, crate::Metrics::GOSSIP_EVENT, "type" => "unsubscribed", "topic" => topic.to_string());
             }
             libp2p::gossipsub::Event::SlowPeer { peer_id, .. } => {
-                trace!(target: "gossip", "Slow peer: {:?}", peer_id);
+                trace!(target: "gossip", peer_id = %peer_id, "Slow peer");
                 base_macros::inc!(gauge, crate::Metrics::GOSSIP_EVENT, "type" => "slow_peer", "peer" => peer_id.to_string());
             }
             libp2p::gossipsub::Event::GossipsubNotSupported { peer_id } => {
-                trace!(target: "gossip", "Peer: {:?} does not support gossipsub", peer_id);
+                trace!(target: "gossip", peer_id = %peer_id, "Peer does not support gossipsub");
                 base_macros::inc!(gauge, crate::Metrics::GOSSIP_EVENT, "type" => "not_supported", "peer" => peer_id.to_string());
             }
         }
@@ -397,7 +397,7 @@ where
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 let peer_count = self.swarm.connected_peers().count();
-                info!(target: "gossip", "Connection established: {:?} | Peer Count: {}", peer_id, peer_count);
+                info!(target: "gossip", peer_id = %peer_id, peer_count, "Connection established");
                 base_macros::inc!(
                     gauge,
                     crate::Metrics::GOSSIPSUB_CONNECTION,
@@ -409,7 +409,7 @@ where
                 self.peer_connection_start.insert(peer_id, Instant::now());
             }
             SwarmEvent::OutgoingConnectionError { peer_id: _peer_id, error, .. } => {
-                debug!(target: "gossip", "Outgoing connection error: {:?}", error);
+                debug!(target: "gossip", error = ?error, "Outgoing connection error");
                 // Remove the peer from current_dials so it can be dialed again
                 if let Some(peer_id) = _peer_id {
                     self.connection_gate.remove_dial(&peer_id);
@@ -424,7 +424,7 @@ where
             SwarmEvent::IncomingConnectionError {
                 error, connection_id: _connection_id, ..
             } => {
-                debug!(target: "gossip", "Incoming connection error: {:?}", error);
+                debug!(target: "gossip", error = ?error, "Incoming connection error");
                 base_macros::inc!(
                     gauge,
                     crate::Metrics::GOSSIPSUB_CONNECTION,

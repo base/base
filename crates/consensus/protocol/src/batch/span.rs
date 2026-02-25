@@ -511,7 +511,7 @@ impl SpanBatch {
                 if !cfg.is_isthmus_active(batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
                 {
-                    warn!(target: "batch_span", "EIP-7702 transactions are not supported pre-isthmus. tx_index: {}", i);
+                    warn!(target: "batch_span", tx_index = i, "EIP-7702 transactions are not supported pre-isthmus");
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
             }
@@ -526,7 +526,7 @@ impl SpanBatch {
                 let safe_block_payload = match fetcher.block_by_number(safe_block_num).await {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!(target: "batch_span", "failed to fetch block number {safe_block_num}: {e}");
+                        warn!(target: "batch_span", block_number = safe_block_num, error = %e, "Failed to fetch block");
                         return BatchValidity::Undecided;
                     }
                 };
@@ -541,9 +541,9 @@ impl SpanBatch {
                 if safe_block.transactions.len() - deposit_count != batch_txs.len() {
                     warn!(
                         target: "batch_span",
-                        "overlapped block's tx count does not match, safe_block_txs: {}, batch_txs: {}",
-                        safe_block.transactions.len(),
-                        batch_txs.len()
+                        safe_block_txs = safe_block.transactions.len(),
+                        batch_txs = batch_txs.len(),
+                        "Overlapped block's tx count does not match"
                     );
                     return BatchValidity::Drop(BatchDropReason::OverlappedTxCountMismatch);
                 }
@@ -679,7 +679,7 @@ impl SpanBatch {
             parent_block = match fetcher.l2_block_info_by_number(parent_num).await {
                 Ok(block) => block,
                 Err(e) => {
-                    warn!(target: "batch_span", "failed to fetch L2 block number {parent_num}: {e}");
+                    warn!(target: "batch_span", block_number = parent_num, error = %e, "Failed to fetch L2 block");
                     // Unable to validate the batch for now. Retry later.
                     return (BatchValidity::Undecided, None);
                 }
@@ -688,8 +688,11 @@ impl SpanBatch {
         if !self.check_parent_hash(parent_block.block_info.hash) {
             warn!(
                 target: "batch_span",
-                "parent block mismatch, expected: {parent_num}, received: {}. parent hash: {}, parent hash check: {}",
-                parent_block.block_info.number, parent_block.block_info.hash, self.parent_check,
+                expected_block_num = parent_num,
+                received_block_num = parent_block.block_info.number,
+                parent_hash = %parent_block.block_info.hash,
+                parent_hash_check = %self.parent_check,
+                "Parent block mismatch"
             );
             return (BatchValidity::Drop(BatchDropReason::ParentHashMismatch), None);
         }
@@ -704,9 +707,9 @@ impl SpanBatch {
         if starting_epoch_num > parent_block.l1_origin.number + 1 {
             warn!(
                 target: "batch_span",
-                "batch is for future epoch too far ahead, while it has the next timestamp, so it must be invalid. starting epoch: {} | next epoch: {}",
-                starting_epoch_num,
-                parent_block.l1_origin.number + 1
+                starting_epoch = starting_epoch_num,
+                next_epoch = parent_block.l1_origin.number + 1,
+                "Batch is for future epoch too far ahead"
             );
             return (BatchValidity::Drop(BatchDropReason::EpochTooFarInFuture), None);
         }
@@ -739,7 +742,7 @@ impl SpanBatch {
         }
 
         if starting_epoch_num < parent_block.l1_origin.number {
-            warn!(target: "batch_span", "dropped batch, epoch is too old, minimum: {:?}", parent_block.block_info.id());
+            warn!(target: "batch_span", minimum_epoch = ?parent_block.block_info.id(), "Dropped batch, epoch is too old");
             return (BatchValidity::Drop(BatchDropReason::EpochTooOld), None);
         }
 
@@ -1139,7 +1142,7 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].contains(
-            "overlapped block's tx count does not match, safe_block_txs: 0, batch_txs: 1"
+            "Overlapped block's tx count does not match, safe_block_txs: 0, batch_txs: 1"
         ));
     }
 
@@ -1354,7 +1357,9 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("failed to fetch L2 block number 40: Block not found"));
+        assert!(
+            logs[0].contains("Failed to fetch L2 block") && logs[0].contains("Block not found")
+        );
     }
 
     #[tokio::test]
@@ -1400,7 +1405,13 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("parent block mismatch, expected: 40, received: 41"));
+        assert!(
+            logs[0].contains("Parent block mismatch")
+                && logs[0].contains("expected_block_num")
+                && logs[0].contains("40")
+                && logs[0].contains("received_block_num")
+                && logs[0].contains("41")
+        );
     }
 
     #[tokio::test]
@@ -1499,8 +1510,11 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        let str = "batch is for future epoch too far ahead, while it has the next timestamp, so it must be invalid. starting epoch: 10 | next epoch: 9";
-        assert!(logs[0].contains(str));
+        assert!(
+            logs[0].contains("Batch is for future epoch too far ahead")
+                && logs[0].contains("starting_epoch")
+                && logs[0].contains("next_epoch")
+        );
     }
 
     #[tokio::test]
@@ -1667,11 +1681,10 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        let str = alloc::format!(
-            "dropped batch, epoch is too old, minimum: {:?}",
-            l2_block.block_info.id(),
+        assert!(
+            logs[0].contains("Dropped batch, epoch is too old")
+                && logs[0].contains("minimum_epoch")
         );
-        assert!(logs[0].contains(&str));
     }
 
     #[tokio::test]
@@ -2039,7 +2052,9 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(
-            logs[0].contains("EIP-7702 transactions are not supported pre-isthmus. tx_index: 0")
+            logs[0].contains("EIP-7702 transactions are not supported pre-isthmus")
+                && logs[0].contains("tx_index")
+                && logs[0].contains('0')
         );
     }
 
@@ -2094,7 +2109,9 @@ mod tests {
         );
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        assert!(logs[0].contains("failed to fetch block number 41: L2 Block not found"));
+        assert!(
+            logs[0].contains("Failed to fetch block") && logs[0].contains("L2 Block not found")
+        );
     }
 
     #[tokio::test]

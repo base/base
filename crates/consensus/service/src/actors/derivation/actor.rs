@@ -125,7 +125,7 @@ where
                             return Err(DerivationError::Yield);
                         }
                         PipelineErrorKind::Reset(e) => {
-                            warn!(target: "derivation", "Derivation pipeline is being reset: {e}");
+                            warn!(target: "derivation", error = %e, "Derivation pipeline is being reset");
 
                             let system_config = self
                                 .pipeline
@@ -174,7 +174,7 @@ where
                             }
                         }
                         PipelineErrorKind::Critical(_) => {
-                            error!(target: "derivation", "Critical derivation error: {e}");
+                            error!(target: "derivation", error = %e, "Critical derivation error");
                             base_macros::inc!(counter, Metrics::DERIVATION_CRITICAL_ERROR);
                             return Err(e.into());
                         }

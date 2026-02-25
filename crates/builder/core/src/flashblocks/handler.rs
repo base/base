@@ -2,7 +2,7 @@ use reth_node_builder::Events;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_payload_builder::OpBuiltPayload;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Handles newly built flashblock payloads.
 ///
@@ -30,7 +30,7 @@ impl PayloadHandler {
     pub async fn run(self) {
         let Self { mut built_rx, payload_events_handle } = self;
 
-        tracing::debug!("flashblocks payload handler started");
+        debug!("flashblocks payload handler started");
 
         loop {
             tokio::select! {

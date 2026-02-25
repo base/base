@@ -95,7 +95,7 @@ impl FilterType {
                 match decoder.write_all(payload) {
                     Ok(_) => (),
                     Err(e) => {
-                        info!("error while decoding payload: {}", e);
+                        info!(error = %e, "error while decoding payload");
                         return false;
                     }
                 }
@@ -114,7 +114,7 @@ impl FilterType {
         match json_result {
             Ok(json) => {
                 let result = self.json_matches(&json);
-                trace!("Filter result: {} for filter type: {:?}", result, self);
+                trace!(result = result, filter_type = ?self, "Filter result");
                 result
             }
             Err(e) => {
@@ -161,7 +161,7 @@ impl FilterType {
         {
             for account in found.keys() {
                 if addresses.contains(&account.to_lowercase()) {
-                    debug!("Found address in new_account_balances: {}", account);
+                    debug!(account = %account, "Found address in new_account_balances");
                     return true;
                 }
             }
@@ -182,7 +182,7 @@ impl FilterType {
                                     log.get("address").and_then(|addr| addr.as_str())
                                     && addresses.contains(&addr_str.to_lowercase())
                                 {
-                                    debug!("Found address in logs: {}", addr_str);
+                                    debug!(addr = %addr_str, "Found address in logs");
                                     return true;
                                 }
                             }
@@ -201,7 +201,7 @@ impl FilterType {
                     let tx_lower = tx_str.to_lowercase();
                     for address in addresses {
                         if tx_lower.contains(address) {
-                            debug!("Found address in transaction: {}", tx_str);
+                            debug!(tx = %tx_str, "Found address in transaction");
                             return true;
                         }
                     }
@@ -231,7 +231,7 @@ impl FilterType {
                                         if let Some(topic_str) = topic_value.as_str()
                                             && topics.contains(&topic_str.to_lowercase())
                                         {
-                                            debug!("Found topic in logs: {}", topic_str);
+                                            debug!(topic = %topic_str, "Found topic in logs");
                                             return true;
                                         }
                                     }

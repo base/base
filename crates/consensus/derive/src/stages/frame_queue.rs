@@ -117,7 +117,7 @@ where
         let data = match self.prev.next_data().await {
             Ok(data) => data,
             Err(e) => {
-                debug!(target: "frame_queue", "Failed to retrieve data: {:?}", e);
+                debug!(target: "frame_queue", error = ?e, "Failed to retrieve data");
                 // SAFETY: Bubble up potential EOF error without wrapping.
                 return Err(e);
             }

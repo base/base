@@ -106,7 +106,7 @@ where
 
         // Get the epoch
         let epoch = self.l1_blocks[0];
-        info!(target: "batch_queue", "Deriving next batch for epoch: {}", epoch.number);
+        info!(target: "batch_queue", epoch_number = epoch.number, "Deriving next batch for epoch");
 
         // Note: epoch origin can now be one block ahead of the L2 Safe Head
         // This is in the case where we auto generate all batches in an epoch & advance the epoch
@@ -143,14 +143,14 @@ where
                         remaining.push(batch.clone());
                     } else {
                         self.prev.flush();
-                        warn!(target: "batch_queue", "[HOLOCENE] Dropping future batch with parent: {}", parent.block_info.number);
+                        warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping future batch");
                     }
                 }
                 BatchValidity::Drop(reason) => {
                     // If we drop a batch, flush previous batches buffered in the BatchStream
                     // stage.
                     self.prev.flush();
-                    warn!(target: "batch_queue", "Dropping batch with parent: {}, reason: {}", parent.block_info, reason);
+                    warn!(target: "batch_queue", parent_block = %parent.block_info, reason = %reason, "Dropping batch");
                     continue;
                 }
                 BatchValidity::Accept => {
@@ -171,7 +171,7 @@ where
                         return Err(PipelineError::InvalidBatchValidity.crit());
                     }
 
-                    warn!(target: "batch_queue", "[HOLOCENE] Dropping outdated batch with parent: {}", parent.block_info.number);
+                    warn!(target: "batch_queue", parent_block_num = parent.block_info.number, "[HOLOCENE] Dropping outdated batch");
                     continue;
                 }
             }
@@ -179,7 +179,7 @@ where
         self.batches = remaining;
 
         if let Some(nb) = next_batch {
-            info!(target: "batch_queue", "Next batch found for timestamp {}", nb.batch.timestamp());
+            info!(target: "batch_queue", timestamp = nb.batch.timestamp(), "Next batch found");
             return Ok(nb.batch);
         }
 
@@ -199,8 +199,9 @@ where
 
         info!(
             target: "batch_queue",
-            "Generating empty batches for epoch: {} | parent: {}",
-            epoch.number, parent.l1_origin.number
+            epoch_number = epoch.number,
+            parent_epoch = parent.l1_origin.number,
+            "Generating empty batches for epoch"
         );
 
         // The next L1 block is needed to proceed towards the next epoch.
@@ -214,7 +215,7 @@ where
         // to preserve that L2 time >= L1 time. If this is the first block of the epoch, always
         // generate a batch to ensure that we at least have one batch per epoch.
         if next_timestamp < next_epoch.timestamp || first_of_epoch {
-            info!(target: "batch_queue", "Generating empty batch for epoch: {}", epoch.number);
+            info!(target: "batch_queue", epoch_number = epoch.number, "Generating empty batch for epoch");
             return Ok(Batch::Single(SingleBatch {
                 parent_hash: parent.block_info.hash,
                 epoch_num: epoch.number,
@@ -341,7 +342,7 @@ where
                 // reset is called, the origin behind is false.
                 self.l1_blocks.clear();
             }
-            info!(target: "batch_queue", "Advancing batch queue origin: {:?}", self.origin);
+            info!(target: "batch_queue", origin = ?self.origin, "Advancing batch queue origin");
         }
 
         // Load more data into the batch queue.
@@ -882,8 +883,11 @@ mod tests {
         // Validate logs
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        let warn_str = "Dropping batch with parent";
-        assert!(logs[0].contains(warn_str));
+        assert!(
+            logs[0].contains("Dropping batch")
+                && logs[0].contains("parent_block")
+                && logs[0].contains("batch timestamp is in the future")
+        );
     }
 
     #[tokio::test]
@@ -1025,7 +1029,7 @@ mod tests {
             parent_hash: Default::default(),
             hash: origin_check,
         });
-        let origin = mock.origin;
+        let _origin = mock.origin;
 
         let parent_check =
             b256!("01ddf682e2f8a6f10c2207e02322897e65317196000000000000000000000000");
@@ -1090,9 +1094,12 @@ mod tests {
         let res = bq.next_batch(parent).await.unwrap_err();
         let logs = trace_store.get_by_level(Level::INFO);
         assert_eq!(logs.len(), 2);
-        let str = alloc::format!("Advancing batch queue origin: {origin:?}");
-        assert!(logs[0].contains(&str));
-        assert!(logs[1].contains("Deriving next batch for epoch: 16988980031808077784"));
+        assert!(logs[0].contains("Advancing batch queue origin") && logs[0].contains("origin"));
+        assert!(
+            logs[1].contains("Deriving next batch for epoch")
+                && logs[1].contains("epoch_number")
+                && logs[1].contains("16988980031808077784")
+        );
         let warns = trace_store.get_by_level(Level::WARN);
         assert_eq!(warns.len(), 1);
         assert!(warns[0].contains("span batch has no new blocks after safe head"));

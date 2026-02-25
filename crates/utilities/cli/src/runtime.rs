@@ -2,6 +2,8 @@
 
 use std::future::Future;
 
+use tracing::info;
+
 /// A runtime manager.
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeManager;
@@ -23,7 +25,7 @@ impl RuntimeManager {
             tokio::select! {
                 biased;
                 _ = tokio::signal::ctrl_c() => {
-                    tracing::info!(target: "cli", "Received Ctrl-C, shutting down...");
+                    info!(target: "cli", "Received Ctrl-C, shutting down...");
                     Ok(())
                 }
                 res = fut => res,

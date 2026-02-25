@@ -216,7 +216,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
 
             match severity {
                 EngineTaskErrorSeverity::Temporary => {
-                    trace!(target: "engine", "{e}");
+                    trace!(target: "engine", error = %e, "Temporary engine error");
 
                     // Yield the task to allow other tasks to execute to avoid starvation.
                     yield_now().await;
@@ -224,7 +224,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
                     continue;
                 }
                 EngineTaskErrorSeverity::Critical => {
-                    error!(target: "engine", "{e}");
+                    error!(target: "engine", error = %e, "Critical engine error");
                     return Err(e);
                 }
                 EngineTaskErrorSeverity::Reset => {

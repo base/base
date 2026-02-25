@@ -122,7 +122,7 @@ impl NetworkEngineClient for ForwardingNetworkEngineClient {
             .blocks_tx
             .send(block)
             .await
-            .inspect_err(|e| error!(target: "net", "Failed to send block: {:?}", e));
+            .inspect_err(|e| error!(target: "net", error = ?e, "Failed to send block"));
         Ok(())
     }
 }

@@ -131,11 +131,11 @@ where
             let otlp_logs_status = runner.block_on(self.cli.traces.init_otlp_logs(&mut layers))?;
 
             self.guard = self.cli.logs.init_tracing_with_layers(layers)?;
-            info!(target: "reth::cli", "Initialized tracing, debug log directory: {}", self.cli.logs.log_file_directory);
+            info!(target: "reth::cli", log_dir = %self.cli.logs.log_file_directory, "Initialized tracing");
 
             match otlp_status {
                 OtlpInitStatus::Started(endpoint) => {
-                    info!(target: "reth::cli", "Started OTLP {:?} tracing export to {endpoint}", self.cli.traces.protocol);
+                    info!(target: "reth::cli", protocol = ?self.cli.traces.protocol, endpoint = %endpoint, "Started OTLP tracing export");
                 }
                 OtlpInitStatus::NoFeature => {
                     warn!(target: "reth::cli", "Provided OTLP tracing arguments do not have effect, compile with the `otlp` feature")
@@ -145,7 +145,7 @@ where
 
             match otlp_logs_status {
                 OtlpLogsStatus::Started(endpoint) => {
-                    info!(target: "reth::cli", "Started OTLP {:?} logs export to {endpoint}", self.cli.traces.protocol);
+                    info!(target: "reth::cli", protocol = ?self.cli.traces.protocol, endpoint = %endpoint, "Started OTLP logs export");
                 }
                 OtlpLogsStatus::NoFeature => {
                     warn!(target: "reth::cli", "Provided OTLP logs arguments do not have effect, compile with the `otlp-logs` feature")

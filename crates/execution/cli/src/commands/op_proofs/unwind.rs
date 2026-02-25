@@ -67,8 +67,8 @@ impl<C: ChainSpecParser<ChainSpec = OpChainSpec>> UnwindCommand<C> {
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = OpPrimitives>>(
         self,
     ) -> eyre::Result<()> {
-        info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
-        info!(target: "reth::cli", "Unwinding OP proofs storage at: {:?}", self.storage_path);
+        info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
+        info!(target: "reth::cli", path = ?self.storage_path, "Unwinding OP proofs storage");
 
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;

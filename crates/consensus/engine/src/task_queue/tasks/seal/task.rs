@@ -77,7 +77,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         let payload_envelope = match get_payload_version {
             EngineGetPayloadVersion::V4 => {
                 let payload = engine.get_payload_v4(payload_id).await.map_err(|e| {
-                    error!(target: "engine", "Payload fetch failed: {e}");
+                    error!(target: "engine", error = %e, "Payload fetch failed");
                     SealTaskError::GetPayloadFailed(e)
                 })?;
 
@@ -88,7 +88,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             }
             EngineGetPayloadVersion::V3 => {
                 let payload = engine.get_payload_v3(payload_id).await.map_err(|e| {
-                    error!(target: "engine", "Payload fetch failed: {e}");
+                    error!(target: "engine", error = %e, "Payload fetch failed");
                     SealTaskError::GetPayloadFailed(e)
                 })?;
 
@@ -99,7 +99,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             }
             EngineGetPayloadVersion::V2 => {
                 let payload = engine.get_payload_v2(payload_id).await.map_err(|e| {
-                    error!(target: "engine", "Payload fetch failed: {e}");
+                    error!(target: "engine", error = %e, "Payload fetch failed");
                     SealTaskError::GetPayloadFailed(e)
                 })?;
 
@@ -174,7 +174,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 };
             }
             Err(e) => {
-                error!(target: "engine", "Payload import failed: {e}");
+                error!(target: "engine", error = %e, "Payload import failed");
                 return Err(Box::new(e).into());
             }
             Ok(_) => {

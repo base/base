@@ -11,6 +11,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, Utf8Bytes},
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 use crate::PublisherMetrics;
 
@@ -52,7 +53,7 @@ impl BroadcastLoop {
         loop {
             tokio::select! {
                 _ = self.cancel.cancelled() => {
-                    tracing::info!("WebSocketPublisher is terminating, closing broadcast loop");
+                    info!("WebSocketPublisher is terminating, closing broadcast loop");
                     return;
                 }
 
@@ -60,21 +61,21 @@ impl BroadcastLoop {
                     Ok(payload) => {
                         self.metrics.on_message_sent();
 
-                        tracing::debug!("Broadcasted payload: {:?}", payload);
+                        debug!(payload = ?payload, "Broadcasted payload");
                         if let Err(e) = self.stream.send(Message::Text(payload)).await {
                             self.metrics.on_send_error();
-                            tracing::debug!("Closing subscription for {peer_addr}: {e}");
+                            debug!(peer_addr = %peer_addr, error = %e, "Closing subscription");
                             break;
                         }
                     }
                     Err(RecvError::Closed) => {
-                        tracing::debug!("Broadcast channel closed, exiting broadcast loop");
+                        debug!("Broadcast channel closed, exiting broadcast loop");
                         return;
                     }
                     Err(RecvError::Lagged(skipped)) => {
                         self.metrics.on_lagged(skipped);
-                        tracing::warn!(
-                            skipped,
+                        warn!(
+                            skipped = skipped,
                             "Broadcast channel lagged, some messages were dropped"
                         );
                     }
@@ -82,11 +83,11 @@ impl BroadcastLoop {
 
                 message = self.stream.next() => if let Some(message) = message { match message {
                     Ok(Message::Close(_)) => {
-                        tracing::info!("Closing frame received, stopping connection for {peer_addr}");
+                        info!(peer_addr = %peer_addr, "Closing frame received, stopping connection");
                         break;
                     }
                     Err(e) => {
-                        tracing::warn!("Received error. Closing subscription for {peer_addr}: {e}");
+                        warn!(peer_addr = %peer_addr, error = %e, "Received error. Closing subscription");
                         break;
                     }
                     _ => (),

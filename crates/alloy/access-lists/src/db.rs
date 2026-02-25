@@ -170,7 +170,7 @@ where
 {
     fn commit(&mut self, changes: HashMap<Address, Account>) {
         if let Err(e) = self.try_commit(changes) {
-            error!("Failed to commit changes via FBALBuilderDb: {:?}", e);
+            error!(error = ?e, "Failed to commit changes via FBALBuilderDb");
             self.error = Some(e);
         }
     }

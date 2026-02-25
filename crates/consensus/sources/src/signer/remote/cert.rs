@@ -9,6 +9,7 @@ use rustls::{
 };
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, trace};
 
 use crate::signer::remote::client::RemoteSigner;
 
@@ -107,7 +108,7 @@ impl RemoteSigner {
             builder.handle_watcher_event(Arc::clone(&client), res)
         })?;
 
-        tracing::info!(target: "signer", "Starting certificate watcher for automatic TLS reload");
+        info!(target: "signer", "Starting certificate watcher for automatic TLS reload");
 
         watcher.watch(&client_cert.cert, RecursiveMode::NonRecursive)?;
         watcher.watch(&client_cert.key, RecursiveMode::NonRecursive)?;
@@ -126,7 +127,7 @@ impl RemoteSigner {
     ) {
         match res {
             Ok(Event { kind: EventKind::Modify(_), .. }) => {
-                tracing::debug!(
+                debug!(
                     target: "signer:certificate-watcher",
                     "Certificate file changed, reloading TLS configuration"
                 );
@@ -140,18 +141,18 @@ impl RemoteSigner {
                         // write here because the handler is synchronous.
                         let mut client_guard = client.blocking_write();
                         *client_guard = new_client;
-                        tracing::info!(target: "signer:certificate-watcher", "TLS configuration reloaded successfully");
+                        info!(target: "signer:certificate-watcher", "TLS configuration reloaded successfully");
                     }
                     Err(e) => {
-                        tracing::error!(target: "signer:certificate-watcher", error = %e, "Failed to reload TLS configuration");
+                        error!(target: "signer:certificate-watcher", error = %e, "Failed to reload TLS configuration");
                     }
                 }
             }
             Ok(event) => {
-                tracing::trace!(target: "signer:certificate-watcher", event = ?event, "Ignoring non-modify event.");
+                trace!(target: "signer:certificate-watcher", event = ?event, "Ignoring non-modify event.");
             }
             Err(e) => {
-                tracing::error!(target: "signer:certificate-watcher", error = %e, "Failed to receive event from watcher channel.");
+                error!(target: "signer:certificate-watcher", error = %e, "Failed to receive event from watcher channel.");
             }
         }
     }

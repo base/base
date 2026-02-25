@@ -17,6 +17,7 @@ use parking_lot::RwLock;
 #[cfg(test)]
 use rand_08::rngs::OsRng;
 use rsa::RsaPrivateKey;
+use tracing::{info, warn};
 
 use crate::{
     attestation::{extract_public_key, verify_attestation_with_pcr0},
@@ -64,7 +65,7 @@ impl Server {
                 (rng, pcr0, None)
             }
             None => {
-                tracing::warn!("running in local mode without NSM");
+                warn!("running in local mode without NSM");
                 let rng = NsmRng::default();
                 let signer_key_env = std::env::var(SIGNER_KEY_ENV_VAR).ok();
                 (rng, Vec::new(), signer_key_env)
@@ -76,14 +77,14 @@ impl Server {
 
         // Generate or load ECDSA signer key
         let signer_key = if let Some(hex_key) = signer_key_env {
-            tracing::info!("using signer key from environment variable");
+            info!("using signer key from environment variable");
             signer_from_hex(&hex_key)?
         } else {
             generate_signer(&mut rng)?
         };
 
         let local_mode = pcr0.is_empty();
-        tracing::info!(
+        info!(
             address = %signer_key.address(),
             local_mode = local_mode,
             "server initialized"
@@ -199,7 +200,7 @@ impl Server {
 
         let new_signer = signer_from_bytes(&decrypted)?;
 
-        tracing::info!(
+        info!(
             address = %new_signer.address(),
             "updated signer key"
         );
@@ -330,7 +331,7 @@ impl Server {
         // Generate ECDSA signer (fast, ~1ms)
         let signer_key = generate_signer(&mut rng)?;
 
-        tracing::info!(
+        info!(
             address = %signer_key.address(),
             "test server initialized (no RSA key)"
         );

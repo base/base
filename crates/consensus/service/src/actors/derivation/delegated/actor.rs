@@ -237,7 +237,7 @@ where
             DerivationActorRequest::ProcessEngineSignalRequest(_)
             | DerivationActorRequest::ProcessFinalizedL1Block(_)
             | DerivationActorRequest::ProcessL1HeadUpdateRequest(_) => {
-                debug!(target: "derivation", "Ignoring request while derivation delegation: {:?}", request_type);
+                debug!(target: "derivation", request_type = ?request_type, "Ignoring request while derivation delegation");
             }
         }
         Ok(())

@@ -308,7 +308,7 @@ impl ConnectionGate for ConnectionGater {
 
         dial_info.num_dials += 1;
         dial_info.last_dial = Instant::now();
-        trace!(target: "gossip", peer=?addr, "Dialed peer, current count: {}", dial_info.num_dials);
+        trace!(target: "gossip", peer=?addr, count = dial_info.num_dials, "Dialed peer");
     }
 
     fn remove_dial(&mut self, peer_id: &PeerId) {

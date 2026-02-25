@@ -98,7 +98,7 @@ impl Cli {
             "Starting rollup node services"
         );
         for hf in cfg.hardforks.to_string().lines() {
-            info!(target: "rollup_node", "{hf}");
+            info!(target: "rollup_node", hardfork = %hf, "hardfork");
         }
 
         let l1_chain_config =
@@ -151,7 +151,7 @@ impl Cli {
         .start()
         .await
         .map_err(|e| {
-            error!(target: "rollup_node", "Failed to start rollup node service: {e}");
+            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
             eyre::eyre!("{e}")
         })?;
 
