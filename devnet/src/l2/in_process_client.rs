@@ -234,7 +234,7 @@ impl InProcessClient {
             .parse()
             .map_err(|e| eyre!("Failed to parse flashblocks URL: {}", e))?;
 
-        let flashblocks_config = FlashblocksConfig::new(flashblocks_url, 3, None)?;
+        let flashblocks_config = FlashblocksConfig::new(flashblocks_url, 3, None, None)?;
 
         // TxPool RPC extension (management + status APIs)
         let txpool_rpc_config =

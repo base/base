@@ -41,9 +41,6 @@ impl BaseNodeExtension for FlashblocksExtension {
         let state_for_rpc = Arc::clone(&state);
         let state_for_start = state;
 
-        let builder_clients = cfg.builder_clients;
-        let builder_rpc_semaphore = cfg.builder_rpc_semaphore;
-
         // Start state processor, subscriber, and canonical subscription after node is started
         let hooks = hooks.add_node_started_hook(move |ctx| {
             info!(message = "Starting Flashblocks state processor");
@@ -73,8 +70,8 @@ impl BaseNodeExtension for FlashblocksExtension {
                 ctx.registry.eth_handlers().filter.clone(),
                 Arc::clone(&state_for_rpc),
                 ctx.pool().clone(),
-                builder_clients.clone(),
-                Arc::clone(&builder_rpc_semaphore),
+                cfg.builder_clients.clone(),
+                Arc::clone(&cfg.concurrency_limiter),
             );
             ctx.modules.replace_configured(api_ext.into_rpc())?;
 

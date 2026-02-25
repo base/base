@@ -32,14 +32,13 @@ use reth_rpc_eth_api::{
 };
 use reth_rpc_eth_types::EthApiError;
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
-use tokio::{
-    sync::{Semaphore, broadcast::error::RecvError},
-    time,
-};
+use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::{FlashblocksAPI, Metrics, PendingBlocksAPI};
+use crate::{
+    AdaptiveConcurrencyLimiter, BuilderRpcStats, FlashblocksAPI, Metrics, PendingBlocksAPI,
+};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -138,8 +137,8 @@ pub struct EthApiExt<Eth: EthApiTypes, FB, Pool> {
     eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
     pool: Pool,
-    builder_clients: Vec<HttpClient>,
-    builder_rpc_semaphore: Arc<Semaphore>,
+    builder_clients: Vec<(HttpClient, Arc<BuilderRpcStats>)>,
+    concurrency_limiter: Arc<AdaptiveConcurrencyLimiter>,
     metrics: Metrics,
 }
 
@@ -150,8 +149,8 @@ impl<Eth: EthApiTypes, FB, Pool> EthApiExt<Eth, FB, Pool> {
         eth_filter: EthFilter<Eth>,
         flashblocks_state: Arc<FB>,
         pool: Pool,
-        builder_clients: Vec<HttpClient>,
-        builder_rpc_semaphore: Arc<Semaphore>,
+        builder_clients: Vec<(HttpClient, Arc<BuilderRpcStats>)>,
+        concurrency_limiter: Arc<AdaptiveConcurrencyLimiter>,
     ) -> Self {
         Self {
             eth_api,
@@ -159,7 +158,7 @@ impl<Eth: EthApiTypes, FB, Pool> EthApiExt<Eth, FB, Pool> {
             flashblocks_state,
             pool,
             builder_clients,
-            builder_rpc_semaphore,
+            concurrency_limiter,
             metrics: Metrics::default(),
         }
     }
@@ -594,29 +593,58 @@ where
             .await
             .map_err(|e| EthApiError::PoolError(e.into()))?;
 
-        // Fire-and-forget to all builder RPCs concurrently with rate limiting
-        for client in &self.builder_clients {
+        // Forward to all builder RPCs concurrently with adaptive rate limiting
+        for (client, stats) in &self.builder_clients {
             let client = client.clone();
-            let semaphore = Arc::clone(&self.builder_rpc_semaphore);
+            let stats = Arc::clone(stats);
+            let limiter = Arc::clone(&self.concurrency_limiter);
             let tx_bytes = transaction.clone();
+            let metrics = self.metrics.clone();
 
             tokio::spawn(async move {
-                // Try to acquire permit, skip if rate limited
-                let _permit = match semaphore.try_acquire() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        warn!(message = "rate limited: skipping builder RPC forward");
+                // Try to acquire permit from adaptive limiter
+                let permit = match limiter.try_acquire() {
+                    Some(p) => p,
+                    None => {
+                        metrics.builder_rpc_rate_limited.increment(1);
+                        warn!(
+                            message = "rate limited: skipping builder RPC forward",
+                            url = %stats.url()
+                        );
                         return;
                     }
                 };
 
-                // Fire-and-forget RPC call to builder
-                if let Err(e) = client
+                // Update in-flight metrics
+                metrics.builder_rpc_in_flight.set(limiter.in_flight() as f64);
+                metrics.builder_rpc_concurrency_limit.set(limiter.current_limit() as f64);
+
+                // Fire RPC call to builder
+                let result = client
                     .request::<TxHash, _>("eth_sendRawTransaction", rpc_params![tx_bytes])
-                    .await
-                {
-                    warn!(message = "builder RPC forward failed", error = %e);
+                    .await;
+
+                match result {
+                    Ok(_) => {
+                        stats.on_success();
+                        limiter.on_success();
+                        metrics.builder_rpc_success.increment(1);
+                    }
+                    Err(e) => {
+                        stats.on_error();
+                        limiter.on_error();
+                        metrics.builder_rpc_error.increment(1);
+                        warn!(
+                            message = "builder RPC forward failed",
+                            url = %stats.url(),
+                            error = %e
+                        );
+                    }
                 }
+
+                // Permit dropped here, update in-flight
+                drop(permit);
+                metrics.builder_rpc_in_flight.set(limiter.in_flight() as f64);
             });
         }
 

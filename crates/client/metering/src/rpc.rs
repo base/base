@@ -773,7 +773,7 @@ mod tests {
 
         // Create a shared flashblocks state that we can inject pending blocks into
         let flashblocks_config =
-            FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10, None)
+            FlashblocksConfig::new(Url::parse("ws://localhost:12345").unwrap(), 10, None, None)
                 .expect("Failed to create flashblocks config");
         let flashblocks_state = Arc::clone(&flashblocks_config.state);
 

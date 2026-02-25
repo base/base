@@ -27,6 +27,18 @@ pub struct Args {
     )]
     pub max_pending_blocks_depth: u64,
 
+    /// URLs of builder RPC endpoints to forward transactions to.
+    #[arg(long = "builder-rpc-urls", value_name = "BUILDER_RPC_URL", num_args = 1..)]
+    pub builder_rpc_urls: Option<Vec<Url>>,
+
+    /// Maximum concurrent in-flight transactions to builder RPCs.
+    #[arg(
+        long = "max-builder-in-flight-req",
+        value_name = "MAX_BUILDER_IN_FLIGHT_REQ",
+        default_value = "10"
+    )]
+    pub max_builder_in_flight_req: usize,
+
     /// Enable transaction tracing for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
@@ -45,8 +57,14 @@ pub struct Args {
 
 impl From<&Args> for Option<FlashblocksConfig> {
     fn from(args: &Args) -> Self {
-        args.flashblocks_url
-            .clone()
-            .and_then(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth, None).ok())
+        args.flashblocks_url.clone().and_then(|url| {
+            FlashblocksConfig::new(
+                url,
+                args.max_pending_blocks_depth,
+                args.builder_rpc_urls.clone(),
+                Some(args.max_builder_in_flight_req),
+            )
+            .ok()
+        })
     }
 }
