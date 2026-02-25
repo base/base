@@ -4,8 +4,6 @@
 Outputs package names (one per line) that are either directly changed or
 transitively depend on a changed crate. Exits silently with no output
 if no workspace crates are affected.
-
-If root Cargo.toml or Cargo.lock changes, outputs all workspace crates.
 """
 
 import argparse
@@ -58,7 +56,7 @@ def build_reverse_deps(meta):
     reverse = {}
     for pkg in meta["packages"]:
         for dep in pkg.get("dependencies", []):
-            dep_name = dep.get("rename") or dep["name"]
+            dep_name = dep["name"]
             if dep_name in workspace_names:
                 reverse.setdefault(dep_name, set()).add(pkg["name"])
     return reverse
