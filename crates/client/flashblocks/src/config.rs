@@ -13,12 +13,14 @@ pub struct FlashblocksConfig {
     pub max_pending_blocks_depth: u64,
     /// Shared Flashblocks state.
     pub state: Arc<FlashblocksState>,
+    /// Builder RPC endpoints.
+    pub builder_rpc: Option<Vec<Url>>,
 }
 
 impl FlashblocksConfig {
     /// Create a new Flashblocks configuration.
-    pub fn new(websocket_url: Url, max_pending_blocks_depth: u64) -> Self {
+    pub fn new(websocket_url: Url, max_pending_blocks_depth: u64, builder_rpc: Option<Vec<Url>>) -> Self {
         let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
-        Self { websocket_url, max_pending_blocks_depth, state }
+        Self { websocket_url, max_pending_blocks_depth, state, builder_rpc }
     }
 }

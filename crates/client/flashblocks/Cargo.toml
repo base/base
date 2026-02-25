@@ -28,6 +28,7 @@ reth-rpc-eth-types.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-rpc.workspace = true
 reth-optimism-forks.workspace = true
+reth-transaction-pool.workspace = true
 reth-optimism-primitives.workspace = true
 
 # revm

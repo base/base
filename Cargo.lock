@@ -2864,6 +2864,7 @@ dependencies = [
  "reth-rpc-convert",
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
+ "reth-transaction-pool",
  "revm",
  "revm-database",
  "rstest",

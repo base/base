@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_eips::{BlockId, BlockNumberOrTag, Decodable2718};
 use alloy_primitives::{
     Address, TxHash, U256,
     map::foldhash::{HashSet, HashSetExt},
@@ -29,6 +29,10 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::EthApiError;
 use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use reth_transaction_pool::{TransactionPool, TransactionOrigin, PoolTransaction};
+use reth_primitives::transaction::SignedTransaction;
+use base_alloy_consensus::OpTxEnvelope;
+use url::Url;
 use tracing::{debug, trace, warn};
 
 use crate::{FlashblocksAPI, Metrics, PendingBlocksAPI};
@@ -116,29 +120,37 @@ pub trait EthApiOverride {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<Option<U256>>;
+
+    /// Sends a raw transaction
+    #[method(name = "sendRawTransaction")]
+    async fn send_raw_transaction(&self, transaction: alloy_primitives::Bytes) -> RpcResult<TxHash>;
 }
 
 /// Extended Eth API with flashblocks support.
 #[derive(Debug)]
-pub struct EthApiExt<Eth: EthApiTypes, FB> {
+pub struct EthApiExt<Eth: EthApiTypes, FB, Pool> {
     eth_api: Eth,
     eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
+    pool: Pool,
+    builder_rpc: Vec<Url>,
     metrics: Metrics,
 }
 
-impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
+impl<Eth: EthApiTypes, FB, Pool> EthApiExt<Eth, FB, Pool> {
     /// Creates a new extended Eth API instance with flashblocks support.
-    pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
-        Self { eth_api, eth_filter, flashblocks_state, metrics: Metrics::default() }
+    pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>, pool: Pool, builder_rpc: Vec<Url>) -> Self {
+        Self { eth_api, eth_filter, flashblocks_state, pool, builder_rpc, metrics: Metrics::default() }
     }
 }
 
 #[async_trait]
-impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
+impl<Eth, FB, Pool> EthApiOverrideServer for EthApiExt<Eth, FB, Pool>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
+    Pool: TransactionPool + 'static,
+    <Pool as TransactionPool>::Transaction: PoolTransaction<Pooled = base_alloy_consensus::OpPooledTransaction>,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn block_by_number(
@@ -533,12 +545,47 @@ where
             .map(|opt| opt.map(U256::from))
             .map_err(Into::into)
     }
+
+    async fn send_raw_transaction(&self, transaction: alloy_primitives::Bytes) -> RpcResult<TxHash> {
+        debug!(
+            message = "rpc::send_raw_transaction",
+            transaction = ?transaction
+        );
+
+        // Decode the transaction
+        let mut b = transaction.as_ref();
+        // TODO: no unwraps
+        let envelope = OpTxEnvelope::decode_2718(&mut b).unwrap();
+        let pooled = envelope.try_into_pooled().unwrap();
+        let recovered = pooled.try_into_recovered().unwrap();
+
+        // Validate the transaction by adding it to the pool
+        let pool_tx = <Pool as TransactionPool>::Transaction::from_pooled(recovered);
+        let tx_hash = pool_tx.hash().0.to_owned();
+        self.pool.add_transaction(TransactionOrigin::External, pool_tx).await
+            .map_err(|e| EthApiError::PoolError(e.into()).into())?;
+
+        // No errors, so the tx is valid
+        // Rollout 1: We call the builder's RPC endpoint to `eth_sendRawTransaction`
+        for builder_rpc in self.builder_rpc.iter() {
+            let client = JsonRpcClient::new(builder_rpc.clone());
+            let response = client.send_raw_transaction(transaction).await;
+            if response.is_ok() {
+                return Ok(TxHash::from(tx_hash));
+            }
+        }
+
+        
+
+        Ok(TxHash::from(tx_hash))
+    }
 }
 
-impl<Eth, FB> EthApiExt<Eth, FB>
+impl<Eth, FB, Pool> EthApiExt<Eth, FB, Pool>
 where
     Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
+    Pool: TransactionPool + 'static,
 {
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Base>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
