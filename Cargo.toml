@@ -112,6 +112,8 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
+# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
 [profile.profiling]
 inherits = "release"
 lto = false
