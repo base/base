@@ -883,8 +883,11 @@ mod tests {
         // Validate logs
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
-        let warn_str = "Dropping batch with parent";
-        assert!(logs[0].contains(warn_str));
+        assert!(
+            logs[0].contains("Dropping batch")
+                && logs[0].contains("parent_block")
+                && logs[0].contains("batch timestamp is in the future")
+        );
     }
 
     #[tokio::test]
@@ -1026,7 +1029,7 @@ mod tests {
             parent_hash: Default::default(),
             hash: origin_check,
         });
-        let origin = mock.origin;
+        let _origin = mock.origin;
 
         let parent_check =
             b256!("01ddf682e2f8a6f10c2207e02322897e65317196000000000000000000000000");
@@ -1091,9 +1094,12 @@ mod tests {
         let res = bq.next_batch(parent).await.unwrap_err();
         let logs = trace_store.get_by_level(Level::INFO);
         assert_eq!(logs.len(), 2);
-        let str = alloc::format!("Advancing batch queue origin: {origin:?}");
-        assert!(logs[0].contains(&str));
-        assert!(logs[1].contains("Deriving next batch for epoch: 16988980031808077784"));
+        assert!(logs[0].contains("Advancing batch queue origin") && logs[0].contains("origin"));
+        assert!(
+            logs[1].contains("Deriving next batch for epoch")
+                && logs[1].contains("epoch_number")
+                && logs[1].contains("16988980031808077784")
+        );
         let warns = trace_store.get_by_level(Level::WARN);
         assert_eq!(warns.len(), 1);
         assert!(warns[0].contains("span batch has no new blocks after safe head"));
