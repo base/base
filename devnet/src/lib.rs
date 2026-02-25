@@ -3,18 +3,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use alloy_network as _;
-use alloy_rpc_client as _;
-use alloy_rpc_types as _;
-use base_alloy_flashblocks as _;
-use base_alloy_network as _;
-use futures_util as _;
-use tokio_tungstenite as _;
-
 mod utils;
 pub use utils::unique_name;
 
-pub mod cli;
 pub mod config;
 pub mod containers;
 pub mod deployer;

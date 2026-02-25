@@ -8,10 +8,6 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[[bin]]
-name = "devnet"
-path = "src/bin/devnet.rs"
-
 [lints]
 workspace = true
 
@@ -20,7 +16,6 @@ workspace = true
 base-txpool-rpc.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks.workspace = true
-base-alloy-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
@@ -41,7 +36,6 @@ reth-node-builder = { workspace = true, features = ["test-utils"] }
 # alloy
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-network.workspace = true
-alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
@@ -53,20 +47,13 @@ base-alloy-network.workspace = true
 
 # tokio
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
-tokio-tungstenite = { workspace = true, features = ["native-tls"] }
-
-# async
-futures-util.workspace = true
 
 # rpc
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
-# cli
-url.workspace = true
-clap.workspace = true
-
 # misc
 hex.workspace = true
+url.workspace = true
 eyre.workspace = true
 rand.workspace = true
 nanoid.workspace = true
