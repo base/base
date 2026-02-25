@@ -524,7 +524,6 @@ mod tests {
 
         let earliest = store.get_earliest_block_number().unwrap();
         let latest = store.get_latest_block_number().unwrap();
-        println!("{earliest:?} {latest:?}");
         assert!(earliest.is_none());
         assert!(latest.is_none());
 

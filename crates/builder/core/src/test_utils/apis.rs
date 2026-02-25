@@ -14,7 +14,7 @@ use reth_optimism_rpc::OpEngineApiClient;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::DEFAULT_JWT_TOKEN;
 
@@ -217,7 +217,7 @@ pub fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        println!("Generated genesis file at: {output}");
+        info!("Generated genesis file at: {output}");
     } else {
         println!("{}", serde_json::to_string_pretty(&genesis)?);
     }
