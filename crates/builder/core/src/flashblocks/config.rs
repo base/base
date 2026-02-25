@@ -40,11 +40,6 @@ pub struct FlashblocksConfig {
     /// When enabled, flashblocks are built without state root, but the final payload
     /// returned by `get_payload` will have the state root computed.
     pub compute_state_root_on_finalize: bool,
-
-    /// Enable incremental trie caching for state root calculation
-    /// When enabled, subsequent flashblocks reuse trie nodes from previous flashblocks
-    /// for faster state root calculation
-    pub enable_incremental_trie_cache: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -56,7 +51,6 @@ impl Default for FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
-            enable_incremental_trie_cache: false,
         }
     }
 }
@@ -72,7 +66,6 @@ impl FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
-            enable_incremental_trie_cache: false,
         }
     }
 
@@ -109,12 +102,6 @@ impl FlashblocksConfig {
     #[must_use]
     pub const fn with_port(mut self, port: u16) -> Self {
         self.ws_addr.set_port(port);
-        self
-    }
-
-    #[must_use]
-    pub const fn with_enable_incremental_trie_cache(mut self, enable: bool) -> Self {
-        self.enable_incremental_trie_cache = enable;
         self
     }
 }

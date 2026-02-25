@@ -58,16 +58,6 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_COMPUTE_STATE_ROOT_ON_FINALIZE"
     )]
     pub flashblocks_compute_state_root_on_finalize: bool,
-
-    /// Enable incremental trie caching for state root calculation.
-    /// When enabled, subsequent flashblocks reuse trie nodes from previous flashblocks
-    /// for faster state root calculation (3-5x speedup expected).
-    #[arg(
-        long = "flashblocks.enable-incremental-trie-cache",
-        env = "FLASHBLOCKS_ENABLE_INCREMENTAL_TRIE_CACHE",
-        default_value = "false"
-    )]
-    pub flashblocks_enable_incremental_trie_cache: bool,
 }
 
 impl Default for FlashblocksArgs {
@@ -80,7 +70,6 @@ impl Default for FlashblocksArgs {
             flashblocks_leeway_time: 75,
             flashblocks_disable_state_root: false,
             flashblocks_compute_state_root_on_finalize: false,
-            flashblocks_enable_incremental_trie_cache: false,
         }
     }
 }
@@ -224,9 +213,6 @@ impl TryFrom<&Args> for FlashblocksConfig {
             compute_state_root_on_finalize: args
                 .flashblocks
                 .flashblocks_compute_state_root_on_finalize,
-            enable_incremental_trie_cache: args
-                .flashblocks
-                .flashblocks_enable_incremental_trie_cache,
         })
     }
 }

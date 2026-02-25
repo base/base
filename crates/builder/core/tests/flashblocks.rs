@@ -338,8 +338,7 @@ async fn test_no_tx_pool_with_compute_state_root_on_finalize() -> eyre::Result<(
 
 #[tokio::test]
 async fn smoke_dynamic_incremental_trie_cache() -> eyre::Result<()> {
-    let flashblocks =
-        FlashblocksConfig::for_tests().with_fixed(false).with_enable_incremental_trie_cache(true);
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
     let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
