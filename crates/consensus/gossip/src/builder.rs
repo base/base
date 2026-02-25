@@ -11,7 +11,9 @@ use libp2p::{
 };
 use tokio::sync::watch::{self};
 
-use crate::{Behaviour, BlockHandler, GaterConfig, GossipDriver, GossipDriverBuilderError};
+use crate::{
+    Behaviour, BlockHandler, GaterConfig, GossipDriver, GossipDriverBuilderError, Handler,
+};
 
 /// A builder for the [`GossipDriver`].
 #[derive(Debug)]
@@ -172,7 +174,6 @@ impl GossipDriverBuilder {
                 info!(target: "scoring", level = ?PeerScoreLevel::Off, "Peer scoring explicitly disabled")
             }
             Some(level) => {
-                use crate::handler::Handler;
                 let params = level
                     .to_params(handler.topics(), self.topic_scoring, block_time)
                     .unwrap_or_default();

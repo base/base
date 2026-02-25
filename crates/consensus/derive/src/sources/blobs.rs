@@ -218,6 +218,7 @@ where
 pub(crate) mod tests {
     use alloc::vec;
 
+    use alloy_consensus::Blob;
     use alloy_rlp::Decodable;
 
     use super::*;
@@ -286,8 +287,6 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_load_blobs_chain_provider_4844_txs_succeeds() {
-        use alloy_consensus::Blob;
-
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
         let batcher_address =

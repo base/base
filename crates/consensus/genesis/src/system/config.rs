@@ -1,7 +1,7 @@
 //! Contains the [`SystemConfig`] type.
 
 use alloy_consensus::{Eip658Value, Receipt};
-use alloy_primitives::{Address, B64, Log, U256};
+use alloy_primitives::{Address, B64, B256, Log, U256};
 
 use crate::{
     CONFIG_UPDATE_TOPIC, RollupConfig, SystemConfigLog, SystemConfigUpdateError,
@@ -59,7 +59,6 @@ impl<'a> serde::Deserialize<'a> for SystemConfig {
     where
         D: serde::Deserializer<'a>,
     {
-        use alloy_primitives::B256;
         // An alias struct that is identical to `SystemConfig`.
         // We use the alias to decode the eip1559 params as their u32 values.
         #[derive(serde::Deserialize)]

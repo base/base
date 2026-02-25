@@ -194,7 +194,6 @@ impl OpP2PApiServer for P2pRpc {
     }
 
     async fn opp2p_connect_peer(&self, _peer: String) -> RpcResult<()> {
-        use std::str::FromStr;
         base_macros::inc!(gauge, kona_gossip::Metrics::RPC_CALLS, "method" => "opp2p_connectPeer");
         let ma = libp2p::Multiaddr::from_str(&_peer).map_err(|_| {
             ErrorObject::borrowed(ErrorCode::InvalidParams.code(), "Invalid multiaddr", None)
@@ -303,9 +302,10 @@ impl OpP2PApiServer for P2pRpc {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     #[test]
     fn test_parse_multiaddr_string() {
-        use std::str::FromStr;
         let ma = "/ip4/127.0.0.1/udt";
         let multiaddr = libp2p::Multiaddr::from_str(ma).unwrap();
         let components = multiaddr.iter().collect::<Vec<_>>();

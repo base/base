@@ -1,6 +1,7 @@
 use alloy_primitives::BlockHash;
 use async_trait::async_trait;
 use base_protocol::{L2BlockInfo, SyncStatus};
+use kona_derive::ChainProvider;
 use kona_providers_alloy::AlloyChainProvider;
 use thiserror::Error;
 use tokio::{select, sync::mpsc, time};
@@ -105,8 +106,6 @@ where
         l1_block_number: u64,
         expected_hash: BlockHash,
     ) -> Result<(), DerivationDelegationError> {
-        use kona_derive::ChainProvider;
-
         let block = self
             .l1_provider
             .block_info_by_number(l1_block_number)

@@ -78,7 +78,7 @@ pub struct RollupConfig {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BASE_SEPOLIA_BASE_FEE_CONFIG};
+        use crate::BASE_SEPOLIA_BASE_FEE_CONFIG;
         let chain_op_config = match u32::arbitrary(u)? % 2 {
             0 => BASE_MAINNET_BASE_FEE_CONFIG,
             _ => BASE_SEPOLIA_BASE_FEE_CONFIG,
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_deserialize_reference_rollup_config() {
-        use crate::{BASE_MAINNET_BASE_FEE_CONFIG, SystemConfig};
+        use crate::SystemConfig;
 
         let raw: &str = r#"
         {

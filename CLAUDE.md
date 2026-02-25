@@ -5,3 +5,5 @@ Do not add `#![allow(missing_docs)]` or other allow-lints to suppress clippy war
 Binary crates (bin/) should contain minimal glue code. All meaningful logic belongs in library crates.
 
 Cargo.toml dependencies should be sorted by line length (waterfall style) and logically grouped as done in the rest of the workspace. Features sections go at the bottom of the manifest. All crate and binary Cargo.toml files must inherit lints from the workspace with `[lints] workspace = true`.
+
+All `use` imports must be at the top of the file or the top of a `mod` block. Never place `use` statements inside function bodies or closures. Exception: conditional imports behind `#[cfg(...)]` may be scoped to the `cfg`-gated block (e.g., inside a `#[cfg(test)] mod tests`, `#[cfg(feature = "...")]` function, or similar) rather than hoisted to the top of the file. Another exception: `use` inside `macro_rules!` bodies is acceptable when the macro needs to import items in its expansion context.

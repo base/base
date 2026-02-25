@@ -4,6 +4,7 @@
 
 use core::fmt::Debug;
 
+use ExecutionMeteringLimitExceeded::*;
 use alloy_primitives::{Address, U256};
 use base_revm::OpTransactionError;
 use derive_more::Display;
@@ -252,8 +253,6 @@ impl ExecutionInfo {
         tx: &TxResources,
         limits: &ResourceLimits,
     ) -> Result<(), TxnExecutionError> {
-        use ExecutionMeteringLimitExceeded::*;
-
         // Check per-transaction DA size limit (always enforced, operator-configured)
         if let Some(da_limit) = limits.tx_data_limit
             && tx.da_size > da_limit

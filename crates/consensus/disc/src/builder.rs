@@ -2,6 +2,7 @@
 
 use std::net::IpAddr;
 
+use alloy_rlp::Encodable;
 use discv5::{Config, Discv5, Enr, enr::k256};
 use kona_peers::{BootNodes, BootStoreFile, OpStackEnr};
 use tokio::time::Duration;
@@ -51,7 +52,6 @@ impl LocalNode {
     fn build_enr(self, chain_id: u64) -> Result<Enr, discv5::enr::Error> {
         let opstack = OpStackEnr::from_chain_id(chain_id);
         let mut opstack_data = Vec::new();
-        use alloy_rlp::Encodable;
         opstack.encode(&mut opstack_data);
 
         let mut enr_builder = Enr::builder();

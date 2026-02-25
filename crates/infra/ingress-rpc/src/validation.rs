@@ -158,7 +158,10 @@ mod tests {
     use alloy_primitives::{Bytes, bytes};
     use alloy_signer_local::PrivateKeySigner;
     use base_alloy_consensus::OpTxEnvelope;
-    use base_alloy_network::{TxSignerSync, eip2718::Encodable2718};
+    use base_alloy_network::{
+        TxSignerSync,
+        eip2718::{Decodable2718, Encodable2718},
+    };
 
     use super::*;
 
@@ -349,7 +352,6 @@ mod tests {
     #[tokio::test]
     async fn test_decode_tx_rejects_empty_bytes() {
         // Test that empty bytes fail to decode
-        use base_alloy_network::eip2718::Decodable2718;
         let empty_bytes = Bytes::new();
         let result = OpTxEnvelope::decode_2718(&mut empty_bytes.as_ref());
         assert!(result.is_err(), "Empty bytes should fail decoding");
@@ -358,7 +360,6 @@ mod tests {
     #[tokio::test]
     async fn test_decode_tx_rejects_invalid_bytes() {
         // Test that malformed bytes fail to decode
-        use base_alloy_network::eip2718::Decodable2718;
         let invalid_bytes = Bytes::from(vec![0x01, 0x02, 0x03]);
         let result = OpTxEnvelope::decode_2718(&mut invalid_bytes.as_ref());
         assert!(result.is_err(), "Invalid bytes should fail decoding");

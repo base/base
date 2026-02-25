@@ -937,11 +937,11 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "metrics")]
     fn test_metrics_instrumentation() {
+        use crate::Metrics;
+
         // This test verifies that metrics code compiles and doesn't panic
         // The actual metric values would require a metrics registry setup in a real test
         // environment
-
-        use crate::Metrics;
 
         // Initialize metrics (this should not panic)
         Metrics::init();

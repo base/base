@@ -13,6 +13,8 @@ use core::{
 };
 use std::net::ToSocketAddrs;
 
+use url::{Host, Url};
+
 use crate::PeerId;
 
 /// Represents an ENR in discovery.
@@ -140,8 +142,6 @@ impl FromStr for NodeRecord {
     type Err = NodeRecordParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use url::{Host, Url};
-
         let url = Url::parse(s).map_err(|e| NodeRecordParseError::InvalidUrl(e.to_string()))?;
 
         let port = url

@@ -182,7 +182,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_eips::{BlockHashOrNumber, NumHash};
-    use alloy_primitives::{B256, BlockNumber, U256};
+    use alloy_primitives::{B256, BlockNumber, U256, keccak256};
     use mockall::mock;
     use reth_primitives_traits::Account;
     use reth_storage_errors::provider::ProviderResult;
@@ -218,7 +218,6 @@ mod tests {
     );
 
     fn b256(n: u64) -> B256 {
-        use alloy_primitives::keccak256;
         keccak256(n.to_be_bytes())
     }
 
@@ -537,8 +536,6 @@ mod tests {
     // The earliest block is None, but the latest block exists -> early return default.
     #[tokio::test]
     async fn run_inner_earliest_none_real_db() {
-        use crate::BlockStateDiff;
-
         let dir = TempDir::new().unwrap();
         let store: OpProofsStorage<Arc<MdbxProofsStorage>> =
             OpProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
@@ -562,8 +559,6 @@ mod tests {
     // interval < min_block_interval -> "Nothing to prune" path; default output.
     #[tokio::test]
     async fn run_inner_interval_too_small_real_db() {
-        use crate::BlockStateDiff;
-
         let dir = TempDir::new().unwrap();
         let store: OpProofsStorage<Arc<MdbxProofsStorage>> =
             OpProofsStorage::from(Arc::new(MdbxProofsStorage::new(dir.path()).expect("env")));
