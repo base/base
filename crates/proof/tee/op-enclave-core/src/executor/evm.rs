@@ -9,15 +9,15 @@ use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_evm::OpEvm;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+// Re-export L1BlockInfo for use by callers
+pub use base_revm::L1BlockInfo;
+use base_revm::{
+    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction,
+    OpTransactionError,
+};
 use kona_executor::StatelessL2Builder;
 use kona_genesis::RollupConfig;
 use kona_mpt::TrieHinter;
-// Re-export L1BlockInfo for use by callers
-pub use op_revm::L1BlockInfo;
-use op_revm::{
-    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-    precompiles::OpPrecompiles,
-};
 use revm::{
     Inspector,
     context::{BlockEnv, TxEnv},

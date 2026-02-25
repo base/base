@@ -296,6 +296,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-hardforks",
+ "alloy-op-hardforks",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -401,6 +402,18 @@ dependencies = [
  "alloy-primitives",
  "alloy-serde",
  "serde",
+]
+
+[[package]]
+name = "alloy-op-hardforks"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6472c610150c4c4c15be9e1b964c9b78068f933bda25fb9cdf09b9ac2bb66f36"
+dependencies = [
+ "alloy-chains",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "auto_impl",
 ]
 
 [[package]]
@@ -9875,7 +9888,7 @@ dependencies = [
  "async-trait",
  "jsonrpsee",
  "op-enclave-core",
- "rustls 0.23.36",
+ "rustls 0.23.37",
  "rustls-pki-types",
  "thiserror 2.0.18",
 ]
@@ -9896,12 +9909,12 @@ dependencies = [
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
  "base-protocol",
+ "base-revm",
  "hex",
  "hex-literal",
  "kona-executor",
  "kona-genesis",
  "kona-mpt",
- "op-revm",
  "revm",
  "serde",
  "serde_json",

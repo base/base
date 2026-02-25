@@ -215,13 +215,13 @@ impl LocalInstance {
 impl Drop for LocalInstance {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.take() {
-            runtime.graceful_shutdown_with_timeout(Duration::from_secs(3));
-            std::fs::remove_dir_all(self.node_config().datadir().to_string()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to remove temporary data directory {}: {e}",
+            runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
+            if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
+                eprintln!(
+                    "Warning: failed to remove temporary data directory {}: {e}",
                     self.node_config().datadir()
-                )
-            });
+                );
+            }
         }
     }
 }

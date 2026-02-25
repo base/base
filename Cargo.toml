@@ -222,9 +222,6 @@ base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
-# op-revm
-op-revm = { version = "15.0.0", default-features = false }
-
 # revm
 revm = { version = "34.0.0", default-features = false }
 revm-bytecode = { version = "8.0.0", default-features = false }
