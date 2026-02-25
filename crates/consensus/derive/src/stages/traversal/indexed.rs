@@ -106,11 +106,11 @@ impl<F: ChainProvider> IndexedTraversal<F> {
             Ok(true) => {
                 let next = block_info.number as f64;
                 base_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next);
-                info!(target: "traversal", "System config updated at block {next}.");
+                info!(target: "traversal", block_number = block_info.number, "System config updated");
             }
             Ok(false) => { /* Ignore, no update applied */ }
             Err(err) => {
-                error!(target: "traversal", ?err, "Failed to update system config at block {}", block_info.number);
+                error!(target: "traversal", err = ?err, block_number = block_info.number, "Failed to update system config");
                 base_macros::set!(
                     gauge,
                     crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,

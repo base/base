@@ -52,7 +52,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
             {
                 Ok(mdbx) => mdbx,
                 Err(e) => {
-                    error!(target: "reth::cli", "Failed to create MdbxProofsStorage: {:?}, continuing without proofs history", e);
+                    error!(target: "reth::cli", error = ?e, "Failed to create MdbxProofsStorage, continuing without proofs history");
                     return hooks;
                 }
             };

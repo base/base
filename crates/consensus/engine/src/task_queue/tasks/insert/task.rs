@@ -113,7 +113,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         let response = match response {
             Ok(resp) => resp,
             Err(e) => {
-                warn!(target: "engine", "Failed to insert new payload: {e}");
+                warn!(target: "engine", error = %e, "Failed to insert new payload");
                 return Err(InsertTaskError::InsertFailed(e));
             }
         };

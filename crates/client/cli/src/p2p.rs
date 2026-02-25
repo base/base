@@ -26,6 +26,7 @@ use kona_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use kona_providers_alloy::AlloyChainProvider;
 use libp2p::identity::Keypair;
 use tokio::time::Duration;
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::signer::{SignerArgs, SignerArgsParseError};
@@ -275,11 +276,11 @@ impl P2PArgs {
         let tcp_socket = std::net::TcpListener::bind((ip_addr, tcp_port));
         let udp_socket = std::net::UdpSocket::bind((ip_addr, udp_port));
         if let Err(e) = tcp_socket {
-            tracing::error!(target: "p2p::flags", tcp_port, "Error binding TCP socket: {e}");
+            error!(target: "p2p::flags", tcp_port = tcp_port, error = %e, "Error binding TCP socket");
             eyre::bail!("Error binding TCP socket on port {tcp_port}: {e}");
         }
         if let Err(e) = udp_socket {
-            tracing::error!(target: "p2p::flags", udp_port, "Error binding UDP socket: {e}");
+            error!(target: "p2p::flags", udp_port = udp_port, error = %e, "Error binding UDP socket");
             eyre::bail!("Error binding UDP socket on port {udp_port}: {e}");
         }
 
@@ -304,7 +305,7 @@ impl P2PArgs {
             match PrivateKeySigner::from_bytes(&key) {
                 Ok(signer) => return Some(signer),
                 Err(e) => {
-                    tracing::error!(target: "p2p::flags", "Failed to parse private key: {}", e);
+                    error!(target: "p2p::flags", error = %e, "Failed to parse private key");
                     return None;
                 }
             }
@@ -318,7 +319,7 @@ impl P2PArgs {
             match PrivateKeySigner::from_bytes(&decoded) {
                 Ok(signer) => return Some(signer),
                 Err(e) => {
-                    tracing::error!(target: "p2p::flags", "Failed to parse private key from file: {}", e);
+                    error!(target: "p2p::flags", error = %e, "Failed to parse private key from file");
                     return None;
                 }
             }
@@ -413,7 +414,7 @@ impl P2PArgs {
 
         let keypair = self.keypair().unwrap_or_else(|e| {
             let generated = Keypair::generate_secp256k1();
-            tracing::warn!(
+            warn!(
                 target: "p2p::config",
                 error = %e,
                 peer_id = %generated.public().to_peer_id(),
@@ -507,7 +508,7 @@ impl P2PArgs {
         if let Some(mut private_key) = self.private_key {
             let keypair =
                 kona_cli::SecretKeyLoader::parse(&mut private_key.0).map_err(|e| eyre::eyre!(e))?;
-            tracing::info!(
+            info!(
                 target: "p2p::config",
                 peer_id = %keypair.public().to_peer_id(),
                 "Successfully loaded P2P keypair from raw private key"

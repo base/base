@@ -64,22 +64,22 @@ where
                 cancel_token.cancel();
 
                 let Some(result) = result else {
-                    warn!(target: "engine", "{task_name} task cancelled");
+                    warn!(target: "engine", task_name, "Task cancelled");
                     return Ok(());
                 };
 
                 let Ok(result) = result else {
-                    error!(target: "engine", ?result, "{task_name} task panicked");
+                    error!(target: "engine", result = ?result, task_name, "Task panicked");
                     return Err(EngineError::ChannelClosed);
                 };
 
                 match result {
                     Ok(()) => {
-                        info!(target: "engine", "{task_name} task completed successfully");
+                        info!(target: "engine", task_name, "Task completed successfully");
                         Ok(())
                     }
                     Err(err) => {
-                        error!(target: "engine", ?err, "{task_name} task failed");
+                        error!(target: "engine", err = ?err, task_name, "Task failed");
                         Err(err)
                     }
                 }

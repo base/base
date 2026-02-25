@@ -8,7 +8,7 @@ use based::{
 };
 use cadence::{StatsdClient, UdpMetricSink};
 use clap::Parser;
-use tracing::Level;
+use tracing::{Level, info};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Blockbuilding sidecar healthcheck service")]
@@ -57,7 +57,7 @@ async fn main() {
     // Use DD_AGENT_HOST if set (Kubernetes), otherwise localhost
     let statsd_host = std::env::var("DD_AGENT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let statsd_addr = format!("{statsd_host}:8125");
-    tracing::info!(address = %statsd_addr, "Connecting to StatsD agent");
+    info!(address = %statsd_addr, "Connecting to StatsD agent");
 
     let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP socket");
     socket.set_nonblocking(true).expect("failed to set socket nonblocking");
@@ -81,7 +81,7 @@ async fn main() {
         .with_tag("servicename", &service_name)
         .build();
 
-    tracing::info!(
+    info!(
         configname = %config_name,
         environment = %environment,
         projectname = %project_name,
@@ -117,7 +117,7 @@ async fn main() {
     tokio::select! {
         _ = checker.poll_for_health_checks() => {},
         _ = &mut shutdown_rx => {
-            tracing::info!(message = "Shutdown signal received, exiting");
+            info!(message = "Shutdown signal received, exiting");
         }
     }
 }

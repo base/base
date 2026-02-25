@@ -86,12 +86,12 @@ impl TryInto<PathBuf> for BootStoreFile {
 }
 
 fn peers_from_file(file: &File) -> VecDeque<Enr> {
-    debug!(target: "bootstore", "Reading boot store from disk: {:?}", file);
+    debug!(target: "bootstore", ?file, "Reading boot store from disk");
     let reader = BufReader::new(file);
     match serde_json::from_reader(reader).map(|s: BootStore| s.peers) {
         Ok(peers) => peers,
         Err(e) => {
-            warn!(target: "bootstore", "Failed to read boot store from disk: {:?}", e);
+            warn!(target: "bootstore", error = ?e, "Failed to read boot store from disk");
             VecDeque::new()
         }
     }
@@ -109,7 +109,7 @@ impl<'de> serde::Deserialize<'de> for BootStore {
                     store.peers.push_back(enr);
                 }
                 Err(e) => {
-                    warn!(target: "peers_store", "Failed to deserialize ENR: {:?}", e);
+                    warn!(target: "peers_store", error = ?e, "Failed to deserialize ENR");
                 }
             }
         }
@@ -198,7 +198,7 @@ impl BootStore {
             return;
         }
 
-        debug!(target: "bootstore", "Adding enr to the boot store: {}", enr);
+        debug!(target: "bootstore", enr = %enr, "Adding enr to the boot store");
         self.peers.push_back(enr);
 
         // Prune the oldest peer if we exceed the maximum number of peers.

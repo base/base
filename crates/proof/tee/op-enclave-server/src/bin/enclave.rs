@@ -12,6 +12,7 @@ use op_enclave_server::{
     transport::TransportConfig,
 };
 use serde_json::value::RawValue;
+use tracing::{debug, info, warn};
 
 /// Read timeout for vsock connections (5 minutes).
 const VSOCK_READ_TIMEOUT: Duration = Duration::from_secs(300);
@@ -25,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server = Arc::new(Server::new()?);
     let config = TransportConfig::default();
 
-    tracing::info!(
+    info!(
         address = %server.signer_address(),
         local_mode = server.is_local_mode(),
         "enclave server initialized"
@@ -35,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     #[cfg(unix)]
     {
         if let Err(e) = try_vsock_server(Arc::clone(&server), &config).await {
-            tracing::warn!("vsock unavailable, falling back to HTTP: {e}");
+            warn!(error = %e, "vsock unavailable, falling back to HTTP");
             run_http_server(server, &config).await?;
         }
         return Ok(());
@@ -43,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     #[cfg(not(unix))]
     {
-        tracing::info!("vsock not supported on this platform, using HTTP mode");
+        info!("vsock not supported on this platform, using HTTP mode");
         run_http_server(server, &config).await
     }
 }
@@ -63,7 +64,7 @@ async fn try_vsock_server(
     let addr = VsockAddr::new(VMADDR_CID_ANY, config.vsock_port);
     let listener = VsockListener::bind(&addr)?;
 
-    tracing::info!(port = config.vsock_port, "listening on vsock");
+    info!(port = config.vsock_port, "listening on vsock");
 
     let rpc_impl = RpcServerImpl::new(server);
     let module = rpc_impl.into_rpc();
@@ -74,14 +75,10 @@ async fn try_vsock_server(
 
         // Set read timeout to prevent hanging on slow/stuck clients
         if let Err(e) = stream.set_read_timeout(Some(VSOCK_READ_TIMEOUT)) {
-            tracing::warn!("failed to set vsock read timeout: {e}");
+            warn!(error = %e, "failed to set vsock read timeout");
         }
 
-        tracing::debug!(
-            cid = peer_addr.cid(),
-            port = peer_addr.port(),
-            "accepted vsock connection"
-        );
+        debug!(cid = peer_addr.cid(), port = peer_addr.port(), "accepted vsock connection");
 
         let module = module.clone();
 
@@ -112,11 +109,11 @@ async fn try_vsock_server(
                         if e.kind() == std::io::ErrorKind::WouldBlock
                             || e.kind() == std::io::ErrorKind::TimedOut =>
                     {
-                        tracing::warn!("vsock read timeout");
+                        warn!("vsock read timeout");
                         return;
                     }
                     Err(e) => {
-                        tracing::warn!("vsock read error: {e}");
+                        warn!(error = %e, "vsock read error");
                         return;
                     }
                 }
@@ -130,7 +127,7 @@ async fn try_vsock_server(
             let request_str = match std::str::from_utf8(&buffer[..total_read]) {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!("invalid UTF-8 in request: {e}");
+                    warn!(error = %e, "invalid UTF-8 in request");
                     return;
                 }
             };
@@ -152,7 +149,7 @@ async fn try_vsock_server(
 
             // Write the response
             if let Err(e) = stream.write_all(response.get().as_bytes()) {
-                tracing::warn!("vsock write error: {e}");
+                warn!(error = %e, "vsock write error");
             }
         });
     }
@@ -165,11 +162,7 @@ async fn run_http_server(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.http_port));
 
-    tracing::info!(
-        port = config.http_port,
-        body_limit = config.http_body_limit,
-        "listening on HTTP"
-    );
+    info!(port = config.http_port, body_limit = config.http_body_limit, "listening on HTTP");
 
     let rpc_impl = RpcServerImpl::new(server);
 

@@ -76,7 +76,7 @@ where
         parent: L2BlockInfo,
         l1_origins: &[BlockInfo],
     ) -> Result<Option<SingleBatch>, SpanBatchError> {
-        trace!(target: "batch_span", "Attempting to get a SingleBatch from buffer len: {}", self.buffer.len());
+        trace!(target: "batch_span", buffer_len = self.buffer.len(), "Attempting to get a SingleBatch from buffer");
 
         self.try_hydrate_buffer(parent, l1_origins)?;
         Ok(self.buffer.pop_front())
@@ -199,7 +199,7 @@ where
             Ok(Some(single_batch)) => Ok(Batch::Single(single_batch)),
             Ok(None) => Err(PipelineError::NotEnoughData.temp()),
             Err(e) => {
-                warn!(target: "batch_span", "Extracting singular batches from span batch failed: {}", e);
+                warn!(target: "batch_span", error = %e, "Extracting singular batches from span batch failed");
                 // If singular batch extraction fails, it should be handled the same as a
                 // dropped batch during span batch prefix checks.
                 self.flush();

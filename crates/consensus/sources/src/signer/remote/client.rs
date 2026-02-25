@@ -8,6 +8,7 @@ use alloy_transport_http::{
 };
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tracing::info;
 use url::Url;
 
 use crate::{
@@ -92,7 +93,7 @@ impl RemoteSigner {
         let version: String =
             client.request("health_status", ()).await.map_err(RemoteSignerStartError::Ping)?;
 
-        tracing::info!(target: "signer", version, "Connected to op-signer server");
+        info!(target: "signer", version, "Connected to op-signer server");
 
         let client = Arc::new(RwLock::new(client));
 

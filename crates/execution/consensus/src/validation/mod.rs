@@ -16,6 +16,7 @@ pub use reth_optimism_chainspec::decode_holocene_base_fee;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_primitives::DepositReceipt;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
+use tracing::debug;
 
 use crate::proof::calculate_receipt_root_optimism;
 
@@ -138,7 +139,7 @@ pub fn validate_block_post_execution<R: DepositReceipt>(
                 .iter()
                 .map(|r| Bytes::from(r.with_bloom_ref().encoded_2718()))
                 .collect::<Vec<_>>();
-            tracing::debug!(%error, ?receipts, "receipts verification failed");
+            debug!(%error, ?receipts, "receipts verification failed");
             return Err(error);
         }
     }

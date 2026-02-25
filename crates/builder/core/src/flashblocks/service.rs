@@ -15,6 +15,7 @@ use reth_optimism_node::{
 };
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
+use tracing::info;
 
 use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
 use crate::{
@@ -78,7 +79,7 @@ impl FlashblocksServiceBuilder {
         ctx.task_executor()
             .spawn_critical_task("flashblocks payload handler", Box::pin(payload_handler.run()));
 
-        tracing::info!("Flashblocks payload builder service started");
+        info!("Flashblocks payload builder service started");
         Ok(payload_builder_handle)
     }
 }

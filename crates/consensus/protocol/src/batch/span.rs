@@ -511,7 +511,7 @@ impl SpanBatch {
                 if !cfg.is_isthmus_active(batch.timestamp)
                     && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
                 {
-                    warn!(target: "batch_span", "EIP-7702 transactions are not supported pre-isthmus. tx_index: {}", i);
+                    warn!(target: "batch_span", tx_index = i, "EIP-7702 transactions are not supported pre-isthmus");
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
                 }
             }
@@ -526,7 +526,7 @@ impl SpanBatch {
                 let safe_block_payload = match fetcher.block_by_number(safe_block_num).await {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!(target: "batch_span", "failed to fetch block number {safe_block_num}: {e}");
+                        warn!(target: "batch_span", block_number = safe_block_num, error = %e, "Failed to fetch block");
                         return BatchValidity::Undecided;
                     }
                 };
@@ -541,9 +541,9 @@ impl SpanBatch {
                 if safe_block.transactions.len() - deposit_count != batch_txs.len() {
                     warn!(
                         target: "batch_span",
-                        "overlapped block's tx count does not match, safe_block_txs: {}, batch_txs: {}",
-                        safe_block.transactions.len(),
-                        batch_txs.len()
+                        safe_block_txs = safe_block.transactions.len(),
+                        batch_txs = batch_txs.len(),
+                        "Overlapped block's tx count does not match"
                     );
                     return BatchValidity::Drop(BatchDropReason::OverlappedTxCountMismatch);
                 }
@@ -679,7 +679,7 @@ impl SpanBatch {
             parent_block = match fetcher.l2_block_info_by_number(parent_num).await {
                 Ok(block) => block,
                 Err(e) => {
-                    warn!(target: "batch_span", "failed to fetch L2 block number {parent_num}: {e}");
+                    warn!(target: "batch_span", block_number = parent_num, error = %e, "Failed to fetch L2 block");
                     // Unable to validate the batch for now. Retry later.
                     return (BatchValidity::Undecided, None);
                 }
@@ -688,8 +688,11 @@ impl SpanBatch {
         if !self.check_parent_hash(parent_block.block_info.hash) {
             warn!(
                 target: "batch_span",
-                "parent block mismatch, expected: {parent_num}, received: {}. parent hash: {}, parent hash check: {}",
-                parent_block.block_info.number, parent_block.block_info.hash, self.parent_check,
+                expected_block_num = parent_num,
+                received_block_num = parent_block.block_info.number,
+                parent_hash = %parent_block.block_info.hash,
+                parent_hash_check = %self.parent_check,
+                "Parent block mismatch"
             );
             return (BatchValidity::Drop(BatchDropReason::ParentHashMismatch), None);
         }
@@ -704,9 +707,9 @@ impl SpanBatch {
         if starting_epoch_num > parent_block.l1_origin.number + 1 {
             warn!(
                 target: "batch_span",
-                "batch is for future epoch too far ahead, while it has the next timestamp, so it must be invalid. starting epoch: {} | next epoch: {}",
-                starting_epoch_num,
-                parent_block.l1_origin.number + 1
+                starting_epoch = starting_epoch_num,
+                next_epoch = parent_block.l1_origin.number + 1,
+                "Batch is for future epoch too far ahead"
             );
             return (BatchValidity::Drop(BatchDropReason::EpochTooFarInFuture), None);
         }
@@ -739,7 +742,7 @@ impl SpanBatch {
         }
 
         if starting_epoch_num < parent_block.l1_origin.number {
-            warn!(target: "batch_span", "dropped batch, epoch is too old, minimum: {:?}", parent_block.block_info.id());
+            warn!(target: "batch_span", minimum_epoch = ?parent_block.block_info.id(), "Dropped batch, epoch is too old");
             return (BatchValidity::Drop(BatchDropReason::EpochTooOld), None);
         }
 

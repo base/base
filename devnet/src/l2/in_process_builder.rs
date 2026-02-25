@@ -30,6 +30,7 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::{args::RollupArgs, node::OpPoolBuilder};
 use reth_optimism_txpool::OpPooledTransaction;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use tracing::warn;
 use url::Url;
 
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
@@ -72,7 +73,7 @@ pub struct InProcessBuilder {
 impl Drop for InProcessBuilder {
     fn drop(&mut self) {
         if let Err(e) = std::fs::remove_dir_all(&self.data_dir) {
-            tracing::warn!("Failed to remove temp data directory {:?}: {e}", self.data_dir);
+            warn!(dir = ?self.data_dir, error = %e, "Failed to remove temp data directory");
         }
     }
 }

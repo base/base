@@ -113,7 +113,7 @@ where
 
     async fn next_batch(&mut self) -> PipelineResult<Batch> {
         if let Err(e) = self.set_batch_reader().await {
-            debug!(target: "channel_reader", "Failed to set batch reader: {:?}", e);
+            debug!(target: "channel_reader", error = ?e, "Failed to set batch reader");
             self.next_channel();
             return Err(e);
         }

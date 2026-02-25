@@ -89,7 +89,7 @@ impl Discv5Driver {
             .retry(ExponentialBuilder::default())
             .context(self)
             .notify(|err: &discv5::Error, dur: Duration| {
-                warn!(target: "discovery", ?err, "Failed to start discovery service [Duration: {:?}]", dur);
+                warn!(target: "discovery", err = ?err, duration = ?dur, "Failed to start discovery service");
             })
             .await;
         res.map(|_| s)
@@ -121,12 +121,12 @@ impl Discv5Driver {
 
             let validation = EnrValidation::validate(&enr, chain_id);
             if validation.is_invalid() {
-                trace!(target: "discovery::bootstrap", "Ignoring Invalid Bootnode ENR: {:?}. {:?}", enr, validation);
+                trace!(target: "discovery::bootstrap", enr = ?enr, validation = ?validation, "Ignoring Invalid Bootnode ENR");
                 continue;
             }
 
             if let Err(e) = disc.add_enr(enr.clone()) {
-                debug!(target: "discovery::bootstrap", "Failed to add enr: {:?}", e);
+                debug!(target: "discovery::bootstrap", error = ?e, "Failed to add enr");
                 continue;
             }
 
@@ -172,13 +172,13 @@ impl Discv5Driver {
                 Self::bootstrap_peers(self.bootstore, self.bootnodes, chain_id, &self.disc).await;
 
             let enrs = self.disc.table_entries_enr();
-            info!(target: "discovery", "Discv5 Started with {} ENRs", enrs.len());
+            info!(target: "discovery", count = enrs.len(), "Discv5 Started");
 
             // Step 3: Forward ENRs in the bootstore to the enr receiver.
             if self.forward {
                 for enr in store.valid_peers_with_chain_id(self.chain_id) {
                     if let Err(e) = enr_sender.send(enr.clone()).await {
-                        debug!(target: "discovery", "Failed to forward enr: {:?}", e);
+                        debug!(target: "discovery", error = ?e, "Failed to forward enr");
                     }
                 }
             }
@@ -197,10 +197,10 @@ impl Discv5Driver {
                         break event_stream;
                     }
                     Err(e) => {
-                        warn!(target: "discovery", "Failed to start event stream: {:?}", e);
+                        warn!(target: "discovery", error = ?e, "Failed to start event stream");
                         retries += 1;
                         sleep(Duration::from_secs(2)).await;
-                        info!(target: "discovery", "Retrying event stream startup... (Attempt {}/{})", retries, max_retries);
+                        info!(target: "discovery", attempt = retries, max = max_retries, "Retrying event stream startup");
                     }
                 }
             };
@@ -214,19 +214,19 @@ impl Discv5Driver {
                                 HandlerRequest::Metrics(tx) => {
                                     let metrics = self.disc.metrics();
                                     if let Err(e) = tx.send(metrics) {
-                                        warn!(target: "discovery", "Failed to send metrics: {:?}", e);
+                                        warn!(target: "discovery", error = ?e, "Failed to send metrics");
                                     }
                                 }
                                 HandlerRequest::PeerCount(tx) => {
                                     let peers = self.disc.connected_peers();
                                     if let Err(e) = tx.send(peers) {
-                                        warn!(target: "discovery", "Failed to send peer count: {:?}", e);
+                                        warn!(target: "discovery", error = ?e, "Failed to send peer count");
                                     }
                                 }
                                 HandlerRequest::LocalEnr(tx) => {
                                     let enr = self.disc.local_enr().clone();
                                     if let Err(e) = tx.send(enr.clone()) {
-                                        warn!(target: "discovery", "Failed to send local enr: {:?}", e);
+                                        warn!(target: "discovery", error = ?e, "Failed to send local enr");
                                     }
                                 }
                                 HandlerRequest::AddEnr(enr) => {
@@ -235,19 +235,19 @@ impl Discv5Driver {
                                 HandlerRequest::RequestEnr{out, addr} => {
                                     let enr = self.disc.request_enr(addr).await;
                                     if let Err(e) = out.send(enr) {
-                                        warn!(target: "discovery", "Failed to send request enr: {:?}", e);
+                                        warn!(target: "discovery", error = ?e, "Failed to send request enr");
                                     }
                                 }
                                 HandlerRequest::TableEnrs(tx) => {
                                     let enrs = self.disc.table_entries_enr();
                                     if let Err(e) = tx.send(enrs) {
-                                        warn!(target: "discovery", "Failed to send table enrs: {:?}", e);
+                                        warn!(target: "discovery", error = ?e, "Failed to send table enrs");
                                     }
                                 },
                                 HandlerRequest::TableInfos(tx) => {
                                     let infos = self.disc.table_entries();
                                     if let Err(e) = tx.send(infos) {
-                                        warn!(target: "discovery", "Failed to send table infos: {:?}", e);
+                                        warn!(target: "discovery", error = ?e, "Failed to send table infos");
                                     }
                                 },
                                 HandlerRequest::BanAddrs{addrs_to_ban, ban_duration} => {
@@ -277,39 +277,39 @@ impl Discv5Driver {
                         match event {
                             discv5::Event::Discovered(enr) => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", "Valid ENR discovered, forwarding to swarm: {:?}", enr);
+                                    debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
                                     base_macros::inc!(gauge, crate::Metrics::DISCOVERY_EVENT, "type" => "discovered");
                                     store.add_enr(enr.clone());
                                     let sender = enr_sender.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) = sender.send(enr).await {
-                                            debug!(target: "discovery", "Failed to send enr: {:?}", e);
+                                            debug!(target: "discovery", error = ?e, "Failed to send enr");
                                         }
                                     });
                                 }
                             }
                             discv5::Event::SessionEstablished(enr, addr) => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", "Session established with valid ENR, forwarding to swarm. Address: {:?}, ENR: {:?}", addr, enr);
+                                    debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
                                     base_macros::inc!(gauge, crate::Metrics::DISCOVERY_EVENT, "type" => "session_established");
                                     store.add_enr(enr.clone());
                                     let sender = enr_sender.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) = sender.send(enr).await {
-                                            debug!(target: "discovery", "Failed to send enr: {:?}", e);
+                                            debug!(target: "discovery", error = ?e, "Failed to send enr");
                                         }
                                     });
                                 }
                             }
                             discv5::Event::UnverifiableEnr { enr, .. } => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", "Valid ENR discovered, forwarding to swarm: {:?}", enr);
+                                    debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
                                     base_macros::inc!(gauge, crate::Metrics::DISCOVERY_EVENT, "type" => "unverifiable_enr");
                                     store.add_enr(enr.clone());
                                     let sender = enr_sender.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) = sender.send(enr).await {
-                                            debug!(target: "discovery", "Failed to send enr: {:?}", e);
+                                            debug!(target: "discovery", error = ?e, "Failed to send enr");
                                         }
                                     });
                                 }
@@ -320,7 +320,7 @@ impl Discv5Driver {
                     }
                     _ = interval.tick() => {
                         let id = NodeId::random();
-                        trace!(target: "discovery", "Finding random node: {}", id);
+                        trace!(target: "discovery", node_id = %id, "Finding random node");
                         base_macros::inc!(gauge, crate::Metrics::FIND_NODE_REQUEST, "find_node" => "find_node");
                         let fut = self.disc.find_node(id);
                         let enr_sender = enr_sender.clone();
@@ -333,7 +333,7 @@ impl Discv5Driver {
                                     }
                                 }
                                 Err(err) => {
-                                    info!(target: "discovery", "Failed to find node: {:?}", err);
+                                    info!(target: "discovery", error = ?err, "Failed to find node");
                                 }
                             }
                         });
@@ -344,11 +344,11 @@ impl Discv5Driver {
                         store.merge(enrs);
 
                         if let Err(e) = store.sync() {
-                            warn!(target: "discovery", "Failed to sync bootstore: {:?}", e);
+                            warn!(target: "discovery", error = ?e, "Failed to sync bootstore");
                         }
 
                         let elapsed = start.elapsed();
-                        debug!(target: "discovery", "Bootstore ENRs stored in {:?}", elapsed);
+                        debug!(target: "discovery", elapsed = ?elapsed, "Bootstore ENRs stored");
                         base_macros::record!(histogram, crate::Metrics::ENR_STORE_TIME, "store_time", "store_time", elapsed.as_secs_f64());
                         base_macros::set!(gauge, crate::Metrics::DISCOVERY_PEER_COUNT, self.disc.connected_peers() as f64);
                     }
@@ -359,7 +359,7 @@ impl Discv5Driver {
                                 let mut rng = rand::rng();
                                 let index = rand::Rng::random_range(&mut rng, 0..enrs.len());
                                 let enr = enrs[index].clone();
-                                debug!(target: "removal", "Removing random ENR: {:?}", enr);
+                                debug!(target: "removal", enr = ?enr, "Removing random ENR");
                                 self.disc.remove_node(&enr.node_id());
                             }
                         }

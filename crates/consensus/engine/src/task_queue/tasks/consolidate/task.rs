@@ -177,7 +177,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         let block = match self.client.l2_block_by_label(block_num.into()).await {
             Ok(Some(block)) => block,
             Ok(None) => {
-                warn!(target: "engine", "Received `None` block for {}", block_num);
+                warn!(target: "engine", block_num, "Received `None` block");
                 return Err(ConsolidateTaskError::MissingUnsafeL2Block(block_num));
             }
             Err(_) => {

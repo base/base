@@ -463,7 +463,7 @@ impl OpPayloadBuilderCtx {
         match fbal_db.finish() {
             Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
             Err(err) => {
-                error!("Failed to finalize FBALBuilder: {}", err);
+                error!(error = %err, "Failed to finalize FBALBuilder");
             }
         }
 
@@ -733,7 +733,7 @@ impl OpPayloadBuilderCtx {
                 info.extra.access_list_builder = fbal_builder;
             }
             Err(err) => {
-                error!("Failed to finalize FBALBuilder: {}", err);
+                error!(error = %err, "Failed to finalize FBALBuilder");
             }
         }
 

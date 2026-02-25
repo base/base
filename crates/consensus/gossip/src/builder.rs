@@ -179,7 +179,7 @@ impl GossipDriverBuilder {
                     .unwrap_or_default();
                 match behaviour.gossipsub.with_peer_score(params, PeerScoreLevel::thresholds()) {
                     Ok(_) => debug!(target: "scoring", "Peer scoring enabled successfully"),
-                    Err(e) => warn!(target: "scoring", "Peer scoring failed: {}", e),
+                    Err(e) => warn!(target: "scoring", error = %e, "Peer scoring failed"),
                 }
             }
         }
@@ -196,13 +196,13 @@ impl GossipDriverBuilder {
 
         // Build the swarm with DNS+TCP transport.
         // Note: with_dns() must be called after with_tcp() to wrap TCP with DNS resolution.
-        debug!(target: "gossip", "Building Swarm with Peer ID: {}", keypair.public().to_peer_id());
+        debug!(target: "gossip", peer_id = %keypair.public().to_peer_id(), "Building Swarm");
         let swarm = SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
             .with_tcp(
                 TcpConfig::default().nodelay(true),
                 |i: &Keypair| {
-                    debug!(target: "gossip", "Noise Config Peer ID: {}", i.public().to_peer_id());
+                    debug!(target: "gossip", peer_id = %i.public().to_peer_id(), "Noise Config");
                     NoiseConfig::new(i)
                 },
                 YamuxConfig::default,

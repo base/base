@@ -23,7 +23,7 @@ use tokio::{
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::PayloadBuilder;
 
@@ -275,7 +275,7 @@ where
         &mut self,
         kind: PayloadKind,
     ) -> (Self::ResolvePayloadFuture, KeepPayloadJobAlive) {
-        tracing::info!("Resolve kind {:?}", kind);
+        info!(kind = ?kind, "Resolve kind");
 
         // Acquire mutex before cancelling to synchronize with payload publishing.
         {
@@ -357,19 +357,19 @@ where
     type Output = Result<(), PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        tracing::trace!("Polling job");
+        trace!("Polling job");
         let this = self.get_mut();
 
         // Check if deadline is reached
         if this.deadline.as_mut().poll(cx).is_ready() {
             this.cancel.cancel();
-            tracing::debug!("Deadline reached");
+            debug!("Deadline reached");
             return Poll::Ready(Ok(()));
         }
 
         // If cancelled via resolve_kind()
         if this.cancel.is_cancelled() {
-            tracing::debug!("Job cancelled");
+            debug!("Job cancelled");
             return Poll::Ready(Ok(()));
         }
 

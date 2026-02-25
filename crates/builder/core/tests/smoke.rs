@@ -127,7 +127,7 @@ async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
                 .expect("Timeout while waiting for block production")
                 .expect("Failed to produce block under load");
 
-                info!("Produced a block under load: {block:#?}");
+                info!(block = ?block, "Produced a block under load");
 
                 yield_now().await;
             }

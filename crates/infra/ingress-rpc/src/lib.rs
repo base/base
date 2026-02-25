@@ -187,7 +187,7 @@ pub fn connect_ingress_to_builder(
                 )
                 .await
             {
-                error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+                error!(error = %e, tx_hash = %tx_hash, "Failed to set metering information");
             }
         }
     });

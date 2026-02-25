@@ -112,7 +112,7 @@ where
                         if let PipelineErrorKind::Temporary(PipelineError::Eof) = err {
                             trace!(target: "pipeline", "Stages reset with EOF");
                         } else {
-                            error!(target: "pipeline", "Stage reset errored: {:?}", err);
+                            error!(target: "pipeline", error = ?err, "Stage reset errored");
                             return Err(err);
                         }
                     }
@@ -179,7 +179,7 @@ where
         );
         match self.attributes.next_attributes(cursor).await {
             Ok(a) => {
-                trace!(target: "pipeline", "Prepared L2 attributes: {:?}", a);
+                trace!(target: "pipeline", attributes = ?a, "Prepared L2 attributes");
                 base_macros::inc!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER
@@ -211,11 +211,11 @@ where
                     StepResult::AdvancedOrigin
                 }
                 PipelineErrorKind::Temporary(_) => {
-                    trace!(target: "pipeline", "Attributes queue step failed due to temporary error: {:?}", err);
+                    trace!(target: "pipeline", error = ?err, "Attributes queue step failed due to temporary error");
                     StepResult::StepFailed(err)
                 }
                 _ => {
-                    warn!(target: "pipeline", "Attributes queue step failed: {:?}", err);
+                    warn!(target: "pipeline", error = ?err, "Attributes queue step failed");
                     StepResult::StepFailed(err)
                 }
             },

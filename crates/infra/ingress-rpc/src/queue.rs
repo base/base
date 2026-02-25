@@ -71,7 +71,7 @@ impl MessageQueue for KafkaMessageQueue {
                     .with_max_times(3),
             )
             .notify(|err: &anyhow::Error, dur: Duration| {
-                info!("retrying to enqueue message {:?} after {:?}", err, dur);
+                info!(error = ?err, delay = ?dur, "retrying to enqueue message");
             })
             .await
     }

@@ -18,6 +18,7 @@ use hyper_util::rt::TokioIo;
 use op_enclave_server::transport::{DEFAULT_PROXY_PORT, DEFAULT_VSOCK_CID, DEFAULT_VSOCK_PORT};
 use parking_lot::Mutex;
 use tokio::net::TcpListener;
+use tracing::{debug, error, info, warn};
 #[cfg(unix)]
 use vsock::{VsockAddr, VsockStream};
 
@@ -64,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     #[cfg(not(unix))]
     {
-        tracing::error!("vsock proxy is only supported on Unix platforms");
+        error!("vsock proxy is only supported on Unix platforms");
         return Err("vsock not supported".into());
     }
 
@@ -87,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let addr = SocketAddr::from(([0, 0, 0, 0], http_port));
 
-        tracing::info!(
+        info!(
             http_port = http_port,
             vsock_cid = cid,
             vsock_port = vsock_port,
@@ -100,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
             let (stream, peer_addr) = listener.accept().await?;
 
-            tracing::debug!(peer = %peer_addr, "accepted connection");
+            debug!(peer = %peer_addr, "accepted connection");
 
             let pool = Arc::clone(&pool);
             tokio::spawn(async move {
@@ -112,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 });
 
                 if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-                    tracing::warn!("connection error: {e}");
+                    warn!(error = %e, "connection error");
                 }
             });
         }
@@ -140,7 +141,7 @@ async fn handle_request(
     let response = tokio::task::spawn_blocking(move || forward_to_vsock(&pool, &body))
         .await
         .map_err(|e| {
-            tracing::error!("spawn_blocking error: {e}");
+            error!(error = %e, "spawn_blocking error");
         })
         .ok()
         .flatten();

@@ -51,7 +51,7 @@ impl<EngineClient_: EngineClient> BuildTask<EngineClient_> {
         match status {
             PayloadStatusEnum::Valid => Ok(()),
             PayloadStatusEnum::Invalid { validation_error } => {
-                error!(target: "engine_builder", "Forkchoice update failed: {}", validation_error);
+                error!(target: "engine_builder", error = %validation_error, "Forkchoice update failed");
                 Err(BuildTaskError::EngineBuildError(EngineBuildError::InvalidPayload(
                     validation_error,
                 )))
@@ -127,7 +127,7 @@ impl<EngineClient_: EngineClient> BuildTask<EngineClient_> {
             }
         }
         .map_err(|e| {
-            error!(target: "engine_builder", "Forkchoice update failed: {}", e);
+            error!(target: "engine_builder", error = %e, "Forkchoice update failed");
             BuildTaskError::EngineBuildError(EngineBuildError::AttributesInsertionFailed(e))
         })?;
 

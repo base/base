@@ -148,7 +148,7 @@ impl P2pRpcRequest {
     fn list_blocked_addrs<G: ConnectionGate>(s: Sender<Vec<IpAddr>>, gossip: &GossipDriver<G>) {
         let blocked_addrs = gossip.connection_gate.list_blocked_addrs();
         if let Err(e) = s.send(blocked_addrs) {
-            warn!(target: "p2p::rpc", "Failed to send blocked addresses through response channel: {:?}", e);
+            warn!(target: "p2p::rpc", error = ?e, "Failed to send blocked addresses through response channel");
         }
     }
 
@@ -165,7 +165,7 @@ impl P2pRpcRequest {
     fn list_blocked_peers<G: ConnectionGate>(s: Sender<Vec<PeerId>>, gossip: &GossipDriver<G>) {
         let blocked_peers = gossip.connection_gate.list_blocked_peers();
         if let Err(e) = s.send(blocked_peers) {
-            warn!(target: "p2p::rpc", "Failed to send blocked peers through response channel: {:?}", e);
+            warn!(target: "p2p::rpc", error = ?e, "Failed to send blocked peers through response channel");
         }
     }
 
@@ -183,9 +183,9 @@ impl P2pRpcRequest {
 
     fn disconnect_peer<G: ConnectionGate>(peer_id: PeerId, gossip: &mut GossipDriver<G>) {
         if let Err(e) = gossip.swarm.disconnect_peer_id(peer_id) {
-            warn!(target: "p2p::rpc", "Failed to disconnect peer {}: {:?}", peer_id, e);
+            warn!(target: "p2p::rpc", peer_id = ?peer_id, error = ?e, "Failed to disconnect peer");
         } else {
-            info!(target: "p2p::rpc", "Disconnected peer {}", peer_id);
+            info!(target: "p2p::rpc", peer_id = ?peer_id, "Disconnected peer");
             // Record the duration of the peer connection.
             if let Some(start_time) = gossip.peer_connection_start.remove(&peer_id) {
                 let _peer_duration = start_time.elapsed();
@@ -201,7 +201,7 @@ impl P2pRpcRequest {
     fn list_blocked_subnets<G: ConnectionGate>(s: Sender<Vec<IpNet>>, gossip: &GossipDriver<G>) {
         let blocked_subnets = gossip.connection_gate.list_blocked_subnets();
         if let Err(e) = s.send(blocked_subnets) {
-            warn!(target: "p2p::rpc", "Failed to send blocked subnets through response channel: {:?}", e);
+            warn!(target: "p2p::rpc", error = ?e, "Failed to send blocked subnets through response channel");
         }
     }
 
@@ -212,13 +212,13 @@ impl P2pRpcRequest {
                 Ok(dt) => dt.into_iter().map(|e| e.to_string()).collect(),
 
                 Err(e) => {
-                    warn!(target: "p2p_rpc", "Failed to receive peer count: {:?}", e);
+                    warn!(target: "p2p_rpc", error = ?e, "Failed to receive peer count");
                     return;
                 }
             };
 
             if let Err(e) = sender.send(dt) {
-                warn!(target: "p2p_rpc", "Failed to send peer count through response channel: {:?}", e);
+                warn!(target: "p2p_rpc", error = ?e, "Failed to send peer count through response channel");
             }
         });
     }
@@ -465,7 +465,7 @@ impl P2pRpcRequest {
                 banned_ips,
                 banned_subnets,
             }) {
-                warn!(target: "p2p::rpc", "Failed to send peer info through response channel: {:?}", e);
+                warn!(target: "p2p::rpc", error = ?e, "Failed to send peer info through response channel");
             }
         });
     }
@@ -497,7 +497,7 @@ impl P2pRpcRequest {
             let enr = match local_enr.await {
                 Ok(enr) => enr,
                 Err(e) => {
-                    warn!(target: "p2p::rpc", "Failed to receive local ENR: {:?}", e);
+                    warn!(target: "p2p::rpc", error = ?e, "Failed to receive local ENR");
                     return;
                 }
             };
@@ -533,7 +533,7 @@ impl P2pRpcRequest {
                 peer_scores: PeerScores::default(),
             };
             if let Err(e) = sender.send(peer_info) {
-                warn!(target: "p2p_rpc", "Failed to send peer info through response channel: {:?}", e);
+                warn!(target: "p2p_rpc", error = ?e, "Failed to send peer info through response channel");
             }
         });
     }
@@ -632,7 +632,7 @@ impl P2pRpcRequest {
             };
 
             if let Err(e) = sender.send(stats) {
-                warn!(target: "p2p_rpc", "Failed to send peer stats through response channel: {:?}", e);
+                warn!(target: "p2p_rpc", error = ?e, "Failed to send peer stats through response channel");
             };
         });
     }
@@ -649,12 +649,12 @@ impl P2pRpcRequest {
             let pc = match pc_req.await {
                 Ok(pc) => Some(pc),
                 Err(e) => {
-                    warn!(target: "p2p_rpc", "Failed to receive peer count: {:?}", e);
+                    warn!(target: "p2p_rpc", error = ?e, "Failed to receive peer count");
                     None
                 }
             };
             if let Err(e) = sender.send((pc, gossip_pc)) {
-                warn!(target: "p2p_rpc", "Failed to send peer count through response channel: {:?}", e);
+                warn!(target: "p2p_rpc", error = ?e, "Failed to send peer count through response channel");
             }
         });
     }

@@ -26,6 +26,7 @@
 use aws_nitro_enclaves_nsm_api::api::{Request, Response};
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::driver::{nsm_exit, nsm_init, nsm_process_request};
+use tracing::warn;
 
 use crate::error::{NsmError, ServerError};
 
@@ -51,7 +52,7 @@ impl NsmSession {
     pub fn open() -> Result<Option<Self>, ServerError> {
         let fd = nsm_init();
         if fd < 0 {
-            tracing::warn!("failed to open Nitro Secure Module session, running in local mode");
+            warn!("failed to open Nitro Secure Module session, running in local mode");
             Ok(None)
         } else {
             Ok(Some(Self { fd }))
@@ -63,7 +64,7 @@ impl NsmSession {
     /// On non-Linux platforms, always returns `None` (local mode).
     #[cfg(not(target_os = "linux"))]
     pub fn open() -> Result<Option<Self>, ServerError> {
-        tracing::warn!("NSM not available on this platform, running in local mode");
+        warn!("NSM not available on this platform, running in local mode");
         Ok(None)
     }
 

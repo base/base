@@ -149,7 +149,7 @@ impl<Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         storage_threshold: usize,
         log_threshold: usize,
     ) -> Result<u64, OpProofsStorageError> {
-        info!("Starting {} initialization", name);
+        info!(name = %name, "Starting initialization");
         let start_time = Instant::now();
 
         let mut source = source.peekable();
@@ -188,13 +188,16 @@ impl<Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
                 };
                 let progress_pct = progress * 100.0;
                 info!(
-                    "Processed {} {}, progress: {progress_pct:.2}%, ETA: {}s",
-                    name, total_entries, estimated_total_time,
+                    name = %name,
+                    total_entries = total_entries,
+                    progress_pct = progress_pct,
+                    estimated_total_time = estimated_total_time,
+                    "Processed entries"
                 );
             }
 
             if batch.len() >= storage_threshold {
-                info!("Storing {} entries, total entries: {}", name, total_entries);
+                info!(name = %name, total_entries = total_entries, "Storing entries");
                 I::store_entries(storage, batch)?;
                 batch = Vec::with_capacity(
                     (source_size_hint.saturating_sub(total_entries)).min(storage_threshold),
@@ -203,11 +206,11 @@ impl<Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
         }
 
         if !batch.is_empty() {
-            info!("Storing final {} entries", name);
+            info!(name = %name, "Storing final entries");
             I::store_entries(storage, batch)?;
         }
 
-        info!("{} initialization complete: {} entries", name, total_entries);
+        info!(name = %name, total_entries = total_entries, "initialization complete");
         Ok(total_entries as u64)
     }
 

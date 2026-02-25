@@ -11,6 +11,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
+use tracing::info;
 
 pub(crate) mod builder;
 
@@ -81,7 +82,7 @@ impl TestNetwork {
             .retry(ExponentialBuilder::default().with_total_delay(Some(Duration::from_secs(360))))
             // When to retry
             .when(|e| matches!(e, TestNetworkError::PeerNotConnected))
-            .notify(|e, duration| tracing::info!(target: "network", "Retrying connection. Error: {e:?}, duration: {duration:?}"))
+            .notify(|e, duration| info!(target: "network", error = ?e, duration = ?duration, "Retrying connection"))
             .await
     }
 

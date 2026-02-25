@@ -13,6 +13,7 @@ use base_protocol::BlockInfo;
 use kona_derive::BlobProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use spin::Lazy;
+use tracing::info;
 
 use crate::{HintType, errors::OracleProviderError};
 
@@ -76,7 +77,7 @@ impl<T: CommsClient> OracleBlobProvider<T> {
             blob[(i as usize) << 5..(i as usize + 1) << 5].copy_from_slice(field_element.as_ref());
         }
 
-        tracing::info!(
+        info!(
             target: "client_blob_oracle",
             hash = ?blob_hash,
             "Retrieved blob"

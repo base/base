@@ -62,7 +62,7 @@ pub(crate) async fn run_safe_head_poller(
     let provider = match ProviderBuilder::new().connect(&l2_rpc).await {
         Ok(p) => p,
         Err(e) => {
-            warn!("Failed to connect to L2 RPC for safe head polling: {e}");
+            warn!(error = %e, "Failed to connect to L2 RPC for safe head polling");
             let _ = toast_tx.try_send(Toast::warning("Safe head poller connection failed"));
             return;
         }
@@ -97,7 +97,7 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
                     let msg = match msg {
                         Ok(m) => m,
                         Err(e) => {
-                            warn!("Flashblock WebSocket connection error: {e}");
+                            warn!(error = %e, "Flashblock WebSocket connection error");
                             let _ = toast_tx.try_send(Toast::warning("WebSocket disconnected"));
                             break;
                         }
@@ -115,7 +115,7 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
                 }
             }
             Err(e) => {
-                warn!("Failed to connect to flashblock WebSocket: {e}");
+                warn!(error = %e, "Failed to connect to flashblock WebSocket");
                 let _ = toast_tx.try_send(Toast::warning(format!(
                     "WebSocket connection failed, retrying in {}s",
                     delay.as_secs()
@@ -271,7 +271,7 @@ pub(crate) async fn fetch_initial_backlog_with_progress(
             let _ = progress_tx.send(BacklogFetchResult::Complete(backlog)).await;
         }
         Err(e) => {
-            warn!("Backlog fetch failed: {e}");
+            warn!(error = %e, "Backlog fetch failed");
             let _ = progress_tx.send(BacklogFetchResult::Error).await;
         }
     }
@@ -303,7 +303,7 @@ pub(crate) async fn run_block_fetcher(
     {
         Ok(p) => p,
         Err(e) => {
-            warn!("Failed to connect to L2 RPC for block fetcher: {e}");
+            warn!(error = %e, "Failed to connect to L2 RPC for block fetcher");
             let _ = toast_tx.try_send(Toast::warning("Block fetcher connection failed"));
             return;
         }
@@ -377,12 +377,12 @@ async fn run_l1_blob_watcher_ws(
     toast_tx: &mpsc::Sender<Toast>,
 ) -> Result<(), ()> {
     let provider = ProviderBuilder::new().connect(ws_url).await.map_err(|e| {
-        warn!("Failed to connect to L1 WebSocket: {e}");
+        warn!(error = %e, "Failed to connect to L1 WebSocket");
         let _ = toast_tx.try_send(Toast::warning("L1 WebSocket connection failed"));
     })?;
 
     let sub = provider.subscribe_blocks().await.map_err(|e| {
-        warn!("Failed to subscribe to L1 blocks: {e}");
+        warn!(error = %e, "Failed to subscribe to L1 blocks");
         let _ = toast_tx.try_send(Toast::warning("L1 block subscription failed"));
     })?;
     let mut stream = sub.into_stream();
@@ -439,7 +439,7 @@ async fn run_l1_blob_watcher_poll(
     let provider = match ProviderBuilder::new().connect(l1_rpc).await {
         Ok(p) => p,
         Err(e) => {
-            warn!("Failed to connect to L1 RPC for polling: {e}");
+            warn!(error = %e, "Failed to connect to L1 RPC for polling");
             let _ = toast_tx.try_send(Toast::warning("L1 poller connection failed"));
             return;
         }

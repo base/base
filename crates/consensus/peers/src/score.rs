@@ -92,7 +92,7 @@ impl PeerScoreLevel {
     ) -> HashMap<TopicHash, TopicScoreParams> {
         let mut topic_scores = HashMap::with_capacity(topics.len());
         for topic in topics {
-            debug!(target: "scoring", "Topic scoring enabled on topic: {}", topic);
+            debug!(target: "scoring", topic = %topic, "Topic scoring enabled");
             topic_scores.insert(topic, Self::topic_score_params(block_time));
         }
         topic_scores
@@ -109,7 +109,7 @@ impl PeerScoreLevel {
         block_time: u64,
     ) -> Option<PeerScoreParams> {
         let slot = std::time::Duration::from_secs(block_time);
-        debug!(target: "scoring", "Slot duration: {:?}", slot);
+        debug!(target: "scoring", slot = ?slot, "Slot duration");
         let epoch = slot * 6;
         let ten_epochs = epoch * 10;
         let one_hundred_epochs = epoch * 100;
