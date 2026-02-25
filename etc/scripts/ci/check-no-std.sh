@@ -13,7 +13,7 @@ no_std_packages=(
   base-alloy-rpc-types-engine
 
   # consensus protocol crates (ported from kona)
-  kona-macros
+  base-macros
   kona-genesis
   kona-hardforks
   kona-registry
