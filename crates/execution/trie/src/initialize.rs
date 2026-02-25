@@ -190,7 +190,7 @@ impl<Tx: DbTx + Sync, S: OpProofsStore + OpProofsInitialStateStore + Send>
                 info!(
                     name = %name,
                     total_entries = total_entries,
-                    progress_pct = progress_pct,
+                    progress_pct = format_args!("{:.2}", progress_pct),
                     estimated_total_time = estimated_total_time,
                     "Processed entries"
                 );
