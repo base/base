@@ -87,10 +87,7 @@ impl Metrics {
             Self::GOSSIPSUB_CONNECTION,
             "Connections made to the libp2p Swarm"
         );
-        metrics::describe_gauge!(
-            Self::BANNED_PEERS,
-            "Number of peers banned by the gossip stack"
-        );
+        metrics::describe_gauge!(Self::BANNED_PEERS, "Number of peers banned by the gossip stack");
         metrics::describe_histogram!(
             Self::PEER_SCORES,
             "Observations of peer scores in the gossipsub mesh"
