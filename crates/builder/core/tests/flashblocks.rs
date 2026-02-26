@@ -2,11 +2,97 @@
 
 use std::time::Duration;
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
     BuilderConfig, FlashblocksConfig,
-    test_utils::{TransactionBuilderExt, setup_test_instance_with_builder_config},
+    test_utils::{TransactionBuilderExt, funded_signer, setup_test_instance_with_builder_config},
 };
+
+/// Verify that flashblock metadata contains correct `new_account_balances` and `receipts`.
+///
+/// Regression test for the bug where `new_account_balances` was read after
+/// `take_bundle()` emptied the bundle state, producing an always-empty map.
+#[tokio::test]
+async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true).with_leeway_time_ms(50);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    let sender = funded_signer().address();
+    let transfer_value = U256::from(42);
+
+    // Use high addresses to avoid overlap with EVM precompiles or OP predeploys
+    let recipient_a = "0xAA00000000000000000000000000000000000001".parse::<Address>()?;
+    let recipient_b = "0xBB00000000000000000000000000000000000002".parse::<Address>()?;
+    let tx_a = driver
+        .create_transaction()
+        .with_to(recipient_a)
+        .with_value(transfer_value.to::<u128>())
+        .send()
+        .await?;
+    let tx_b = driver
+        .create_transaction()
+        .with_to(recipient_b)
+        .with_value(transfer_value.to::<u128>())
+        .send()
+        .await?;
+
+    let _block = driver.build_new_block().await?;
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert!(!flashblocks.is_empty(), "Expected at least one flashblock");
+
+    // --- Verify new_account_balances on the last flashblock (cumulative state) ---
+    let last_fb = flashblocks.last().unwrap();
+    let balances = last_fb
+        .metadata
+        .get("new_account_balances")
+        .expect("metadata should contain new_account_balances");
+    let balances_map = balances.as_object().expect("new_account_balances should be an object");
+    assert!(!balances_map.is_empty(), "new_account_balances should not be empty");
+
+    // Sender should appear with a reduced balance (spent value + gas)
+    let sender_key = format!("{sender:#x}");
+    assert!(balances_map.contains_key(&sender_key), "sender should appear in new_account_balances");
+
+    // Recipients started at zero; their balance should equal the transfer value
+    for (label, recipient) in [("A", recipient_a), ("B", recipient_b)] {
+        let key = format!("{recipient:#x}");
+        let balance_value = balances_map
+            .get(&key)
+            .unwrap_or_else(|| panic!("recipient {label} ({key}) should appear in balances"));
+
+        let balance_str = balance_value.as_str().unwrap_or_default();
+        let balance = U256::from_str_radix(balance_str.trim_start_matches("0x"), 16)
+            .expect("balance should be a valid hex U256");
+        assert_eq!(
+            balance, transfer_value,
+            "recipient {label} should have exactly {transfer_value} wei"
+        );
+    }
+
+    // --- Verify receipts across all flashblocks ---
+    // Each flashblock's receipts only cover the transactions added in that flashblock,
+    // so we collect receipts from all flashblocks.
+    let tx_a_key = format!("{:#x}", tx_a.tx_hash());
+    let tx_b_key = format!("{:#x}", tx_b.tx_hash());
+
+    let has_receipt = |tx_key: &str| {
+        flashblocks.iter().any(|fb| {
+            fb.metadata
+                .get("receipts")
+                .and_then(|r| r.as_object())
+                .is_some_and(|map| map.contains_key(tx_key))
+        })
+    };
+
+    assert!(has_receipt(&tx_a_key), "receipt for tx_a ({tx_a_key}) should be present");
+    assert!(has_receipt(&tx_b_key), "receipt for tx_b ({tx_b_key}) should be present");
+
+    flashblocks_listener.stop().await
+}
 
 /// Test that when `compute_state_root_on_finalize` is enabled:
 /// 1. Flashblocks are built without state root (`state_root` = ZERO in intermediate blocks)
