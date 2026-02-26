@@ -27,7 +27,4 @@ pub mod backtrace;
 mod tracing;
 pub use tracing::{LogFormat, init_test_tracing};
 
-mod prometheus;
-pub use prometheus::init_prometheus_server;
-
 pub mod sigsegv_handler;

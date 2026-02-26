@@ -13,7 +13,7 @@ mod metrics;
 pub use metrics::MetricsArgs;
 
 mod prometheus;
-pub use prometheus::PrometheusServer;
+pub use prometheus::{BuildError, PrometheusServer};
 
 mod args;
 pub use args::{GlobalArgs, LogArgs};
