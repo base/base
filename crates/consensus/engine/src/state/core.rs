@@ -260,7 +260,7 @@ mod test {
         );
 
         assert!(handle.render().contains(
-            format!("kona_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()
+            format!("base_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()
         ));
     }
 }

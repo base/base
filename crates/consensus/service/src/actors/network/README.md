@@ -1,6 +1,6 @@
 # Network actor
 
-The network actor is responsible for handling interactions with the p2p layer of the kona-node, specifically the libp2p gossip driver and the discv5 handler.
+The network actor is responsible for handling interactions with the p2p layer of the base-node, specifically the libp2p gossip driver and the discv5 handler.
 
 ### Example
 
@@ -15,9 +15,9 @@ The network actor is responsible for handling interactions with the p2p layer of
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use alloy_primitives::address;
 use tokio_util::sync::CancellationToken;
-use kona_genesis::RollupConfig;
-use kona_p2p::{LocalNode, Config};
-use kona_node_service::{NetworkActor};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_disc::LocalNode;
+use base_consensus_service::{NetworkActor};
 use libp2p::Multiaddr;
 use discv5::enr::CombinedKey;
 
@@ -46,7 +46,7 @@ async fn main() {
         signer
     )));
 
-    // This will start the p2p stack of the kona-node (ie the libp2p gossip and discovery layers)
+    // This will start the p2p stack of the base-node (ie the libp2p gossip and discovery layers)
     network.start(NetworkContext { blocks, cancellation: CancellationToken::new() }).await?;
 }
 ```

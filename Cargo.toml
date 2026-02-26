@@ -472,7 +472,7 @@ rand_08 = { package = "rand", version = "0.8" }
 crossbeam-channel = "0.5.13"
 
 
-# kona transitive deps
+# transitive deps
 syn = "2.0"
 quote = "1.0"
 spin = "0.9"

@@ -7,6 +7,6 @@ Consensus layer hardfork types for the OP Stack including network upgrade transa
 
 ### Provenance
 
-This code was ported from [op-alloy] as part of `kona` monorepo migrations.
+This code was ported from [op-alloy] as part of the `base` monorepo.
 
 [op-alloy]: https://github.com/alloy-rs/op-alloy

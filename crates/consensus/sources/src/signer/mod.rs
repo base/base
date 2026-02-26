@@ -1,4 +1,4 @@
-//! Signer utilities for the Kona node.
+//! Signer utilities for the base node.
 //!
 //! We currently support two types of block signers:
 //!

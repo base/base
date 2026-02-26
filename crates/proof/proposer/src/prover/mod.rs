@@ -230,15 +230,15 @@ where
                     }
 
                     // Missing header errors are not recoverable from the proposer side.
-                    // The enclave's kona executor needs all referenced headers in its
+                    // The enclave's executor needs all referenced headers in its
                     // trie DB, and it looks them up by computing the hash from the
-                    // consensus header. If the kona version doesn't correctly hash
+                    // consensus header. If the executor version doesn't correctly hash
                     // post-Pectra headers, this lookup will always fail regardless of
                     // whether the header data is present.
                     if extract_missing_header_hash(&err_str).is_some() {
                         tracing::warn!(
                             block_number = block.header.number,
-                            "Enclave cannot find header by hash -- this is likely a kona executor version issue with post-Pectra header hashing"
+                            "Enclave cannot find header by hash -- this is likely an executor version issue with post-Pectra header hashing"
                         );
                         return Err(ProposerError::Enclave(err_str));
                     }

@@ -10,7 +10,7 @@ doc-valid-idents = [
     "EIP",
     "Flashblocks",
     "Reth",
-    "Kona",
+
     "geth",
     "SSZ",
     "JWT",

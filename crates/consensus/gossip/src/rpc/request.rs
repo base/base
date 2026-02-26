@@ -319,7 +319,7 @@ impl P2pRpcRequest {
             })
             .collect();
 
-        // We consider that kona-nodes are gossiping blocks if their peers are subscribed to any of
+        // We consider that base-nodes are gossiping blocks if their peers are subscribed to any of
         // the blocks topics.
         // This is the same heuristic as the one used in the op-node (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-node/p2p/rpc_server.go#L179-L183>`).
         let peer_gossip_info = gossip

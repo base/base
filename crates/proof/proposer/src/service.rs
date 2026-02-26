@@ -88,8 +88,8 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // Fetch chain configuration from op-node
     info!("Fetching chain configuration from rollup RPC...");
-    let kona_config = rollup_client.rollup_config().await?;
-    let per_chain_config = rollup_config_to_per_chain_config(&kona_config)?;
+    let chain_config = rollup_client.rollup_config().await?;
+    let per_chain_config = rollup_config_to_per_chain_config(&chain_config)?;
     info!(chain_id = %per_chain_config.chain_id, "Chain configuration loaded");
 
     let enclave_client =
@@ -154,7 +154,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     let prover = Arc::new(Prover::new(
         per_chain_config,
-        kona_config.clone(),
+        chain_config.clone(),
         Arc::clone(&l1_client),
         Arc::clone(&l2_client),
         enclave_client,

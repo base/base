@@ -375,7 +375,7 @@ impl P2PArgs {
         })
     }
 
-    /// Constructs kona's P2P network [`NetworkConfig`] from CLI arguments.
+    /// Constructs the P2P network [`NetworkConfig`] from CLI arguments.
     ///
     /// ## Parameters
     ///

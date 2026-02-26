@@ -1,4 +1,4 @@
-//! Error types for kona's attributes builder.
+//! Error types for the attributes builder.
 
 use alloc::string::String;
 

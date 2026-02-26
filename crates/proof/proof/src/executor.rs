@@ -18,7 +18,7 @@ use base_revm::OpSpecId;
 
 /// An executor wrapper type.
 #[derive(Debug)]
-pub struct KonaExecutor<'a, P, H, Evm>
+pub struct BaseExecutor<'a, P, H, Evm>
 where
     P: TrieDBProvider + Send + Sync + Clone,
     H: TrieHinter + Send + Sync + Clone,
@@ -36,7 +36,7 @@ where
     inner: Option<StatelessL2Builder<'a, P, H, Evm>>,
 }
 
-impl<'a, P, H, Evm> KonaExecutor<'a, P, H, Evm>
+impl<'a, P, H, Evm> BaseExecutor<'a, P, H, Evm>
 where
     P: TrieDBProvider + Send + Sync + Clone,
     H: TrieHinter + Send + Sync + Clone,
@@ -55,7 +55,7 @@ where
 }
 
 #[async_trait]
-impl<P, H, Evm> Executor for KonaExecutor<'_, P, H, Evm>
+impl<P, H, Evm> Executor for BaseExecutor<'_, P, H, Evm>
 where
     P: TrieDBProvider + Debug + Send + Sync + Clone,
     H: TrieHinter + Debug + Send + Sync + Clone,
@@ -67,7 +67,7 @@ where
 
     /// Waits for the executor to be ready.
     async fn wait_until_ready(&mut self) {
-        /* no-op for the kona executor */
+        /* no-op for the stateless executor */
         /* This is used when an engine api is used instead of a stateless block executor */
     }
 

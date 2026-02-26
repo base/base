@@ -20,7 +20,7 @@ workspace = true
 base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
-# kona
+# consensus
 base-consensus-genesis.workspace = true
 base-consensus-derive = { workspace = true, features = ["metrics"] }
 base-consensus-disc = { workspace = true, features = ["metrics"] }

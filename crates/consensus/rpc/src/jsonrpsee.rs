@@ -208,7 +208,7 @@ pub trait AdminApi {
 #[cfg_attr(not(feature = "client"), rpc(server))]
 #[cfg_attr(feature = "client", rpc(server, client))]
 pub trait HealthzApi {
-    /// Gets the health of the kona-node.
+    /// Gets the health of the base-node.
     #[method(name = "healthz")]
     async fn healthz(&self) -> RpcResult<HealthzResponse>;
 }

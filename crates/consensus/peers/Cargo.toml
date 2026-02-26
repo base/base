@@ -13,7 +13,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# Kona
+# consensus
 base-consensus-registry.workspace = true
 
 # Alloy

@@ -1,4 +1,4 @@
-//! Contains various traversal stages for kona's derivation pipeline.
+//! Contains various traversal stages for the derivation pipeline.
 //!
 //! The traversal stage sits at the bottom of the pipeline, and is responsible for
 //! providing the next block to the next stage in the pipeline.

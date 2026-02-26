@@ -12,10 +12,10 @@ The intended way of working with `base-consensus-derive` is to use the [`Derivat
 
 ```rust,ignore
 use std::sync::Arc;
-use kona_genesis::RollupConfig;
-use kona_derive::EthereumDataSource;
-use kona_derive::PipelineBuilder;
-use kona_derive::StatefulAttributesBuilder;
+use base_consensus_genesis::RollupConfig;
+use base_consensus_derive::EthereumDataSource;
+use base_consensus_derive::PipelineBuilder;
+use base_consensus_derive::StatefulAttributesBuilder;
 
 let chain_provider = todo!();
 let l2_chain_provider = todo!();

@@ -1,4 +1,4 @@
-//! The driver of the kona derivation pipeline.
+//! The driver of the derivation pipeline.
 
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;

@@ -13,7 +13,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# Kona
+# consensus
 base-consensus-peers.workspace = true
 base-macros.workspace = true
 base-consensus-genesis.workspace = true

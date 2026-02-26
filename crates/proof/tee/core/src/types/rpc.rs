@@ -13,7 +13,7 @@ use crate::{Proposal, executor::ExecutionWitness, types::account::AccountResult}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteStatelessRequest {
-    /// The full kona chain configuration.
+    /// The full chain configuration.
     pub config: ChainConfig,
 
     /// The per-chain configuration hash used in proposal signing.

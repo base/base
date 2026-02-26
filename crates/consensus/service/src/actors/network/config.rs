@@ -9,7 +9,7 @@ use base_consensus_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
 use tokio::time::Duration;
 
-/// Configuration for kona's P2P stack.
+/// Configuration for the P2P stack.
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
     /// Discovery Config.
