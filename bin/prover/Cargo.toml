@@ -1,0 +1,30 @@
+[package]
+name = "base-prover"
+description = "TEE prover server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prover"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-enclave-server.workspace = true
+
+# cli
+clap = { workspace = true, features = ["derive", "env"] }
+eyre.workspace = true
+
+# async
+tokio = { workspace = true, features = ["full"] }
+
+# tracing
+tracing-subscriber.workspace = true

@@ -34,6 +34,12 @@
 #![deny(unused_must_use)]
 #![deny(rust_2018_idioms)]
 
+mod enclave;
+pub use enclave::run as run_enclave;
+
+mod proxy;
+pub use proxy::run as run_proxy;
+
 pub mod attestation;
 pub mod crypto;
 pub mod error;
@@ -41,9 +47,6 @@ pub mod nsm;
 pub mod rpc;
 mod server;
 pub mod transport;
-
-// Re-export core types
-// Re-export commonly used types
 pub use attestation::{
     AttestationDocument, VerificationResult, verify_attestation, verify_attestation_with_pcr0,
 };
