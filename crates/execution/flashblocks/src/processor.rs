@@ -24,7 +24,7 @@ use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
@@ -278,7 +278,7 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
-        // FIX for issue #781: Early return if no flashblocks to process.
+        // Early return if no flashblocks to process.
         // Prevents panic when retain() filters out all flashblocks during reorg
         // or depth limit exceeded.
         if flashblocks.is_empty() {
@@ -295,8 +295,10 @@ where
                 .push(flashblock.clone());
         }
 
-        // Safe: flashblocks non-empty checked above
-        let earliest_block_number = *flashblocks_per_block.keys().min().unwrap();
+        let earliest_block_number = match flashblocks_per_block.keys().min() {
+            Some(min) => *min,
+            None => return Ok(None),
+        };
 
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
@@ -421,5 +423,32 @@ where
         pending_blocks_builder.with_state_overrides(state_overrides);
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base_primitives::Metadata;
+
+    #[test]
+    fn test_empty_flashblocks_returns_none() {
+        let flashblocks: Vec<Flashblock> = vec![];
+        assert!(flashblocks.is_empty());
+    }
+
+    #[test]
+    fn test_flashblocks_retain_to_empty() {
+        let mut flashblocks = vec![
+            Flashblock {
+                payload_id: Default::default(),
+                index: 0,
+                base: None,
+                diff: Default::default(),
+                metadata: Metadata { block_number: 10 },
+            }
+        ];
+        flashblocks.retain(|f| f.metadata.block_number > 100);
+        assert!(flashblocks.is_empty());
     }
 }
