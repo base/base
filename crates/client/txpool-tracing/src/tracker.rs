@@ -90,12 +90,20 @@ impl Tracker {
     fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>, received_at: Instant) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
-                self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion, received_at);
+                self.transaction_completed(
+                    *transaction.tx_hash(),
+                    TxEvent::BlockInclusion,
+                    received_at,
+                );
             }
         }
     }
 
-    fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks, received_at: Instant) {
+    fn track_flashblock_transactions(
+        &mut self,
+        pending_blocks: &PendingBlocks,
+        received_at: Instant,
+    ) {
         // Get all transaction hashes from pending blocks
         for tx_hash in pending_blocks.get_pending_transaction_hashes() {
             self.transaction_fb_included(tx_hash, received_at);
