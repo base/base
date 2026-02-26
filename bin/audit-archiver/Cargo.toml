@@ -7,6 +7,10 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "audit-archiver"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 

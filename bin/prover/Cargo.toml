@@ -9,7 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "prover"
+name = "base-prover"
 path = "src/main.rs"
 
 [lints]
