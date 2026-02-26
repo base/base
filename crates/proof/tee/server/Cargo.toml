@@ -4,14 +4,6 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "enclave"
-path = "src/bin/enclave.rs"
-
-[[bin]]
-name = "proxy"
-path = "src/bin/proxy.rs"
-
 [dependencies]
 base-enclave.workspace = true
 
@@ -46,9 +38,9 @@ serde_json.workspace = true
 
 # Logging
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 # Error handling
+eyre.workspace = true
 thiserror.workspace = true
 
 # Sync primitives
@@ -57,13 +49,13 @@ parking_lot.workspace = true
 # Async runtime
 tokio.workspace = true
 
-# RPC
-tower.workspace = true
-tower-http.workspace = true
+# HTTP
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio", "server", "http1"] }
-jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
 http-body-util.workspace = true
+
+# RPC
+jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
 async-trait.workspace = true
 
 # Vsock (Unix only)

@@ -68,4 +68,5 @@ test-utils = [
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
+	"kona-registry?/test-utils",
 ]

@@ -2829,6 +2829,7 @@ dependencies = [
  "base-enclave",
  "base64 0.22.1",
  "ciborium",
+ "eyre",
  "hex",
  "http-body-util",
  "hyper 1.8.1",
@@ -2848,10 +2849,7 @@ dependencies = [
  "spki",
  "thiserror 2.0.18",
  "tokio",
- "tower",
- "tower-http",
  "tracing",
- "tracing-subscriber 0.3.22",
  "vsock",
  "x509-cert",
  "zip",
@@ -3565,6 +3563,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "unsigned-varint 0.8.0",
+]
+
+[[package]]
+name = "base-prover"
+version = "0.0.0"
+dependencies = [
+ "base-enclave-server",
+ "clap",
+ "eyre",
+ "tokio",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]

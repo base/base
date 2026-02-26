@@ -34,6 +34,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
+	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"revm/std",
