@@ -211,6 +211,48 @@ async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
+/// Regression test: when `compute_state_root_on_finalize` is enabled and the builder
+/// receives an FCU with `no_tx_pool = true` (historical sync), `resolve_kind` must still
+/// return a payload. 
+#[tokio::test]
+async fn test_no_tx_pool_with_compute_state_root_on_finalize() -> eyre::Result<()> {
+    let flashblocks = FlashblocksConfig::for_tests()
+        .with_fixed(true)
+        .with_disable_state_root(true)
+        .with_compute_state_root_on_finalize(true);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+
+    // Seed the chain with a normal block first so we have a valid parent
+    let _ = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Build a block with no_tx_pool=true (historical sync).
+    // Before the fix this would hang forever because finalized_cell was never set.
+    let block = tokio::time::timeout(
+        Duration::from_secs(30),
+        driver.build_new_block_with_no_tx_pool(),
+    )
+    .await
+    .expect("get_payload timed out — finalized_cell was likely never populated")?;
+
+    // The block must contain the deposit transaction
+    assert_eq!(
+        block.transactions.len(),
+        1,
+        "no_tx_pool block should contain exactly one deposit transaction"
+    );
+
+    // State root should be valid (non-zero) because no_tx_pool forces state root calculation
+    assert_ne!(
+        block.header.state_root,
+        B256::ZERO,
+        "State root must be computed for CL sync (no_tx_pool path)"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
     let flashblocks = FlashblocksConfig::for_tests()

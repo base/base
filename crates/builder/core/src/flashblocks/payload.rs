@@ -282,6 +282,9 @@ where
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
+        if compute_state_root_on_finalize {
+            finalized_cell.set(payload.clone());
+        }
         best_payload.set(payload);
 
         info!(
@@ -309,7 +312,6 @@ where
             ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
             ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
-            // return early since we don't need to build a block with transactions from the pool
             return Ok(());
         }
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
