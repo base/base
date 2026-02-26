@@ -282,10 +282,7 @@ where
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
-        if compute_state_root_on_finalize {
-            finalized_cell.set(payload.clone());
-        }
-        best_payload.set(payload);
+        best_payload.set(payload.clone());
 
         info!(
             target: "payload_builder",
@@ -301,6 +298,10 @@ where
         }
 
         if ctx.attributes().no_tx_pool {
+            if compute_state_root_on_finalize {
+                finalized_cell.set(payload);
+            }
+
             info!(
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
