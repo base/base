@@ -15,5 +15,5 @@ pub use registry::Registry;
 mod l1;
 pub use l1::{L1Config, L1GenesisGetterErrors};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
