@@ -114,6 +114,7 @@ impl Metrics {
         base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "header_by_hash", 0);
         base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "receipts_by_hash", 0);
         base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "block_info_and_tx", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "block_by_number", 0);
 
         base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "header_by_hash", 0);
         base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "receipts_by_hash", 0);
@@ -124,6 +125,7 @@ impl Metrics {
             "block_info_and_tx",
             0
         );
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "block_by_number", 0);
 
         // RPC call metrics
         base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "header_by_hash", 0);
