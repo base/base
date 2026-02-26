@@ -2,16 +2,16 @@ use std::sync::Arc;
 
 use base_builder_publish::WebSocketPublisher;
 use base_client_node::{BaseNode, OpNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder};
+use base_execution_evm::OpEvmConfig;
+use base_execution_node::{
+    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, node::OpPoolBuilder,
+};
 use derive_more::Debug;
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext,
     components::{ComponentsBuilder, PayloadServiceBuilder},
-};
-use reth_optimism_evm::OpEvmConfig;
-use reth_optimism_node::{
-    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, node::OpPoolBuilder,
 };
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;

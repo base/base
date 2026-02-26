@@ -6,8 +6,8 @@ use alloy_consensus::ReceiptWithBloom;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_trie::root::ordered_trie_root_with_encoder;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::DepositReceipt;
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::DepositReceipt;
 
 /// Calculates the receipt root for a header.
 pub(crate) fn calculate_receipt_root_optimism<R: DepositReceipt>(
@@ -82,8 +82,8 @@ mod tests {
     use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
     use alloy_primitives::{Address, Bytes, Log, LogData, b256, bloom, hex};
     use base_alloy_consensus::OpDepositReceipt;
-    use reth_optimism_chainspec::BASE_SEPOLIA;
-    use reth_optimism_primitives::OpReceipt;
+    use base_execution_chainspec::BASE_SEPOLIA;
+    use base_execution_primitives::OpReceipt;
 
     use super::*;
 

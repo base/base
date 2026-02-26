@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 test-utils = [
+	"base-execution-node/test-utils",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
 	"dep:alloy-primitives",
@@ -39,7 +40,6 @@ test-utils = [
 	"reth-db/test-utils",
 	"reth-evm/test-utils",
 	"reth-node-builder/test-utils",
-	"reth-optimism-node/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
 	"reth-tasks?/test-utils",
@@ -59,16 +59,16 @@ reth-provider.workspace = true
 reth-rpc-api.workspace = true
 reth-node-api.workspace = true
 reth-node-builder.workspace = true
-reth-optimism-rpc = { workspace = true, features = ["client"] }
-reth-optimism-forks.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-txpool.workspace = true
+base-execution-rpc = { workspace = true, features = ["client"] }
+base-execution-forks.workspace = true
+base-execution-node.workspace = true
+base-execution-txpool.workspace = true
 reth-rpc-server-types.workspace = true
-reth-optimism-storage.workspace = true
+base-execution-storage.workspace = true
 reth-transaction-pool.workspace = true
-reth-optimism-chainspec.workspace = true
-reth-optimism-primitives.workspace = true
-reth-optimism-payload-builder.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-primitives.workspace = true
+base-execution-payload-builder.workspace = true
 reth-db.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-tasks = { workspace = true, optional = true }

@@ -1,4 +1,4 @@
-//! Standalone crate for Optimism Trie Node storage.
+#![doc = include_str!("../README.md")]
 //!
 //! External storage for intermediary trie nodes that are otherwise discarded by pipeline and
 //! live sync upon successful state root update. Storing these intermediary trie nodes enables

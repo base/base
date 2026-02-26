@@ -19,10 +19,10 @@ base-client-node.workspace = true
 reth-db.workspace = true
 reth-tasks.workspace = true
 reth-node-api.workspace = true
-reth-optimism-rpc.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-trie.workspace = true
-reth-optimism-exex = { workspace = true, features = ["metrics"] }
+base-execution-rpc.workspace = true
+base-execution-node.workspace = true
+base-execution-trie.workspace = true
+base-execution-exex = { workspace = true, features = ["metrics"] }
 
 # tokio
 tokio.workspace = true

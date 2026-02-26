@@ -4,8 +4,8 @@ use alloc::sync::Arc;
 
 use alloy_chains::Chain;
 use alloy_primitives::U256;
+use base_execution_forks::DEV_HARDFORKS;
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec};
-use reth_optimism_forks::DEV_HARDFORKS;
 use reth_primitives_traits::SealedHeader;
 
 use crate::{LazyLock, OpChainSpec, make_op_genesis_header};

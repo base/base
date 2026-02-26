@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-consensus"
+name = "base-execution-consensus"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,8 +23,8 @@ reth-storage-errors.workspace = true
 reth-trie-common.workspace = true
 
 # op-reth
-reth-optimism-forks.workspace = true
-reth-optimism-primitives.workspace = true
+base-execution-forks.workspace = true
+base-execution-primitives.workspace = true
 
 # ethereum
 alloy-eips.workspace = true
@@ -36,14 +36,14 @@ revm.workspace = true
 # misc
 tracing.workspace = true
 thiserror.workspace = true
-reth-optimism-chainspec.workspace = true
+base-execution-chainspec.workspace = true
 
 [dev-dependencies]
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-db-common.workspace = true
 reth-revm.workspace = true
 reth-trie.workspace = true
-reth-optimism-node.workspace = true
+base-execution-node.workspace = true
 
 alloy-chains.workspace = true
 
@@ -58,13 +58,13 @@ std = [
 	"alloy-primitives/std",
 	"alloy-trie/std",
 	"base-alloy-consensus/std",
+	"base-execution-chainspec/std",
+	"base-execution-forks/std",
+	"base-execution-primitives/std",
 	"reth-chainspec/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",
 	"reth-execution-types/std",
-	"reth-optimism-chainspec/std",
-	"reth-optimism-forks/std",
-	"reth-optimism-primitives/std",
 	"reth-primitives-traits/std",
 	"reth-revm/std",
 	"reth-storage-api/std",

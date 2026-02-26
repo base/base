@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-txpool"
+name = "base-execution-txpool"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -30,9 +30,9 @@ base-revm.workspace = true
 # optimism
 base-alloy-flz.workspace = true
 base-alloy-consensus.workspace = true
-reth-optimism-evm.workspace = true
-reth-optimism-forks.workspace = true
-reth-optimism-primitives.workspace = true
+base-execution-evm.workspace = true
+base-execution-forks.workspace = true
+base-execution-primitives.workspace = true
 
 # misc
 c-kzg.workspace = true
@@ -41,5 +41,5 @@ parking_lot.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time"] }
-reth-optimism-chainspec.workspace = true
+base-execution-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }

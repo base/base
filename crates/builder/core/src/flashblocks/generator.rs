@@ -492,10 +492,12 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
+    use base_execution_payload_builder::{
+        OpPayloadPrimitives, payload::OpPayloadBuilderAttributes,
+    };
+    use base_execution_primitives::OpPrimitives;
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
-    use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
-    use reth_optimism_primitives::OpPrimitives;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_tasks::TokioTaskExecutor;

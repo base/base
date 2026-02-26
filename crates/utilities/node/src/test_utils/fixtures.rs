@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
+use base_execution_chainspec::OpChainSpec;
 use base_test_utils::{Account, build_test_genesis};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -14,7 +15,6 @@ use reth_db::{
     },
 };
 use reth_node_builder::NodeTypesWithDBAdapter;
-use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{
     ProviderFactory,
     providers::{NodeTypesForProvider, RocksDBBuilder, StaticFileProvider},

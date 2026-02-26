@@ -1,15 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use reth_db::database_metrics::DatabaseMetrics;
-use reth_node_api::FullNodeComponents;
-use reth_optimism_exex::OpProofsExEx;
-use reth_optimism_node::args::RollupArgs;
-use reth_optimism_rpc::{
+use base_execution_exex::OpProofsExEx;
+use base_execution_node::args::RollupArgs;
+use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use reth_optimism_trie::{MdbxProofsStorage, OpProofsStorage};
+use base_execution_trie::{MdbxProofsStorage, OpProofsStorage};
+use reth_db::database_metrics::DatabaseMetrics;
+use reth_node_api::FullNodeComponents;
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::{error, info};

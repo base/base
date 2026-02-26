@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-payload-builder"
+name = "base-execution-payload-builder"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -28,10 +28,10 @@ reth-basic-payload-builder.workspace = true
 reth-payload-validator.workspace = true
 
 # op-reth
-reth-optimism-evm.workspace = true
-reth-optimism-forks.workspace = true
-reth-optimism-primitives.workspace = true
-reth-optimism-txpool.workspace = true
+base-execution-evm.workspace = true
+base-execution-forks.workspace = true
+base-execution-primitives.workspace = true
+base-execution-txpool.workspace = true
 base-revm.workspace = true
 
 # ethereum

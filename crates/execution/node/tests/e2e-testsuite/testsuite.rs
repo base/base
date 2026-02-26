@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_execution_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
+use base_execution_node::{OpEngineTypes, OpNode};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
     actions::AssertMineBlock,
     setup::{NetworkSetup, Setup},
 };
-use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
-use reth_optimism_node::{OpEngineTypes, OpNode};
 
 #[tokio::test]
 async fn test_testsuite_op_assert_mine_block() -> Result<()> {

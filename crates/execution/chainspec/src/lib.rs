@@ -1,5 +1,4 @@
-//! Base chain specs.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -27,6 +26,8 @@ use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
 pub use base::BASE_MAINNET;
+use base_execution_forks::{BASE_MAINNET_HARDFORKS, OpHardfork, OpHardforks};
+use base_execution_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 pub use base_sepolia::BASE_SEPOLIA;
 pub use basefee::*;
 use derive_more::{Constructor, Deref, From, Into};
@@ -37,8 +38,6 @@ use reth_chainspec::{
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::NodeRecord;
-use reth_optimism_forks::{BASE_MAINNET_HARDFORKS, OpHardfork, OpHardforks};
-use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
 /// All supported chain names for the CLI.
@@ -482,9 +481,9 @@ mod tests {
     use alloy_primitives::{B256, U256, b256, hex};
     use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
     use base_alloy_rpc_types::OpBaseFeeInfo;
+    use base_execution_forks::{OpHardfork, OpHardforks};
     use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, test_fork_ids};
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
-    use reth_optimism_forks::{OpHardfork, OpHardforks};
 
     use crate::*;
 

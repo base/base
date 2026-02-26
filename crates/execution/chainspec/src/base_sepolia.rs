@@ -4,9 +4,9 @@ use alloc::{sync::Arc, vec};
 
 use alloy_chains::Chain;
 use alloy_primitives::{U256, b256};
+use base_execution_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec, Hardfork};
 use reth_ethereum_forks::EthereumHardfork;
-use reth_optimism_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
 use reth_primitives_traits::SealedHeader;
 
 use crate::{LazyLock, OpChainSpec, make_op_genesis_header};

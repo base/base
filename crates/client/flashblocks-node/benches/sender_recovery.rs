@@ -7,9 +7,9 @@
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, B256};
+use base_execution_primitives::OpTransactionSigned;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
-use reth_optimism_primitives::OpTransactionSigned;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use serde_json::Value;
 

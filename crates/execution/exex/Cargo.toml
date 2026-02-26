@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-exex"
+name = "base-execution-exex"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -21,7 +21,7 @@ reth-provider.workspace = true
 
 # op-reth
 # proofs exex handles `TrieUpdates` in notifications
-reth-optimism-trie = { workspace = true, features = ["serde-bincode-compat"] }
+base-execution-trie = { workspace = true, features = ["serde-bincode-compat"] }
 
 # alloy
 alloy-consensus.workspace = true
@@ -37,8 +37,8 @@ tokio.workspace = true
 futures.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-node-builder.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-chainspec.workspace = true
+base-execution-node.workspace = true
+base-execution-chainspec.workspace = true
 reth-primitives-traits.workspace = true
 reth-ethereum-primitives.workspace = true
 reth-exex-test-utils.workspace = true
@@ -46,20 +46,20 @@ tempfile.workspace = true
 
 [features]
 test-utils = [
+	"base-execution-node/test-utils",
 	"reth-db/test-utils",
 	"reth-ethereum-primitives/test-utils",
 	"reth-node-builder/test-utils",
-	"reth-optimism-node/test-utils",
 	"reth-primitives-traits/test-utils",
 	"reth-provider/test-utils",
 	"reth-trie/test-utils",
 ]
-metrics = [ "reth-optimism-trie/metrics", "reth-trie/metrics" ]
+metrics = [ "base-execution-trie/metrics", "reth-trie/metrics" ]
 
 [package.metadata.cargo-udeps.ignore]
 development = [
     "reth-node-builder",
-    "reth-optimism-node",
-    "reth-optimism-chainspec",
+    "base-execution-node",
+    "base-execution-chainspec",
     "tempfile.workspace",
 ]

@@ -2,13 +2,13 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base_execution_chainspec::OpChainSpec;
+use base_execution_primitives::OpPrimitives;
+use base_execution_trie::{OpProofsStorage, OpProofsStore, db::MdbxProofsStorage};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::OpPrimitives;
-use reth_optimism_trie::{OpProofsStorage, OpProofsStore, db::MdbxProofsStorage};
 use reth_provider::{BlockReader, TransactionVariant};
 use tracing::{info, warn};
 

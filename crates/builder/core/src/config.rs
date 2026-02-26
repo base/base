@@ -3,7 +3,7 @@
 use core::time::Duration;
 use std::sync::Arc;
 
-use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     ExecutionMeteringMode, FlashblocksConfig, NoopMeteringProvider, SharedMeteringProvider,

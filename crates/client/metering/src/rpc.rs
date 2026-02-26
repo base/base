@@ -6,12 +6,12 @@ use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
+use base_execution_chainspec::OpChainSpec;
+use base_execution_evm::extract_l1_info_from_tx;
+use base_execution_primitives::OpBlock;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use base_revm::L1BlockInfo;
 use jsonrpsee::core::{RpcResult, async_trait};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::extract_l1_info_from_tx;
-use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
@@ -403,8 +403,8 @@ mod tests {
     };
     use base_bundles::{Bundle, MeterBundleResponse};
     use base_client_node::test_utils::{Account, TestHarness};
+    use base_execution_primitives::OpTransactionSigned;
     use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
-    use reth_optimism_primitives::OpTransactionSigned;
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use url::Url;
 

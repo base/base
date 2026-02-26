@@ -5,8 +5,8 @@ use alloc::sync::Arc;
 use alloy_consensus::Block;
 use alloy_rpc_types_engine::PayloadError;
 use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadError};
+use base_execution_forks::OpHardforks;
 use derive_more::{Constructor, Deref};
-use reth_optimism_forks::OpHardforks;
 use reth_payload_validator::{cancun, prague, shanghai};
 use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction};
 

@@ -4,13 +4,13 @@ use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
+use base_execution_node::OpEngineTypes;
+use base_execution_rpc::OpEngineApiClient;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
 };
 use reth_node_api::{EngineTypes, PayloadTypes};
-use reth_optimism_node::OpEngineTypes;
-use reth_optimism_rpc::OpEngineApiClient;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;

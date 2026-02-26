@@ -30,6 +30,8 @@ use base_client_node::{
         init_silenced_tracing,
     },
 };
+use base_execution_chainspec::OpChainSpec;
+use base_execution_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
     FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
@@ -38,8 +40,6 @@ use derive_more::Deref;
 use eyre::Result;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::EthChainSpec;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_primitives_traits::{Account as RethAccount, Block as BlockT, RecoveredBlock};
 use reth_provider::{AccountReader, BlockNumReader, BlockReader, ChainSpecProvider};
 use reth_transaction_pool::test_utils::TransactionBuilder;

@@ -6,9 +6,9 @@ use core::fmt::Debug;
 
 use ExecutionMeteringLimitExceeded::*;
 use alloy_primitives::{Address, U256};
+use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use base_revm::OpTransactionError;
 use derive_more::Display;
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use thiserror::Error;
 
 use crate::flashblocks::FlashblocksExecutionInfo;

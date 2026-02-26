@@ -5,6 +5,8 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_alloy_network::Base;
+use base_execution_chainspec::OpChainSpec;
+use base_execution_node::args::RollupArgs;
 use eyre::Result;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
@@ -15,8 +17,6 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::Runtime;
 

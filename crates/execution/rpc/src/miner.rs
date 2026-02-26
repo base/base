@@ -2,9 +2,9 @@
 
 use alloy_primitives::U64;
 pub use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
+use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_metrics::{Metrics, metrics::Gauge};
-use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 use tracing::debug;
 
 /// Miner API extension for OP, exposes settings for the data availability configuration via the

@@ -4,12 +4,12 @@ use std::sync::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
+use base_execution_evm::RethL1BlockInfo;
+use base_execution_forks::OpHardforks;
 use base_revm::L1BlockInfo;
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
-use reth_optimism_evm::RethL1BlockInfo;
-use reth_optimism_forks::OpHardforks;
 use reth_primitives_traits::{
     Block, BlockBody, BlockTy, GotExpected, SealedBlock,
     transaction::error::InvalidTransactionError,
@@ -130,7 +130,7 @@ where
     {
         self.block_info.timestamp.store(header.timestamp(), Ordering::Relaxed);
 
-        if let Some(Ok(l1_block_info)) = tx.map(reth_optimism_evm::extract_l1_info_from_tx) {
+        if let Some(Ok(l1_block_info)) = tx.map(base_execution_evm::extract_l1_info_from_tx) {
             *self.block_info.l1_block_info.write() = l1_block_info;
         }
     }

@@ -6,10 +6,10 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
+use base_execution_evm::OpBlockExecutionError;
 use base_revm::{OpHaltReason, OpTransactionError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_evm::execute::ProviderError;
-use reth_optimism_evm::OpBlockExecutionError;
 use reth_rpc_eth_api::{AsEthApiError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_eth_types::{
     EthApiError,
