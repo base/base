@@ -111,9 +111,14 @@ async fn handle_request(
     let limited = Limited::new(req.into_body(), MAX_BODY_SIZE);
     let body = match limited.collect().await {
         Ok(collected) => collected.to_bytes(),
-        Err(_) => {
+        Err(e) => {
+            let status = if e.is::<http_body_util::LengthLimitError>() {
+                StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
             return Ok(Response::builder()
-                .status(StatusCode::PAYLOAD_TOO_LARGE)
+                .status(status)
                 .body(Full::new(Bytes::new()))
                 .expect("failed to build response"));
         }
