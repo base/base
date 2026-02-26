@@ -5,7 +5,7 @@ FROM ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc192
 
 # Stage 2: Chef base image - Alpine provides musl libc, which produces fully static
 # binaries required for the Nitro Enclave ramdisk (no libc available at runtime).
-FROM lukemathwalker/cargo-chef:latest-rust-1.93-alpine3.21 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.93-alpine3.21@sha256:7d9f8f8e78087879b8988fd4e55d477a2b7f949d45a1e52903d466df99ae8c66 AS chef
 WORKDIR /app
 
 # Set reproducible build timestamp
@@ -28,12 +28,7 @@ RUN apk add --no-cache \
     perl \
     make \
     clang \
-    git \
-    go
-
-# Install linuxkit at the specific commit
-RUN go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@270fd1c5aa1986977b31af6c743c6a2681f67a29
-ENV PATH="${PATH}:/root/go/bin"
+    git
 
 # Stage 3: Planner - analyze dependencies
 FROM chef AS planner
@@ -42,6 +37,11 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 4: Builder - cook dependencies, then build
 FROM chef AS builder
+
+# Install go + linuxkit (only needed here for ramdisk assembly)
+RUN apk add --no-cache go
+RUN go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@270fd1c5aa1986977b31af6c743c6a2681f67a29
+ENV PATH="${PATH}:/root/go/bin"
 
 # Copy ONLY the recipe (dependency metadata)
 COPY --from=planner /app/recipe.json recipe.json
