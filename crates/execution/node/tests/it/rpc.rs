@@ -1,7 +1,7 @@
 //! RPC integration tests.
 
 use base_execution_chainspec::BASE_MAINNET;
-use base_execution_node::OpNode;
+use base_node_core::OpNode;
 use reth_network::types::NatResolver;
 use reth_node_builder::{NodeBuilder, NodeHandle};
 use reth_node_core::{

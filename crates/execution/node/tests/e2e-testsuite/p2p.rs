@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_execution_node::utils::{advance_chain, setup};
+use base_node_core::utils::{advance_chain, setup};
 use futures::StreamExt;
 use tokio::sync::Mutex;
 

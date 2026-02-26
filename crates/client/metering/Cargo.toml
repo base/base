@@ -15,7 +15,7 @@ workspace = true
 # workspace
 base-bundles.workspace = true
 base-flashblocks.workspace = true
-base-client-node.workspace = true
+base-node-runner.workspace = true
 
 # reth
 reth-evm.workspace = true
@@ -57,11 +57,11 @@ derive_more.workspace = true
 # workspace
 base-flashblocks.workspace = true
 base-alloy-flashblocks.workspace = true
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-db-common.workspace = true
-base-execution-node.workspace = true
+base-node-core.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 

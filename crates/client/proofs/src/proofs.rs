@@ -1,13 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_execution_exex::OpProofsExEx;
-use base_execution_node::args::RollupArgs;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
 use base_execution_trie::{MdbxProofsStorage, OpProofsStorage};
+use base_node_core::args::RollupArgs;
+use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
 use reth_tasks::TaskExecutor;

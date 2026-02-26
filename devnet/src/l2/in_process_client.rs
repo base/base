@@ -6,11 +6,11 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_client_node::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_execution_chainspec::OpChainSpec;
-use base_execution_node::args::RollupArgs;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
+use base_node_core::args::RollupArgs;
+use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use eyre::{Context, Result, eyre};

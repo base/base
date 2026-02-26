@@ -259,9 +259,9 @@ impl Tracker {
 mod tests {
     use std::ops::Deref;
 
-    use base_client_node::test_utils::Account;
     use base_flashblocks::FlashblocksAPI;
     use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
+    use base_node_runner::test_utils::Account;
     use tokio::time;
 
     use super::*;

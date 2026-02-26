@@ -18,7 +18,7 @@ use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_node::args::RollupArgs;
+use base_node_core::args::RollupArgs;
 use chainspec::OpChainSpecParser;
 use clap::Parser;
 use commands::Commands;
@@ -123,7 +123,7 @@ where
 #[cfg(test)]
 mod test {
     use base_execution_chainspec::{BASE_MAINNET, OP_DEV};
-    use base_execution_node::args::RollupArgs;
+    use base_node_core::args::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
 

@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use base_execution_forks::OpHardforks;
-use base_execution_node::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
 use base_execution_payload_builder::{
     OpAttributes, OpPayloadPrimitives,
     config::{OpDAConfig, OpGasLimitConfig},
@@ -12,6 +11,7 @@ use base_execution_rpc::{
     witness::OpDebugWitnessApi,
 };
 use base_execution_txpool::OpPooledTx;
+use base_node_core::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{

@@ -12,10 +12,10 @@ use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_alloy_network::ReceiptResponse;
-use base_client_node::test_utils::{
+use base_flashblocks_node::test_harness::FlashblocksHarness;
+use base_node_runner::test_utils::{
     Account, L1_BLOCK_INFO_DEPOSIT_TX, Minimal7702Account, SignerSync,
 };
-use base_flashblocks_node::test_harness::FlashblocksHarness;
 use eyre::Result;
 
 /// Cumulative gas used after the base flashblock (deposit tx + contract deployment)

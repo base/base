@@ -134,7 +134,7 @@ mod test {
     use alloy_consensus::Header;
     use alloy_primitives::{B256, U256, keccak256};
     use base_execution_chainspec::OpChainSpecBuilder;
-    use base_execution_node::OpNode;
+    use base_node_core::OpNode;
     use reth_db_common::init::init_genesis;
     use reth_provider::{
         StateWriter, providers::BlockchainProvider,

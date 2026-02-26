@@ -6,7 +6,7 @@ use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
 use base_execution_chainspec::OpChainSpecBuilder;
-use base_execution_node::{OpNode, utils::optimism_payload_attributes};
+use base_node_core::{OpNode, utils::optimism_payload_attributes};
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{

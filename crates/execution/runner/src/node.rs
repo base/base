@@ -1,16 +1,16 @@
 //! Base Node types config.
 
 use base_execution_chainspec::OpChainSpec;
-use base_execution_node::{
+use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_primitives::OpPrimitives;
+use base_execution_rpc::eth::OpEthApiBuilder;
+use base_execution_storage::OpStorage;
+use base_node_core::{
     OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
     OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
     args::RollupArgs,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };
-use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
-use base_execution_primitives::OpPrimitives;
-use base_execution_rpc::eth::OpEthApiBuilder;
-use base_execution_storage::OpStorage;
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
@@ -102,7 +102,7 @@ impl BaseNode {
     ///
     /// ```no_run
     /// use base_execution_chainspec::BASE_MAINNET;
-    /// use base_client_node::BaseNode;
+    /// use base_node_runner::BaseNode;
     ///
     /// let factory =
     ///     BaseNode::provider_factory_builder().open_read_only(BASE_MAINNET.clone(), "datadir").unwrap();
@@ -113,7 +113,7 @@ impl BaseNode {
     /// ```no_run
     /// use reth_db::open_db_read_only;
     /// use base_execution_chainspec::OpChainSpecBuilder;
-    /// use base_client_node::BaseNode;
+    /// use base_node_runner::BaseNode;
     /// use reth_provider::providers::{RocksDBProvider, StaticFileProvider};
     /// use std::sync::Arc;
     ///

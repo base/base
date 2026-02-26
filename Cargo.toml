@@ -157,7 +157,6 @@ base-builder-metering = { path = "crates/builder/metering" }
 
 # Client
 base-client-cli = { path = "crates/client/cli" }
-base-client-node = { path = "crates/utilities/node" }
 base-metering = { path = "crates/client/metering" }
 base-client-engine = { path = "crates/client/engine" }
 base-flashblocks = { path = "crates/client/flashblocks" }
@@ -186,13 +185,15 @@ base-execution-consensus = { path = "crates/execution/consensus" }
 base-execution-evm = { path = "crates/execution/evm" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-forks = { path = "crates/execution/hardforks" }
-base-execution-node = { path = "crates/execution/node" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-execution-primitives = { path = "crates/execution/primitives" }
 base-execution-rpc = { path = "crates/execution/rpc" }
 base-execution-storage = { path = "crates/execution/storage" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-execution-txpool = { path = "crates/execution/txpool" }
+base-node-core = { path = "crates/execution/node" }
+base-node-runner = { path = "crates/execution/runner" }
+base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
 
 # Infra
 based = { path = "crates/infra/based" }
@@ -218,7 +219,6 @@ base-proposer = { path = "crates/proof/proposer" }
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
 base-cli-utils = { path = "crates/utilities/cli" }
-base-txpool-rpc = { path = "crates/utilities/txpool-rpc" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }

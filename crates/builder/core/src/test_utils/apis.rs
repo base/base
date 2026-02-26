@@ -4,8 +4,8 @@ use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
-use base_execution_node::OpEngineTypes;
 use base_execution_rpc::OpEngineApiClient;
+use base_node_core::OpEngineTypes;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,

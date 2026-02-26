@@ -1,6 +1,6 @@
 //! Trait for customizing the payload service used by the node.
 
-use base_execution_node::{
+use base_node_core::{
     OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };

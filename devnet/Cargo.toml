@@ -20,14 +20,14 @@ base-flashblocks-node.workspace = true
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-tasks.workspace = true
 reth-provider.workspace = true
 reth-node-core.workspace = true
 base-execution-rpc.workspace = true
-base-execution-node.workspace = true
+base-node-core.workspace = true
 base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 reth-db.workspace = true

@@ -123,7 +123,7 @@ where
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
 /// use base_execution_chainspec::BASE_MAINNET;
 /// use base_execution_exex::OpProofsExEx;
-/// use base_execution_node::{OpNode, args::RollupArgs};
+/// use base_node_core::{OpNode, args::RollupArgs};
 /// use base_execution_trie::{InMemoryProofsStorage, OpProofsStorage, db::MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};

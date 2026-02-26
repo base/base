@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig};
 use base_builder_metering::MeteringStore;
-use base_execution_node::args::RollupArgs;
+use base_node_core::args::RollupArgs;
 
 /// Parameters for Flashblocks configuration.
 ///

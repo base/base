@@ -17,7 +17,7 @@
 //! };
 //! use base_execution_chainspec::BASE_SEPOLIA;
 //! use base_execution_evm::OpEvmConfig;
-//! use base_execution_node::{OpExecutorBuilder, OpNetworkPrimitives, OpNode};
+//! use base_node_core::{OpExecutorBuilder, OpNetworkPrimitives, OpNode};
 //! use base_execution_rpc::OpEthApiBuilder;
 //! use base_execution_txpool::OpPooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;

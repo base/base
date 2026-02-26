@@ -261,7 +261,7 @@ impl OpNode {
     ///
     /// ```no_run
     /// use base_execution_chainspec::BASE_MAINNET;
-    /// use base_execution_node::OpNode;
+    /// use base_node_core::OpNode;
     ///
     /// fn demo(runtime: reth_tasks::Runtime) {
     ///     let factory = OpNode::provider_factory_builder()
@@ -274,7 +274,7 @@ impl OpNode {
     ///
     /// ```no_run
     /// use base_execution_chainspec::OpChainSpecBuilder;
-    /// use base_execution_node::OpNode;
+    /// use base_node_core::OpNode;
     /// use reth_provider::providers::ReadOnlyConfig;
     ///
     /// fn demo(runtime: reth_tasks::Runtime) {

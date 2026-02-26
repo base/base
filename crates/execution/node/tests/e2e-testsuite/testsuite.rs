@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B64, B256};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_execution_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
-use base_execution_node::{OpEngineTypes, OpNode};
+use base_node_core::{OpEngineTypes, OpNode};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
