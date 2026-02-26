@@ -7,6 +7,7 @@ use base_builder_core::{
     BuilderConfig, FlashblocksConfig,
     test_utils::{TransactionBuilderExt, setup_test_instance_with_builder_config},
 };
+use serde_json::Value;
 
 /// Test that when `compute_state_root_on_finalize` is enabled:
 /// 1. Flashblocks are built without state root (`state_root` = ZERO in intermediate blocks)
@@ -237,4 +238,36 @@ async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
     );
 
     Ok(())
+}
+
+/// Verify that flashblock metadata contains non-empty `new_account_balances`
+/// when transactions that transfer value are included in the block.
+#[tokio::test]
+async fn test_flashblock_metadata_new_account_balances() -> eyre::Result<()> {
+    let flashblocks_config = FlashblocksConfig::for_tests().with_fixed(false);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks_config);
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+    let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
+
+    // Send a value transfer so at least sender + receiver have balance changes
+    let _ = driver.create_transaction().random_valid_transfer().send().await?;
+
+    let _block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    let flashblocks = flashblocks_listener.get_flashblocks();
+    assert!(!flashblocks.is_empty(), "should have produced flashblocks");
+
+    // At least one flashblock must have non-empty new_account_balances
+    let has_balances = flashblocks.iter().any(|fb| {
+        fb.metadata
+            .get("new_account_balances")
+            .and_then(Value::as_object)
+            .is_some_and(|b| !b.is_empty())
+    });
+
+    assert!(has_balances, "at least one flashblock should report non-empty new_account_balances");
+
+    flashblocks_listener.stop().await
 }
