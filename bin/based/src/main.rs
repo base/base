@@ -91,10 +91,8 @@ async fn main() {
 
     let metrics = HealthcheckMetrics::new(statsd_client);
 
-    // Allow NODE_URL (exported from BBHC_SIDECAR_GETH_RPC in ConfigMap) to override
-    let effective_url = std::env::var("NODE_URL").unwrap_or_else(|_| args.node_url.clone());
-    let node = Node::new(effective_url.clone(), args.new_instance);
-    let client = AlloyEthClient::new_http(&effective_url).expect("failed to create client");
+    let node = Node::new(args.node_url.clone(), args.new_instance);
+    let client = AlloyEthClient::new_http(&args.node_url).expect("failed to create client");
     let config = HealthcheckConfig::new(
         args.poll_interval_ms,
         args.grace_period_ms,
