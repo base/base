@@ -55,6 +55,7 @@ rocksdb = { workspace = true, features = ["snappy"], optional = true }
 
 [features]
 test-utils = [
+	"base-consensus-registry?/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",
 	"dep:alloy-rpc-client",
@@ -68,5 +69,4 @@ test-utils = [
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
-	"base-consensus-registry?/test-utils"
 ]
