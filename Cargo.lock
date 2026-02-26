@@ -3284,6 +3284,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "arc-swap",
  "base-alloy-consensus",
+ "base-alloy-evm",
  "base-alloy-flashblocks",
  "base-alloy-network",
  "base-alloy-rpc-types",

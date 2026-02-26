@@ -13,7 +13,7 @@ use base_node_core::{OpEngineTypes, OpRethReceiptBuilder};
 use base_revm::OpHaltReason;
 use reth_chainspec::EthChainSpec;
 use reth_engine_primitives::ConfigureEngineEvm;
-use reth_evm::{ConfigureEvm, eth::EthTxResult};
+use reth_evm::ConfigureEvm;
 use reth_node_api::{
     AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, NodeTypes, PayloadTypes, TreeConfig,
 };
@@ -22,7 +22,6 @@ use reth_node_builder::{
     rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
 };
 use reth_provider::BlockNumReader;
-use revm::context::result::ExecResultAndState;
 use revm_primitives::B256;
 use tracing::warn;
 
@@ -56,7 +55,7 @@ where
 
         let parent_block_number = self.provider.block_number(*parent_block_hash).ok().flatten()?;
 
-        let this_block_number = parent_block_number.saturating_add(1);
+        let this_block_number = parent_block_number.checked_add(1).unwrap();
 
         let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
 
@@ -64,8 +63,8 @@ where
             // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
             if !pending_blocks.has_transaction_hash(prev_cached_hash) {
                 warn!(
-                    "Not using cached results - previous transaction not cached: {:?}",
-                    prev_cached_hash
+                    prev_cached_hash = ?prev_cached_hash,
+                    "Not using cached results - previous transaction not cached",
                 );
                 return None;
             }
@@ -77,29 +76,12 @@ where
                 .map(|tx| tx.inner.inner.tx_hash())
                 != Some(*tx_hash)
             {
-                warn!("Not using cached results - first transaction not cached: {:?}", tx_hash);
+                warn!(tx_hash = ?tx_hash, "Not using cached results - first transaction not cached");
                 return None;
             }
         }
 
-        let receipt_and_state = pending_blocks
-            .get_transaction_result(tx_hash)
-            .zip(pending_blocks.get_transaction_state(tx_hash))
-            .zip(pending_blocks.get_transaction_by_hash(*tx_hash))
-            .zip(pending_blocks.get_transaction_sender(tx_hash));
-
-        let (((result, state), tx), sender) = receipt_and_state?;
-
-        let eth_tx_result = EthTxResult {
-            result: ExecResultAndState::new(result.clone(), state),
-            blob_gas_used: 0,
-            tx_type: tx.inner.inner.tx_type(),
-        };
-
-        let op_tx_result =
-            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
-
-        Some(op_tx_result)
+        pending_blocks.get_op_tx_result(tx_hash)
     }
 }
 /// Basic implementation of [`EngineValidatorBuilder`].

@@ -11,14 +11,20 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
+use base_alloy_consensus::OpTxType;
+use base_alloy_evm::OpTxResult;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_revm::OpHaltReason;
+use reth_evm::eth::EthTxResult;
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use revm::{context_interface::result::ExecutionResult, state::EvmState};
+use revm::{
+    context::result::ExecResultAndState, context_interface::result::ExecutionResult,
+    state::EvmState,
+};
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
@@ -301,6 +307,26 @@ impl PendingBlocks {
     /// Returns the execution result for a transaction.
     pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<&ExecutionResult<OpHaltReason>> {
         self.transaction_results.get(tx_hash)
+    }
+
+    /// Returns the receipt and state for a transaction.
+    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+        let (((result, state), tx), sender) = self
+            .get_transaction_result(tx_hash)
+            .zip(self.get_transaction_state(tx_hash))
+            .zip(self.get_transaction_by_hash(*tx_hash))
+            .zip(self.get_transaction_sender(tx_hash))?;
+
+        let eth_tx_result = EthTxResult {
+            result: ExecResultAndState::new(result.clone(), state),
+            blob_gas_used: 0,
+            tx_type: tx.inner.inner.tx_type(),
+        };
+
+        let op_tx_result =
+            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+
+        Some(op_tx_result)
     }
 
     /// Returns a transaction by its hash.
