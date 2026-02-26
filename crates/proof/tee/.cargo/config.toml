@@ -1,8 +1,0 @@
-# Cargo configuration for musl cross-compilation
-# Used for building static binaries for Nitro Enclave EIF
-
-[target.x86_64-unknown-linux-musl]
-rustflags = ["-C", "target-feature=+crt-static", "-C", "link-self-contained=yes"]
-
-[env]
-OPENSSL_STATIC = "1"

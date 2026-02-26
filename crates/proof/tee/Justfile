@@ -1,28 +1,20 @@
 set positional-arguments
 
-eif_image_name := "op-enclave-rust-eif"
+eif_image_name := "base-enclave-rust-eif"
 eif_output := "eif.bin"
 
 # Default recipe to display help information
 default:
     @just --list
 
-# Build the Go enclave server
-build-go-server:
-    cd ../op-enclave/op-enclave && go build -o bin/enclave ./cmd/enclave
-
-# Run integration tests (requires Go server to be running)
-test-integration: build-go-server
-    cargo test --package op-enclave-server --test go_interop -- --ignored --test-threads=1
-
-# Run the enclave server locally (HTTP mode on port 1234)
-run-server:
+# Run the nitro enclave server locally (HTTP mode on port 1234)
+run-nitro:
     RUST_LOG=info OP_ENCLAVE_SIGNER_KEY=ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
         cargo run --package base-prover --bin prover -- nitro
 
 # Build EIF using Docker
 build-eif:
-    docker build -f Dockerfile.enclave -t {{ eif_image_name }} .
+    cd ../../.. && docker build --platform linux/amd64 -f etc/docker/Dockerfile.enclave -t {{ eif_image_name }} .
     docker create --name eif-extract {{ eif_image_name }}
     docker cp eif-extract:/build/eif.bin {{ eif_output }}
     docker rm eif-extract
@@ -31,7 +23,8 @@ build-eif:
 
 # Local musl release build (requires musl toolchain)
 musl-release:
-    OPENSSL_STATIC=1 cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin prover
+    OPENSSL_STATIC=1 CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes" \
+        cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin prover
     @echo "Binary built at: target/x86_64-unknown-linux-musl/release/prover"
     @ls -lh target/x86_64-unknown-linux-musl/release/prover
 
