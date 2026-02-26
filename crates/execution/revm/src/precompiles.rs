@@ -159,7 +159,7 @@ impl Default for OpPrecompiles {
 
 /// Bn254 pair precompile.
 pub mod bn254_pair {
-    use super::*;
+    use super::{Precompile, PrecompileError, PrecompileId, PrecompileResult, bn254};
 
     /// Max input size for the bn254 pair precompile.
     pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
@@ -204,7 +204,7 @@ pub mod bn254_pair {
 pub mod bls12_381 {
     use revm::precompile::bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS};
 
-    use super::*;
+    use super::{Precompile, PrecompileError, PrecompileId, PrecompileResult, precompile};
 
     /// Max input size for the g1 msm precompile.
     pub const ISTHMUS_G1_MSM_MAX_INPUT_SIZE: usize = 513760;

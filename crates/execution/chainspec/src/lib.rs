@@ -474,18 +474,26 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::{String, ToString};
+    use alloc::{
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    };
     use core::str::FromStr;
 
+    use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig, Genesis};
+    use alloy_hardforks::Hardfork;
     use alloy_primitives::{B256, U256, b256, hex};
     use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
     use base_alloy_rpc_types::OpBaseFeeInfo;
     use base_execution_forks::{OpHardfork, OpHardforks};
-    use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, test_fork_ids};
+    use reth_chainspec::{
+        BaseFeeParams, BaseFeeParamsKind, EthChainSpec, EthereumHardforks, test_fork_ids,
+    };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::*;
+    use crate::{BASE_MAINNET, BASE_SEPOLIA, OpChainSpec, OpChainSpecBuilder};
 
     #[test]
     fn test_storage_root_consistency() {

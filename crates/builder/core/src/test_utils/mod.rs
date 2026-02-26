@@ -105,7 +105,7 @@ fn init_tests() {
     // Clear OTEL env vars that may interfere with CLI argument parsing
     clear_otel_env_vars();
 
-    use tracing_subscriber::{filter::filter_fn, prelude::*};
+    use tracing_subscriber::{filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt};
     if let Ok(v) = std::env::var("TEST_TRACE") {
         let level = match v.as_str() {
             "true" | "debug" | "on" => tracing::Level::DEBUG,
