@@ -49,14 +49,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     crate::setup_signal_handler(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
-    if config.metrics.enabled {
-        let addr = SocketAddr::new(config.metrics.addr, config.metrics.port);
-        metrics_exporter_prometheus::PrometheusBuilder::new()
-            .with_http_listener(addr)
-            .install()
-            .expect("failed to install Prometheus recorder");
-        info!(%addr, "Metrics server started");
-    }
+    config.metrics.init().expect("failed to install Prometheus recorder");
 
     // Record startup metrics (no-ops if no recorder installed).
     crate::record_startup_metrics(env!("CARGO_PKG_VERSION"));

@@ -17,19 +17,18 @@ base-consensus-registry.workspace = true
 base-cli-utils.workspace = true
 
 # Alloy
-alloy-chains = { workspace = true, features = ["std"] }
+alloy-primitives.workspace = true
 
 # General
-clap = { workspace = true, features = ["derive", "env"] }
 thiserror = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
 
 # `secrets` feature
 tracing = { workspace = true, features = ["std"], optional = true }
 libp2p = { workspace = true, features = ["secp256k1"], optional = true }
-alloy-primitives.workspace = true
 
 [dev-dependencies]
-rstest.workspace = true
+base-consensus-registry.workspace = true
 
 [features]
 default = []

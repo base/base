@@ -9,14 +9,8 @@ pub use sigsegv::SigsegvHandler;
 mod backtrace;
 pub use backtrace::Backtracing;
 
-mod metrics;
-pub use metrics::MetricsArgs;
-
 mod prometheus;
-pub use prometheus::{BuildError, PrometheusServer};
-
-mod args;
-pub use args::{GlobalArgs, LogArgs};
+pub use prometheus::{BuildError, MetricsConfig, PrometheusServer};
 
 mod styles;
 pub use styles::CliStyles;
@@ -40,3 +34,6 @@ mod cli;
 
 mod runtime;
 pub use runtime::RuntimeManager;
+
+#[macro_use]
+mod macros;

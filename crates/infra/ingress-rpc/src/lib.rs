@@ -27,8 +27,7 @@ use alloy_primitives::TxHash;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
-use base_cli_utils::{LogFormat, LogLevel};
-use clap::Parser;
+use clap::Args;
 use tokio::sync::broadcast;
 use tracing::{error, warn};
 use url::Url;
@@ -64,8 +63,7 @@ impl FromStr for TxSubmissionMethod {
 }
 
 /// Configuration for the tips ingress RPC service.
-#[derive(Parser, Debug, Clone)]
-#[command(author, version, about, long_about = None)]
+#[derive(Args, Debug, Clone)]
 pub struct Config {
     /// Address to bind the RPC server to
     #[arg(long, env = "TIPS_INGRESS_ADDRESS", default_value = "0.0.0.0")]
@@ -99,14 +97,6 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC", default_value = "tips-audit")]
     pub audit_topic: String,
 
-    /// Log verbosity level
-    #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
-    pub log_level: LogLevel,
-
-    /// Log output format (pretty or json)
-    #[arg(long, env = "TIPS_INGRESS_LOG_FORMAT", default_value = "pretty")]
-    pub log_format: LogFormat,
-
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(
         long,
@@ -118,10 +108,6 @@ pub struct Config {
     /// URL of the simulation RPC service for bundle metering
     #[arg(long, env = "TIPS_INGRESS_RPC_SIMULATION")]
     pub simulation_rpc: Url,
-
-    /// Port to bind the Prometheus metrics server to
-    #[arg(long, env = "TIPS_INGRESS_METRICS_ADDR", default_value = "0.0.0.0:9002")]
-    pub metrics_addr: SocketAddr,
 
     /// Configurable block time in milliseconds (default: 2000 milliseconds)
     #[arg(long, env = "TIPS_INGRESS_BLOCK_TIME_MILLISECONDS", default_value = "2000")]

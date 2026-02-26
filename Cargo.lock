@@ -1658,6 +1658,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "rdkafka",
+ "serde",
  "tokio",
  "tracing",
 ]
@@ -2627,9 +2628,6 @@ dependencies = [
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
- "alloy-chains",
- "alloy-primitives",
- "base-consensus-registry",
  "clap",
  "dirs-next",
  "eyre",
@@ -2739,8 +2737,11 @@ dependencies = [
 name = "base-consensus"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
+ "alloy-primitives",
  "base-cli-utils",
  "base-client-cli",
+ "base-consensus-cli",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-engine",
@@ -2748,9 +2749,11 @@ dependencies = [
  "base-consensus-gossip",
  "base-consensus-node",
  "base-consensus-providers",
+ "base-consensus-registry",
  "clap",
  "eyre",
  "metrics",
+ "serde",
  "strum",
  "tracing",
 ]
@@ -2759,14 +2762,12 @@ dependencies = [
 name = "base-consensus-cli"
 version = "0.0.0"
 dependencies = [
- "alloy-chains",
  "alloy-primitives",
  "base-cli-utils",
  "base-consensus-genesis",
  "base-consensus-registry",
  "clap",
  "libp2p",
- "rstest",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -4379,12 +4380,13 @@ dependencies = [
 name = "based-bin"
 version = "0.0.0"
 dependencies = [
+ "base-cli-utils",
  "based",
  "cadence",
  "clap",
+ "serde",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
@@ -8246,6 +8248,7 @@ dependencies = [
  "ingress-rpc-lib",
  "jsonrpsee",
  "rdkafka",
+ "serde",
  "tokio",
  "tracing",
 ]
@@ -8266,7 +8269,6 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-network",
  "base-bundles",
- "base-cli-utils",
  "base-execution-evm",
  "base-revm",
  "clap",
@@ -8276,6 +8278,7 @@ dependencies = [
  "moka",
  "rdkafka",
  "reth-rpc-eth-types",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
@@ -9626,12 +9629,13 @@ dependencies = [
 name = "mempool-rebroadcaster-bin"
 version = "0.0.0"
 dependencies = [
+ "base-cli-utils",
  "clap",
  "dotenvy",
  "mempool-rebroadcaster",
+ "serde",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
@@ -17944,16 +17948,17 @@ name = "websocket-proxy-bin"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "base-cli-utils",
  "brotli",
  "clap",
  "dotenvy",
  "futures",
  "hostname",
  "metrics-exporter-prometheus",
+ "serde",
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-subscriber 0.3.22",
  "websocket-proxy",
 ]
 

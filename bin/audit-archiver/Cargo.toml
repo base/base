@@ -18,6 +18,7 @@ workspace = true
 base-cli-utils.workspace = true
 audit-archiver-lib.workspace = true
 clap.workspace = true
+serde.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 tracing = { workspace = true, features = ["std"] }

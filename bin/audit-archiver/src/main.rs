@@ -1,7 +1,5 @@
 //! Audit archiver binary entry point.
 
-use std::net::SocketAddr;
-
 use anyhow::Result;
 use audit_archiver_lib::{
     KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
@@ -9,10 +7,13 @@ use audit_archiver_lib::{
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
-use base_cli_utils::{LogConfig, LogFormat, LogLevel, PrometheusServer, StdoutLogConfig};
+use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
 use tracing::info;
+
+base_cli_utils::define_log_args!("TIPS_AUDIT");
+base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
 
 #[derive(Debug, Clone, ValueEnum)]
 enum S3ConfigType {
@@ -32,11 +33,11 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_S3_BUCKET")]
     s3_bucket: String,
 
-    #[arg(long, env = "TIPS_AUDIT_LOG_LEVEL", default_value = "info")]
-    log_level: LogLevel,
+    #[command(flatten)]
+    log: LogArgs,
 
-    #[arg(long, env = "TIPS_AUDIT_LOG_FORMAT", default_value = "pretty")]
-    log_format: LogFormat,
+    #[command(flatten)]
+    metrics: MetricsArgs,
 
     #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
     s3_config_type: S3ConfigType,
@@ -52,9 +53,6 @@ struct Args {
 
     #[arg(long, env = "TIPS_AUDIT_S3_SECRET_ACCESS_KEY")]
     s3_secret_access_key: Option<String>,
-
-    #[arg(long, env = "TIPS_AUDIT_METRICS_ADDR", default_value = "0.0.0.0:9002")]
-    metrics_addr: SocketAddr,
 
     #[arg(long, env = "TIPS_AUDIT_WORKER_POOL_SIZE", default_value = "80")]
     worker_pool_size: usize,
@@ -72,22 +70,20 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    LogConfig {
-        global_level: args.log_level.into(),
-        stdout_logs: Some(StdoutLogConfig { format: args.log_format }),
-        file_logs: None,
-    }
-    .init_tracing_subscriber()
-    .expect("Failed to initialize tracing");
+    LogConfig::from(args.log.clone())
+        .init_tracing_subscriber()
+        .expect("Failed to initialize tracing");
 
-    PrometheusServer::init(args.metrics_addr.ip(), args.metrics_addr.port(), None)
+    base_cli_utils::MetricsConfig::from(args.metrics.clone())
+        .init()
         .expect("Failed to install Prometheus exporter");
 
     info!(
         kafka_properties_file = %args.kafka_properties_file,
         kafka_topic = %args.kafka_topic,
         s3_bucket = %args.s3_bucket,
-        metrics_addr = %args.metrics_addr,
+        metrics_addr = %args.metrics.addr,
+        metrics_port = args.metrics.port,
         "Starting audit archiver"
     );
 

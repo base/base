@@ -25,5 +25,6 @@ websocket-proxy.workspace = true
 tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true, features = ["ws"] }
 clap = { workspace = true, features = ["derive", "env"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+serde.workspace = true
+base-cli-utils.workspace = true
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }

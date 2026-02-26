@@ -3,6 +3,7 @@
 use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{extract::ws::Message, http::Uri};
+use base_cli_utils::LogConfig;
 use clap::Parser;
 use dotenvy::dotenv;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -12,12 +13,13 @@ use tokio::{
     time::interval,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{Level, error, info, trace, warn};
-use tracing_subscriber::EnvFilter;
+use tracing::{error, info, trace, warn};
 use websocket_proxy::{
     Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
     WebsocketSubscriber,
 };
+
+base_cli_utils::define_log_args!("WEBSOCKET_PROXY");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -77,12 +79,8 @@ struct Args {
     )]
     ip_addr_http_header: String,
 
-    #[arg(long, env, default_value = "info")]
-    log_level: Level,
-
-    /// Format for logs, can be json or text
-    #[arg(long, env, default_value = "text")]
-    log_format: String,
+    #[command(flatten)]
+    log: LogArgs,
 
     /// Enable Prometheus metrics
     #[arg(long, env, default_value = "true")]
@@ -157,21 +155,7 @@ async fn main() {
     dotenv().ok();
     let args = Args::parse();
 
-    let log_format = args.log_format.to_lowercase();
-    let log_level = args.log_level.to_string();
-
-    if log_format == "json" {
-        tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(EnvFilter::new(log_level))
-            .with_ansi(false)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(log_level))
-            .with_ansi(false)
-            .init();
-    }
+    LogConfig::from(args.log).init_tracing_subscriber().expect("failed to initialize tracing");
 
     let api_keys: Vec<String> = args.api_keys.into_iter().filter(|s| !s.is_empty()).collect();
     let authentication = if api_keys.is_empty() {

@@ -3,9 +3,12 @@
 use std::{net::IpAddr, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use base_cli_utils::{CliStyles, LogFormat};
-use clap::{ArgAction, Parser};
+use base_cli_utils::CliStyles;
+use clap::Parser;
 use url::Url;
+
+base_cli_utils::define_log_args!("BASE_PROPOSER");
+base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 
 /// Proposer - TEE-based output proposal generation for OP Stack chains.
 #[derive(Debug, Clone, Parser)]
@@ -182,67 +185,6 @@ pub struct ProposerArgs {
     pub signer_address: Option<Address>,
 }
 
-/// Logging configuration arguments.
-#[derive(Debug, Clone, Parser)]
-#[command(next_help_heading = "Logging")]
-pub struct LogArgs {
-    /// Increase logging verbosity (1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=TRACE).
-    #[arg(
-        short = 'v',
-        long = "verbose",
-        action = ArgAction::Count,
-        default_value = "3",
-        env = "BASE_PROPOSER_LOG_LEVEL",
-        global = true
-    )]
-    pub level: u8,
-
-    /// Suppress stdout logging.
-    #[arg(long = "quiet", short = 'q', global = true)]
-    pub stdout_quiet: bool,
-
-    /// Stdout log format.
-    #[arg(
-        long = "log-format",
-        default_value = "full",
-        env = "BASE_PROPOSER_LOG_FORMAT",
-        global = true
-    )]
-    pub stdout_format: LogFormat,
-}
-
-/// Metrics server configuration arguments.
-#[derive(Debug, Clone, Parser)]
-#[command(next_help_heading = "Metrics")]
-pub struct MetricsArgs {
-    /// Enable metrics server.
-    #[arg(
-        id = "metrics_enabled",
-        long = "metrics.enabled",
-        env = "BASE_PROPOSER_METRICS_ENABLED",
-        default_value = "false"
-    )]
-    pub enabled: bool,
-
-    /// Metrics server bind address.
-    #[arg(
-        id = "metrics_addr",
-        long = "metrics.addr",
-        env = "BASE_PROPOSER_METRICS_ADDR",
-        default_value = "0.0.0.0"
-    )]
-    pub addr: IpAddr,
-
-    /// Metrics server port.
-    #[arg(
-        id = "metrics_port",
-        long = "metrics.port",
-        env = "BASE_PROPOSER_METRICS_PORT",
-        default_value = "7300"
-    )]
-    pub port: u16,
-}
-
 /// RPC server configuration arguments.
 #[derive(Debug, Clone, Parser)]
 #[command(next_help_heading = "RPC Server")]
@@ -297,6 +239,8 @@ fn parse_b256(s: &str) -> Result<B256, alloy_primitives::hex::FromHexError> {
 
 #[cfg(test)]
 mod tests {
+    use base_cli_utils::LogFormat;
+
     use super::*;
 
     #[test]

@@ -12,15 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# consensus
-base-consensus-registry.workspace = true
-
 # reth
 reth-node-core.workspace = true
-
-# alloy
-alloy-chains = { workspace = true, features = ["std"] }
-alloy-primitives.workspace = true
 
 # cli
 clap = { workspace = true, features = ["derive"] }

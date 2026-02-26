@@ -18,6 +18,7 @@ workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 tracing = { workspace = true, features = ["std"] }
 dotenvy.workspace = true
 rdkafka.workspace = true

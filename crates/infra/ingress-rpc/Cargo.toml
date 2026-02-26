@@ -15,7 +15,6 @@ url.workspace = true
 base-revm.workspace = true
 metrics.workspace = true
 async-trait.workspace = true
-base-cli-utils.workspace = true
 metrics-derive.workspace = true
 base-bundles.workspace = true
 base-alloy-network.workspace = true
@@ -28,6 +27,7 @@ tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 moka = { workspace = true, features = ["future"] }
+serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }

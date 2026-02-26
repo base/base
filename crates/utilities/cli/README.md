@@ -10,8 +10,8 @@ CLI utilities for the Base Reth node.
 - **`parse_cli!`**: Parses CLI arguments with package version/description from Cargo.toml.
 - **`init_reth_version!`**: Initializes Reth's global version metadata for P2P identification.
 - **`register_version_metrics!`**: Registers `base_info{version="..."}` Prometheus metric.
-- **`GlobalArgs`**: Common CLI arguments (chain ID, logging).
-- **`LoggingArgs`**: Verbosity levels, output formats, file rotation.
+- **`define_log_args!`**: Generates a `LogArgs` struct with env-var-prefixed logging flags.
+- **`define_metrics_args!`**: Generates a `MetricsArgs` struct with env-var-prefixed Prometheus flags.
 - **`RuntimeManager`**: Tokio runtime with Ctrl+C shutdown handling.
 
 ## Usage

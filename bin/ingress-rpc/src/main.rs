@@ -6,7 +6,7 @@ use audit_archiver_lib::{
 };
 use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
-use base_cli_utils::{LogConfig, PrometheusServer, StdoutLogConfig};
+use base_cli_utils::LogConfig;
 use clap::Parser;
 use ingress_rpc_lib::{
     Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers, bind_health_server,
@@ -17,22 +17,37 @@ use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
+base_cli_utils::define_log_args!("TIPS_INGRESS");
+base_cli_utils::define_metrics_args!("TIPS_INGRESS", 9002);
+
+/// CLI entry point for the tips ingress RPC service.
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Service configuration.
+    #[command(flatten)]
+    config: Config,
+    /// Logging configuration.
+    #[command(flatten)]
+    log: LogArgs,
+    /// Metrics configuration.
+    #[command(flatten)]
+    metrics: MetricsArgs,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    let config = Config::parse();
-    let cfg = config.clone();
+    let cli = Cli::parse();
+    let config = cli.config.clone();
 
-    LogConfig {
-        global_level: config.log_level.into(),
-        stdout_logs: Some(StdoutLogConfig { format: config.log_format }),
-        file_logs: None,
-    }
-    .init_tracing_subscriber()
-    .expect("Failed to initialize tracing");
+    LogConfig::from(cli.log).init_tracing_subscriber().expect("Failed to initialize tracing");
 
-    PrometheusServer::init(config.metrics_addr.ip(), config.metrics_addr.port(), None)
+    let metrics_addr = cli.metrics.addr;
+    let metrics_port = cli.metrics.port;
+    base_cli_utils::MetricsConfig::from(cli.metrics)
+        .init()
         .expect("Failed to install Prometheus exporter");
 
     info!(
@@ -41,7 +56,8 @@ async fn main() -> anyhow::Result<()> {
         port = config.port,
         mempool_url = %config.mempool_url,
         simulation_rpc = %config.simulation_rpc,
-        metrics_address = %config.metrics_addr,
+        metrics_addr = %metrics_addr,
+        metrics_port = metrics_port,
         health_check_address = %config.health_check_addr,
     );
 
@@ -71,7 +87,8 @@ async fn main() -> anyhow::Result<()> {
 
     let audit_producer: FutureProducer = audit_client_config.create()?;
 
-    let audit_publisher = KafkaBundleEventPublisher::new(audit_producer, config.audit_topic);
+    let audit_publisher =
+        KafkaBundleEventPublisher::new(audit_producer, config.audit_topic.clone());
     let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
     AuditConnector::connect(audit_rx, audit_publisher);
 
@@ -89,8 +106,8 @@ async fn main() -> anyhow::Result<()> {
         address = %bound_health_addr
     );
 
-    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cfg);
     let bind_addr = format!("{}:{}", config.address, config.port);
+    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cli.config);
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;

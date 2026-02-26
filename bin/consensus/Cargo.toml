@@ -17,11 +17,17 @@ workspace = true
 
 [dependencies]
 # workspace
+base-consensus-cli.workspace = true
 base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
+# alloy
+alloy-chains.workspace = true
+alloy-primitives.workspace = true
+
 # consensus
 base-consensus-genesis.workspace = true
+base-consensus-registry.workspace = true
 base-consensus-derive = { workspace = true, features = ["metrics"] }
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-gossip = { workspace = true, features = ["metrics"] }
@@ -41,3 +47,4 @@ metrics.workspace = true
 
 # misc
 eyre.workspace = true
+serde.workspace = true
