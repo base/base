@@ -57,7 +57,7 @@ impl Tracker {
                 self.transaction_moved(tx_hash, Pool::Queued);
             }
             FullTransactionEvent::Discarded(tx_hash) => {
-                self.transaction_completed(tx_hash, TxEvent::Dropped);
+                self.transaction_completed(tx_hash, TxEvent::Dropped, Instant::now());
             }
             FullTransactionEvent::Replaced { transaction, replaced_by } => {
                 let tx_hash = transaction.hash();
@@ -73,27 +73,40 @@ impl Tracker {
     pub fn handle_canon_state_notification<N: NodePrimitives>(
         &mut self,
         notification: CanonStateNotification<N>,
+        received_at: Instant,
     ) {
-        self.track_committed_chain(&notification.committed());
+        self.track_committed_chain(&notification.committed(), received_at);
     }
 
     /// Parse flashblock updates and track transaction inclusion in flashblocks.
-    pub fn handle_flashblock_notification(&mut self, pending_blocks: Arc<PendingBlocks>) {
-        self.track_flashblock_transactions(&pending_blocks);
+    pub fn handle_flashblock_notification(
+        &mut self,
+        pending_blocks: Arc<PendingBlocks>,
+        received_at: Instant,
+    ) {
+        self.track_flashblock_transactions(&pending_blocks, received_at);
     }
 
-    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) {
+    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>, received_at: Instant) {
         for block in chain.blocks().values() {
             for transaction in block.body().transactions() {
-                self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                self.transaction_completed(
+                    *transaction.tx_hash(),
+                    TxEvent::BlockInclusion,
+                    received_at,
+                );
             }
         }
     }
 
-    fn track_flashblock_transactions(&mut self, pending_blocks: &PendingBlocks) {
+    fn track_flashblock_transactions(
+        &mut self,
+        pending_blocks: &PendingBlocks,
+        received_at: Instant,
+    ) {
         // Get all transaction hashes from pending blocks
         for tx_hash in pending_blocks.get_pending_transaction_hashes() {
-            self.transaction_fb_included(tx_hash);
+            self.transaction_fb_included(tx_hash, received_at);
         }
     }
 
@@ -156,10 +169,10 @@ impl Tracker {
     }
 
     /// Track a transaction being included in a block or dropped.
-    pub fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
+    pub fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent, received_at: Instant) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
-            let time_in_mempool = Instant::now().duration_since(mempool_time);
+            let time_in_mempool = received_at.duration_since(mempool_time);
 
             if self.is_overflowed(&tx_hash, &event_log) {
                 return;
@@ -172,7 +185,7 @@ impl Tracker {
             if event == TxEvent::BlockInclusion
                 && let Some(pending_time) = event_log.pending_time
             {
-                let time_pending_to_inclusion = Instant::now().duration_since(pending_time);
+                let time_pending_to_inclusion = received_at.duration_since(pending_time);
                 self.metrics
                     .inclusion_duration
                     .record(time_pending_to_inclusion.as_millis() as f64);
@@ -186,12 +199,12 @@ impl Tracker {
 
     /// Track a transaction being included in a flashblock. This will not remove
     /// the tx from the cache.
-    pub fn transaction_fb_included(&mut self, tx_hash: TxHash) {
+    pub fn transaction_fb_included(&mut self, tx_hash: TxHash, received_at: Instant) {
         // Only track if we have seen this transaction before
         if let Some(event_log) = self.txs.peek(&tx_hash) {
             // Record `fb_inclusion_duration` metric if transaction was pending
             if let Some(pending_time) = event_log.pending_time {
-                let time_pending_to_fb_inclusion = Instant::now().duration_since(pending_time);
+                let time_pending_to_fb_inclusion = received_at.duration_since(pending_time);
                 self.metrics
                     .fb_inclusion_duration
                     .record(time_pending_to_fb_inclusion.as_millis() as f64);
@@ -395,7 +408,7 @@ mod tests {
         assert!(tracker.txs.peek(&tx_hash).unwrap().pending_time.is_some());
 
         // Complete the transaction with block inclusion
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
 
         // Transaction should be removed from txs cache
         assert!(tracker.txs.get(&tx_hash).is_none());
@@ -410,7 +423,7 @@ mod tests {
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
 
         // Drop the transaction
-        tracker.transaction_completed(tx_hash, TxEvent::Dropped);
+        tracker.transaction_completed(tx_hash, TxEvent::Dropped, Instant::now());
 
         // Transaction should be removed from cache
         assert!(tracker.txs.get(&tx_hash).is_none());
@@ -527,7 +540,7 @@ mod tests {
         assert_eq!(event_log.events[1].1, TxEvent::QueuedToPending);
 
         // 3. Transaction included in block
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
 
@@ -543,7 +556,7 @@ mod tests {
         assert!(tracker.txs.get(&tx_hash).unwrap().pending_time.is_some());
 
         // 2. Transaction included in block
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
         assert!(tracker.txs.get(&tx_hash).is_none());
     }
 
@@ -564,7 +577,7 @@ mod tests {
         assert!(tracker.txs.get(&tx_hash2).unwrap().pending_time.is_none());
 
         // Complete one
-        tracker.transaction_completed(tx_hash1, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash1, TxEvent::BlockInclusion, Instant::now());
 
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
@@ -602,14 +615,14 @@ mod tests {
         assert_eq!(ptxs[1], tx_hash);
 
         let pb = state.as_ref().unwrap().deref();
-        tracker.track_flashblock_transactions(pb);
+        tracker.track_flashblock_transactions(pb, Instant::now());
 
         // It should still be in the tracker
         assert!(tracker.txs.get(&tx_hash).is_some());
 
         // Wait until its included in canonical block
         time::sleep(Duration::from_millis(1500)).await;
-        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion);
+        tracker.transaction_completed(tx_hash, TxEvent::BlockInclusion, Instant::now());
 
         // It should be removed from the tracker
         assert!(tracker.txs.get(&tx_hash).is_none());
@@ -634,7 +647,7 @@ mod tests {
 
         tokio::spawn(async move {
             while let Ok(pending_blocks) = stream.recv().await {
-                t.handle_flashblock_notification(pending_blocks);
+                t.handle_flashblock_notification(pending_blocks, Instant::now());
                 // Signal that we received a flashblock
                 if let Some(signal) = tx_signal.take() {
                     let _ = signal.send(());
