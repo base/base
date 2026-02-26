@@ -5,9 +5,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
     BuilderConfig, FlashblocksConfig,
-    test_utils::{
-        TransactionBuilderExt, funded_signer, setup_test_instance_with_builder_config,
-    },
+    test_utils::{TransactionBuilderExt, funded_signer, setup_test_instance_with_builder_config},
 };
 use serde_json::Value;
 
@@ -58,10 +56,7 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
 
     // Sender should appear with a reduced balance (spent value + gas)
     let sender_key = format!("{sender:#x}");
-    assert!(
-        balances_map.contains_key(&sender_key),
-        "sender should appear in new_account_balances"
-    );
+    assert!(balances_map.contains_key(&sender_key), "sender should appear in new_account_balances");
 
     // Recipients started at zero; their balance should equal the transfer value
     for (label, recipient) in [("A", recipient_a), ("B", recipient_b)] {
