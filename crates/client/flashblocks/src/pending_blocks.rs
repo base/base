@@ -453,3 +453,132 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Header, Receipt, ReceiptWithBloom, Sealed, Signed};
+    use alloy_primitives::{Bloom, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind};
+    use alloy_rpc_types_engine::PayloadId;
+    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_flashblocks::{ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata};
+
+    use super::*;
+
+    /// Creates a minimal [`Flashblock`] with the given index.
+    fn test_flashblock(index: u64) -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index,
+            base: None,
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata { block_number: 1 },
+        }
+    }
+
+    /// Creates a [`Transaction`] whose `tx_hash()` equals `hash`.
+    fn test_transaction(hash: B256) -> Transaction {
+        let legacy = alloy_consensus::TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 1_000_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        };
+        let envelope =
+            OpTxEnvelope::Legacy(Signed::new_unchecked(legacy, Signature::test_signature(), hash));
+        let recovered =
+            alloy_consensus::transaction::Recovered::new_unchecked(envelope, Address::ZERO);
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: recovered,
+                block_hash: Some(B256::ZERO),
+                block_number: Some(1),
+                transaction_index: Some(0),
+                effective_gas_price: Some(1_000_000_000),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    /// Creates an [`OpTransactionReceipt`] with a single log emitted from `log_address`.
+    fn test_receipt(tx_hash: B256, log_address: Address) -> OpTransactionReceipt {
+        let log = Log {
+            inner: PrimitiveLog {
+                address: log_address,
+                data: LogData::new_unchecked(vec![], Bytes::new()),
+            },
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            block_timestamp: None,
+            transaction_hash: Some(tx_hash),
+            transaction_index: Some(0),
+            log_index: Some(0),
+            removed: false,
+        };
+
+        use base_alloy_consensus::OpReceipt;
+        let op_receipt = OpReceipt::Legacy(Receipt {
+            status: alloy_consensus::Eip658Value::Eip658(true),
+            cumulative_gas_used: 21_000,
+            logs: vec![log.clone()],
+        });
+
+        OpTransactionReceipt {
+            inner: alloy_rpc_types_eth::TransactionReceipt {
+                inner: ReceiptWithBloom { receipt: op_receipt, logs_bloom: Bloom::default() },
+                transaction_hash: tx_hash,
+                transaction_index: Some(0),
+                block_hash: Some(B256::ZERO),
+                block_number: Some(1),
+                gas_used: 21_000,
+                effective_gas_price: 1_000_000_000,
+                blob_gas_used: None,
+                blob_gas_price: None,
+                from: Address::ZERO,
+                to: None,
+                contract_address: None,
+            },
+            l1_block_info: Default::default(),
+        }
+    }
+
+    /// Builds a [`PendingBlocks`] with the supplied (hash, log_address) pairs
+    /// inserted in the given order.
+    fn build_pending_blocks(entries: &[(B256, Address)]) -> PendingBlocks {
+        let header = Sealed::new_unchecked(Header::default(), B256::ZERO);
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock(0)]);
+        builder.with_header(header);
+
+        for &(hash, addr) in entries {
+            builder.with_transaction(test_transaction(hash));
+            builder.with_receipt(hash, test_receipt(hash, addr));
+        }
+
+        builder.build().expect("build should succeed")
+    }
+
+    #[test]
+    fn get_pending_logs_returns_logs_in_transaction_order() {
+        let hash_a = B256::with_last_byte(0xAA);
+        let hash_b = B256::with_last_byte(0xBB);
+        let hash_c = B256::with_last_byte(0xCC);
+
+        let addr_a = Address::with_last_byte(0x0A);
+        let addr_b = Address::with_last_byte(0x0B);
+        let addr_c = Address::with_last_byte(0x0C);
+
+        let pending = build_pending_blocks(&[(hash_a, addr_a), (hash_b, addr_b), (hash_c, addr_c)]);
+
+        let filter = Filter::default();
+        let logs = pending.get_pending_logs(&filter);
+
+        assert_eq!(logs.len(), 3, "should return one log per transaction");
+        assert_eq!(logs[0].address(), addr_a);
+        assert_eq!(logs[1].address(), addr_b);
+        assert_eq!(logs[2].address(), addr_c);
+    }
+}
