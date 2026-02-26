@@ -282,7 +282,7 @@ where
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
-        best_payload.set(payload);
+        best_payload.set(payload.clone());
 
         info!(
             target: "payload_builder",
@@ -298,6 +298,10 @@ where
         }
 
         if ctx.attributes().no_tx_pool {
+            if compute_state_root_on_finalize {
+                finalized_cell.set(payload);
+            }
+
             info!(
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
@@ -309,7 +313,6 @@ where
             ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
             ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
-            // return early since we don't need to build a block with transactions from the pool
             return Ok(());
         }
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
