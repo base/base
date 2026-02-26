@@ -1,6 +1,8 @@
 set positional-arguments := true
 set dotenv-filename := "etc/docker/devnet-env"
 
+mod tee 'crates/proof/tee'
+
 alias t := test
 alias f := fix
 alias b := build
