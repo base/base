@@ -33,13 +33,13 @@ pub trait CachedExecutionProvider<TxResult> {
 #[derive(Debug, Clone, Default)]
 pub struct NoopCachedExecutionProvider;
 
-impl<Result> CachedExecutionProvider<Result> for NoopCachedExecutionProvider {
+impl<TxResult> CachedExecutionProvider<TxResult> for NoopCachedExecutionProvider {
     fn get_cached_execution_for_tx(
         &self,
         _parent_block_hash: &B256,
         _prev_cached_hash: Option<&B256>,
         _tx_hash: &B256,
-    ) -> Option<Result> {
+    ) -> Option<TxResult> {
         None
     }
 }
