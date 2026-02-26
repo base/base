@@ -2,15 +2,24 @@
 //!
 //! Forwards HTTP requests to the enclave over vsock transport.
 
-use std::{net::SocketAddr, sync::Arc};
+#[cfg(unix)]
+use std::io::{Read, Write};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     Method, Request, Response, StatusCode, body::Bytes, server::conn::http1, service::service_fn,
 };
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
+
+/// Maximum HTTP body size (50 MB, matching enclave-side limit).
+const MAX_BODY_SIZE: usize = 50 * 1024 * 1024;
+
+/// Read timeout for vsock connections (5 minutes, matching enclave-side timeout).
+#[cfg(unix)]
+const VSOCK_READ_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Run the HTTP-to-vsock proxy.
 #[cfg(unix)]
@@ -107,7 +116,16 @@ async fn handle_request(
             .expect("failed to build response"));
     }
 
-    let body = req.collect().await?.to_bytes();
+    let limited = Limited::new(req.into_body(), MAX_BODY_SIZE);
+    let body = match limited.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(_) => {
+            return Ok(Response::builder()
+                .status(StatusCode::PAYLOAD_TOO_LARGE)
+                .body(Full::new(Bytes::new()))
+                .expect("failed to build response"));
+        }
+    };
 
     let response = tokio::task::spawn_blocking(move || forward_to_vsock(&pool, &body))
         .await
@@ -136,9 +154,11 @@ async fn handle_request(
 /// Forward a request to vsock and return the response.
 #[cfg(unix)]
 fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
-    use std::io::{Read, Write};
-
     let mut conn = pool.get()?;
+
+    if let Err(e) = conn.set_read_timeout(Some(VSOCK_READ_TIMEOUT)) {
+        warn!(error = %e, "failed to set vsock read timeout");
+    }
 
     if conn.write_all(request).is_err() {
         return None;
@@ -149,7 +169,7 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
 
     loop {
         match conn.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(n) => {
                 response.extend_from_slice(&buffer[..n]);
                 if let Ok(s) = std::str::from_utf8(&response)
@@ -158,6 +178,14 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
                     break;
                 }
             }
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                warn!("vsock read timeout");
+                break;
+            }
+            Err(_) => break,
         }
     }
 
