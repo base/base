@@ -5,17 +5,16 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+pub use base_cli_utils::{
+    FileLogConfig, LogConfig, LogFormat, LogRotation, SigsegvHandler, StdoutLogConfig,
+    init_test_tracing,
+};
+
 mod error;
 pub use error::{CliError, CliResult};
 
 mod flags;
 pub use flags::{GlobalArgs, LogArgs, MetricsArgs, OverrideArgs};
-
-mod logs;
-pub use logs::{FileLogConfig, LogConfig, LogRotation, StdoutLogConfig};
-
-mod clap;
-pub use clap::cli_styles;
 
 #[cfg(feature = "secrets")]
 mod secrets;
@@ -23,8 +22,3 @@ mod secrets;
 pub use secrets::{KeypairError, ParseKeyError, SecretKeyLoader};
 
 pub mod backtrace;
-
-mod tracing;
-pub use tracing::{LogFormat, init_test_tracing};
-
-pub mod sigsegv_handler;

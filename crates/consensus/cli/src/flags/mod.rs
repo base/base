@@ -6,10 +6,8 @@ mod globals;
 pub use globals::GlobalArgs;
 
 mod overrides;
+pub use base_cli_utils::LogArgs;
 pub use overrides::OverrideArgs;
-
-mod log;
-pub use log::LogArgs;
 
 mod metrics;
 pub use metrics::MetricsArgs;

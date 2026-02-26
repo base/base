@@ -8177,14 +8177,10 @@ dependencies = [
  "clap",
  "kona-genesis",
  "kona-registry",
- "libc",
  "libp2p",
  "rstest",
- "serde",
  "thiserror 2.0.18",
  "tracing",
- "tracing-appender",
- "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
@@ -8221,10 +8217,10 @@ version = "0.0.0"
 dependencies = [
  "alloy-rlp",
  "backon",
+ "base-cli-utils",
  "base-macros",
  "derive_more",
  "discv5",
- "kona-cli",
  "kona-genesis",
  "kona-peers",
  "libp2p",
