@@ -6,7 +6,8 @@ use std::{
     time::Duration,
 };
 
-use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
+pub use metrics_exporter_prometheus::BuildError;
+use metrics_exporter_prometheus::PrometheusBuilder;
 use metrics_process::Collector;
 use tracing::info;
 

@@ -3,9 +3,8 @@
 
 use std::net::IpAddr;
 
+use base_cli_utils::{BuildError, PrometheusServer};
 use clap::Parser;
-
-use crate::{CliResult, init_prometheus_server};
 
 /// Configuration for Prometheus metrics.
 #[derive(Debug, Clone, Parser)]
@@ -44,9 +43,9 @@ impl MetricsArgs {
     /// Initialize the tracing stack and Prometheus metrics recorder.
     ///
     /// This function should be called at the beginning of the program.
-    pub fn init_metrics(&self) -> CliResult<()> {
+    pub fn init_metrics(&self) -> Result<(), BuildError> {
         if self.enabled {
-            init_prometheus_server(self.addr, self.port)?;
+            PrometheusServer::init(self.addr, self.port, Some(60))?;
         }
 
         Ok(())
