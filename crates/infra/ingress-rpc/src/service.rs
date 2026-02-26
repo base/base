@@ -9,9 +9,7 @@ use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use audit_archiver_lib::BundleEvent;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
-use base_bundles::{
-    AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle,
-};
+use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
