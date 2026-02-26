@@ -188,12 +188,10 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
         }
     }
 
-    if response.is_empty() {
+    if response.is_empty() || !clean {
         None
     } else {
-        if clean {
-            pool.put(conn);
-        }
+        pool.put(conn);
         Some(response)
     }
 }

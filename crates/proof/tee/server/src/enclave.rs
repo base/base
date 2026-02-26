@@ -2,11 +2,15 @@
 //!
 //! Tries vsock transport first, falls back to HTTP.
 
+#[cfg(unix)]
+use std::io::{Read, Write};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use jsonrpsee::server::{ServerBuilder, ServerConfig};
 use serde_json::value::RawValue;
 use tracing::{debug, info, warn};
+#[cfg(unix)]
+use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 
 use crate::{
     Server,
@@ -48,10 +52,6 @@ pub async fn run(config: TransportConfig) -> eyre::Result<()> {
 /// Try to start a vsock server.
 #[cfg(unix)]
 async fn try_vsock_server(server: Arc<Server>, config: &TransportConfig) -> eyre::Result<()> {
-    use std::io::{Read, Write};
-
-    use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
-
     let addr = VsockAddr::new(VMADDR_CID_ANY, config.vsock_port);
     let listener = VsockListener::bind(&addr)?;
 
