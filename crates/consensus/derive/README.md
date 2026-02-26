@@ -51,7 +51,7 @@ let pipeline = PipelineBuilder::new()
 
 ## Features
 
-The most up-to-date feature list will be available on the [docs.rs `Feature Flags` tab][ff] of the `base-consensus-derive` crate.
+The most up-to-date feature list will be available in the [`Cargo.toml`][ff] of the `base-consensus-derive` crate.
 
 Some features include the following.
 - `serde`: Serialization and Deserialization support for `base-consensus-derive` types.
@@ -59,5 +59,4 @@ Some features include the following.
 
 By default, `base-consensus-derive` enables the `serde` feature.
 
-[ap]: https://docs.rs/crate/alloy-providers/latest
-[ff]: https://docs.rs/crate/base-consensus-derive/latest/features
+[ff]: https://github.com/base/base/blob/main/crates/consensus/derive/Cargo.toml
