@@ -4,16 +4,16 @@
 //! binary serialization that produces identical config hashes.
 //!
 //! We use custom types for `PerChainConfig` and related genesis types because:
-//! - Go uses `B256` for Scalar, while `kona_genesis` uses `U256`
+//! - Go uses `B256` for Scalar, while `base_consensus_genesis` uses `U256`
 //! - We need exact control over binary serialization order for hash compatibility
 //! - Go's `Overhead` exists in struct but is forced to zero and not in binary
 //!
-//! For `RollupConfig`, we re-export from `kona_genesis` to maintain ecosystem compatibility.
+//! For `RollupConfig`, we re-export from `base_consensus_genesis` to maintain ecosystem compatibility.
 
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
-// Re-export RollupConfig from kona_genesis for ecosystem compatibility
-pub use kona_genesis::RollupConfig;
+// Re-export RollupConfig from base_consensus_genesis for ecosystem compatibility
+pub use base_consensus_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 
 use crate::config::default_rollup_config;
@@ -42,8 +42,8 @@ impl Default for BlockId {
 
 /// System configuration at genesis.
 ///
-/// Note: We use custom types here instead of `kona_genesis` types because:
-/// - Go uses `B256` for Scalar, while `kona_genesis` uses `U256`
+/// Note: We use custom types here instead of `base_consensus_genesis` types because:
+/// - Go uses `B256` for Scalar, while `base_consensus_genesis` uses `U256`
 /// - We need exact control over binary serialization order
 /// - Go's `Overhead` exists in struct but is forced to zero and not in binary
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,7 +202,7 @@ impl PerChainConfig {
         self.genesis.system_config.overhead = B256::ZERO;
     }
 
-    /// Convert to `kona_genesis::RollupConfig` using default template.
+    /// Convert to `base_consensus_genesis::RollupConfig` using default template.
     ///
     /// This starts with `default_rollup_config()` and overwrites the 5 chain-specific fields:
     /// - `l2_chain_id`
@@ -224,13 +224,13 @@ impl PerChainConfig {
         cfg
     }
 
-    /// Convert our Genesis to `kona_genesis::ChainGenesis`.
-    const fn to_chain_genesis(&self) -> kona_genesis::ChainGenesis {
-        kona_genesis::ChainGenesis {
+    /// Convert our Genesis to `base_consensus_genesis::ChainGenesis`.
+    const fn to_chain_genesis(&self) -> base_consensus_genesis::ChainGenesis {
+        base_consensus_genesis::ChainGenesis {
             l1: BlockNumHash { hash: self.genesis.l1.hash, number: self.genesis.l1.number },
             l2: BlockNumHash { hash: self.genesis.l2.hash, number: self.genesis.l2.number },
             l2_time: self.genesis.l2_time,
-            system_config: Some(kona_genesis::SystemConfig {
+            system_config: Some(base_consensus_genesis::SystemConfig {
                 batcher_address: self.genesis.system_config.batcher_addr,
                 overhead: U256::ZERO,
                 scalar: U256::from_be_bytes(self.genesis.system_config.scalar.0),

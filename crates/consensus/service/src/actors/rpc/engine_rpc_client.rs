@@ -9,8 +9,8 @@ use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
-use kona_engine::{EngineQueries, EngineState};
-use kona_genesis::RollupConfig;
+use base_consensus_engine::{EngineQueries, EngineState};
+use base_consensus_genesis::RollupConfig;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{EngineActorRequest, EngineRpcRequest};

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use alloy_eips::{eip1898::BlockNumHash, eip7840::BlobParams};
 use alloy_primitives::Address;
-use kona_genesis::{
+use base_consensus_genesis::{
     BaseFeeConfig, ChainGenesis, HardForkConfig, L1ChainConfig, RollupConfig, SystemConfig,
 };
 

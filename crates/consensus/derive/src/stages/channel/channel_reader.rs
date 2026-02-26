@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_protocol::{Batch, BatchReader, BlockInfo};
-use kona_genesis::{
+use base_consensus_genesis::{
     MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
 };
 use tracing::{debug, warn};
@@ -203,7 +203,7 @@ where
 mod test {
     use alloc::vec;
 
-    use kona_genesis::HardForkConfig;
+    use base_consensus_genesis::HardForkConfig;
 
     use super::*;
     use crate::{

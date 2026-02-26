@@ -34,7 +34,7 @@ pub struct ExecutionWitness {
     pub state: HashMap<String, String>,
 }
 
-/// Transformed witness ready for use with kona-executor.
+/// Transformed witness ready for use with base-proof-executor.
 ///
 /// This is the processed form of `ExecutionWitness` with decoded bytes.
 #[derive(Debug, Clone)]
@@ -72,7 +72,7 @@ impl TransformedWitness {
     }
 }
 
-/// Transform witness from JSON format to the format expected by kona-executor.
+/// Transform witness from JSON format to the format expected by base-proof-executor.
 ///
 /// This performs the transformation described in `server.go:253-265`:
 /// - Decode hex strings in `codes` map to `HashMap<B256, Bytes>`

@@ -1,4 +1,4 @@
-//! Error types for the `kona-executor` crate.
+//! Error types for the `base-proof-executor` crate.
 //!
 //! This module provides comprehensive error handling for the stateless L2 block
 //! execution engine, covering validation errors, execution failures, and
@@ -8,7 +8,7 @@ use alloc::string::String;
 
 use alloy_evm::block::BlockExecutionError;
 use base_alloy_consensus::EIP1559ParamError;
-use kona_mpt::TrieNodeError;
+use base_proof_mpt::TrieNodeError;
 use revm::context::DBErrorMarker;
 use thiserror::Error;
 

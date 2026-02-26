@@ -16,7 +16,7 @@
 ///
 /// ```rust,ignore
 /// use metrics::{counter, gauge, histogram};
-/// use kona_engine::Metrics;
+/// use base_consensus_engine::Metrics;
 ///
 /// // Track successful task execution
 /// counter!(Metrics::ENGINE_TASK_SUCCESS, "task" => Metrics::INSERT_TASK_LABEL);
@@ -85,7 +85,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona_engine`][crate].
+    /// Describes metrics used in [`base_consensus_engine`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         // Block labels

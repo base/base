@@ -1,7 +1,7 @@
 //! Sync start algorithm for the OP Stack rollup node.
 
 use base_protocol::L2BlockInfo;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 mod forkchoice;
 pub use forkchoice::L2ForkchoiceState;
@@ -125,7 +125,7 @@ mod test {
     use alloy_rpc_types_eth::Block;
     use base_alloy_network::Base;
     use base_protocol::L2BlockInfo;
-    use kona_genesis::ChainGenesis;
+    use base_consensus_genesis::ChainGenesis;
 
     const OP_SEPOLIA_GENESIS_HASH: B256 =
         b256!("102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d");

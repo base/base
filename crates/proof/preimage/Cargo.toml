@@ -1,5 +1,5 @@
 [package]
-name = "kona-preimage"
+name = "base-proof-preimage"
 description = "Bindings and types for interacting with the PreimageOracle ABI"
 version.workspace = true
 edition.workspace = true

@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use derive_more::Constructor;
-use kona_engine::ConsolidateInput;
+use base_consensus_engine::ConsolidateInput;
 use tokio::sync::mpsc;
 
 use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};

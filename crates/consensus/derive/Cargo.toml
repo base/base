@@ -1,5 +1,5 @@
 [package]
-name = "kona-derive"
+name = "base-consensus-derive"
 description = "A no_std derivation pipeline implementation for the OP Stack"
 version.workspace = true
 edition.workspace = true
@@ -13,9 +13,9 @@ workspace = true
 [dependencies]
 # Protocol
 base-macros.workspace = true
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 base-protocol.workspace = true
-kona-hardforks.workspace = true
+base-consensus-hardforks.workspace = true
 
 # Alloy
 alloy-eips.workspace = true
@@ -45,7 +45,7 @@ metrics = { workspace = true, optional = true }
 spin.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
-kona-registry.workspace = true
+base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 tracing = { workspace = true, features = ["std"] }
@@ -64,7 +64,7 @@ serde = [
 	"base-alloy-rpc-types-engine/serde",
 	"base-protocol/serde",
 	"dep:serde",
-	"kona-genesis/serde",
+	"base-consensus-genesis/serde",
 	"tracing-subscriber?/serde",
 ]
 test-utils = [

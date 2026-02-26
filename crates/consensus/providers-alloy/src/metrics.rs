@@ -55,7 +55,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona_providers_alloy`][crate].
+    /// Describes metrics used in [`base_consensus_providers`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         metrics::describe_gauge!(

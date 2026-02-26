@@ -8,7 +8,7 @@ use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
 };
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use crate::{
     L2ChainProvider, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError,
@@ -253,7 +253,7 @@ mod test {
     use alloy_primitives::{FixedBytes, b256};
     use base_alloy_consensus::OpBlock;
     use base_protocol::{SingleBatch, SpanBatchElement};
-    use kona_genesis::{ChainGenesis, HardForkConfig};
+    use base_consensus_genesis::{ChainGenesis, HardForkConfig};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use super::*;

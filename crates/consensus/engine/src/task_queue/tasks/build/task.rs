@@ -5,7 +5,7 @@ use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use async_trait::async_trait;
 use base_protocol::OpAttributesWithParent;
 use derive_more::Constructor;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use tokio::sync::mpsc;
 
 use super::BuildTaskError;

@@ -1,4 +1,4 @@
-//! L1/L2 data providers for kona-derive integration.
+//! L1/L2 data providers for base-consensus-derive integration.
 //!
 //! This module provides implementations of data providers used by the
 //! derivation pipeline to access L1 and L2 block data.
@@ -6,7 +6,7 @@
 //! # Design Notes
 //!
 //! These providers are **synchronous** by design. Unlike async trait-based providers
-//! in kona-derive, our providers hold pre-loaded block data for stateless execution
+//! in base-consensus-derive, our providers hold pre-loaded block data for stateless execution
 //! within an enclave. The data is passed in at construction time, and accessor methods
 //! simply return references to the cached data.
 //!
@@ -17,9 +17,9 @@
 //! This separation allows the caller to control when verification happens, which is
 //! useful when receipts are provided by an untrusted source.
 //!
-//! ## kona-derive Integration
+//! ## base-consensus-derive Integration
 //!
-//! These structs are designed to be easily wrapped with kona-derive traits (e.g.,
+//! These structs are designed to be easily wrapped with base-consensus-derive traits (e.g.,
 //! `ChainProvider`, `L2ChainProvider`) in a future milestone. The trait integration
 //! with `FetchingAttributesBuilder` will be added in Milestone 5.
 

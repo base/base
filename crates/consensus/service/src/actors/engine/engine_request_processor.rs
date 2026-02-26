@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
-use kona_derive::{ResetSignal, Signal};
-use kona_engine::{
+use base_consensus_derive::{ResetSignal, Signal};
+use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineTask,
     EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, InsertTask, SealTask,
 };
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,

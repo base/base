@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use super::{ChannelAssembler, ChannelBank, ChannelReaderProvider, NextFrameProvider};
 use crate::{
@@ -161,7 +161,7 @@ mod test {
     use alloc::{sync::Arc, vec};
 
     use base_protocol::BlockInfo;
-    use kona_genesis::{HardForkConfig, RollupConfig};
+    use base_consensus_genesis::{HardForkConfig, RollupConfig};
 
     use crate::{
         ChannelProvider, ChannelReaderProvider, OriginProvider, PipelineError, ResetSignal,

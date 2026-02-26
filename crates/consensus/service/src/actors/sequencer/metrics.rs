@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use kona_derive::AttributesBuilder;
+use base_consensus_derive::AttributesBuilder;
 
 use crate::{
     Conductor, OriginSelector, SequencerActor, SequencerEngineClient, UnsafePayloadGossipClient,

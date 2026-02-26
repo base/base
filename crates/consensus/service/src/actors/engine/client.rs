@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use base_protocol::L2BlockInfo;
 use derive_more::Constructor;
-use kona_derive::Signal;
+use base_consensus_derive::Signal;
 use tokio::sync::mpsc;
 
 use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResult};

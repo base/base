@@ -1,9 +1,6 @@
-# `kona-derive`
+# `base-consensus-derive`
 
-<a href="https://github.com/op-rs/kona/actions/workflows/rust_ci.yaml"><img src="https://github.com/op-rs/kona/actions/workflows/rust_ci.yaml/badge.svg?label=ci" alt="CI"></a>
-<a href="https://crates.io/crates/kona-derive"><img src="https://img.shields.io/crates/v/kona-derive.svg?label=kona-derive&labelColor=2a2f35" alt="Kona Derive"></a>
-<a href="https://github.com/op-rs/kona/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="License"></a>
-<a href="https://app.codecov.io/github/op-rs/kona"><img src="https://img.shields.io/codecov/c/github/op-rs/kona" alt="Codecov"></a>
+<a href="https://crates.io/crates/base-consensus-derive"><img src="https://img.shields.io/crates/v/base-consensus-derive.svg?label=base-consensus-derive&labelColor=2a2f35" alt="base-consensus-derive"></a>
 
 A `no_std` compatible implementation of the OP Stack's [derivation pipeline][derive].
 
@@ -11,7 +8,7 @@ A `no_std` compatible implementation of the OP Stack's [derivation pipeline][der
 
 ## Usage
 
-The intended way of working with `kona-derive` is to use the [`DerivationPipeline`][dp] which implements the [`Pipeline`][p] trait. To create an instance of the [`DerivationPipeline`][dp], it's recommended to use the [`PipelineBuilder`][pb] as follows.
+The intended way of working with `base-consensus-derive` is to use the [`DerivationPipeline`][dp] which implements the [`Pipeline`][p] trait. To create an instance of the [`DerivationPipeline`][dp], it's recommended to use the [`PipelineBuilder`][pb] as follows.
 
 ```rust,ignore
 use std::sync::Arc;
@@ -54,13 +51,13 @@ let pipeline = PipelineBuilder::new()
 
 ## Features
 
-The most up-to-date feature list will be available on the [docs.rs `Feature Flags` tab][ff] of the `kona-derive` crate.
+The most up-to-date feature list will be available on the [docs.rs `Feature Flags` tab][ff] of the `base-consensus-derive` crate.
 
 Some features include the following.
-- `serde`: Serialization and Deserialization support for `kona-derive` types.
+- `serde`: Serialization and Deserialization support for `base-consensus-derive` types.
 - `test-utils`: Test utilities for downstream libraries.
 
-By default, `kona-derive` enables the `serde` feature.
+By default, `base-consensus-derive` enables the `serde` feature.
 
 [ap]: https://docs.rs/crate/alloy-providers/latest
-[ff]: https://docs.rs/crate/kona-derive/latest/features
+[ff]: https://docs.rs/crate/base-consensus-derive/latest/features

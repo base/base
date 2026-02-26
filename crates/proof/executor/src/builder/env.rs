@@ -6,8 +6,8 @@ use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_revm::OpSpecId;
-use kona_genesis::RollupConfig;
-use kona_mpt::TrieHinter;
+use base_consensus_genesis::RollupConfig;
+use base_proof_mpt::TrieHinter;
 use revm::{
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,

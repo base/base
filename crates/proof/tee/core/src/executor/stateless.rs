@@ -7,7 +7,7 @@ use alloy_consensus::{Header, ReceiptEnvelope, Sealable};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes, address};
 use base_alloy_consensus::OpTxEnvelope;
-use kona_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 
 use super::{
     attributes::extract_deposits_from_receipts,
@@ -45,7 +45,7 @@ pub struct ExecutionResult {
 /// This validates a block without maintaining full state by using a witness
 /// that provides the necessary state data. It performs all validation checks
 /// from the Go implementation in `stateless.go` and executes the block via
-/// kona-executor's `StatelessL2Builder`.
+/// base-proof-executor's `StatelessL2Builder`.
 ///
 /// # Validation Checks
 ///

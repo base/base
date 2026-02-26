@@ -11,8 +11,8 @@ use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use derive_more::Debug;
 use discv5::Enr;
 use futures::{AsyncReadExt, AsyncWriteExt, stream::StreamExt};
-use kona_genesis::RollupConfig;
-use kona_peers::{EnrValidation, PeerMonitoring, enr_to_multiaddr};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_peers::{EnrValidation, PeerMonitoring, enr_to_multiaddr};
 use libp2p::{
     Multiaddr, PeerId, Swarm, TransportError,
     gossipsub::{IdentTopic, MessageId},

@@ -17,8 +17,8 @@ use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
-use kona_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
-use kona_genesis::{RollupConfig, SystemConfig};
+use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use lru::LruCache;
 use tower::ServiceBuilder;
 

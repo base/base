@@ -6,7 +6,7 @@ use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
 use base_protocol::{BatchValidationProvider, L2BlockInfo};
-use kona_genesis::{RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use thiserror::Error;
 
 use crate::{

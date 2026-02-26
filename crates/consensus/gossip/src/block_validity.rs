@@ -10,7 +10,7 @@ use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadV4, OpNetworkPayloadEnvelope, OpPayloadError,
 };
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use libp2p::gossipsub::MessageAcceptance;
 
 use super::BlockHandler;
@@ -347,7 +347,7 @@ pub(crate) mod tests {
     use arbitrary::{Arbitrary, Unstructured};
     use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadV4, PayloadHash};
-    use kona_genesis::RollupConfig;
+    use base_consensus_genesis::RollupConfig;
 
     use super::*;
 

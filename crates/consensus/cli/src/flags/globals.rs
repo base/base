@@ -4,8 +4,8 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use base_cli_utils::LogArgs;
 use clap::Parser;
-use kona_genesis::RollupConfig;
-use kona_registry::Registry;
+use base_consensus_genesis::RollupConfig;
+use base_consensus_registry::Registry;
 
 use crate::{CliError, CliResult, MetricsArgs, OverrideArgs};
 

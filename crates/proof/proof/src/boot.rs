@@ -2,9 +2,9 @@
 //! through the `PreimageOracle` ABI as local keys.
 
 use alloy_primitives::{B256, U256};
-use kona_genesis::{L1ChainConfig, RollupConfig};
-use kona_preimage::{PreimageKey, PreimageOracleClient};
-use kona_registry::Registry;
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_proof_preimage::{PreimageKey, PreimageOracleClient};
+use base_consensus_registry::Registry;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::OracleProviderError;

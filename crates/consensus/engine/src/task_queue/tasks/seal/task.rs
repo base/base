@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
 use derive_more::Constructor;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use tokio::sync::mpsc;
 
 use super::SealTaskError;

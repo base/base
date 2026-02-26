@@ -1,4 +1,4 @@
-//! Errors for the `kona-derive` crate.
+//! Errors for the `base-consensus-derive` crate.
 
 use alloc::string::String;
 

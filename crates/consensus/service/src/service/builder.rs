@@ -12,8 +12,8 @@ use alloy_transport_http::{
 use base_alloy_network::Base;
 use base_consensus_rpc::RpcBuilder;
 use http_body_util::Full;
-use kona_genesis::{L1ChainConfig, RollupConfig};
-use kona_providers_alloy::OnlineBeaconClient;
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_providers::OnlineBeaconClient;
 use tower::ServiceBuilder;
 use url::Url;
 

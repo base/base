@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use async_trait::async_trait;
 use base_protocol::{Batch, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use super::NextBatchProvider;
 use crate::{
@@ -332,7 +332,7 @@ mod test {
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::B256;
     use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
-    use kona_genesis::{HardForkConfig, RollupConfig};
+    use base_consensus_genesis::{HardForkConfig, RollupConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 

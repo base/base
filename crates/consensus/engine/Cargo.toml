@@ -1,5 +1,5 @@
 [package]
-name = "kona-engine"
+name = "base-consensus-engine"
 description = "An implementation of the OP Stack engine client"
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # workspace
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 base-macros.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
@@ -51,7 +51,7 @@ serde_json = { workspace = true, features = ["std"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-kona-registry.workspace = true
+base-consensus-registry.workspace = true
 rand = {workspace = true, features = ["thread_rng"]}
 arbitrary.workspace = true
 base-alloy-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}

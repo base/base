@@ -1,7 +1,7 @@
 //! Rollup and L1 chain configuration registry.
 
 use alloy_primitives::{Address, map::HashMap};
-use kona_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 
 use crate::L1Config;
 
@@ -9,7 +9,7 @@ lazy_static::lazy_static! {
     /// Private initializer that loads the chain configurations.
     static ref INIT: (
         HashMap<u64, RollupConfig>,
-        HashMap<u64, kona_genesis::ChainConfig>,
+        HashMap<u64, base_consensus_genesis::ChainConfig>,
     ) = init_configs();
 
     /// Rollup configurations loaded from embedded TOML config files.
@@ -50,7 +50,7 @@ impl Registry {
 }
 
 /// Initialize chain and rollup configurations from embedded TOML config files.
-fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, kona_genesis::ChainConfig>) {
+fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genesis::ChainConfig>) {
     let configs: [(&str, &str); 3] = [
         ("base-mainnet", include_str!("../configs/base-mainnet.toml")),
         ("base-sepolia", include_str!("../configs/base-sepolia.toml")),
@@ -61,7 +61,7 @@ fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, kona_genesis::Cha
     let mut chain_configs = HashMap::default();
 
     for (name, toml_str) in configs {
-        let mut chain_config: kona_genesis::ChainConfig = toml::from_str(toml_str)
+        let mut chain_config: base_consensus_genesis::ChainConfig = toml::from_str(toml_str)
             .unwrap_or_else(|e| panic!("Failed to parse {name} config: {e}"));
 
         if let Some(a) = &mut chain_config.addresses {

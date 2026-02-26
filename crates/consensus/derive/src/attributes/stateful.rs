@@ -12,8 +12,8 @@ use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
-use kona_genesis::{L1ChainConfig, RollupConfig};
-use kona_hardforks::{Hardfork, Hardforks};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_hardforks::{Hardfork, Hardforks};
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
@@ -260,8 +260,8 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_protocol::{BlockInfo, DepositError};
-    use kona_genesis::{HardForkConfig, SystemConfig};
-    use kona_registry::L1Config;
+    use base_consensus_genesis::{HardForkConfig, SystemConfig};
+    use base_consensus_registry::L1Config;
 
     use super::*;
     use crate::{

@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [features]
-test-utils = [ "kona-engine?/test-utils" ]
+test-utils = [ "base-consensus-engine?/test-utils" ]
 engine-validation = [
 	"dep:alloy-provider",
 	"dep:alloy-transport-http",
@@ -20,7 +20,7 @@ engine-validation = [
 	"dep:base-alloy-network",
 	"dep:base-alloy-provider",
 	"dep:eyre",
-	"dep:kona-engine",
+	"dep:base-consensus-engine",
 	"dep:tracing",
 	"dep:url",
 ]
@@ -38,7 +38,7 @@ url = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
 backon = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true, features = ["std"] }
-kona-engine = { workspace = true, optional = true }
+base-consensus-engine = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
 base-alloy-network = { workspace = true, optional = true }
 base-alloy-provider = { workspace = true, optional = true }

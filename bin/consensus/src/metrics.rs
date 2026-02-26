@@ -1,6 +1,6 @@
 //! CLI Options Metrics
 
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 /// Metrics to record various CLI options.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -19,7 +19,7 @@ pub enum BuilderError {
     BlockMismatchEpochReset(BlockNumHash, BlockNumHash, B256),
     /// [`SystemConfig`] update failed.
     ///
-    /// [`SystemConfig`]: kona_genesis::SystemConfig
+    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
     #[error("System config update failed")]
     SystemConfigUpdate,
     /// Broken time invariant between L2 and L1.

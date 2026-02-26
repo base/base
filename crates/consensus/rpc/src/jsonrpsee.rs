@@ -15,8 +15,8 @@ use jsonrpsee::{
     core::{RpcResult, SubscriptionResult},
     proc_macros::rpc,
 };
-use kona_genesis::RollupConfig;
-use kona_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 
 use crate::{OutputResponse, SafeHeadResponse, health::HealthzResponse};
 

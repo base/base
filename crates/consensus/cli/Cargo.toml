@@ -1,5 +1,5 @@
 [package]
-name = "kona-cli"
+name = "base-consensus-cli"
 version.workspace = true
 description = "Shared CLI utilities for Kona crates"
 edition.workspace = true
@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-genesis.workspace = true
-kona-registry.workspace = true
+base-consensus-genesis.workspace = true
+base-consensus-registry.workspace = true
 base-cli-utils.workspace = true
 
 # Alloy

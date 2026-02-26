@@ -1,5 +1,5 @@
 [package]
-name = "kona-mpt"
+name = "base-proof-mpt"
 description = "Utilities for interacting with and iterating through a merkle patricia trie"
 version.workspace = true
 edition.workspace = true

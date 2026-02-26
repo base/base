@@ -5,8 +5,8 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_protocol::{L2BlockInfo, OutputRoot};
 use jsonrpsee::core::RpcResult;
-use kona_engine::EngineState;
-use kona_genesis::RollupConfig;
+use base_consensus_engine::EngineState;
+use base_consensus_genesis::RollupConfig;
 use thiserror::Error;
 use tokio::sync::watch;
 

@@ -7,7 +7,7 @@ use alloy_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_trie::TrieAccount;
-use kona_mpt::{Nibbles, TrieHinter, TrieNode, TrieNodeError};
+use base_proof_mpt::{Nibbles, TrieHinter, TrieNode, TrieNodeError};
 use revm::{
     Database,
     database::{BundleState, states::StorageSlot},
@@ -360,7 +360,7 @@ where
 mod tests {
     use alloy_consensus::Sealable;
     use alloy_primitives::b256;
-    use kona_mpt::NoopTrieHinter;
+    use base_proof_mpt::NoopTrieHinter;
 
     use super::*;
 

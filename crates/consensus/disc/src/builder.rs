@@ -4,7 +4,7 @@ use std::net::IpAddr;
 
 use alloy_rlp::Encodable;
 use discv5::{Config, Discv5, Enr, enr::k256};
-use kona_peers::{BootNodes, BootStoreFile, OpStackEnr};
+use base_consensus_peers::{BootNodes, BootStoreFile, OpStackEnr};
 use tokio::time::Duration;
 
 use crate::{Discv5BuilderError, Discv5Driver};
@@ -191,7 +191,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
     use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
-    use kona_peers::EnrValidation;
+    use base_consensus_peers::EnrValidation;
 
     use super::*;
 

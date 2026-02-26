@@ -13,7 +13,7 @@ use jsonrpsee::{
     RpcModule,
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
-use kona_gossip::P2pRpcRequest;
+use base_consensus_gossip::P2pRpcRequest;
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 

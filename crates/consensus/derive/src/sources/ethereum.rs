@@ -6,7 +6,7 @@ use alloc::{boxed::Box, fmt::Debug};
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use crate::{
     BlobProvider, BlobSource, CalldataSource, ChainProvider, DataAvailabilityProvider,
@@ -88,7 +88,7 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
     use base_protocol::BlockInfo;
-    use kona_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
 
     use super::*;
     use crate::{

@@ -5,8 +5,8 @@ use std::{str::FromStr, time::Duration};
 use backon::{ExponentialBuilder, Retryable};
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use discv5::Enr;
-use kona_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
-use kona_node_service::{NetworkActorError, NetworkInboundData};
+use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
+use base_consensus_node::{NetworkActorError, NetworkInboundData};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,

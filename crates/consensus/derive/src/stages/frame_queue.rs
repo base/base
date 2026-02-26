@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
 use base_protocol::{BlockInfo, Frame};
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use crate::{
     NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
@@ -206,7 +206,7 @@ where
 pub(crate) mod tests {
     use alloc::vec;
 
-    use kona_genesis::HardForkConfig;
+    use base_consensus_genesis::HardForkConfig;
 
     use super::*;
     use crate::{test_utils::TestFrameQueueProvider, types::ResetSignal};

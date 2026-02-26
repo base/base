@@ -2,7 +2,7 @@
 
 use alloy_primitives::bytes;
 use alloy_rlp::{Buf, Decodable, Encodable};
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use crate::{
     BatchDecodingError, BatchEncodingError, BatchType, RawSpanBatch, SingleBatch, SpanBatch,

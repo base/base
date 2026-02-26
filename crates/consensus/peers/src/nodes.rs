@@ -1,7 +1,7 @@
 //! Bootnodes for consensus network discovery.
 
 use derive_more::Deref;
-use kona_registry::Registry;
+use base_consensus_registry::Registry;
 use lazy_static::lazy_static;
 
 use crate::BootNode;
@@ -113,7 +113,7 @@ mod tests {
     use std::str::FromStr;
 
     use discv5::{Enr, enr::EnrPublicKey};
-    use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
+    use base_consensus_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
 
     use super::*;
 

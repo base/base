@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use crate::{
     errors::{PipelineError, ResetError},

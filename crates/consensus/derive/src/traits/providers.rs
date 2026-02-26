@@ -7,7 +7,7 @@ use alloy_consensus::{Header, Receipt, TxEnvelope};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_protocol::{BatchValidationProvider, BlockInfo};
-use kona_genesis::{RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::PipelineErrorKind;
 

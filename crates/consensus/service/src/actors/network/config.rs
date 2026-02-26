@@ -1,11 +1,11 @@
 //! Configuration for the `Network`.
 
 use alloy_primitives::Address;
-use kona_disc::LocalNode;
-use kona_genesis::RollupConfig;
-use kona_gossip::GaterConfig;
-use kona_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
-use kona_sources::BlockSigner;
+use base_consensus_disc::LocalNode;
+use base_consensus_genesis::RollupConfig;
+use base_consensus_gossip::GaterConfig;
+use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
 use tokio::time::Duration;
 

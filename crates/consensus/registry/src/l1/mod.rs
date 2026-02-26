@@ -6,7 +6,7 @@ use alloy_chains::NamedChain;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::EthashConfig;
 use alloy_primitives::{Address, U256, address, map::HashMap};
-use kona_genesis::L1ChainConfig;
+use base_consensus_genesis::L1ChainConfig;
 
 use crate::alloc::string::ToString;
 

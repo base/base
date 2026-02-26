@@ -1,5 +1,5 @@
 use base_protocol::BlockInfo;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use tokio::sync::oneshot::Sender;
 
 /// The L1 watcher state accessible from RPC queries.

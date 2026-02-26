@@ -6,7 +6,7 @@
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, U256};
 use base_protocol::{L1BlockInfoIsthmusBaseFields, L1BlockInfoJovianBaseFields, L1BlockInfoTx};
-use kona_genesis::{RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::error::ProviderError;
 

@@ -31,7 +31,7 @@ use base_alloy_rpc_types_engine::{
 };
 use base_protocol::{FromBlockError, L2BlockInfo};
 use http_body_util::Full;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;

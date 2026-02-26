@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 use base_consensus_rpc::SequencerAdminAPIError;
-use kona_derive::AttributesBuilder;
+use base_consensus_derive::AttributesBuilder;
 use tokio::sync::oneshot;
 
 use super::SequencerActor;

@@ -5,7 +5,7 @@ use alloc::{sync::Arc, vec};
 use alloy_consensus::Receipt;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, hex};
 use base_protocol::BlockInfo;
-use kona_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, RollupConfig};
+use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, RollupConfig};
 
 use crate::{PollingTraversal, test_utils::TestChainProvider};
 

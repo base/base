@@ -16,7 +16,7 @@ alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["serde"] }
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 hex.workspace = true
 
 # NSM and Attestation

@@ -10,7 +10,7 @@ use alloy_rpc_types_eth::Block as RpcBlock;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
 use derive_more::Display;
-use kona_genesis::ChainGenesis;
+use base_consensus_genesis::ChainGenesis;
 
 use crate::{DecodeError, L1BlockInfoTx};
 

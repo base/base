@@ -1,4 +1,4 @@
-//! Errors for the `kona-preimage` crate.
+//! Errors for the `base-proof-preimage` crate.
 
 use alloc::string::String;
 

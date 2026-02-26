@@ -93,7 +93,7 @@ impl Behaviour {
 mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::Address;
-    use kona_genesis::RollupConfig;
+    use base_consensus_genesis::RollupConfig;
     use libp2p::gossipsub::{IdentTopic, TopicHash};
 
     use super::*;

@@ -23,7 +23,7 @@ use base_alloy_rpc_types_engine::{
     OpPayloadAttributes,
 };
 use base_protocol::L2BlockInfo;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use tokio::sync::RwLock;
 
 use crate::{EngineClient, EngineClientError, HyperAuthClient};
@@ -99,7 +99,7 @@ pub struct MockEngineStorage {
 /// # Example
 ///
 /// ```rust,ignore
-/// use kona_engine::test_utils::{MockEngineClient};
+/// use base_consensus_engine::test_utils::{MockEngineClient};
 /// use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 /// use std::sync::Arc;
 ///

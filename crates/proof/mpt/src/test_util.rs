@@ -1,4 +1,4 @@
-//! Testing utilities for `kona-mpt`
+//! Testing utilities for `base-proof-mpt`
 
 use alloc::{collections::BTreeMap, vec::Vec};
 

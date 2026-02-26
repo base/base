@@ -168,18 +168,18 @@ base-engine-tree = { path = "crates/client/engine-tree" }
 # Consensus
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
-kona-cli = { path = "crates/consensus/cli", default-features = false }
-kona-disc = { path = "crates/consensus/disc", default-features = false }
-kona-peers = { path = "crates/consensus/peers", default-features = false }
-kona-derive = { path = "crates/consensus/derive", default-features = false }
-kona-engine = { path = "crates/consensus/engine", default-features = false }
-kona-gossip = { path = "crates/consensus/gossip", default-features = false }
-kona-sources = { path = "crates/consensus/sources", default-features = false }
-kona-genesis = { path = "crates/consensus/genesis", default-features = false }
-kona-registry = { path = "crates/consensus/registry", default-features = false }
-kona-hardforks = { path = "crates/consensus/hardforks", default-features = false }
-kona-node-service = { path = "crates/consensus/service", default-features = false }
-kona-providers-alloy = { path = "crates/consensus/providers-alloy", default-features = false }
+base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
+base-consensus-disc = { path = "crates/consensus/disc", default-features = false }
+base-consensus-peers = { path = "crates/consensus/peers", default-features = false }
+base-consensus-derive = { path = "crates/consensus/derive", default-features = false }
+base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
+base-consensus-gossip = { path = "crates/consensus/gossip", default-features = false }
+base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
+base-consensus-genesis = { path = "crates/consensus/genesis", default-features = false }
+base-consensus-registry = { path = "crates/consensus/registry", default-features = false }
+base-consensus-hardforks = { path = "crates/consensus/hardforks", default-features = false }
+base-consensus-node = { path = "crates/consensus/service", default-features = false }
+base-consensus-providers = { path = "crates/consensus/providers-alloy", default-features = false }
 
 # Execution
 base-execution-chainspec = { path = "crates/execution/chainspec" }
@@ -207,13 +207,13 @@ websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Proof
-kona-mpt = { path = "crates/proof/mpt", default-features = false }
-kona-proof = { path = "crates/proof/proof", default-features = false }
-kona-driver = { path = "crates/proof/driver", default-features = false }
-kona-executor = { path = "crates/proof/executor", default-features = false }
-kona-preimage = { path = "crates/proof/preimage", default-features = false }
-kona-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
-kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
+base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
+base-proof = { path = "crates/proof/proof", default-features = false }
+base-proof-driver = { path = "crates/proof/driver", default-features = false }
+base-proof-executor = { path = "crates/proof/executor", default-features = false }
+base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
+base-proof-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
+base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
 base-enclave = { path = "crates/proof/tee/core" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-enclave-server = { path = "crates/proof/tee/server" }

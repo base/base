@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
 use base_protocol::{BlockInfo, Channel};
-use kona_genesis::{
+use base_consensus_genesis::{
     MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
 };
 
@@ -217,7 +217,7 @@ mod test {
     use alloc::{sync::Arc, vec};
 
     use base_protocol::BlockInfo;
-    use kona_genesis::{
+    use base_consensus_genesis::{
         HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
         RollupConfig,
     };

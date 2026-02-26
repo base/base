@@ -15,10 +15,10 @@ pub fn client_entry(_: TokenStream, input: TokenStream) -> TokenStream {
     let expanded = quote! {
         fn #fn_name() -> Result<(), String> {
             match #fn_body {
-                Ok(_) => kona_std_fpvm::io::exit(0),
+                Ok(_) => base_proof_std_fpvm::io::exit(0),
                 Err(e) => {
-                    kona_std_fpvm::io::print_err(alloc::format!("Program encountered fatal error: {:?}\n", e).as_ref());
-                    kona_std_fpvm::io::exit(1);
+                    base_proof_std_fpvm::io::print_err(alloc::format!("Program encountered fatal error: {:?}\n", e).as_ref());
+                    base_proof_std_fpvm::io::exit(1);
                 }
             }
         }
@@ -28,15 +28,15 @@ pub fn client_entry(_: TokenStream, input: TokenStream) -> TokenStream {
                 #[doc = "Program entry point"]
                 #[unsafe(no_mangle)]
                 pub extern "C" fn _start() {
-                    kona_std_fpvm::alloc_heap!();
+                    base_proof_std_fpvm::alloc_heap!();
                     let _ = #fn_name();
                 }
 
                 #[panic_handler]
                 fn panic(info: &core::panic::PanicInfo) -> ! {
                     let msg = alloc::format!("Panic: {}", info);
-                    kona_std_fpvm::io::print_err(msg.as_ref());
-                    kona_std_fpvm::io::exit(2)
+                    base_proof_std_fpvm::io::print_err(msg.as_ref());
+                    base_proof_std_fpvm::io::exit(2)
                 }
             }
         }

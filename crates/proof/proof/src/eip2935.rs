@@ -7,8 +7,8 @@ use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_primitives::{B256, U256, b256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_trie::TrieAccount;
-use kona_mpt::{Nibbles, TrieHinter, TrieNode, TrieNodeError, TrieProvider};
-use kona_preimage::errors::PreimageOracleError;
+use base_proof_mpt::{Nibbles, TrieHinter, TrieNode, TrieNodeError, TrieProvider};
+use base_proof_preimage::errors::PreimageOracleError;
 
 use crate::errors::OracleProviderError;
 
@@ -69,7 +69,7 @@ mod tests {
     use alloy_primitives::{Bytes, map::HashMap};
     use alloy_rlp::Encodable;
     use alloy_trie::{HashBuilder, proof::ProofRetainer};
-    use kona_mpt::NoopTrieHinter;
+    use base_proof_mpt::NoopTrieHinter;
     use rstest::rstest;
 
     use super::*;

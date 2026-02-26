@@ -8,7 +8,7 @@ use base_alloy_hardforks::{
     BASE_MAINNET_GRANITE_TIMESTAMP, BASE_MAINNET_HOLOCENE_TIMESTAMP,
     BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP,
 };
-use kona_genesis::{
+use base_consensus_genesis::{
     BASE_MAINNET_BASE_FEE_CONFIG, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig,
 };
 

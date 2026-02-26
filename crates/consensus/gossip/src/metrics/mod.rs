@@ -66,7 +66,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona_gossip`][crate].
+    /// Describes metrics used in [`base_consensus_gossip`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         metrics::describe_gauge!(Self::RPC_CALLS, "Calls made to the Gossip RPC module");

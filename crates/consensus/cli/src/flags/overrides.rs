@@ -1,7 +1,7 @@
 //! Flags that allow overriding derived values.
 
 use clap::Parser;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 /// Override Flags.
 #[derive(Parser, Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +47,7 @@ impl Default for OverrideArgs {
 impl OverrideArgs {
     /// Applies the override args to the given rollup config.
     pub fn apply(&self, config: RollupConfig) -> RollupConfig {
-        let hardforks = kona_genesis::HardForkConfig {
+        let hardforks = base_consensus_genesis::HardForkConfig {
             regolith_time: config.hardforks.regolith_time,
             canyon_time: self.canyon_override.map(Some).unwrap_or(config.hardforks.canyon_time),
             delta_time: self.delta_override.map(Some).unwrap_or(config.hardforks.delta_time),
@@ -109,7 +109,7 @@ mod tests {
         let updated_config = args.override_flags.apply(config);
         assert_eq!(
             updated_config.hardforks,
-            kona_genesis::HardForkConfig {
+            base_consensus_genesis::HardForkConfig {
                 regolith_time: Default::default(),
                 canyon_time: Some(1699981200),
                 delta_time: Some(1703203200),
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn test_apply_default_overrides() {
         // Use Base Mainnet rollup config.
-        let config = kona_registry::Registry::rollup_config(8453)
+        let config = base_consensus_registry::Registry::rollup_config(8453)
             .expect("No config found for chain ID 8453")
             .clone();
         let init_forks = config.hardforks;

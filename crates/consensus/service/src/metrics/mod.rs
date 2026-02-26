@@ -48,7 +48,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona-node-service`][crate].
+    /// Describes metrics used in [`base-consensus-node`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         // L1 reorg count

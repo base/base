@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch,
 };
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use super::NextBatchProvider;
 use crate::{
@@ -473,7 +473,7 @@ mod tests {
     use alloy_rlp::{BytesMut, Encodable};
     use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
-    use kona_genesis::{ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD};
+    use base_consensus_genesis::{ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 

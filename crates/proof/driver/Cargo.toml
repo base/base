@@ -1,5 +1,5 @@
 [package]
-name = "kona-driver"
+name = "base-proof-driver"
 description = "A no_std derivation pipeline driver"
 edition.workspace = true
 license.workspace = true
@@ -12,9 +12,9 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-derive.workspace = true
-kona-genesis.workspace = true
-kona-executor.workspace = true
+base-consensus-derive.workspace = true
+base-consensus-genesis.workspace = true
+base-proof-executor.workspace = true
 base-protocol.workspace = true
 
 # Alloy

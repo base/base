@@ -11,10 +11,10 @@ use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_evm::OpTxEnv;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_revm::OpSpecId;
-use kona_driver::Executor;
-use kona_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
-use kona_genesis::RollupConfig;
-use kona_mpt::TrieHinter;
+use base_proof_driver::Executor;
+use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
+use base_consensus_genesis::RollupConfig;
+use base_proof_mpt::TrieHinter;
 
 /// An executor wrapper type.
 #[derive(Debug)]
@@ -63,7 +63,7 @@ where
     <Evm as EvmFactory>::Tx:
         FromTxWithEncoded<OpTxEnvelope> + FromRecoveredTx<OpTxEnvelope> + OpTxEnv,
 {
-    type Error = kona_executor::ExecutorError;
+    type Error = base_proof_executor::ExecutorError;
 
     /// Waits for the executor to be ready.
     async fn wait_until_ready(&mut self) {
@@ -91,7 +91,7 @@ where
         attributes: OpPayloadAttributes,
     ) -> Result<BlockBuildingOutcome, Self::Error> {
         self.inner.as_mut().map_or_else(
-            || Err(kona_executor::ExecutorError::MissingExecutor),
+            || Err(base_proof_executor::ExecutorError::MissingExecutor),
             |e| e.build_block(attributes),
         )
     }
@@ -99,7 +99,7 @@ where
     /// Computes the output root.
     fn compute_output_root(&mut self) -> Result<B256, Self::Error> {
         self.inner.as_mut().map_or_else(
-            || Err(kona_executor::ExecutorError::MissingExecutor),
+            || Err(base_proof_executor::ExecutorError::MissingExecutor),
             |e| e.compute_output_root(),
         )
     }

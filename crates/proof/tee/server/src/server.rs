@@ -12,7 +12,7 @@ use base_enclave::{
     output_root_v0,
     types::account::AccountResult,
 };
-use kona_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use parking_lot::RwLock;
 #[cfg(test)]
 use rand_08::rngs::OsRng;

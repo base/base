@@ -1,5 +1,5 @@
 [package]
-name = "kona-providers-alloy"
+name = "base-consensus-providers"
 version.workspace = true
 description = "Alloy Backed Providers"
 
@@ -15,9 +15,9 @@ workspace = true
 [dependencies]
 # Kona
 base-macros.workspace = true
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 base-protocol.workspace = true
-kona-derive.workspace = true
+base-consensus-derive.workspace = true
 
 # Alloy
 alloy-serde = { workspace = true, features = ["std"] }
@@ -51,7 +51,7 @@ metrics = { workspace = true, optional = true }
 
 [features]
 default = []
-metrics = [ "dep:metrics", "kona-derive/metrics" ]
+metrics = [ "dep:metrics", "base-consensus-derive/metrics" ]
 
 [dev-dependencies]
 tokio.workspace = true

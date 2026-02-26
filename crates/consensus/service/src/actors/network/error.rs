@@ -1,7 +1,7 @@
 //! Contains the error type for the network driver builder.
 
-use kona_disc::Discv5BuilderError;
-use kona_gossip::GossipDriverBuilderError;
+use base_consensus_disc::Discv5BuilderError;
+use base_consensus_gossip::GossipDriverBuilderError;
 
 /// An error from the [`crate::NetworkBuilder`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

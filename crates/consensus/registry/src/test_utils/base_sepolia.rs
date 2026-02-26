@@ -8,7 +8,7 @@ use base_alloy_hardforks::{
     BASE_SEPOLIA_GRANITE_TIMESTAMP, BASE_SEPOLIA_HOLOCENE_TIMESTAMP,
     BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,
 };
-use kona_genesis::{
+use base_consensus_genesis::{
     BASE_SEPOLIA_BASE_FEE_CONFIG, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig,
 };
 

@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use kona_executor::TrieDBProvider;
-use kona_mpt::{TrieNode, TrieProvider};
+use base_proof_executor::TrieDBProvider;
+use base_proof_mpt::{TrieNode, TrieProvider};
 
 use super::witness::TransformedWitness;
 use crate::error::ExecutorError;
@@ -138,7 +138,7 @@ impl std::fmt::Display for TrieProviderError {
 
 impl std::error::Error for TrieProviderError {}
 
-/// Implementation of `TrieProvider` from kona-mpt for `EnclaveTrieDB`.
+/// Implementation of `TrieProvider` from base-proof-mpt for `EnclaveTrieDB`.
 ///
 /// This enables the `EnclaveTrieDB` to be used as a trie node provider
 /// for the stateless execution engine.
@@ -158,7 +158,7 @@ impl TrieProvider for EnclaveTrieDB {
     }
 }
 
-/// Implementation of `TrieDBProvider` from kona-executor for `EnclaveTrieDB`.
+/// Implementation of `TrieDBProvider` from base-proof-executor for `EnclaveTrieDB`.
 ///
 /// This enables the `EnclaveTrieDB` to provide bytecode and header lookups
 /// required by the stateless L2 block executor.

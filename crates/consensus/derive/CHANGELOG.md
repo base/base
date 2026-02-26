@@ -6,14 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.3](https://github.com/op-rs/kona/compare/kona-derive-v0.2.2...kona-derive-v0.2.3) - 2025-01-16
+## [0.2.3](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.2.2...base-consensus-derive-v0.2.3) - 2025-01-16
 
 ### Other
 
 - Update Maili Deps (#908)
 - fix some typos in comment (#906)
 
-## [0.2.2](https://github.com/op-rs/kona/compare/kona-derive-v0.2.1...kona-derive-v0.2.2) - 2025-01-13
+## [0.2.2](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.2.1...base-consensus-derive-v0.2.2) - 2025-01-13
 
 ### Other
 
@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(deps)* Replace dep `alloy-rs/op-alloy-protocol`->`op-rs/maili-protocol` (#890)
 - *(derive)* Test Ignoring EIP-7702 (#887)
 
-## [0.2.1](https://github.com/op-rs/kona/compare/kona-derive-v0.2.0...kona-derive-v0.2.1) - 2025-01-07
+## [0.2.1](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.2.0...base-consensus-derive-v0.2.1) - 2025-01-07
 
 ### Fixed
 
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump Dependencies (#880)
 - patch for rust 1.81 ([#867](https://github.com/op-rs/kona/pull/867))
 
-## [0.2.0](https://github.com/op-rs/kona/compare/kona-derive-v0.1.0...kona-derive-v0.2.0) - 2024-12-03
+## [0.2.0](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.1.0...base-consensus-derive-v0.2.0) - 2024-12-03
 
 ### Added
 
@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(derive)* remove indexed blob hash ([#847](https://github.com/op-rs/kona/pull/847))
 
-## [0.0.7](https://github.com/op-rs/kona/compare/kona-derive-v0.0.6...kona-derive-v0.0.7) - 2024-11-20
+## [0.0.7](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.0.6...base-consensus-derive-v0.0.7) - 2024-11-20
 
 ### Added
 
@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(derive)* Re-export types ([#790](https://github.com/op-rs/kona/pull/790))
 - Revert "chore: bump alloy deps ([#788](https://github.com/op-rs/kona/pull/788))" ([#791](https://github.com/op-rs/kona/pull/791))
 
-## [0.0.6](https://github.com/op-rs/kona/compare/kona-derive-v0.0.5...kona-derive-v0.0.6) - 2024-11-06
+## [0.0.6](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.0.5...base-consensus-derive-v0.0.6) - 2024-11-06
 
 ### Added
 
@@ -87,11 +87,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bump alloy deps ([#788](https://github.com/op-rs/kona/pull/788))
 - *(derive)* pipeline error test coverage ([#784](https://github.com/op-rs/kona/pull/784))
 - Only fill blob data when there is no calldata ([#764](https://github.com/op-rs/kona/pull/764))
-- *(derive)* touchup kona-derive readme ([#762](https://github.com/op-rs/kona/pull/762))
+- *(derive)* touchup base-consensus-derive readme ([#762](https://github.com/op-rs/kona/pull/762))
 - *(derive)* Error Exports ([#758](https://github.com/op-rs/kona/pull/758))
 - *(derive)* Cleanup Exports ([#757](https://github.com/op-rs/kona/pull/757))
 
-## [0.0.5](https://github.com/op-rs/kona/compare/kona-derive-v0.0.4...kona-derive-v0.0.5) - 2024-10-29
+## [0.0.5](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.0.4...base-consensus-derive-v0.0.5) - 2024-10-29
 
 ### Added
 
@@ -101,14 +101,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- tracing_subscriber problem in `kona-derive` tests ([#741](https://github.com/op-rs/kona/pull/741))
+- tracing_subscriber problem in `base-consensus-derive` tests ([#741](https://github.com/op-rs/kona/pull/741))
 - *(derive)* Holocene action tests / fixes ([#733](https://github.com/op-rs/kona/pull/733))
 
 ### Other
 
 - *(derive)* import hygiene ([#744](https://github.com/op-rs/kona/pull/744))
 
-## [0.0.4](https://github.com/op-rs/kona/compare/kona-derive-v0.0.3...kona-derive-v0.0.4) - 2024-10-25
+## [0.0.4](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.0.3...base-consensus-derive-v0.0.4) - 2024-10-25
 
 ### Added
 
@@ -193,7 +193,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumps Dependency Versions ([#520](https://github.com/op-rs/kona/pull/520))
 - *(primitives)* rm RawTransaction ([#505](https://github.com/op-rs/kona/pull/505))
 
-## [0.0.3](https://github.com/op-rs/kona/compare/kona-derive-v0.0.2...kona-derive-v0.0.3) - 2024-09-04
+## [0.0.3](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.0.2...base-consensus-derive-v0.0.3) - 2024-09-04
 
 ### Added
 - Run cargo hack against workspace ([#485](https://github.com/op-rs/kona/pull/485))
@@ -215,7 +215,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(derive)* Granite Hardfork Support ([#420](https://github.com/op-rs/kona/pull/420))
 - remove data iter option ([#405](https://github.com/op-rs/kona/pull/405))
 - *(deps)* Bump Alloy Dependencies ([#409](https://github.com/op-rs/kona/pull/409))
-- *(kona-derive)* Remove SignedRecoverable Shim ([#400](https://github.com/op-rs/kona/pull/400))
+- *(base-consensus-derive)* Remove SignedRecoverable Shim ([#400](https://github.com/op-rs/kona/pull/400))
 - *(derive)* Pipeline Reset ([#383](https://github.com/op-rs/kona/pull/383))
 - *(examples)* Start N Blocks Back from Tip ([#349](https://github.com/op-rs/kona/pull/349))
 - *(derive)* Unused var w/o `metrics` feature ([#345](https://github.com/op-rs/kona/pull/345))
@@ -231,7 +231,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(derive)* reset docs ([#464](https://github.com/op-rs/kona/pull/464))
 - *(derive)* Remove udeps ([#462](https://github.com/op-rs/kona/pull/462))
 - *(bin)* Remove `kt` ([#461](https://github.com/op-rs/kona/pull/461))
-- refactor types out of kona-derive ([#454](https://github.com/op-rs/kona/pull/454))
+- refactor types out of base-consensus-derive ([#454](https://github.com/op-rs/kona/pull/454))
 - *(derive)* Channel timeout ([#437](https://github.com/op-rs/kona/pull/437))
 - *(derive)* remove previous stage trait ([#423](https://github.com/op-rs/kona/pull/423))
 - *(examples)* Add logs to trusted-sync ([#415](https://github.com/op-rs/kona/pull/415))
@@ -241,13 +241,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(docs)* Label Cleanup ([#307](https://github.com/op-rs/kona/pull/307))
 - *(derive)* add targets to stage logs ([#310](https://github.com/op-rs/kona/pull/310))
 
-## [0.0.2](https://github.com/op-rs/kona/compare/kona-derive-v0.0.1...kona-derive-v0.0.2) - 2024-06-22
+## [0.0.2](https://github.com/op-rs/kona/compare/base-consensus-derive-v0.0.1...base-consensus-derive-v0.0.2) - 2024-06-22
 
 ### Added
 - *(fjord)* fjord parameter changes ([#284](https://github.com/op-rs/kona/pull/284))
 - *(client/host)* Oracle-backed Blob fetcher ([#255](https://github.com/op-rs/kona/pull/255))
-- *(kona-derive)* Towards Derivation ([#243](https://github.com/op-rs/kona/pull/243))
-- *(kona-derive)* Updated interface ([#230](https://github.com/op-rs/kona/pull/230))
+- *(base-consensus-derive)* Towards Derivation ([#243](https://github.com/op-rs/kona/pull/243))
+- *(base-consensus-derive)* Updated interface ([#230](https://github.com/op-rs/kona/pull/230))
 - *(ci)* Dependabot config ([#236](https://github.com/op-rs/kona/pull/236))
 - *(client)* `StatelessL2BlockExecutor` ([#210](https://github.com/op-rs/kona/pull/210))
 - Pipeline Builder ([#217](https://github.com/op-rs/kona/pull/217))
@@ -258,11 +258,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(workspace)* Client programs in workspace ([#178](https://github.com/op-rs/kona/pull/178))
 - *(primitives)* move attributes into primitives ([#163](https://github.com/op-rs/kona/pull/163))
 - *(derive)* return the concrete online attributes queue type from the online stack constructor ([#158](https://github.com/op-rs/kona/pull/158))
-- *(derive)* Abstract Alt DA out of `kona-derive` ([#156](https://github.com/op-rs/kona/pull/156))
+- *(derive)* Abstract Alt DA out of `base-consensus-derive` ([#156](https://github.com/op-rs/kona/pull/156))
 - *(derive)* Online Data Source Factory Wiring ([#150](https://github.com/op-rs/kona/pull/150))
 - *(plasma)* Implements Plasma Support for kona derive ([#152](https://github.com/op-rs/kona/pull/152))
 - *(derive)* Pipeline Builder ([#127](https://github.com/op-rs/kona/pull/127))
-- *(primitives)* kona-derive type refactor ([#135](https://github.com/op-rs/kona/pull/135))
+- *(primitives)* base-consensus-derive type refactor ([#135](https://github.com/op-rs/kona/pull/135))
 - *(derive)* Span Batch Validation ([#121](https://github.com/op-rs/kona/pull/121))
 - *(derive)* Use `L2ChainProvider` for system config fetching in attributes builder ([#123](https://github.com/op-rs/kona/pull/123))
 - *(derive)* Online Blob Provider ([#117](https://github.com/op-rs/kona/pull/117))
@@ -303,7 +303,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(derive)* Fjord brotli decompression ([#298](https://github.com/op-rs/kona/pull/298))
 - *(examples)* Dynamic Rollup Config Loading ([#293](https://github.com/op-rs/kona/pull/293))
 - type re-exports ([#280](https://github.com/op-rs/kona/pull/280))
-- *(kona-derive)* reuse upstream reqwest provider ([#229](https://github.com/op-rs/kona/pull/229))
+- *(base-consensus-derive)* reuse upstream reqwest provider ([#229](https://github.com/op-rs/kona/pull/229))
 - Derivation Pipeline ([#220](https://github.com/op-rs/kona/pull/220))
 - *(derive)* Alloy EIP4844 Blob Type ([#215](https://github.com/op-rs/kona/pull/215))
 - Strong Error Typing ([#187](https://github.com/op-rs/kona/pull/187))
@@ -353,7 +353,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(derive)* cleanup pipeline tracing ([#264](https://github.com/op-rs/kona/pull/264))
 - *(derive)* online module touchups ([#265](https://github.com/op-rs/kona/pull/265))
 - *(derive)* Sources Touchups ([#266](https://github.com/op-rs/kona/pull/266))
-- *(kona-derive)* Online Pipeline Cleanup ([#241](https://github.com/op-rs/kona/pull/241))
+- *(base-consensus-derive)* Online Pipeline Cleanup ([#241](https://github.com/op-rs/kona/pull/241))
 - *(derive)* data source unit tests ([#181](https://github.com/op-rs/kona/pull/181))
 - *(workspace)* Move `alloy-primitives` to workspace dependencies ([#103](https://github.com/op-rs/kona/pull/103))
 - *(ci)* Fail CI on doclint failure ([#101](https://github.com/op-rs/kona/pull/101))

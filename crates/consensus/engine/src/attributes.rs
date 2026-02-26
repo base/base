@@ -9,7 +9,7 @@ use base_alloy_consensus::{
 };
 use base_alloy_rpc_types::Transaction;
 use base_protocol::OpAttributesWithParent;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 /// Result of validating payload attributes against an execution layer block.
 ///
@@ -20,8 +20,8 @@ use kona_genesis::RollupConfig;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use kona_engine::AttributesMatch;
-/// use kona_genesis::RollupConfig;
+/// use base_consensus_engine::AttributesMatch;
+/// use base_consensus_genesis::RollupConfig;
 /// use base_protocol::OpAttributesWithParent;
 ///
 /// let config = RollupConfig::default();
@@ -404,7 +404,7 @@ mod tests {
     use base_alloy_consensus::encode_holocene_extra_data;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use kona_registry::Registry;
+    use base_consensus_registry::Registry;
 
     use super::*;
     use crate::AttributesMismatch::EIP1559Parameters;

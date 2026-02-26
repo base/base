@@ -6,7 +6,7 @@ use jsonrpsee::{
     core::{SubscriptionResult, to_json_raw_value},
     tracing::warn,
 };
-use kona_engine::EngineState;
+use base_consensus_engine::EngineState;
 
 use crate::{EngineRpcClient, jsonrpsee::WsServer};
 

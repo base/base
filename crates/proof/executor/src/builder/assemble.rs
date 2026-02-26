@@ -10,8 +10,8 @@ use alloy_trie::EMPTY_ROOT_HASH;
 use base_alloy_consensus::OpReceiptEnvelope;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_protocol::{OutputRoot, Predeploys};
-use kona_genesis::RollupConfig;
-use kona_mpt::{TrieHinter, ordered_trie_with_encoder};
+use base_consensus_genesis::RollupConfig;
+use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use revm::{context::BlockEnv, database::BundleState};
 
 use super::StatelessL2Builder;

@@ -1,4 +1,4 @@
-//! Trait implementations for `kona-mpt` traits that are effectively a no-op.
+//! Trait implementations for `base-proof-mpt` traits that are effectively a no-op.
 //! Provides trait implementations for downstream users who do not require hinting.
 
 use alloc::string::String;

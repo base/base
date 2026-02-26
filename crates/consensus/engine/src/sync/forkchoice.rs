@@ -7,7 +7,7 @@ use alloy_provider::Network;
 use alloy_transport::TransportResult;
 use base_alloy_network::Base;
 use base_protocol::L2BlockInfo;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 use crate::{EngineClient, SyncStartError};
 

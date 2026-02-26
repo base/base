@@ -1,4 +1,4 @@
-//! Utilities for `kona-mpt`
+//! Utilities for `base-proof-mpt`
 
 use alloc::vec::Vec;
 
