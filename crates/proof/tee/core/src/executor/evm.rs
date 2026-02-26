@@ -9,6 +9,9 @@ use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_evm::OpEvm;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_consensus_genesis::RollupConfig;
+use base_proof_executor::StatelessL2Builder;
+use base_proof_mpt::TrieHinter;
 use base_protocol::L1BlockInfoTx;
 // Re-export L1BlockInfo for use by callers
 pub use base_revm::L1BlockInfo;
@@ -16,9 +19,6 @@ use base_revm::{
     DefaultOp, OpBuilder, OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction,
     OpTransactionError,
 };
-use base_proof_executor::StatelessL2Builder;
-use base_consensus_genesis::RollupConfig;
-use base_proof_mpt::TrieHinter;
 use revm::{
     Inspector,
     context::{BlockEnv, TxEnv},

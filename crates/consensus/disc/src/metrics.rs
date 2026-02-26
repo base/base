@@ -6,16 +6,16 @@ pub struct Metrics;
 
 impl Metrics {
     /// Identifier for discv5 events.
-    pub const DISCOVERY_EVENT: &str = "kona_node_discovery_events";
+    pub const DISCOVERY_EVENT: &str = "base_node_discovery_events";
 
     /// Counter for the number of `FIND_NODE` requests.
-    pub const FIND_NODE_REQUEST: &str = "kona_node_find_node_requests";
+    pub const FIND_NODE_REQUEST: &str = "base_node_find_node_requests";
 
     /// Timer for the time taken to store ENRs in the bootstore.
-    pub const ENR_STORE_TIME: &str = "kona_node_enr_store_time";
+    pub const ENR_STORE_TIME: &str = "base_node_enr_store_time";
 
     /// Identifier for the gauge that tracks the number of peers in the discovery service.
-    pub const DISCOVERY_PEER_COUNT: &str = "kona_node_discovery_peer_count";
+    pub const DISCOVERY_PEER_COUNT: &str = "base_node_discovery_peer_count";
 
     /// Initializes metrics for the discovery service.
     ///

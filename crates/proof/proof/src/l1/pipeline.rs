@@ -4,15 +4,15 @@ use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use base_consensus_derive::{
     ChainProvider, DataAvailabilityProvider, DerivationPipeline, L2ChainProvider, OriginProvider,
     Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage,
     ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
-use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_preimage::CommsClient;
+use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use spin::RwLock;
 
 use crate::FlushableCache;

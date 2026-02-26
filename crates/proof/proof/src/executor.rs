@@ -10,11 +10,11 @@ use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_evm::OpTxEnv;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_revm::OpSpecId;
+use base_consensus_genesis::RollupConfig;
 use base_proof_driver::Executor;
 use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
-use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::TrieHinter;
+use base_revm::OpSpecId;
 
 /// An executor wrapper type.
 #[derive(Debug)]

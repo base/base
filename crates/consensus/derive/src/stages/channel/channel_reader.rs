@@ -5,10 +5,10 @@ use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_protocol::{Batch, BatchReader, BlockInfo};
 use base_consensus_genesis::{
     MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
 };
+use base_protocol::{Batch, BatchReader, BlockInfo};
 use tracing::{debug, warn};
 
 use crate::{

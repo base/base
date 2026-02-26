@@ -7,8 +7,8 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, Typed2718, eip2718::Decodable2718};
 use alloy_primitives::{B256, Bytes};
 use base_alloy_consensus::OpTxEnvelope;
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::error::ExecutorError;
 

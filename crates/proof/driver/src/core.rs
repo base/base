@@ -7,10 +7,10 @@ use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
-use base_protocol::L2BlockInfo;
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
-use base_proof_executor::BlockBuildingOutcome;
 use base_consensus_genesis::RollupConfig;
+use base_proof_executor::BlockBuildingOutcome;
+use base_protocol::L2BlockInfo;
 use spin::RwLock;
 
 use crate::{DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor};

@@ -1,11 +1,11 @@
 //! [`NodeActor`] implementation for the derivation sub-routine.
 
 use async_trait::async_trait;
-use base_protocol::OpAttributesWithParent;
 use base_consensus_derive::{
     ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal,
     SignalReceiver, StepResult,
 };
+use base_protocol::OpAttributesWithParent;
 use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};

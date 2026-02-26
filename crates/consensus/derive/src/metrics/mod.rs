@@ -76,15 +76,18 @@ impl Metrics {
 
     /// Identifier for the histogram that tracks the amount of time it takes to validate a
     /// span batch.
-    pub const PIPELINE_CHECK_BATCH_PREFIX: &str = "base_consensus_derive_check_batch_prefix_duration";
+    pub const PIPELINE_CHECK_BATCH_PREFIX: &str =
+        "base_consensus_derive_check_batch_prefix_duration";
 
     /// Identifier for the histogram that tracks the amount of time it takes to build payload
     /// attributes.
-    pub const PIPELINE_ATTRIBUTES_BUILD_DURATION: &str = "base_consensus_derive_attributes_build_duration";
+    pub const PIPELINE_ATTRIBUTES_BUILD_DURATION: &str =
+        "base_consensus_derive_attributes_build_duration";
 
     /// Identifier for the gauge that tracks the number of payload attributes buffered in the
     /// pipeline.
-    pub const PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER: &str = "base_consensus_derive_payload_attributes_buffer";
+    pub const PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER: &str =
+        "base_consensus_derive_payload_attributes_buffer";
 
     /// Identifier for a gauge that tracks the latest block number for a system config update.
     pub const PIPELINE_LATEST_SYS_CONFIG_UPDATE: &'static str =

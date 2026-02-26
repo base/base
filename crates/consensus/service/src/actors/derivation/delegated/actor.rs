@@ -1,8 +1,8 @@
 use alloy_primitives::BlockHash;
 use async_trait::async_trait;
-use base_protocol::{L2BlockInfo, SyncStatus};
 use base_consensus_derive::ChainProvider;
 use base_consensus_providers::AlloyChainProvider;
+use base_protocol::{L2BlockInfo, SyncStatus};
 use thiserror::Error;
 use tokio::{select, sync::mpsc, time};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};

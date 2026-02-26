@@ -3,8 +3,8 @@
 
 use alloy_primitives::{B256, U256};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_proof_preimage::{PreimageKey, PreimageOracleClient};
 use base_consensus_registry::Registry;
+use base_proof_preimage::{PreimageKey, PreimageOracleClient};
 use serde::{Deserialize, Serialize};
 
 use crate::errors::OracleProviderError;

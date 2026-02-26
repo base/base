@@ -3,9 +3,9 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use async_trait::async_trait;
+use base_consensus_genesis::RollupConfig;
 use base_protocol::OpAttributesWithParent;
 use derive_more::Constructor;
-use base_consensus_genesis::RollupConfig;
 use tokio::sync::mpsc;
 
 use super::BuildTaskError;

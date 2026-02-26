@@ -4,11 +4,11 @@ use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
 use core::fmt::Debug;
 
 use async_trait::async_trait;
+use base_consensus_genesis::RollupConfig;
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
 };
-use base_consensus_genesis::RollupConfig;
 
 use crate::{
     L2ChainProvider, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError,
@@ -252,8 +252,8 @@ mod test {
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
     use base_alloy_consensus::OpBlock;
-    use base_protocol::{SingleBatch, SpanBatchElement};
     use base_consensus_genesis::{ChainGenesis, HardForkConfig};
+    use base_protocol::{SingleBatch, SpanBatchElement};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use super::*;

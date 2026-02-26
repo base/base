@@ -9,11 +9,11 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_hardforks::{Hardfork, Hardforks};
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_consensus_hardforks::{Hardfork, Hardforks};
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
@@ -259,9 +259,9 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_protocol::{BlockInfo, DepositError};
     use base_consensus_genesis::{HardForkConfig, SystemConfig};
     use base_consensus_registry::L1Config;
+    use base_protocol::{BlockInfo, DepositError};
 
     use super::*;
     use crate::{

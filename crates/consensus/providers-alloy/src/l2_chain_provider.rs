@@ -15,10 +15,10 @@ use alloy_transport_http::{
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
-use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
-use http_body_util::Full;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
+use http_body_util::Full;
 use lru::LruCache;
 use tower::ServiceBuilder;
 

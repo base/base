@@ -50,7 +50,8 @@ impl Registry {
 }
 
 /// Initialize chain and rollup configurations from embedded TOML config files.
-fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genesis::ChainConfig>) {
+fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genesis::ChainConfig>)
+{
     let configs: [(&str, &str); 3] = [
         ("base-mainnet", include_str!("../configs/base-mainnet.toml")),
         ("base-sepolia", include_str!("../configs/base-sepolia.toml")),

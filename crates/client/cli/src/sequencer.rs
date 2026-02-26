@@ -6,8 +6,8 @@
 
 use std::{num::ParseIntError, time::Duration};
 
-use clap::Parser;
 use base_consensus_node::SequencerConfig;
+use clap::Parser;
 use url::Url;
 
 /// Sequencer CLI Flags

@@ -3,8 +3,8 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 
-use base_protocol::BlockInfo;
 use base_consensus_genesis::RollupConfig;
+use base_protocol::BlockInfo;
 
 use crate::{
     AttributesBuilder, AttributesQueue, BatchProvider, BatchStream, ChainProvider, ChannelProvider,

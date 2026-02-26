@@ -57,8 +57,8 @@ client = [
 	"jsonrpsee/http-client",
 ]
 metrics = [
-	"dep:metrics",
 	"base-consensus-engine/metrics",
 	"base-consensus-gossip/metrics",
+	"dep:metrics",
 	"libp2p/metrics",
 ]

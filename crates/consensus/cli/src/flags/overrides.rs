@@ -1,38 +1,38 @@
 //! Flags that allow overriding derived values.
 
-use clap::Parser;
 use base_consensus_genesis::RollupConfig;
+use clap::Parser;
 
 /// Override Flags.
 #[derive(Parser, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverrideArgs {
     /// Manually specify the timestamp for the Canyon fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_CANYON")]
+    #[arg(long, env = "BASE_OVERRIDE_CANYON")]
     pub canyon_override: Option<u64>,
     /// Manually specify the timestamp for the Delta fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_DELTA")]
+    #[arg(long, env = "BASE_OVERRIDE_DELTA")]
     pub delta_override: Option<u64>,
     /// Manually specify the timestamp for the Ecotone fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_ECOTONE")]
+    #[arg(long, env = "BASE_OVERRIDE_ECOTONE")]
     pub ecotone_override: Option<u64>,
     /// Manually specify the timestamp for the Fjord fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_FJORD")]
+    #[arg(long, env = "BASE_OVERRIDE_FJORD")]
     pub fjord_override: Option<u64>,
     /// Manually specify the timestamp for the Granite fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_GRANITE")]
+    #[arg(long, env = "BASE_OVERRIDE_GRANITE")]
     pub granite_override: Option<u64>,
     /// Manually specify the timestamp for the Holocene fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_HOLOCENE")]
+    #[arg(long, env = "BASE_OVERRIDE_HOLOCENE")]
     pub holocene_override: Option<u64>,
     /// Manually specify the timestamp for the Isthmus fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_ISTHMUS")]
+    #[arg(long, env = "BASE_OVERRIDE_ISTHMUS")]
     pub isthmus_override: Option<u64>,
     /// Manually specify the timestamp for the Jovian fork, overriding the bundled setting.
-    #[arg(long, env = "KONA_OVERRIDE_JOVIAN")]
+    #[arg(long, env = "BASE_OVERRIDE_JOVIAN")]
     pub jovian_override: Option<u64>,
     /// Manually specify the timestamp for the pectra blob schedule, overriding the bundled
     /// setting.
-    #[arg(long, env = "KONA_OVERRIDE_PECTRA_BLOB_SCHEDULE")]
+    #[arg(long, env = "BASE_OVERRIDE_PECTRA_BLOB_SCHEDULE")]
     pub pectra_blob_schedule_override: Option<u64>,
 }
 

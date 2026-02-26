@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::{
     AdminApiServer, AdminRpc, DevEngineApiServer, DevEngineRpc, EngineRpcClient, HealthzApiServer,
     HealthzRpc, L1WatcherQueries, NetworkAdminQuery, OpP2PApiServer, P2pRpc, RollupNodeApiServer,
@@ -13,7 +14,6 @@ use jsonrpsee::{
     RpcModule,
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
-use base_consensus_gossip::P2pRpcRequest;
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 

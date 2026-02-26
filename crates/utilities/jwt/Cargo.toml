@@ -19,8 +19,8 @@ engine-validation = [
 	"dep:backon",
 	"dep:base-alloy-network",
 	"dep:base-alloy-provider",
-	"dep:eyre",
 	"dep:base-consensus-engine",
+	"dep:eyre",
 	"dep:tracing",
 	"dep:url",
 ]

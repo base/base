@@ -4,8 +4,8 @@ use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
 use crate::{
@@ -177,8 +177,8 @@ where
 mod test {
     use alloc::{sync::Arc, vec};
 
-    use base_protocol::BlockInfo;
     use base_consensus_genesis::{HardForkConfig, RollupConfig};
+    use base_protocol::BlockInfo;
 
     use super::BatchProvider;
     use crate::{

@@ -46,7 +46,7 @@
 //! - Network interface and port bindings
 
 #![doc(html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4")]
-#![doc(issue_tracker_base_url = "https://github.com/op-rs/kona/issues/")]
+#![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 

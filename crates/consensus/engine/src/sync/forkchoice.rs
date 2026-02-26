@@ -6,8 +6,8 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_provider::Network;
 use alloy_transport::TransportResult;
 use base_alloy_network::Base;
-use base_protocol::L2BlockInfo;
 use base_consensus_genesis::RollupConfig;
+use base_protocol::L2BlockInfo;
 
 use crate::{EngineClient, SyncStartError};
 

@@ -3,8 +3,8 @@
 use alloc::{sync::Arc, vec, vec::Vec};
 
 use alloy_primitives::Bytes;
-use base_protocol::{BlockInfo, DERIVATION_VERSION_0, Frame};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, DERIVATION_VERSION_0, Frame};
 
 use crate::{
     FrameQueue, NextFrameProvider, OriginProvider, PipelineError, PipelineErrorKind,

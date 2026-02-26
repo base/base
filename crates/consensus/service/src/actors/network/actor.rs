@@ -1,8 +1,8 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope};
-use base_consensus_rpc::NetworkAdminQuery;
 use base_consensus_gossip::P2pRpcRequest;
+use base_consensus_rpc::NetworkAdminQuery;
 use base_consensus_sources::BlockSignerError;
 use libp2p::TransportError;
 use thiserror::Error;

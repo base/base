@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-cli"
 version.workspace = true
-description = "Shared CLI utilities for Kona crates"
+description = "Shared CLI utilities for Base consensus crates"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

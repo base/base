@@ -6,8 +6,8 @@ use base_cli_utils::{CliStyles, GlobalArgs, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
-use clap::Parser;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
+use clap::Parser;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
 

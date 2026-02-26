@@ -6,54 +6,54 @@ pub struct Metrics;
 
 impl Metrics {
     /// Identifier for the gauge that tracks gossip events.
-    pub const GOSSIP_EVENT: &str = "kona_node_gossip_events";
+    pub const GOSSIP_EVENT: &str = "base_node_gossip_events";
 
     /// Identifier for the gauge that tracks libp2p gossipsub events.
-    pub const GOSSIPSUB_EVENT: &str = "kona_node_gossipsub_events";
+    pub const GOSSIPSUB_EVENT: &str = "base_node_gossipsub_events";
 
     /// Identifier for the gauge that tracks libp2p gossipsub connections.
-    pub const GOSSIPSUB_CONNECTION: &str = "kona_node_gossipsub_connection";
+    pub const GOSSIPSUB_CONNECTION: &str = "base_node_gossipsub_connection";
 
     /// Identifier for the gauge that tracks unsafe blocks published.
-    pub const UNSAFE_BLOCK_PUBLISHED: &str = "kona_node_unsafe_block_published";
+    pub const UNSAFE_BLOCK_PUBLISHED: &str = "base_node_unsafe_block_published";
 
     /// Identifier for the gauge that tracks the number of connected peers.
-    pub const GOSSIP_PEER_COUNT: &str = "kona_node_swarm_peer_count";
+    pub const GOSSIP_PEER_COUNT: &str = "base_node_swarm_peer_count";
 
     /// Identifier for the gauge that tracks the number of dialed peers.
-    pub const DIAL_PEER: &str = "kona_node_dial_peer";
+    pub const DIAL_PEER: &str = "base_node_dial_peer";
 
     /// Identifier for the gauge that tracks the number of errors when dialing peers.
-    pub const DIAL_PEER_ERROR: &str = "kona_node_dial_peer_error";
+    pub const DIAL_PEER_ERROR: &str = "base_node_dial_peer_error";
 
     /// Identifier for the gauge that tracks RPC calls.
-    pub const RPC_CALLS: &str = "kona_node_rpc_calls";
+    pub const RPC_CALLS: &str = "base_node_rpc_calls";
 
     /// Identifier for a gauge that tracks the number of banned peers.
-    pub const BANNED_PEERS: &str = "kona_node_banned_peers";
+    pub const BANNED_PEERS: &str = "base_node_banned_peers";
 
     /// Identifier for a histogram that tracks peer scores.
-    pub const PEER_SCORES: &str = "kona_node_peer_scores";
+    pub const PEER_SCORES: &str = "base_node_peer_scores";
 
     /// Identifier for the gauge that tracks the duration of peer connections in seconds.
     pub const GOSSIP_PEER_CONNECTION_DURATION_SECONDS: &str =
-        "kona_node_gossip_peer_connection_duration_seconds";
+        "base_node_gossip_peer_connection_duration_seconds";
 
     /// Identifier for the counter that tracks total block validation attempts.
-    pub const BLOCK_VALIDATION_TOTAL: &str = "kona_node_block_validation_total";
+    pub const BLOCK_VALIDATION_TOTAL: &str = "base_node_block_validation_total";
 
     /// Identifier for the counter that tracks successful block validations.
-    pub const BLOCK_VALIDATION_SUCCESS: &str = "kona_node_block_validation_success";
+    pub const BLOCK_VALIDATION_SUCCESS: &str = "base_node_block_validation_success";
 
     /// Identifier for the counter that tracks failed block validations by reason.
-    pub const BLOCK_VALIDATION_FAILED: &str = "kona_node_block_validation_failed";
+    pub const BLOCK_VALIDATION_FAILED: &str = "base_node_block_validation_failed";
 
     /// Identifier for the histogram that tracks block validation duration in seconds.
     pub const BLOCK_VALIDATION_DURATION_SECONDS: &str =
-        "kona_node_block_validation_duration_seconds";
+        "base_node_block_validation_duration_seconds";
 
     /// Identifier for the counter that tracks block version distribution.
-    pub const BLOCK_VERSION: &str = "kona_node_block_version";
+    pub const BLOCK_VERSION: &str = "base_node_block_version";
 
     /// Initializes metrics for the Gossip stack.
     ///
@@ -89,7 +89,7 @@ impl Metrics {
         );
         metrics::describe_gauge!(
             Self::BANNED_PEERS,
-            "Number of peers banned by kona's gossip stack"
+            "Number of peers banned by the gossip stack"
         );
         metrics::describe_histogram!(
             Self::PEER_SCORES,

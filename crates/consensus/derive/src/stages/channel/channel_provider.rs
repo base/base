@@ -5,8 +5,8 @@ use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_protocol::BlockInfo;
 use base_consensus_genesis::RollupConfig;
+use base_protocol::BlockInfo;
 
 use super::{ChannelAssembler, ChannelBank, ChannelReaderProvider, NextFrameProvider};
 use crate::{
@@ -160,8 +160,8 @@ where
 mod test {
     use alloc::{sync::Arc, vec};
 
-    use base_protocol::BlockInfo;
     use base_consensus_genesis::{HardForkConfig, RollupConfig};
+    use base_protocol::BlockInfo;
 
     use crate::{
         ChannelProvider, ChannelReaderProvider, OriginProvider, PipelineError, ResetSignal,

@@ -1,5 +1,5 @@
-use base_protocol::{BlockInfo, L2BlockInfo};
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
+use base_protocol::{BlockInfo, L2BlockInfo};
 use rstest::rstest;
 
 #[cfg(test)]

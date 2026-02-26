@@ -31,7 +31,7 @@ pub struct BootStore {
 /// The bootstore caching policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootStoreFile {
-    /// Default path for the bootstore, ie `~/.kona/<chain_id>/bootstore.json`.
+    /// Default path for the bootstore, ie `~/.base/<chain_id>/bootstore.json`.
     Default {
         /// The l2 chain ID.
         chain_id: u64,
@@ -75,7 +75,7 @@ impl TryInto<PathBuf> for BootStoreFile {
             Self::Default { chain_id } => {
                 let mut path = dirs::home_dir()
                     .ok_or_else(|| std::io::Error::other("Failed to get home directory"))?;
-                path.push(".kona");
+                path.push(".base");
                 path.push(chain_id.to_string());
                 path.push("bootstore.json");
                 Ok(path)
@@ -179,7 +179,7 @@ impl BootStore {
         let mut bootstores = Vec::new();
         let path = datadir.unwrap_or_else(|| {
             let mut home = dirs::home_dir().expect("Failed to get home directory");
-            home.push(".kona");
+            home.push(".base");
             home
         });
         if let Ok(entries) = std::fs::read_dir(path) {

@@ -3,13 +3,13 @@
 use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 
 use alloy_primitives::map::{HashMap, HashSet};
+use base_consensus_disc::Discv5Handler;
+use base_consensus_peers::OpStackEnr;
 use discv5::{
     enr::{NodeId, k256::ecdsa},
     multiaddr::Protocol,
 };
 use ipnet::IpNet;
-use base_consensus_disc::Discv5Handler;
-use base_consensus_peers::OpStackEnr;
 use libp2p::{Multiaddr, PeerId, gossipsub::TopicHash};
 use tokio::sync::oneshot::Sender;
 
@@ -510,7 +510,7 @@ impl P2pRpcRequest {
             let peer_info = PeerInfo {
                 peer_id: peer_id.to_string(),
                 node_id,
-                user_agent: "kona".to_string(),
+                user_agent: "base".to_string(),
                 protocol_version: String::new(),
                 enr: Some(enr.to_string()),
                 addresses,

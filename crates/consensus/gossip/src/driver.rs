@@ -8,11 +8,11 @@ use std::{
 
 use alloy_primitives::{Address, hex};
 use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
+use base_consensus_genesis::RollupConfig;
+use base_consensus_peers::{EnrValidation, PeerMonitoring, enr_to_multiaddr};
 use derive_more::Debug;
 use discv5::Enr;
 use futures::{AsyncReadExt, AsyncWriteExt, stream::StreamExt};
-use base_consensus_genesis::RollupConfig;
-use base_consensus_peers::{EnrValidation, PeerMonitoring, enr_to_multiaddr};
 use libp2p::{
     Multiaddr, PeerId, Swarm, TransportError,
     gossipsub::{IdentTopic, MessageId},

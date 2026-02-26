@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_protocol::{L2BlockInfo, OutputRoot, Predeploys};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{L2BlockInfo, OutputRoot, Predeploys};
 use tokio::sync::oneshot::Sender;
 
 use crate::{EngineClient, EngineClientError, EngineState};

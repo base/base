@@ -5,7 +5,6 @@ use alloy_primitives::Address;
 use alloy_signer::k256;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use discv5::{ConfigBuilder, Enr, ListenConfig};
 use base_consensus_disc::LocalNode;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
@@ -13,6 +12,7 @@ use base_consensus_node::{
 };
 use base_consensus_peers::BootNode;
 use base_consensus_sources::BlockSigner;
+use discv5::{ConfigBuilder, Enr, ListenConfig};
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};
 use rand::RngCore;
 use tokio::sync::mpsc;

@@ -1,7 +1,7 @@
 //! Bootnodes for consensus network discovery.
 
-use derive_more::Deref;
 use base_consensus_registry::Registry;
+use derive_more::Deref;
 use lazy_static::lazy_static;
 
 use crate::BootNode;
@@ -112,8 +112,8 @@ pub static OP_RAW_TESTNET_BOOTNODES: &[&str] = &[
 mod tests {
     use std::str::FromStr;
 
-    use discv5::{Enr, enr::EnrPublicKey};
     use base_consensus_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
+    use discv5::{Enr, enr::EnrPublicKey};
 
     use super::*;
 

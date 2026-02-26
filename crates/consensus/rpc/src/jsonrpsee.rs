@@ -7,6 +7,8 @@ use alloy_primitives::B256;
 // Re-export apis defined in `base-alloy-rpc-jsonrpsee`
 pub use base_alloy_rpc_jsonrpsee::{MinerApiExtServer, OpAdminApiServer};
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_consensus_genesis::RollupConfig;
+use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_protocol::SyncStatus;
 #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_imports))]
 use getrandom as _; // required for compiling wasm32-unknown-unknown
@@ -15,8 +17,6 @@ use jsonrpsee::{
     core::{RpcResult, SubscriptionResult},
     proc_macros::rpc,
 };
-use base_consensus_genesis::RollupConfig;
-use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 
 use crate::{OutputResponse, SafeHeadResponse, health::HealthzResponse};
 

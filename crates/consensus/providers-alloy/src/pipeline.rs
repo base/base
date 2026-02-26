@@ -4,7 +4,6 @@ use core::fmt::Debug;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use base_consensus_derive::{
     DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage, L2ChainProvider,
     OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
@@ -12,6 +11,7 @@ use base_consensus_derive::{
     StepResult,
 };
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
 use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
 

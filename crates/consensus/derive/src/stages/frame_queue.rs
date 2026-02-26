@@ -5,8 +5,8 @@ use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, Frame};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, Frame};
 
 use crate::{
     NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,

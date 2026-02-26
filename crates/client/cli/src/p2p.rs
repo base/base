@@ -14,9 +14,6 @@ use std::{
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
-use clap::Parser;
-use discv5::enr::k256;
-use eyre::Result;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
 use base_consensus_genesis::RollupConfig;
@@ -24,6 +21,9 @@ use base_consensus_gossip::GaterConfig;
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::AlloyChainProvider;
+use clap::Parser;
+use discv5::enr::k256;
+use eyre::Result;
 use libp2p::identity::Keypair;
 use tokio::time::Duration;
 use tracing::{error, info, warn};
@@ -506,8 +506,8 @@ impl P2PArgs {
     pub fn keypair(&self) -> Result<Keypair> {
         // Attempt the parse the private key if specified.
         if let Some(mut private_key) = self.private_key {
-            let keypair =
-                base_consensus_cli::SecretKeyLoader::parse(&mut private_key.0).map_err(|e| eyre::eyre!(e))?;
+            let keypair = base_consensus_cli::SecretKeyLoader::parse(&mut private_key.0)
+                .map_err(|e| eyre::eyre!(e))?;
             info!(
                 target: "p2p::config",
                 peer_id = %keypair.public().to_peer_id(),
@@ -527,8 +527,8 @@ impl P2PArgs {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
-    use clap::Parser;
     use base_consensus_peers::NodeRecord;
+    use clap::Parser;
 
     use super::*;
 

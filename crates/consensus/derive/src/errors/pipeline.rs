@@ -3,8 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::B256;
-use base_protocol::{DepositError, SpanBatchError};
 use base_consensus_genesis::SystemConfigUpdateError;
+use base_protocol::{DepositError, SpanBatchError};
 use thiserror::Error;
 
 use crate::BuilderError;

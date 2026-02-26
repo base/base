@@ -82,12 +82,12 @@ base-consensus-derive = {workspace = true, features = ["test-utils"]}
 [features]
 default = []
 metrics = [
-	"base-consensus-rpc/metrics",
-	"dep:metrics",
 	"base-consensus-derive/metrics",
 	"base-consensus-disc/metrics",
 	"base-consensus-engine/metrics",
 	"base-consensus-gossip/metrics",
 	"base-consensus-providers/metrics",
+	"base-consensus-rpc/metrics",
+	"dep:metrics",
 	"libp2p/metrics",
 ]

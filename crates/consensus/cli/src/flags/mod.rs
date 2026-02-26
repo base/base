@@ -1,6 +1,6 @@
 //! Common CLI Flags
 //!
-//! These are cli flags that are shared across binaries to standardize kona's services CLI UX.
+//! These are cli flags that are shared across binaries to standardize the node CLI UX.
 
 mod globals;
 pub use globals::GlobalArgs;

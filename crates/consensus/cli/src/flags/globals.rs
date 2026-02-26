@@ -3,9 +3,9 @@
 use alloy_chains::Chain;
 use alloy_primitives::Address;
 use base_cli_utils::LogArgs;
-use clap::Parser;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_registry::Registry;
+use clap::Parser;
 
 use crate::{CliError, CliResult, MetricsArgs, OverrideArgs};
 
@@ -22,7 +22,7 @@ pub struct GlobalArgs {
         short = 'c',
         global = true,
         default_value = "8453",
-        env = "KONA_L2_CHAIN_ID",
+        env = "BASE_L2_CHAIN_ID",
         help = "The L2 chain ID to use"
     )]
     pub l2_chain_id: Chain,
@@ -95,13 +95,13 @@ mod tests {
     fn test_l2_chain_id_env_var(#[case] env_value: &str, #[case] expected_id: u64) {
         // SAFETY: Single-threaded test; no other threads are reading or writing env vars.
         unsafe {
-            std::env::set_var("KONA_NODE_L2_CHAIN_ID", env_value);
+            std::env::set_var("BASE_NODE_L2_CHAIN_ID", env_value);
         }
         let args = GlobalArgs::try_parse_from(["test"]).unwrap();
         assert_eq!(args.l2_chain_id.id(), expected_id);
         // SAFETY: Single-threaded test; no other threads are reading or writing env vars.
         unsafe {
-            std::env::remove_var("KONA_NODE_L2_CHAIN_ID");
+            std::env::remove_var("BASE_NODE_L2_CHAIN_ID");
         }
     }
 

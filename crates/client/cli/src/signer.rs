@@ -8,9 +8,9 @@ use std::{path::PathBuf, str::FromStr};
 use alloy_primitives::{Address, B256};
 use alloy_signer::{Signer, k256::ecdsa};
 use alloy_signer_local::PrivateKeySigner;
-use clap::Parser;
 use base_consensus_cli::SecretKeyLoader;
 use base_consensus_sources::{BlockSigner, ClientCert, RemoteSigner};
+use clap::Parser;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 

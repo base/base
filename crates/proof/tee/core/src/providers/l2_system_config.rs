@@ -5,8 +5,8 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, U256};
-use base_protocol::{L1BlockInfoIsthmusBaseFields, L1BlockInfoJovianBaseFields, L1BlockInfoTx};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_protocol::{L1BlockInfoIsthmusBaseFields, L1BlockInfoJovianBaseFields, L1BlockInfoTx};
 
 use crate::error::ProviderError;
 

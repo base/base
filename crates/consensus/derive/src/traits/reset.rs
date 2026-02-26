@@ -3,8 +3,8 @@
 use alloc::boxed::Box;
 
 use async_trait::async_trait;
-use base_protocol::BlockInfo;
 use base_consensus_genesis::SystemConfig;
+use base_protocol::BlockInfo;
 
 /// Provides the [`BlockInfo`] and [`SystemConfig`] for the stack to reset the stages.
 #[async_trait]

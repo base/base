@@ -5,8 +5,8 @@ use core::fmt::Debug;
 
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
 
 use crate::{
     errors::{PipelineError, ResetError},

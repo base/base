@@ -5,8 +5,8 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex, map::HashMap};
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, Channel, ChannelId, Frame};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, Channel, ChannelId, Frame};
 
 use crate::{
     ChannelReaderProvider, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError,

@@ -2,6 +2,8 @@ use std::fmt::Debug;
 
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
+use base_consensus_engine::{EngineQueries, EngineState};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_rpc::EngineRpcClient;
 use base_protocol::{L2BlockInfo, OutputRoot};
 use derive_more::Constructor;
@@ -9,8 +11,6 @@ use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
-use base_consensus_engine::{EngineQueries, EngineState};
-use base_consensus_genesis::RollupConfig;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{EngineActorRequest, EngineRpcRequest};

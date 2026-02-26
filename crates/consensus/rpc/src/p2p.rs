@@ -9,12 +9,12 @@ use std::{net::IpAddr, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
+use base_consensus_gossip::{P2pRpcRequest, PeerCount, PeerDump, PeerInfo, PeerStats};
 use ipnet::IpNet;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
-use base_consensus_gossip::{P2pRpcRequest, PeerCount, PeerDump, PeerInfo, PeerStats};
 
 use crate::{OpP2PApiServer, net::P2pRpc};
 

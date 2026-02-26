@@ -11,8 +11,8 @@ use base_alloy_consensus::OpBlock;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadSidecar,
 };
-use base_protocol::L2BlockInfo;
 use base_consensus_genesis::RollupConfig;
+use base_protocol::L2BlockInfo;
 
 use crate::{
     EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,

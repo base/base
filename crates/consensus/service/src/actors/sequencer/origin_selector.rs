@@ -6,8 +6,8 @@ use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, L2BlockInfo};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::watch;
 
 /// Trait for selecting the next L1 origin block for sequencing.

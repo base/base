@@ -4,8 +4,8 @@
 //! of the pipeline. They allow the pipeline driver to perform actions such as
 //! resetting all stages in the pipeline through message passing.
 
-use base_protocol::{BlockInfo, L2BlockInfo};
 use base_consensus_genesis::SystemConfig;
+use base_protocol::{BlockInfo, L2BlockInfo};
 
 /// A signal to send to the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

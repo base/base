@@ -22,8 +22,8 @@ use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes,
 };
-use base_protocol::L2BlockInfo;
 use base_consensus_genesis::RollupConfig;
+use base_protocol::L2BlockInfo;
 use tokio::sync::RwLock;
 
 use crate::{EngineClient, EngineClientError, HyperAuthClient};

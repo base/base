@@ -62,9 +62,9 @@ serde = [
 	"alloy-rpc-types-engine/serde",
 	"base-alloy-consensus/serde",
 	"base-alloy-rpc-types-engine/serde",
+	"base-consensus-genesis/serde",
 	"base-protocol/serde",
 	"dep:serde",
-	"base-consensus-genesis/serde",
 	"tracing-subscriber?/serde",
 ]
 test-utils = [

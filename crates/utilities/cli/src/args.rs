@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use alloy_primitives::Address;
-use clap::{ArgAction, Parser};
 use base_consensus_registry::Registry;
+use clap::{ArgAction, Parser};
 
 use crate::{
     FileLogConfig, LogConfig, LogFormat, LogRotation, MetricsArgs, StdoutLogConfig,

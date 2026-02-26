@@ -6,10 +6,10 @@
 
 use alloc::string::{String, ToString};
 
-use base_protocol::{FromBlockError, OpBlockConversionError};
 use base_consensus_derive::{PipelineError, PipelineErrorKind};
 use base_proof_mpt::{OrderedListWalkerError, TrieNodeError};
 use base_proof_preimage::errors::PreimageOracleError;
+use base_protocol::{FromBlockError, OpBlockConversionError};
 use thiserror::Error;
 
 /// Error from an oracle-backed provider.

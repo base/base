@@ -5,10 +5,10 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
-use base_protocol::{BlockInfo, Channel};
 use base_consensus_genesis::{
     MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
 };
+use base_protocol::{BlockInfo, Channel};
 
 use super::{ChannelReaderProvider, NextFrameProvider};
 use crate::{
@@ -216,11 +216,11 @@ where
 mod test {
     use alloc::{sync::Arc, vec};
 
-    use base_protocol::BlockInfo;
     use base_consensus_genesis::{
         HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
         RollupConfig,
     };
+    use base_protocol::BlockInfo;
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 

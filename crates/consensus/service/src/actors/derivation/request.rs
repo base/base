@@ -1,5 +1,5 @@
-use base_protocol::{BlockInfo, L2BlockInfo};
 use base_consensus_derive::Signal;
+use base_protocol::{BlockInfo, L2BlockInfo};
 use thiserror::Error;
 
 /// The result of an Engine client call.
