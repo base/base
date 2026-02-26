@@ -4,7 +4,13 @@
 mod tests {
     use alloy_consensus::constants::EIP7702_TX_TYPE_ID;
     use base_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTxType};
-    use reth_codecs::{Compact, txtype::{COMPACT_EXTENDED_IDENTIFIER_FLAG, COMPACT_IDENTIFIER_EIP1559, COMPACT_IDENTIFIER_EIP2930, COMPACT_IDENTIFIER_LEGACY}};
+    use reth_codecs::{
+        Compact,
+        txtype::{
+            COMPACT_EXTENDED_IDENTIFIER_FLAG, COMPACT_IDENTIFIER_EIP1559,
+            COMPACT_IDENTIFIER_EIP2930, COMPACT_IDENTIFIER_LEGACY,
+        },
+    };
     use rstest::rstest;
 
     #[rstest]

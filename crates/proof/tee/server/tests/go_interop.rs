@@ -33,7 +33,10 @@ use base_enclave_server::{
         sign_proposal_data_sync, signer_from_hex, verify_proposal_signature,
     },
 };
-use signing_test_vectors::{CONFIG_HASH, L1_ORIGIN_HASH, L1_ORIGIN_NUMBER, L2_BLOCK_NUMBER, OUTPUT_ROOT, PREV_OUTPUT_ROOT, PROPOSER, STARTING_L2_BLOCK, TEE_IMAGE_HASH};
+use signing_test_vectors::{
+    CONFIG_HASH, L1_ORIGIN_HASH, L1_ORIGIN_NUMBER, L2_BLOCK_NUMBER, OUTPUT_ROOT, PREV_OUTPUT_ROOT,
+    PROPOSER, STARTING_L2_BLOCK, TEE_IMAGE_HASH,
+};
 
 /// Well-known test signer private key (Hardhat account #0).
 const TEST_SIGNER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";

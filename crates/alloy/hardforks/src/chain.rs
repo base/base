@@ -125,7 +125,9 @@ impl Index<EthereumHardfork> for OpChainHardforks {
 
 #[cfg(test)]
 mod tests {
-    use OpHardfork::{Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith};
+    use OpHardfork::{
+        Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+    };
     use alloy_hardforks::EthereumHardfork;
 
     use super::*;

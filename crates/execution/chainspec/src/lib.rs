@@ -474,9 +474,11 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::{String, ToString};
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{
+        string::{String, ToString},
+        vec,
+        vec::Vec,
+    };
     use core::str::FromStr;
 
     use alloy_consensus::proofs::storage_root_unhashed;

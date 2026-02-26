@@ -10,7 +10,10 @@ use base_execution_forks::OpHardforks;
 use base_execution_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, transaction::OpTransaction};
 use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
-use reth_basic_payload_builder::{BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder, PayloadConfig, is_better_payload};
+use reth_basic_payload_builder::{
+    BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
+    PayloadConfig, is_better_payload,
+};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::{
     ConfigureEvm, Database,
