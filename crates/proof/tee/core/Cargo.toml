@@ -1,0 +1,47 @@
+[package]
+name = "base-enclave"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# EVM
+revm = { workspace = true, features = ["std"] }
+base-revm = { workspace = true, features = ["std"] }
+
+# Alloy
+alloy-rlp.workspace = true
+alloy-trie.workspace = true
+alloy-chains.workspace = true
+alloy-evm = { workspace = true, features = ["op"] }
+alloy-eips = { workspace = true, features = ["serde"] }
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-engine.workspace = true
+
+# Base Alloy
+base-alloy-evm.workspace = true
+base-alloy-consensus = { workspace = true, features = ["serde"] }
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+
+# Kona
+kona-mpt.workspace = true
+kona-executor.workspace = true
+kona-genesis = { workspace = true, features = ["serde"] }
+
+# Consensus
+base-protocol = { workspace = true, features = ["serde"] }
+
+# Serialization
+hex = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+hex-literal.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,4 @@
-//! Base chain specs.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -27,6 +26,8 @@ use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
 pub use base::BASE_MAINNET;
+use base_execution_forks::{BASE_MAINNET_HARDFORKS, OpHardfork, OpHardforks};
+use base_execution_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 pub use base_sepolia::BASE_SEPOLIA;
 pub use basefee::*;
 use derive_more::{Constructor, Deref, From, Into};
@@ -37,8 +38,6 @@ use reth_chainspec::{
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::NodeRecord;
-use reth_optimism_forks::{BASE_MAINNET_HARDFORKS, OpHardfork, OpHardforks};
-use reth_optimism_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
 /// All supported chain names for the CLI.
@@ -303,7 +302,6 @@ impl OpHardforks for OpChainSpec {
 
 impl From<Genesis> for OpChainSpec {
     fn from(genesis: Genesis) -> Self {
-        use reth_optimism_forks::OpHardfork;
         let optimism_genesis_info = OpGenesisInfo::extract_from(&genesis);
         let genesis_info =
             optimism_genesis_info.optimism_chain_info.genesis_info.unwrap_or_default();
@@ -477,22 +475,20 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
 #[cfg(test)]
 mod tests {
     use alloc::string::{String, ToString};
+    use core::str::FromStr;
 
     use alloy_genesis::{ChainConfig, Genesis};
-    use alloy_primitives::{b256, hex};
+    use alloy_primitives::{B256, U256, b256, hex};
     use base_alloy_hardforks::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
+    use base_alloy_rpc_types::OpBaseFeeInfo;
+    use base_execution_forks::{OpHardfork, OpHardforks};
     use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, test_fork_ids};
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
-    use reth_optimism_forks::{OpHardfork, OpHardforks};
 
     use crate::*;
 
     #[test]
     fn test_storage_root_consistency() {
-        use core::str::FromStr;
-
-        use alloy_primitives::{B256, U256};
-
         let k1 =
             B256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")
                 .unwrap();
@@ -852,8 +848,6 @@ mod tests {
 
     #[test]
     fn parse_genesis_optimism_with_variable_base_fee_params() {
-        use base_alloy_rpc_types::OpBaseFeeInfo;
-
         let geth_genesis = r#"
     {
       "config": {
@@ -928,8 +922,6 @@ mod tests {
 
     #[test]
     fn test_fork_order_optimism_mainnet() {
-        use reth_optimism_forks::OpHardfork;
-
         let genesis = Genesis {
             config: ChainConfig {
                 chain_id: 0,

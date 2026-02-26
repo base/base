@@ -46,7 +46,7 @@ base-client-node = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { workspace = true, features = ["test-utils"] }
 
 # reth
-reth-optimism-primitives.workspace = true
+base-execution-primitives.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # revm

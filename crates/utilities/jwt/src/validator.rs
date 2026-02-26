@@ -1,6 +1,7 @@
 //! JWT validation utilities.
 
 use alloy_rpc_types_engine::JwtSecret;
+use tracing::debug;
 
 #[cfg(feature = "engine-validation")]
 use crate::JwtValidationError;
@@ -121,7 +122,7 @@ impl JwtValidator {
             .retry(ExponentialBuilder::default())
             .when(|e: &eyre::Error| !Self::is_jwt_signature_error_from_eyre(e))
             .notify(|_, duration| {
-                debug!("Retrying engine capability handshake after {duration:?}");
+                debug!(duration = ?duration, "Retrying engine capability handshake");
             })
             .await
             .map_err(|e| {
@@ -146,7 +147,7 @@ impl JwtValidator {
         match url.scheme() {
             "http" | "https" => Ok(url),
             "ws" => {
-                tracing::debug!("Converting WebSocket URL to HTTP for engine validation");
+                debug!("Converting WebSocket URL to HTTP for engine validation");
                 url.set_scheme("http").map_err(|()| {
                     JwtValidationError::CapabilityExchange(
                         "Failed to convert ws:// to http://".to_string(),
@@ -155,7 +156,7 @@ impl JwtValidator {
                 Ok(url)
             }
             "wss" => {
-                tracing::debug!("Converting secure WebSocket URL to HTTPS for engine validation");
+                debug!("Converting secure WebSocket URL to HTTPS for engine validation");
                 url.set_scheme("https").map_err(|()| {
                     JwtValidationError::CapabilityExchange(
                         "Failed to convert wss:// to https://".to_string(),

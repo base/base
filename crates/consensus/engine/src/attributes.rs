@@ -397,6 +397,7 @@ impl From<AttributesMismatch> for AttributesMatch {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::EMPTY_ROOT_HASH;
+    use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
@@ -564,7 +565,6 @@ mod tests {
             transactions
                 .iter()
                 .map(|tx| {
-                    use alloy_eips::Encodable2718;
                     let mut buf = vec![];
                     tx.inner.inner.inner().encode_2718(&mut buf);
                     Bytes::from(buf)

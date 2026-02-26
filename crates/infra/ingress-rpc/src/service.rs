@@ -3,19 +3,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_consensus::{
-    Transaction,
-    transaction::{Recovered, SignerRecoverable},
-};
+use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use audit_archiver_lib::BundleEvent;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
-use base_bundles::{
-    AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
-    ParsedBundle,
-};
+use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -32,7 +26,6 @@ use crate::{
     Config, TxSubmissionMethod,
     metrics::{Metrics, record_histogram},
     queue::{BundleQueuePublisher, MessageQueue},
-    validation::validate_bundle,
 };
 
 /// RPC providers for different endpoints.
@@ -48,24 +41,12 @@ pub struct Providers {
 
 #[rpc(server, namespace = "eth")]
 pub trait IngressApi {
-    /// `eth_sendBundle` can be used to send your bundles to the builder.
-    #[method(name = "sendBundle")]
-    async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
-
-    /// `eth_sendBackrunBundle` submits a backrun bundle to the builder.
-    #[method(name = "sendBackrunBundle")]
-    async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
-
-    /// `eth_cancelBundle` is used to prevent a submitted bundle from being included on-chain.
-    #[method(name = "cancelBundle")]
-    async fn cancel_bundle(&self, request: CancelBundle) -> RpcResult<()>;
-
     /// Handler for: `eth_sendRawTransaction`
     #[method(name = "sendRawTransaction")]
     async fn send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
 }
 
-/// Core ingress RPC service that handles bundle and transaction submission.
+/// Core ingress RPC service that handles transaction submission.
 pub struct IngressService<Q: MessageQueue> {
     mempool_provider: Arc<RootProvider<Base>>,
     simulation_provider: Arc<RootProvider<Base>>,
@@ -78,10 +59,6 @@ pub struct IngressService<Q: MessageQueue> {
     block_time_milliseconds: u64,
     meter_bundle_timeout_ms: u64,
     builder_tx: broadcast::Sender<MeterBundleResponse>,
-    backrun_enabled: bool,
-    builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
-    max_backrun_txs: usize,
-    max_backrun_gas_limit: u64,
     bundle_cache: Cache<B256, ()>,
     send_to_builder: bool,
 }
@@ -99,7 +76,6 @@ impl<Q: MessageQueue> IngressService<Q> {
         queue: Q,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
-        builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
         config: Config,
     ) -> Self {
         let mempool_provider = Arc::new(providers.mempool);
@@ -126,108 +102,14 @@ impl<Q: MessageQueue> IngressService<Q> {
             block_time_milliseconds: config.block_time_milliseconds,
             meter_bundle_timeout_ms: config.meter_bundle_timeout_ms,
             builder_tx,
-            backrun_enabled: config.backrun_enabled,
-            builder_backrun_tx,
-            max_backrun_txs: config.max_backrun_txs,
-            max_backrun_gas_limit: config.max_backrun_gas_limit,
             bundle_cache,
             send_to_builder: config.send_to_builder,
         }
     }
 }
 
-fn validate_backrun_bundle_limits(
-    txs_count: usize,
-    total_gas_limit: u64,
-    max_backrun_txs: usize,
-    max_backrun_gas_limit: u64,
-) -> Result<(), String> {
-    if txs_count < 2 {
-        return Err(
-            "Backrun bundle must have at least 2 transactions (target + backrun)".to_string()
-        );
-    }
-    if txs_count > max_backrun_txs {
-        return Err(format!(
-            "Backrun bundle exceeds max transaction count: {txs_count} > {max_backrun_txs}",
-        ));
-    }
-    if total_gas_limit > max_backrun_gas_limit {
-        return Err(format!(
-            "Backrun bundle exceeds max gas limit: {total_gas_limit} > {max_backrun_gas_limit}",
-        ));
-    }
-    Ok(())
-}
-
 #[async_trait]
 impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
-    async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
-        if !self.backrun_enabled {
-            return Err(EthApiError::InvalidParams("Backrun bundle submission is disabled".into())
-                .into_rpc_err());
-        }
-
-        let start = Instant::now();
-        let (accepted_bundle, bundle_hash) =
-            self.validate_parse_and_meter_bundle(&bundle, false).await?;
-
-        let total_gas_limit: u64 = accepted_bundle.txs.iter().map(|tx| tx.gas_limit()).sum();
-        validate_backrun_bundle_limits(
-            accepted_bundle.txs.len(),
-            total_gas_limit,
-            self.max_backrun_txs,
-            self.max_backrun_gas_limit,
-        )
-        .map_err(|e| EthApiError::InvalidParams(e).into_rpc_err())?;
-
-        self.metrics.backrun_bundles_received_total.increment(1);
-
-        self.builder_backrun_tx.send(accepted_bundle.clone()).map_err(|e| {
-            EthApiError::InvalidParams(format!("Failed to send backrun bundle: {e}")).into_rpc_err()
-        })?;
-
-        self.send_audit_event(&accepted_bundle, bundle_hash);
-
-        self.metrics.backrun_bundles_sent_duration.record(start.elapsed().as_secs_f64());
-
-        Ok(BundleHash { bundle_hash })
-    }
-
-    async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
-        let (accepted_bundle, bundle_hash) =
-            self.validate_parse_and_meter_bundle(&bundle, true).await?;
-
-        // Get meter_bundle_response for builder broadcast
-        let meter_bundle_response = accepted_bundle.meter_bundle_response.clone();
-
-        // asynchronously send the meter bundle response to the builder
-        self.builder_tx
-            .send(meter_bundle_response)
-            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
-
-        // publish the bundle to the queue
-        if let Err(e) = self.bundle_queue_publisher.publish(&accepted_bundle, &bundle_hash).await {
-            warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
-            return Err(EthApiError::InvalidParams("Failed to queue bundle".into()).into_rpc_err());
-        }
-
-        info!(
-            message = "queued bundle",
-            bundle_hash = %bundle_hash,
-        );
-
-        // asynchronously send the audit event to the audit channel
-        self.send_audit_event(&accepted_bundle, bundle_hash);
-
-        Ok(BundleHash { bundle_hash })
-    }
-
-    async fn cancel_bundle(&self, _request: CancelBundle) -> RpcResult<()> {
-        warn!(message = "TODO: implement cancel_bundle", method = "cancel_bundle");
-        todo!("implement cancel_bundle")
-    }
-
     async fn send_raw_transaction(&self, data: Bytes) -> RpcResult<B256> {
         let start = Instant::now();
         let transaction = self.get_tx(&data).await?;
@@ -369,26 +251,6 @@ impl<Q: MessageQueue> IngressService<Q> {
         Ok(transaction)
     }
 
-    async fn validate_bundle(&self, bundle: &Bundle) -> RpcResult<()> {
-        let start = Instant::now();
-        if bundle.txs.is_empty() {
-            return Err(EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
-                .into_rpc_err());
-        }
-
-        let mut total_gas = 0u64;
-        let mut tx_hashes = Vec::new();
-        for tx_data in &bundle.txs {
-            let transaction = self.get_tx(tx_data).await?;
-            total_gas = total_gas.saturating_add(transaction.gas_limit());
-            tx_hashes.push(transaction.tx_hash());
-        }
-        validate_bundle(bundle, total_gas, tx_hashes)?;
-
-        self.metrics.validate_bundle_duration.record(start.elapsed().as_secs_f64());
-        Ok(())
-    }
-
     /// `meter_bundle` is used to determine how long a bundle will take to execute. A bundle that
     /// is within `block_time_milliseconds` will return the `MeterBundleResponse` that can be passed along
     /// to the builder.
@@ -428,27 +290,6 @@ impl<Q: MessageQueue> IngressService<Q> {
             );
         }
         Ok(res)
-    }
-
-    /// Helper method to validate, parse, and meter a bundle
-    async fn validate_parse_and_meter_bundle(
-        &self,
-        bundle: &Bundle,
-        to_meter: bool,
-    ) -> RpcResult<(AcceptedBundle, B256)> {
-        self.validate_bundle(bundle).await?;
-        let parsed_bundle: ParsedBundle = bundle
-            .clone()
-            .try_into()
-            .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
-        let bundle_hash = parsed_bundle.bundle_hash();
-        let meter_bundle_response = if to_meter {
-            self.meter_bundle(bundle, &bundle_hash).await?
-        } else {
-            MeterBundleResponse::default()
-        };
-        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response);
-        Ok((accepted_bundle, bundle_hash))
     }
 
     /// Helper method to send audit event for a bundle
@@ -513,13 +354,9 @@ mod tests {
             meter_bundle_timeout_ms: 5000,
             builder_rpcs: vec![],
             max_buffered_meter_bundle_responses: 100,
-            max_buffered_backrun_bundles: 100,
             health_check_addr: SocketAddr::from(([127, 0, 0, 1], 8081)),
-            backrun_enabled: false,
             raw_tx_forward_rpc: None,
             chain_id: 11,
-            max_backrun_txs: 5,
-            max_backrun_gas_limit: 5000000,
             bundle_cache_ttl: 20,
             send_to_builder: false,
         }
@@ -601,10 +438,8 @@ mod tests {
 
         let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
         let (builder_tx, _builder_rx) = broadcast::channel(1);
-        let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
-        let service =
-            IngressService::new(providers, MockQueue, audit_tx, builder_tx, backrun_tx, config);
+        let service = IngressService::new(providers, MockQueue, audit_tx, builder_tx, config);
 
         let bundle = Bundle::default();
         let bundle_hash = B256::default();
@@ -657,10 +492,8 @@ mod tests {
 
         let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
         let (builder_tx, _builder_rx) = broadcast::channel(1);
-        let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
-        let service =
-            IngressService::new(providers, MockQueue, audit_tx, builder_tx, backrun_tx, config);
+        let service = IngressService::new(providers, MockQueue, audit_tx, builder_tx, config);
 
         // Valid signed transaction bytes
         let tx_bytes = Bytes::from_str("0x02f86c0d010183072335825208940000000000000000000000000000000000000000872386f26fc1000080c001a0cdb9e4f2f1ba53f9429077e7055e078cf599786e29059cd80c5e0e923bb2c114a01c90e29201e031baf1da66296c3a5c15c200bcb5e6c34da2f05f7d1778f8be07").unwrap();
@@ -672,22 +505,5 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // wiremock automatically verifies expect(1) when forward_server is dropped
-    }
-    #[test]
-    fn test_validate_backrun_bundle_rejects_invalid() {
-        // Too few transactions (need at least 2: target + backrun)
-        let result = validate_backrun_bundle_limits(1, 21000, 5, 5000000);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("at least 2 transactions"));
-
-        // Exceeds max tx count
-        let result = validate_backrun_bundle_limits(6, 21000, 5, 5000000);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("exceeds max transaction count"));
-
-        // Exceeds max gas limit
-        let result = validate_backrun_bundle_limits(2, 6000000, 5, 5000000);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("exceeds max gas limit"));
     }
 }

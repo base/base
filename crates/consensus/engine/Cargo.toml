@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 # workspace
 kona-genesis.workspace = true
-kona-macros.workspace = true
+base-macros.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
 # alloy

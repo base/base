@@ -20,10 +20,10 @@ pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
 };
+use base_execution_evm::OpNextBlockEnvAttributes;
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::OpPrimitives;
 use reth_chainspec::EthChainSpec;
-use reth_optimism_evm::OpNextBlockEnvAttributes;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::OpPrimitives;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_primitives::{
     BuildNextEnv, BuiltPayload, BuiltPayloadExecutedBlock, PayloadBuilderAttributes,
@@ -448,7 +448,7 @@ mod tests {
 
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use reth_optimism_primitives::OpTransactionSigned;
+    use base_execution_primitives::OpTransactionSigned;
     use reth_payload_primitives::EngineApiMessageVersion;
 
     use super::*;

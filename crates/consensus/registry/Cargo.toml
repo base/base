@@ -34,6 +34,10 @@ lazy_static = { workspace = true, features = ["spin_no_std"] }
 [dev-dependencies]
 alloy-eips.workspace = true
 
+[[test]]
+name = "hardfork_consistency"
+required-features = ["test-utils"]
+
 [features]
 default = []
 std = [
@@ -44,3 +48,4 @@ std = [
 	"kona-genesis/std",
 	"toml/std",
 ]
+test-utils = []

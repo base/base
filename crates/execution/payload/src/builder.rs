@@ -6,6 +6,9 @@ use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, transaction::OpTransaction};
+use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
 use reth_basic_payload_builder::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -17,9 +20,6 @@ use reth_evm::{
     },
 };
 use reth_execution_types::BlockExecutionOutput;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, transaction::OpTransaction};
-use reth_optimism_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderAttributes};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};

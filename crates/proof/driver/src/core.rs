@@ -89,7 +89,7 @@ where
                     continue;
                 }
                 Err(e) => {
-                    error!(target: "client", "Failed to produce payload: {:?}", e);
+                    error!(target: "client", error = ?e, "Failed to produce payload");
                     return Err(DriverError::Pipeline(e));
                 }
             };
@@ -98,7 +98,7 @@ where
             let outcome = match self.executor.execute_payload(attributes.clone()).await {
                 Ok(outcome) => outcome,
                 Err(e) => {
-                    error!(target: "client", "Failed to execute L2 block: {}", e);
+                    error!(target: "client", error = %e, "Failed to execute L2 block");
 
                     if cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
                         // Retry with a deposit-only block.

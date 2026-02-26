@@ -111,57 +111,59 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // Chain provider cache metrics
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "header_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "receipts_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "block_info_and_tx", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "header_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "receipts_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "block_info_and_tx", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "block_by_number", 0);
 
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "header_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "receipts_by_hash", 0);
-        kona_macros::set!(
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "header_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "receipts_by_hash", 0);
+        base_macros::set!(
             gauge,
             Self::CHAIN_PROVIDER_CACHE_MISSES,
             "cache",
             "block_info_and_tx",
             0
         );
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "block_by_number", 0);
 
         // RPC call metrics
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "header_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "receipts_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "block_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "block_number", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "header_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "receipts_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "block_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_CALLS, "method", "block_number", 0);
 
         // RPC error metrics
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "header_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "receipts_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "block_by_hash", 0);
-        kona_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "block_number", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "header_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "receipts_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "block_by_hash", 0);
+        base_macros::set!(gauge, Self::CHAIN_PROVIDER_RPC_ERRORS, "method", "block_number", 0);
 
         // Beacon client metrics
-        kona_macros::set!(gauge, Self::BEACON_CLIENT_REQUESTS, "method", "spec", 0);
-        kona_macros::set!(gauge, Self::BEACON_CLIENT_REQUESTS, "method", "genesis", 0);
-        kona_macros::set!(gauge, Self::BEACON_CLIENT_REQUESTS, "method", "blob_sidecars", 0);
+        base_macros::set!(gauge, Self::BEACON_CLIENT_REQUESTS, "method", "spec", 0);
+        base_macros::set!(gauge, Self::BEACON_CLIENT_REQUESTS, "method", "genesis", 0);
+        base_macros::set!(gauge, Self::BEACON_CLIENT_REQUESTS, "method", "blob_sidecars", 0);
 
-        kona_macros::set!(gauge, Self::BEACON_CLIENT_ERRORS, "method", "spec", 0);
-        kona_macros::set!(gauge, Self::BEACON_CLIENT_ERRORS, "method", "genesis", 0);
-        kona_macros::set!(gauge, Self::BEACON_CLIENT_ERRORS, "method", "blob_sidecars", 0);
+        base_macros::set!(gauge, Self::BEACON_CLIENT_ERRORS, "method", "spec", 0);
+        base_macros::set!(gauge, Self::BEACON_CLIENT_ERRORS, "method", "genesis", 0);
+        base_macros::set!(gauge, Self::BEACON_CLIENT_ERRORS, "method", "blob_sidecars", 0);
 
         // L2 chain provider metrics
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             Self::L2_CHAIN_PROVIDER_REQUESTS,
             "method",
             "l2_block_ref_by_label",
             0
         );
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             Self::L2_CHAIN_PROVIDER_REQUESTS,
             "method",
             "l2_block_ref_by_hash",
             0
         );
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             Self::L2_CHAIN_PROVIDER_REQUESTS,
             "method",
@@ -169,21 +171,21 @@ impl Metrics {
             0
         );
 
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             Self::L2_CHAIN_PROVIDER_ERRORS,
             "method",
             "l2_block_ref_by_label",
             0
         );
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             Self::L2_CHAIN_PROVIDER_ERRORS,
             "method",
             "l2_block_ref_by_hash",
             0
         );
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             Self::L2_CHAIN_PROVIDER_ERRORS,
             "method",
@@ -192,16 +194,16 @@ impl Metrics {
         );
 
         // Blob sidecar metrics
-        kona_macros::set!(gauge, Self::BLOB_FETCHES, 0);
-        kona_macros::set!(gauge, Self::BLOB_FETCH_ERRORS, 0);
+        base_macros::set!(gauge, Self::BLOB_FETCHES, 0);
+        base_macros::set!(gauge, Self::BLOB_FETCH_ERRORS, 0);
 
         // Cache metrics
-        kona_macros::set!(gauge, Self::CACHE_ENTRIES, "cache", "header_by_hash", 0);
-        kona_macros::set!(gauge, Self::CACHE_ENTRIES, "cache", "receipts_by_hash", 0);
-        kona_macros::set!(gauge, Self::CACHE_ENTRIES, "cache", "block_info_and_tx", 0);
+        base_macros::set!(gauge, Self::CACHE_ENTRIES, "cache", "header_by_hash", 0);
+        base_macros::set!(gauge, Self::CACHE_ENTRIES, "cache", "receipts_by_hash", 0);
+        base_macros::set!(gauge, Self::CACHE_ENTRIES, "cache", "block_info_and_tx", 0);
 
-        kona_macros::set!(gauge, Self::CACHE_MEMORY_USAGE, "cache", "header_by_hash", 0);
-        kona_macros::set!(gauge, Self::CACHE_MEMORY_USAGE, "cache", "receipts_by_hash", 0);
-        kona_macros::set!(gauge, Self::CACHE_MEMORY_USAGE, "cache", "block_info_and_tx", 0);
+        base_macros::set!(gauge, Self::CACHE_MEMORY_USAGE, "cache", "header_by_hash", 0);
+        base_macros::set!(gauge, Self::CACHE_MEMORY_USAGE, "cache", "receipts_by_hash", 0);
+        base_macros::set!(gauge, Self::CACHE_MEMORY_USAGE, "cache", "block_info_and_tx", 0);
     }
 }

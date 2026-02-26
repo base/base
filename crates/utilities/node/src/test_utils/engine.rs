@@ -9,11 +9,11 @@ use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
+use base_execution_node::OpEngineTypes;
+use base_execution_rpc::OpEngineApiClient;
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
 use reth_node_builder::{EngineTypes, PayloadTypes};
-use reth_optimism_node::OpEngineTypes;
-use reth_optimism_rpc::OpEngineApiClient;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
 use url::Url;
@@ -126,7 +126,7 @@ impl<P: EngineProtocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        debug!("Fetching payload with id: {} at {}", payload_id, chrono::Utc::now());
+        debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
         Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
             .await?)
     }
@@ -139,7 +139,7 @@ impl<P: EngineProtocol> EngineApi<P> {
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
-        debug!("Submitting new payload at {}...", chrono::Utc::now());
+        debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
         Ok(OpEngineApiClient::<OpEngineTypes>::new_payload_v4(
             &self.client().await,
             payload,
@@ -175,8 +175,8 @@ impl<P: EngineProtocol> EngineApi<P> {
         .await;
 
         match &result {
-            Ok(fcu) => debug!("Forkchoice updated successfully: {:?}", fcu),
-            Err(e) => debug!("Forkchoice update failed: {:?}", e),
+            Ok(fcu) => debug!(fcu = ?fcu, "Forkchoice updated successfully"),
+            Err(e) => debug!(error = ?e, "Forkchoice update failed"),
         }
 
         Ok(result?)

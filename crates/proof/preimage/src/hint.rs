@@ -30,7 +30,7 @@ where
     /// Write a hint to the host. This will overwrite any existing hint in the channel, and block
     /// until all data has been written.
     async fn write(&self, hint: &str) -> PreimageOracleResult<()> {
-        trace!(target: "hint_writer", "Writing hint \"{hint}\"");
+        trace!(target: "hint_writer", hint = %hint, "Writing hint");
 
         // Form the hint into a byte buffer. The format is a 4-byte big-endian length prefix
         // followed by the hint string.
@@ -95,14 +95,14 @@ where
             }
         };
 
-        trace!(target: "hint_reader", "Successfully read hint: \"{payload}\"");
+        trace!(target: "hint_reader", payload = %payload, "Successfully read hint");
 
         // Route the hint
         if let Err(e) = hint_router.route_hint(payload).await {
             // Write back on error to prevent blocking the client.
             self.channel.write(&[0x00]).await?;
 
-            error!(target: "hint_reader", "Failed to route hint: {e}");
+            error!(target: "hint_reader", error = %e, "Failed to route hint");
             return Err(e);
         }
 

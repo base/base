@@ -123,7 +123,7 @@ where
                         // Send the head update event to all consumers.
                         self.latest_head.send_replace(Some(head_block_info));
                         self.derivation_client.send_new_l1_head(head_block_info).await.map_err(|e| {
-                            warn!(target: "l1_watcher", "Error sending l1 head update to derivation actor: {e}");
+                            warn!(target: "l1_watcher", error = %e, "Error sending l1 head update to derivation actor");
                             L1WatcherActorError::DerivationClientError(e)
                         })?;
 
@@ -157,7 +157,7 @@ where
                     }
                     Some(finalized_block_info) => {
                         self.derivation_client.send_finalized_l1_block(finalized_block_info).await.map_err(|e| {
-                            warn!(target: "l1_watcher", "Error sending finalized l1 block update to derivation actor: {e}");
+                            warn!(target: "l1_watcher", error = %e, "Error sending finalized l1 block update to derivation actor");
                             L1WatcherActorError::DerivationClientError(e)
                         })?;
                     }

@@ -112,7 +112,7 @@ impl Discv5Handler {
         let sender = self.sender.clone();
         tokio::spawn(async move {
             if let Err(e) = sender.send(HandlerRequest::TableInfos(tx)).await {
-                warn!(target: "discv5_handler", "Failed to send table infos request: {:?}", e);
+                warn!(target: "discv5_handler", error = ?e, "Failed to send table infos request");
             }
         });
         rx
@@ -143,7 +143,7 @@ impl Discv5Handler {
             if let Err(e) =
                 sender.send(HandlerRequest::RequestEnr { out: tx, addr: addr.to_string() }).await
             {
-                warn!(target: "discv5_handler", "Failed to send request ENR request: {:?}", e);
+                warn!(target: "discv5_handler", error = ?e, "Failed to send request ENR request");
             }
         });
         rx

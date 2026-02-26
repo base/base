@@ -1,12 +1,12 @@
 //! Trait for customizing the payload service used by the node.
 
+use base_execution_node::{
+    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder,
+    node::{OpPayloadBuilder, OpPoolBuilder},
+};
 use reth_node_builder::{
     NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
-};
-use reth_optimism_node::{
-    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder,
-    node::{OpPayloadBuilder, OpPoolBuilder},
 };
 
 use crate::{

@@ -65,7 +65,7 @@ where
     type Item = OpAttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
-        kona_macros::set!(
+        base_macros::set!(
             gauge,
             crate::metrics::Metrics::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER,
             self.prepared.len().saturating_sub(1) as f64
@@ -112,7 +112,7 @@ where
                         if let PipelineErrorKind::Temporary(PipelineError::Eof) = err {
                             trace!(target: "pipeline", "Stages reset with EOF");
                         } else {
-                            error!(target: "pipeline", "Stage reset errored: {:?}", err);
+                            error!(target: "pipeline", error = ?err, "Stage reset errored");
                             return Err(err);
                         }
                     }
@@ -122,7 +122,7 @@ where
                 self.attributes.signal(signal).await?;
             }
         }
-        kona_macros::inc!(
+        base_macros::inc!(
             gauge,
             crate::metrics::Metrics::PIPELINE_SIGNALS,
             "type" => signal.to_string(),
@@ -171,35 +171,35 @@ where
     ///
     /// [`PipelineError`]: crate::errors::PipelineError
     async fn step(&mut self, cursor: L2BlockInfo) -> StepResult {
-        kona_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_STEPS);
-        kona_macros::set!(
+        base_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_STEPS);
+        base_macros::set!(
             gauge,
             crate::metrics::Metrics::PIPELINE_STEP_BLOCK,
             cursor.block_info.number as f64
         );
         match self.attributes.next_attributes(cursor).await {
             Ok(a) => {
-                trace!(target: "pipeline", "Prepared L2 attributes: {:?}", a);
-                kona_macros::inc!(
+                trace!(target: "pipeline", attributes = ?a, "Prepared L2 attributes");
+                base_macros::inc!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER
                 );
-                kona_macros::set!(
+                base_macros::set!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_LATEST_PAYLOAD_TX_COUNT,
                     a.attributes.transactions.as_ref().map_or(0.0, |txs| txs.len() as f64)
                 );
                 if !a.is_last_in_span {
-                    kona_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_DERIVED_SPAN_SIZE);
+                    base_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_DERIVED_SPAN_SIZE);
                 } else {
-                    kona_macros::set!(
+                    base_macros::set!(
                         gauge,
                         crate::metrics::Metrics::PIPELINE_DERIVED_SPAN_SIZE,
                         0
                     );
                 }
                 self.prepared.push_back(a);
-                kona_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_PREPARED_ATTRIBUTES);
+                base_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_PREPARED_ATTRIBUTES);
                 StepResult::PreparedAttributes
             }
             Err(err) => match err {
@@ -211,11 +211,11 @@ where
                     StepResult::AdvancedOrigin
                 }
                 PipelineErrorKind::Temporary(_) => {
-                    trace!(target: "pipeline", "Attributes queue step failed due to temporary error: {:?}", err);
+                    trace!(target: "pipeline", error = ?err, "Attributes queue step failed due to temporary error");
                     StepResult::StepFailed(err)
                 }
                 _ => {
-                    warn!(target: "pipeline", "Attributes queue step failed: {:?}", err);
+                    warn!(target: "pipeline", error = ?err, "Attributes queue step failed");
                     StepResult::StepFailed(err)
                 }
             },

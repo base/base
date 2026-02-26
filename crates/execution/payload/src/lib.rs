@@ -1,5 +1,4 @@
-//! Optimism's payload builder implementation.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -20,7 +19,7 @@ pub use payload::{
     OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilderAttributes, payload_id_optimism,
 };
 mod traits;
-use reth_optimism_primitives::OpPrimitives;
+use base_execution_primitives::OpPrimitives;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
 use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
 pub use traits::*;

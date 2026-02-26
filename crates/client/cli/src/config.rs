@@ -55,7 +55,7 @@ impl L1ConfigFile {
     pub fn load(&self, l1_chain_id: u64) -> Result<L1ChainConfig, ConfigError> {
         match &self.l1_config_file {
             Some(path) => {
-                debug!("Loading l1 config from file: {:?}", path);
+                debug!(path = ?path, "Loading l1 config from file");
                 let file = File::open(path).map_err(ConfigError::OpenFile)?;
                 from_reader(file).map_err(ConfigError::Parse)
             }
@@ -99,7 +99,7 @@ impl L2ConfigFile {
     pub fn load(&self, l2_chain: &Chain) -> Result<RollupConfig, ConfigError> {
         match &self.l2_config_file {
             Some(path) => {
-                debug!("Loading l2 config from file: {:?}", path);
+                debug!(path = ?path, "Loading l2 config from file");
                 let file = File::open(path).map_err(ConfigError::OpenFile)?;
                 from_reader(file).map_err(ConfigError::Parse)
             }

@@ -10,6 +10,7 @@ use std::{
 use alloy_primitives::B256;
 use libp2p::identity::{Keypair, secp256k1::SecretKey};
 use thiserror::Error;
+use tracing::{error, info};
 
 /// A loader type for loading secret keys.
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ impl SecretKeyLoader {
                 let contents = std::fs::read_to_string(secret_key_path)?;
                 let contents_trimmed = contents.trim();
                 let mut decoded = B256::from_str(contents_trimmed).inspect_err(|e| {
-                    tracing::error!(
+                    error!(
                         target: "p2p::secrets",
                         path = %secret_key_path.display(),
                         error = %e,
@@ -38,7 +39,7 @@ impl SecretKeyLoader {
                     );
                 })?;
                 Ok(Self::parse(&mut decoded.0)?).inspect(|keypair| {
-                    tracing::info!(
+                    info!(
                         target: "p2p::secrets",
                         path = %secret_key_path.display(),
                         peer_id = %keypair.public().to_peer_id(),
@@ -56,7 +57,7 @@ impl SecretKeyLoader {
                 std::fs::write(secret_key_path, &hex)?;
                 let kp = libp2p::identity::secp256k1::Keypair::from(secret);
                 Ok(Keypair::from(kp)).inspect(|keypair| {
-                    tracing::info!(
+                    info!(
                         target: "p2p::secrets",
                         path = %secret_key_path.display(),
                         peer_id = %keypair.public().to_peer_id(),
@@ -65,7 +66,7 @@ impl SecretKeyLoader {
                 })
             }
             Err(error) => {
-                tracing::error!(
+                error!(
                     target: "p2p::secrets",
                     path = %secret_key_path.display(),
                     error = %error,

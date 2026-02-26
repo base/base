@@ -232,11 +232,11 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // The batch reader is by default not set.
-        kona_macros::set!(gauge, Self::PIPELINE_BATCH_READER_SET, 0);
+        base_macros::set!(gauge, Self::PIPELINE_BATCH_READER_SET, 0);
 
         // No source data is initially read.
-        kona_macros::set!(gauge, Self::PIPELINE_DATA_AVAILABILITY_PROVIDER, "source", "blobs", 0);
-        kona_macros::set!(
+        base_macros::set!(gauge, Self::PIPELINE_DATA_AVAILABILITY_PROVIDER, "source", "blobs", 0);
+        base_macros::set!(
             gauge,
             Self::PIPELINE_DATA_AVAILABILITY_PROVIDER,
             "source",
@@ -245,26 +245,26 @@ impl Metrics {
         );
 
         // Manually translate a value of `0` for sys config update as no update yet.
-        kona_macros::set!(gauge, Self::PIPELINE_LATEST_SYS_CONFIG_UPDATE, 0);
-        kona_macros::set!(gauge, Self::PIPELINE_SYS_CONFIG_UPDATE_ERROR, 0);
+        base_macros::set!(gauge, Self::PIPELINE_LATEST_SYS_CONFIG_UPDATE, 0);
+        base_macros::set!(gauge, Self::PIPELINE_SYS_CONFIG_UPDATE_ERROR, 0);
 
         // Pipeline signals start at zero.
-        kona_macros::set!(gauge, Self::PIPELINE_SIGNALS, "type", "reset", 0);
-        kona_macros::set!(gauge, Self::PIPELINE_SIGNALS, "type", "activation", 0);
-        kona_macros::set!(gauge, Self::PIPELINE_SIGNALS, "type", "flush_channel", 0);
+        base_macros::set!(gauge, Self::PIPELINE_SIGNALS, "type", "reset", 0);
+        base_macros::set!(gauge, Self::PIPELINE_SIGNALS, "type", "activation", 0);
+        base_macros::set!(gauge, Self::PIPELINE_SIGNALS, "type", "flush_channel", 0);
 
         // No batches are initially read.
-        kona_macros::set!(gauge, Self::PIPELINE_READ_BATCHES, "type", "single", 0);
-        kona_macros::set!(gauge, Self::PIPELINE_READ_BATCHES, "type", "span", 0);
+        base_macros::set!(gauge, Self::PIPELINE_READ_BATCHES, "type", "single", 0);
+        base_macros::set!(gauge, Self::PIPELINE_READ_BATCHES, "type", "span", 0);
 
         // Cumulative counters start at zero.
-        kona_macros::set!(gauge, Self::PIPELINE_STEPS, 0);
-        kona_macros::set!(gauge, Self::PIPELINE_PREPARED_ATTRIBUTES, 0);
+        base_macros::set!(gauge, Self::PIPELINE_STEPS, 0);
+        base_macros::set!(gauge, Self::PIPELINE_PREPARED_ATTRIBUTES, 0);
 
         // All buffers can be zeroed out since they are expected to return to zero.
-        kona_macros::set!(gauge, Self::PIPELINE_BATCH_BUFFER, 0);
-        kona_macros::set!(gauge, Self::PIPELINE_CHANNEL_BUFFER, 0);
-        kona_macros::set!(gauge, Self::PIPELINE_FRAME_QUEUE_BUFFER, 0);
-        kona_macros::set!(gauge, Self::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER, 0);
+        base_macros::set!(gauge, Self::PIPELINE_BATCH_BUFFER, 0);
+        base_macros::set!(gauge, Self::PIPELINE_CHANNEL_BUFFER, 0);
+        base_macros::set!(gauge, Self::PIPELINE_FRAME_QUEUE_BUFFER, 0);
+        base_macros::set!(gauge, Self::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER, 0);
     }
 }

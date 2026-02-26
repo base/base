@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-storage"
+name = "base-execution-storage"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # reth
-reth-optimism-primitives = { workspace = true, features = ["serde", "reth-codec"] }
+base-execution-primitives = { workspace = true, features = ["serde", "reth-codec"] }
 reth-storage-api = { workspace = true, features = ["db-api"] }
 
 # ethereum
@@ -27,7 +27,7 @@ reth-stages-types.workspace = true
 default = [ "std" ]
 std = [
 	"alloy-consensus/std",
-	"reth-optimism-primitives/std",
+	"base-execution-primitives/std",
 	"reth-prune-types/std",
 	"reth-stages-types/std",
 	"reth-storage-api/std",

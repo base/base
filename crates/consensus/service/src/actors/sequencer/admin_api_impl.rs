@@ -164,7 +164,7 @@ where
         };
 
         if let Err(e) = conductor.override_leader().await {
-            error!(target: "sequencer::rpc", "Failed to override leader: {}", e);
+            error!(target: "sequencer::rpc", error = %e, "Failed to override leader");
             return Err(SequencerAdminAPIError::LeaderOverrideError(e.to_string()));
         }
         info!(target: "sequencer", "Overrode leader via the conductor service");

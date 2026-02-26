@@ -1,7 +1,7 @@
 //! Contains the CLI arguments
 
+use base_execution_node::args::RollupArgs;
 use base_flashblocks::FlashblocksConfig;
-use reth_optimism_node::args::RollupArgs;
 use url::Url;
 
 /// CLI Arguments

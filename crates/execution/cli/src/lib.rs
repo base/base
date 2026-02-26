@@ -1,5 +1,4 @@
-//! OP-Reth CLI implementation.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -18,6 +17,8 @@ pub mod commands;
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
+use base_execution_chainspec::OpChainSpec;
+use base_execution_node::args::RollupArgs;
 use chainspec::OpChainSpecParser;
 use clap::Parser;
 use commands::Commands;
@@ -34,8 +35,6 @@ use reth_node_core::{
 // This allows us to manually enable node metrics features, required for proper jemalloc metric
 // reporting
 use reth_node_metrics as _;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::args::RollupArgs;
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
 
 /// The main op-reth cli interface.
@@ -123,10 +122,10 @@ where
 
 #[cfg(test)]
 mod test {
+    use base_execution_chainspec::{BASE_MAINNET, OP_DEV};
+    use base_execution_node::args::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
-    use reth_optimism_chainspec::{BASE_MAINNET, OP_DEV};
-    use reth_optimism_node::args::RollupArgs;
 
     use crate::{Cli, chainspec::OpChainSpecParser, commands::Commands};
 
@@ -150,6 +149,11 @@ mod test {
 
     #[test]
     fn parse_node() {
+        // clap 4.x validates env var values even when the CLI arg is explicitly provided.
+        // Override OTEL_EXPORTER_OTLP_PROTOCOL (which may be set to `http/protobuf` in CI)
+        // to a value accepted by reth's OtlpProtocol enum.
+        // SAFETY: this is a single-test context; no other thread concurrently reads this var.
+        unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http") };
         let cmd = Cli::<OpChainSpecParser, RollupArgs>::parse_from([
             "op-reth",
             "node",

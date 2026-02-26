@@ -150,14 +150,17 @@ impl ExternalNode {
                 ));
             }
             (we, them) if we < them => {
-                debug!("external node is behind the local chain: {we} < {them}, catching up...");
+                debug!(
+                    our_height = we,
+                    their_height = them,
+                    "external node is behind the local chain, catching up"
+                );
 
                 // make sure that we share common history with the provided chain
                 let hash_at_height = chain.hash_at_height(we).await?;
                 if hash_at_height != our_latest_hash {
                     return Err(eyre::eyre!(
-                        "External node does not share the same genesis block or history with \
-                        the provided chain: {} != {} at height {}",
+                        "External node does not share the same genesis block or history with the provided chain: {} != {} at height {}",
                         hash_at_height,
                         our_latest_hash,
                         we
@@ -219,8 +222,9 @@ impl ExternalNode {
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
         debug!(
-            "external validation node payload status for block {new_block_hash}: {:?}",
-            result.status
+            new_block_hash = %new_block_hash,
+            status = ?result.status,
+            "external validation node payload status"
         );
 
         if result.status != PayloadStatusEnum::Valid {
@@ -272,7 +276,7 @@ async fn create_container(
     );
 
     while let Some(pull_result) = pull_stream.try_next().await? {
-        debug!("Pulling 'ghcr.io/paradigmxyz/op-reth:{version_tag}' locally: {:?}", pull_result);
+        debug!(pull_result = ?pull_result, version_tag = %version_tag, "Pulling ghcr.io/paradigmxyz/op-reth locally");
     }
 
     // Don't expose any ports, as we will only use IPC for communication.
@@ -370,7 +374,7 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
                 }
 
                 if message.to_lowercase().contains("error") {
-                    return Err(eyre::eyre!("Failed to start op-reth container: {message}."));
+                    return Err(eyre::eyre!("Failed to start op-reth container: {}.", message));
                 }
             }
             LogOutput::StdIn { .. } | LogOutput::Console { .. } => {}
@@ -391,7 +395,7 @@ async fn await_ipc_readiness(docker: &Docker, container: &str) -> eyre::Result<(
 async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
     // This is a no-op function that will be spawned to clean up the container on ctrl-c
     // or Drop.
-    debug!("Cleaning up external node resources at {} [{container_id}]...", tempdir.display());
+    debug!(tempdir = %tempdir.display(), container_id = %container_id, "Cleaning up external node resources");
 
     if !tempdir.exists() {
         return; // If the tempdir does not exist, there's nothing to clean up.
@@ -399,7 +403,7 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
 
     // Block on cleaning up the container
     if let Err(e) = docker.stop_container(&container_id, None::<StopContainerOptions>).await {
-        warn!("Failed to stop container {}: {}", container_id, e);
+        warn!(container_id = %container_id, error = %e, "Failed to stop container");
     }
 
     if let Err(e) = docker
@@ -409,7 +413,7 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
         )
         .await
     {
-        warn!("Failed to remove container {}: {}", container_id, e);
+        warn!(container_id = %container_id, error = %e, "Failed to remove container");
     }
 
     // Clean up the temporary directory

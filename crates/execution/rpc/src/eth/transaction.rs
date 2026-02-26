@@ -9,9 +9,9 @@ use std::{
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
 use base_alloy_consensus::{OpDepositInfo, OpTransaction, OpTransactionInfo};
+use base_execution_primitives::DepositReceipt;
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
-use reth_optimism_primitives::DepositReceipt;
 use reth_primitives_traits::{Recovered, SignedTransaction, SignerRecoverable, WithEncoded};
 use reth_rpc_eth_api::{
     EthApiTypes as _, FromEthApiError, FromEvmError, RpcConvert, RpcNodeCore, RpcReceipt,
@@ -23,6 +23,7 @@ use reth_storage_api::{ProviderTx, ReceiptProvider, TransactionsProvider, errors
 use reth_transaction_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTransaction, TransactionOrigin, TransactionPool,
 };
+use tracing::{debug, warn};
 
 use crate::{OpEthApi, OpEthApiError, SequencerClient};
 
@@ -55,14 +56,14 @@ where
         // On optimism, transactions are forwarded directly to the sequencer to be included in
         // blocks that it builds.
         if let Some(client) = self.raw_tx_forwarder().as_ref() {
-            tracing::debug!(target: "rpc::eth", hash = %pool_transaction.hash(), "forwarding raw transaction to sequencer");
+            debug!(target: "rpc::eth", hash = %pool_transaction.hash(), "forwarding raw transaction to sequencer");
             let hash = client.forward_raw_transaction(&tx).await.inspect_err(|err| {
-                    tracing::debug!(target: "rpc::eth", %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
+                    debug!(target: "rpc::eth", error = %err, hash=% *pool_transaction.hash(), "failed to forward raw transaction");
                 })?;
 
             // Retain tx in local tx pool after forwarding, for local RPC usage.
             let _ = self.inner.eth_api.add_pool_transaction(origin, pool_transaction).await.inspect_err(|err| {
-                tracing::warn!(target: "rpc::eth", %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
+                warn!(target: "rpc::eth", error = %err, %hash, "successfully sent tx to sequencer, but failed to persist in local tx pool");
             });
 
             return Ok(hash);

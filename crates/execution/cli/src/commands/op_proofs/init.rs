@@ -2,16 +2,16 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base_execution_chainspec::OpChainSpec;
+use base_execution_primitives::OpPrimitives;
+use base_execution_trie::{
+    InitializationJob, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
+};
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::OpPrimitives;
-use reth_optimism_trie::{
-    InitializationJob, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
-};
 use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use tracing::info;
 
@@ -41,8 +41,8 @@ impl<C: ChainSpecParser<ChainSpec = OpChainSpec>> InitCommand<C> {
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = OpPrimitives>>(
         self,
     ) -> eyre::Result<()> {
-        info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
-        info!(target: "reth::cli", "Initializing OP proofs storage at: {:?}", self.storage_path);
+        info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
+        info!(target: "reth::cli", path = ?self.storage_path, "Initializing OP proofs storage");
 
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;

@@ -12,8 +12,8 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use base_execution_primitives::OpTransactionSigned;
 use c_kzg::KzgSettings;
-use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
@@ -266,9 +266,9 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
     use base_alloy_consensus::TxDeposit;
-    use reth_optimism_chainspec::BASE_MAINNET;
-    use reth_optimism_evm::OpEvmConfig;
-    use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
+    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_evm::OpEvmConfig;
+    use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,

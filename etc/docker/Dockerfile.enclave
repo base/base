@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for building Rust op-enclave EIF
+# Multi-stage Dockerfile for building Rust enclave EIF
 # Mirrors the Go setup in op-enclave/Dockerfile
 
 # Stage 1: Bootstrap - AWS Nitro SDK bootstrap image for kernel + NSM
@@ -40,31 +40,31 @@ RUN rustup target add x86_64-unknown-linux-musl
 # Copy Cargo files first for dependency caching
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo .cargo/
-COPY op-enclave-core/Cargo.toml op-enclave-core/
-COPY op-enclave-server/Cargo.toml op-enclave-server/
-COPY op-enclave-client/Cargo.toml op-enclave-client/
+COPY core/Cargo.toml core/
+COPY server/Cargo.toml server/
+COPY client/Cargo.toml client/
 
 # Create dummy source files for dependency compilation
-RUN mkdir -p op-enclave-core/src op-enclave-server/src op-enclave-client/src && \
-    echo "pub fn dummy() {}" > op-enclave-core/src/lib.rs && \
-    mkdir -p op-enclave-server/src/bin && \
-    echo "fn main() {}" > op-enclave-server/src/lib.rs && \
-    echo "fn main() {}" > op-enclave-server/src/bin/enclave.rs && \
-    echo "fn main() {}" > op-enclave-client/src/lib.rs
+RUN mkdir -p core/src server/src client/src && \
+    echo "pub fn dummy() {}" > core/src/lib.rs && \
+    mkdir -p server/src/bin && \
+    echo "fn main() {}" > server/src/lib.rs && \
+    echo "fn main() {}" > server/src/bin/enclave.rs && \
+    echo "fn main() {}" > client/src/lib.rs
 
 # Build dependencies (cached layer)
-RUN cargo build --release --target x86_64-unknown-linux-musl --package op-enclave-server --bin enclave || true
+RUN cargo build --release --target x86_64-unknown-linux-musl --package base-enclave-server --bin enclave || true
 
 # Copy actual source code
-COPY op-enclave-core op-enclave-core/
-COPY op-enclave-server op-enclave-server/
-COPY op-enclave-client op-enclave-client/
+COPY core core/
+COPY server server/
+COPY client client/
 
 # Touch source files to invalidate cache
-RUN touch op-enclave-core/src/lib.rs op-enclave-server/src/lib.rs
+RUN touch core/src/lib.rs server/src/lib.rs
 
 # Build the enclave binary with musl target
-RUN cargo build --release --target x86_64-unknown-linux-musl --package op-enclave-server --bin enclave
+RUN cargo build --release --target x86_64-unknown-linux-musl --package base-enclave-server --bin enclave
 
 # Strip debug symbols for smaller binary
 RUN strip target/x86_64-unknown-linux-musl/release/enclave

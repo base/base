@@ -53,11 +53,11 @@ where
                     // stages can make progress.
                     match e {
                         PipelineErrorKind::Temporary(_) => {
-                            trace!(target: "client_derivation_driver", "Failed to step derivation pipeline temporarily: {:?}", e);
+                            trace!(target: "client_derivation_driver", error = ?e, "Failed to step derivation pipeline temporarily");
                             continue;
                         }
                         PipelineErrorKind::Reset(e) => {
-                            warn!(target: "client_derivation_driver", "Failed to step derivation pipeline due to reset: {:?}", e);
+                            warn!(target: "client_derivation_driver", error = ?e, "Failed to step derivation pipeline due to reset");
                             let system_config = self
                                 .system_config_by_number(l2_safe_head.block_info.number)
                                 .await?;
@@ -96,7 +96,7 @@ where
                             }
                         }
                         PipelineErrorKind::Critical(_) => {
-                            warn!(target: "client_derivation_driver", "Failed to step derivation pipeline: {:?}", e);
+                            warn!(target: "client_derivation_driver", error = ?e, "Failed to step derivation pipeline");
                             return Err(e);
                         }
                     }

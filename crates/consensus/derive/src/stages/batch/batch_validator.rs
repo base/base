@@ -116,13 +116,13 @@ where
         #[cfg(feature = "metrics")]
         {
             if let Some(origin) = self.l1_blocks.first() {
-                kona_macros::set!(
+                base_macros::set!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_L1_BLOCKS_START,
                     origin.number as f64
                 );
                 let last = self.l1_blocks.last().unwrap_or(origin);
-                kona_macros::set!(
+                base_macros::set!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_L1_BLOCKS_END,
                     last.number as f64
@@ -173,7 +173,7 @@ where
         // to preserve that L2 time >= L1 time. If this is the first block of the epoch, always
         // generate a batch to ensure that we at least have one batch per epoch.
         if next_timestamp < next_epoch.timestamp || first_of_epoch {
-            info!(target: "batch_validator", "Generating empty batch for epoch #{}", epoch.number);
+            info!(target: "batch_validator", epoch_number = epoch.number, "Generating empty batch for epoch");
             return Ok(SingleBatch {
                 parent_hash: parent.block_info.hash,
                 epoch_num: epoch.number,
@@ -257,7 +257,7 @@ where
             &stage_origin,
         ) {
             BatchValidity::Accept => {
-                info!(target: "batch_validator", "Found next batch (epoch #{})", next_batch.epoch_num);
+                info!(target: "batch_validator", epoch_num = next_batch.epoch_num, "Found next batch");
                 Ok(next_batch)
             }
             BatchValidity::Past => {
@@ -265,7 +265,7 @@ where
                 Err(PipelineError::NotEnoughData.temp())
             }
             BatchValidity::Drop(reason) => {
-                warn!(target: "batch_validator", "Invalid singular batch ({}), flushing current channel.", reason);
+                warn!(target: "batch_validator", reason = %reason, "Invalid singular batch, flushing current channel");
                 self.prev.flush();
                 Err(PipelineError::NotEnoughData.temp())
             }

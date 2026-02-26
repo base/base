@@ -9,6 +9,7 @@ use jsonrpsee::{
     core::{RpcResult, SubscriptionResult, to_json_raw_value},
     types::ErrorCode,
 };
+use tracing::warn;
 
 use crate::{DevEngineApiServer, EngineRpcClient};
 
@@ -85,7 +86,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> DevEngineApiServer
             current_queue_length = new_queue_length;
         }
 
-        tracing::warn!(target: "rpc::dev::engine_queue_size", "Subscription to engine queue size has been closed.");
+        warn!(target: "rpc::dev::engine_queue_size", "Subscription to engine queue size has been closed.");
         Ok(())
     }
 }

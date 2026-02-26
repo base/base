@@ -77,7 +77,7 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         slot: u64,
         blob_hashes: &[IndexedBlobHash],
     ) -> Result<Vec<BoxedBlobWithIndex>, BlobProviderError> {
-        kona_macros::inc!(gauge, Metrics::BLOB_FETCHES);
+        base_macros::inc!(gauge, Metrics::BLOB_FETCHES);
 
         let result = self
             .beacon_client
@@ -87,7 +87,7 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
 
         #[cfg(feature = "metrics")]
         if result.is_err() {
-            kona_macros::inc!(gauge, Metrics::BLOB_FETCH_ERRORS);
+            base_macros::inc!(gauge, Metrics::BLOB_FETCH_ERRORS);
         }
 
         result

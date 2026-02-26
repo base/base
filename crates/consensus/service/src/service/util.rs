@@ -1,5 +1,7 @@
 //! Utilities for the rollup node service, internal to the crate.
 
+use tracing::info;
+
 /// Spawns a set of parallel actors in a [`JoinSet`], and cancels all actors if any of them fail. The
 /// type of the error in the [`NodeActor`]s is erased to avoid having to specify a common error type
 /// between actors.
@@ -13,6 +15,7 @@
 /// [NodeActor]: crate::NodeActor
 macro_rules! spawn_and_wait {
     ($cancellation:expr, actors = [$($actor:expr$(,)?)*]) => {
+        use tracing::{error, info};
         let mut task_handles = tokio::task::JoinSet::new();
 
         // Check if the actor is present, and spawn it if it is.
@@ -43,7 +46,7 @@ macro_rules! spawn_and_wait {
         loop {
             tokio::select! {
                 _ = &mut shutdown => {
-                    tracing::info!(target: "rollup_node", "Received shutdown signal, initiating graceful shutdown...");
+                    info!(target: "rollup_node", "Received shutdown signal, initiating graceful shutdown...");
                     $cancellation.cancel();
                     break;
                 }
@@ -51,7 +54,7 @@ macro_rules! spawn_and_wait {
                     match result {
                         Some(Ok(Ok(()))) => { /* Actor completed successfully */ }
                         Some(Ok(Err(e))) => {
-                            tracing::error!(target: "rollup_node", "Critical error in sub-routine: {e}");
+                            error!(target: "rollup_node", error = %e, "Critical error in sub-routine");
                             // Cancel all tasks and gracefully shutdown.
                             $cancellation.cancel();
                             return Err(e);
@@ -59,7 +62,7 @@ macro_rules! spawn_and_wait {
                         Some(Err(e)) => {
                             let error_msg = format!("Task join error: {e}");
                             // Log the error and cancel all tasks.
-                            tracing::error!(target: "rollup_node", "Task join error: {e}");
+                            error!(target: "rollup_node", error = %e, "Task join error");
                             // Cancel all tasks and gracefully shutdown.
                             $cancellation.cancel();
                             return Err(error_msg);
@@ -94,10 +97,10 @@ pub(crate) async fn shutdown_signal() {
 
     tokio::select! {
         _ = ctrl_c => {
-            tracing::info!(target: "rollup_node", "Received SIGINT (Ctrl+C)");
+            info!(target: "rollup_node", "Received SIGINT (Ctrl+C)");
         },
         _ = terminate => {
-            tracing::info!(target: "rollup_node", "Received SIGTERM");
+            info!(target: "rollup_node", "Received SIGTERM");
         },
     }
 }

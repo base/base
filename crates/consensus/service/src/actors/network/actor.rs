@@ -211,8 +211,8 @@ impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
                     };
 
                     match handler.gossip.publish(selector, Some(payload)) {
-                        Ok(id) => info!("Published unsafe payload | {:?}", id),
-                        Err(e) => warn!("Failed to publish unsafe payload: {:?}", e),
+                        Ok(id) => info!(id = ?id, "Published unsafe payload"),
+                        Err(e) => warn!(error = ?e, "Failed to publish unsafe payload"),
                     }
                 }
                 event = handler.gossip.next() => {

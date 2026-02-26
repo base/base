@@ -7,9 +7,9 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use base_alloy_network::Base;
+use base_execution_txpool::OpPooledTransaction;
 use dashmap::DashMap;
 use futures::StreamExt;
-use reth_optimism_txpool::OpPooledTransaction;
 use reth_primitives::Recovered;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use tokio::sync::watch;
@@ -183,27 +183,27 @@ impl TransactionPoolObserver {
                     tx_event = stream.next() => {
                         match tx_event {
                             Some(FullTransactionEvent::Pending(hash)) => {
-                                tracing::debug!("Transaction pending: {hash}");
+                                debug!(hash = %hash, "Transaction pending");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Pending);
                             },
                             Some(FullTransactionEvent::Queued(hash, _)) => {
-                                tracing::debug!("Transaction queued: {hash}");
+                                debug!(hash = %hash, "Transaction queued");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Queued);
                             },
                             Some(FullTransactionEvent::Mined { tx_hash, block_hash }) => {
-                                tracing::debug!("Transaction mined: {tx_hash} in block {block_hash}");
+                                debug!(tx_hash = %tx_hash, block_hash = %block_hash, "Transaction mined");
                                 observations.entry(tx_hash).or_default().push_back(TransactionEvent::Mined(block_hash));
                             },
                             Some(FullTransactionEvent::Replaced { transaction, replaced_by }) => {
-                                tracing::debug!("Transaction replaced: {transaction:?} by {replaced_by}");
+                                debug!(transaction = ?transaction, replaced_by = %replaced_by, "Transaction replaced");
                                 observations.entry(*transaction.hash()).or_default().push_back(TransactionEvent::Replaced(replaced_by));
                             },
                             Some(FullTransactionEvent::Discarded(hash)) => {
-                                tracing::debug!("Transaction discarded: {hash}");
+                                debug!(hash = %hash, "Transaction discarded");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Discarded);
                             },
                             Some(FullTransactionEvent::Invalid(hash)) => {
-                                tracing::debug!("Transaction invalid: {hash}");
+                                debug!(hash = %hash, "Transaction invalid");
                                 observations.entry(hash).or_default().push_back(TransactionEvent::Invalid);
                             },
                             Some(FullTransactionEvent::Propagated(_)) | None => {},
@@ -254,7 +254,7 @@ impl TransactionPoolObserver {
     }
 
     pub fn print_all(&self) {
-        tracing::debug!("TxPool {:#?}", self.observations);
+        debug!(observations = ?self.observations, "TxPool");
     }
 
     pub fn exists(&self, txhash: TxHash) -> bool {

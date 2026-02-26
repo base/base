@@ -5,6 +5,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 use crate::{Listener, PublisherMetrics, PublishingMetrics};
 
@@ -76,7 +77,7 @@ impl WebSocketPublisher {
 impl Drop for WebSocketPublisher {
     fn drop(&mut self) {
         self.cancel.cancel();
-        tracing::info!("WebSocketPublisher dropped, terminating listener loop");
+        info!("WebSocketPublisher dropped, terminating listener loop");
     }
 }
 

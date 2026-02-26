@@ -1,22 +1,22 @@
 //! Base Node types config.
 
+use base_execution_chainspec::OpChainSpec;
+use base_execution_node::{
+    OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
+    OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
+    args::RollupArgs,
+    node::{OpPayloadBuilder, OpPoolBuilder},
+};
+use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_primitives::OpPrimitives;
+use base_execution_rpc::eth::OpEthApiBuilder;
+use base_execution_storage::OpStorage;
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
     node::{FullNodeTypes, NodeTypes},
     rpc::BasicEngineValidatorBuilder,
 };
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::{
-    OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
-    OpExecutorBuilder, OpFullNodeTypes, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
-    args::RollupArgs,
-    node::{OpPayloadBuilder, OpPoolBuilder},
-};
-use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
-use reth_optimism_primitives::OpPrimitives;
-use reth_optimism_rpc::eth::OpEthApiBuilder;
-use reth_optimism_storage::OpStorage;
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
 
@@ -101,7 +101,7 @@ impl BaseNode {
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
     ///
     /// ```no_run
-    /// use reth_optimism_chainspec::BASE_MAINNET;
+    /// use base_execution_chainspec::BASE_MAINNET;
     /// use base_client_node::BaseNode;
     ///
     /// let factory =
@@ -112,7 +112,7 @@ impl BaseNode {
     ///
     /// ```no_run
     /// use reth_db::open_db_read_only;
-    /// use reth_optimism_chainspec::OpChainSpecBuilder;
+    /// use base_execution_chainspec::OpChainSpecBuilder;
     /// use base_client_node::BaseNode;
     /// use reth_provider::providers::{RocksDBProvider, StaticFileProvider};
     /// use std::sync::Arc;

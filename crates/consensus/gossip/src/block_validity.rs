@@ -122,7 +122,7 @@ impl BlockHandler {
 
         // Record total validation attempts
         #[cfg(feature = "metrics")]
-        kona_macros::inc!(counter, Metrics::BLOCK_VALIDATION_TOTAL);
+        base_macros::inc!(counter, Metrics::BLOCK_VALIDATION_TOTAL);
 
         // Record block version distribution
         #[cfg(feature = "metrics")]
@@ -133,7 +133,7 @@ impl BlockHandler {
                 OpExecutionPayload::V3(_) => "v3",
                 OpExecutionPayload::V4(_) => "v4",
             };
-            kona_macros::inc!(counter, Metrics::BLOCK_VERSION, "version" => version);
+            base_macros::inc!(counter, Metrics::BLOCK_VERSION, "version" => version);
         }
 
         let validation_result = self.validate_block_internal(envelope);
@@ -142,7 +142,7 @@ impl BlockHandler {
         #[cfg(feature = "metrics")]
         {
             let duration = validation_start.elapsed();
-            kona_macros::record!(
+            base_macros::record!(
                 histogram,
                 Metrics::BLOCK_VALIDATION_DURATION_SECONDS,
                 duration.as_secs_f64()
@@ -153,7 +153,7 @@ impl BlockHandler {
         match &validation_result {
             Ok(()) => {
                 #[cfg(feature = "metrics")]
-                kona_macros::inc!(counter, Metrics::BLOCK_VALIDATION_SUCCESS);
+                base_macros::inc!(counter, Metrics::BLOCK_VALIDATION_SUCCESS);
             }
             Err(_err) => {
                 #[cfg(feature = "metrics")]
@@ -178,7 +178,7 @@ impl BlockHandler {
                         BlockInvalidError::ExcessBlobGas => "excess_blob_gas",
                         BlockInvalidError::WithdrawalsRoot => "withdrawals_root",
                     };
-                    kona_macros::inc!(counter, Metrics::BLOCK_VALIDATION_FAILED, "reason" => reason);
+                    base_macros::inc!(counter, Metrics::BLOCK_VALIDATION_FAILED, "reason" => reason);
                 }
             }
         }
@@ -937,11 +937,11 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "metrics")]
     fn test_metrics_instrumentation() {
+        use crate::Metrics;
+
         // This test verifies that metrics code compiles and doesn't panic
         // The actual metric values would require a metrics registry setup in a real test
         // environment
-
-        use crate::Metrics;
 
         // Initialize metrics (this should not panic)
         Metrics::init();

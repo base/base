@@ -10,12 +10,13 @@ use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
+pub use base_execution_chainspec::decode_holocene_base_fee;
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::DepositReceipt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
-pub use reth_optimism_chainspec::decode_holocene_base_fee;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::DepositReceipt;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
+use tracing::debug;
 
 use crate::proof::calculate_receipt_root_optimism;
 
@@ -138,7 +139,7 @@ pub fn validate_block_post_execution<R: DepositReceipt>(
                 .iter()
                 .map(|r| Bytes::from(r.with_bloom_ref().encoded_2718()))
                 .collect::<Vec<_>>();
-            tracing::debug!(%error, ?receipts, "receipts verification failed");
+            debug!(%error, ?receipts, "receipts verification failed");
             return Err(error);
         }
     }
@@ -213,10 +214,10 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, U256, b256, hex};
     use base_alloy_consensus::OpTxEnvelope;
+    use base_execution_chainspec::{BASE_SEPOLIA, OpChainSpec};
+    use base_execution_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
+    use base_execution_primitives::OpReceipt;
     use reth_chainspec::{BaseFeeParams, ChainSpec, EthChainSpec, ForkCondition, Hardfork};
-    use reth_optimism_chainspec::{BASE_SEPOLIA, OpChainSpec};
-    use reth_optimism_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
-    use reth_optimism_primitives::OpReceipt;
 
     use super::*;
 
@@ -271,7 +272,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee =
-            reth_optimism_chainspec::OpChainSpec::next_block_base_fee(&op_chain_spec, &parent, 0);
+            base_execution_chainspec::OpChainSpec::next_block_base_fee(&op_chain_spec, &parent, 0);
         assert_eq!(
             base_fee.unwrap(),
             op_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
@@ -289,7 +290,7 @@ mod tests {
             extra_data: Bytes::from_static(&[0, 0, 0, 0, 0, 0, 0, 0, 0]),
             ..Default::default()
         };
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &op_chain_spec,
             &parent,
             HOLOCENE_TIMESTAMP + 5,
@@ -311,7 +312,7 @@ mod tests {
             ..Default::default()
         };
 
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &holocene_chainspec(),
             &parent,
             HOLOCENE_TIMESTAMP + 5,
@@ -336,7 +337,7 @@ mod tests {
             ..Default::default()
         };
 
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &*BASE_SEPOLIA,
             &parent,
             1735315546,
@@ -365,7 +366,7 @@ mod tests {
             ..Default::default()
         };
 
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &*BASE_SEPOLIA,
             &parent,
             1735315546,
@@ -394,7 +395,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &op_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
@@ -425,7 +426,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &op_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
@@ -457,7 +458,7 @@ mod tests {
             extra_data: extra_data.clone(),
             ..Default::default()
         };
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &op_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
@@ -473,7 +474,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &op_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + 2 * BLOCK_TIME_SECONDS,
@@ -503,7 +504,7 @@ mod tests {
             extra_data,
             ..Default::default()
         };
-        let base_fee = reth_optimism_chainspec::OpChainSpec::next_block_base_fee(
+        let base_fee = base_execution_chainspec::OpChainSpec::next_block_base_fee(
             &op_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,

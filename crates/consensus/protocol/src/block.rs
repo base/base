@@ -240,13 +240,14 @@ impl L2BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::ToString;
+    use alloc::{string::ToString, vec};
 
     use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
     use base_alloy_consensus::OpBlock;
 
     use super::*;
+    use crate::test_utils::RAW_BEDROCK_INFO_TX;
 
     #[test]
     fn test_rpc_block_into_info() {
@@ -277,9 +278,6 @@ mod tests {
 
     #[test]
     fn test_from_block_and_genesis() {
-        use alloc::vec;
-
-        use crate::test_utils::RAW_BEDROCK_INFO_TX;
         let genesis = ChainGenesis {
             l1: BlockNumHash { hash: B256::from([4; 32]), number: 2 },
             l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },

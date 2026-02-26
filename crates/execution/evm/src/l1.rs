@@ -2,9 +2,9 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
+use base_execution_forks::OpHardforks;
 use base_revm::{L1BlockInfo, OpSpecId};
 use reth_execution_errors::BlockExecutionError;
-use reth_optimism_forks::OpHardforks;
 use reth_primitives_traits::BlockBody;
 
 use crate::{OpBlockExecutionError, error::L1BlockInfoError};
@@ -292,7 +292,7 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, OpBlockExecut
 }
 
 /// Returns the [`OpSpecId`] at the given timestamp using the [`OpHardforks`] trait from
-/// `reth-optimism-forks`.
+/// `base-execution-forks`.
 fn op_spec_id(chain_spec: &impl OpHardforks, timestamp: u64) -> OpSpecId {
     if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         OpSpecId::JOVIAN
@@ -376,20 +376,17 @@ impl RethL1BlockInfo for L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Block, BlockBody};
+    use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::eip2718::Decodable2718;
-    use alloy_primitives::keccak256;
-    use reth_optimism_chainspec::BASE_MAINNET;
-    use reth_optimism_forks::OpHardforks;
-    use reth_optimism_primitives::OpTransactionSigned;
+    use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
+    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_forks::OpHardforks;
+    use base_execution_primitives::OpTransactionSigned;
 
     use super::*;
 
     #[test]
     fn sanity_l1_block() {
-        use alloy_consensus::Header;
-        use alloy_primitives::{Bytes, hex_literal::hex};
-
         let bytes = Bytes::from_static(&hex!(
             "7ef9015aa044bae9d41b8380d781187b426c6fe43df5fb2fb57bd4466ef6a701e1f01e015694deaddeaddeaddeaddeaddeaddeaddeaddead000194420000000000000000000000000000000000001580808408f0d18001b90104015d8eb900000000000000000000000000000000000000000000000000000000008057650000000000000000000000000000000000000000000000000000000063d96d10000000000000000000000000000000000000000000000000000000000009f35273d89754a1e0387b89520d989d3be9c37c1f32495a88faf1ea05c61121ab0d1900000000000000000000000000000000000000000000000000000000000000010000000000000000000000002d679b567db6187c0c8323fa982cfb88b74dbcc7000000000000000000000000000000000000000000000000000000000000083400000000000000000000000000000000000000000000000000000000000f4240"
         ));

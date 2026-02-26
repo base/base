@@ -47,7 +47,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_optimism_primitives::OpReceipt;
+    /// use base_execution_primitives::OpReceipt;
     /// use reth_primitives_traits::serde_bincode_compat::SerdeBincodeCompat;
     /// use serde::{Deserialize, Serialize, de::DeserializeOwned};
     /// use serde_with::serde_as;

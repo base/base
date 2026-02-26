@@ -144,6 +144,16 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: true
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install native dependencies
@@ -260,6 +270,16 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: true
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -271,8 +291,8 @@ jobs:
         uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - run: just check-deny
 
-  system-tests:
-    name: System Tests
+  devnet-tests:
+    name: Devnet Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -324,7 +344,7 @@ jobs:
           key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'etc/docker/Dockerfile.devnet') }}
 
       - name: Pre-pull docker images
-        run: just system-tests-pull-images
+        run: just devnet-pull-images
 
       - name: Run devnet tests
         run: just devnet-tests-ci

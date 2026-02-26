@@ -27,6 +27,8 @@ min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
 	"base-client-node/test-utils",
+	"base-execution-node/test-utils",
+	"base-execution-rpc/client",
 	"ctor",
 	"http-body-util",
 	"hyper",
@@ -39,8 +41,6 @@ test-utils = [
 	"reth-ipc",
 	"reth-node-builder/test-utils",
 	"reth-node-ethereum/test-utils",
-	"reth-optimism-node/test-utils",
-	"reth-optimism-rpc/client",
 	"reth-payload-builder/test-utils",
 	"reth-primitives-traits/test-utils",
 	"reth-primitives/test-utils",
@@ -87,23 +87,23 @@ reth-tracing-otlp.workspace = true
 reth-execution-types.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-payload-builder.workspace = true
-reth-optimism-evm.workspace = true
-reth-optimism-node.workspace = true
+base-execution-evm.workspace = true
+base-execution-node.workspace = true
 reth-primitives-traits.workspace = true
-reth-optimism-forks.workspace = true
-reth-optimism-txpool.workspace = true
+base-execution-forks.workspace = true
+base-execution-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-payload-primitives.workspace = true
-reth-optimism-chainspec.workspace = true
-reth-optimism-consensus.workspace = true
-reth-optimism-primitives.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-consensus.workspace = true
+base-execution-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
-reth-optimism-payload-builder.workspace = true
+base-execution-payload-builder.workspace = true
 reth-ipc = { workspace = true, optional = true }
 reth-db.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
-reth-optimism-rpc = { workspace = true, features = ["client"] }
+base-execution-rpc = { workspace = true, features = ["client"] }
 
 # revm
 revm.workspace = true
@@ -208,7 +208,7 @@ base-builder-core = { path = ".", features = ["test-utils"] }
 # reth
 reth-ipc.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
-reth-optimism-rpc = { workspace = true, features = ["client"] }
+base-execution-rpc = { workspace = true, features = ["client"] }
 
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }

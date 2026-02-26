@@ -5,10 +5,6 @@ ignore = [
     # No safe upgrade available, waiting for upstream to migrate to rustls-pki-types
     "RUSTSEC-2025-0134",
 
-    # number_prefix is unmaintained but comes from indicatif -> system-tests (dev dependency)
-    # No safe upgrade available
-    "RUSTSEC-2025-0119",
-
     # bincode is unmaintained but comes from reth-nippy-jar (upstream reth dependency)
     # No safe upgrade available
     "RUSTSEC-2025-0141",
@@ -173,7 +169,7 @@ skip = [
     "toml_datetime",
     "toml_edit",
 
-    # op-enclave-server upstream dep mismatches (aws-nitro-enclaves, vsock, ciborium)
+    # base-enclave-server upstream dep mismatches (aws-nitro-enclaves, vsock, ciborium)
     "half",
     "memoffset",
 ]

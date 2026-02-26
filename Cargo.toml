@@ -20,9 +20,9 @@ members = [
     "crates/proof/preimage",
     "crates/proof/std-fpvm",
     "crates/proof/std-fpvm-proc",
-    "crates/proof/tee/op-enclave-core",
-    "crates/proof/tee/op-enclave-client",
-    "crates/proof/tee/op-enclave-server",
+    "crates/proof/tee/core",
+    "crates/proof/tee/client",
+    "crates/proof/tee/server",
     "crates/utilities/*",
     "crates/builder/*",
     "crates/infra/*",
@@ -112,12 +112,13 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
+# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
 [profile.profiling]
 inherits = "release"
 lto = false
 debug = "line-tables-only"
 strip = "none"
-force-frame-pointers = true
 
 # CI profile: optimized for minimal disk usage in CI environments
 # - Inherits from dev for fast compilation
@@ -169,7 +170,6 @@ kona-disc = { path = "crates/consensus/disc", default-features = false }
 kona-peers = { path = "crates/consensus/peers", default-features = false }
 kona-derive = { path = "crates/consensus/derive", default-features = false }
 kona-engine = { path = "crates/consensus/engine", default-features = false }
-kona-macros = { path = "crates/consensus/macros", default-features = false }
 kona-gossip = { path = "crates/consensus/gossip", default-features = false }
 kona-sources = { path = "crates/consensus/sources", default-features = false }
 kona-genesis = { path = "crates/consensus/genesis", default-features = false }
@@ -179,25 +179,24 @@ kona-node-service = { path = "crates/consensus/service", default-features = fals
 kona-providers-alloy = { path = "crates/consensus/providers-alloy", default-features = false }
 
 # Execution
-reth-optimism-evm = { path = "crates/execution/evm" }
-reth-optimism-cli = { path = "crates/execution/cli" }
-reth-optimism-rpc = { path = "crates/execution/rpc" }
-reth-optimism-exex = { path = "crates/execution/exex" }
-reth-optimism-node = { path = "crates/execution/node" }
-reth-optimism-trie = { path = "crates/execution/trie" }
-reth-optimism-forks = { path = "crates/execution/hardforks" }
-reth-optimism-txpool = { path = "crates/execution/txpool" }
-reth-optimism-storage = { path = "crates/execution/storage" }
-reth-optimism-consensus = { path = "crates/execution/consensus" }
-reth-optimism-chainspec = { path = "crates/execution/chainspec" }
-reth-optimism-primitives = { path = "crates/execution/primitives" }
-reth-optimism-payload-builder = { path = "crates/execution/payload" }
+base-execution-chainspec = { path = "crates/execution/chainspec" }
+base-execution-cli = { path = "crates/execution/cli" }
+base-execution-consensus = { path = "crates/execution/consensus" }
+base-execution-evm = { path = "crates/execution/evm" }
+base-execution-exex = { path = "crates/execution/exex" }
+base-execution-forks = { path = "crates/execution/hardforks" }
+base-execution-node = { path = "crates/execution/node" }
+base-execution-payload-builder = { path = "crates/execution/payload" }
+base-execution-primitives = { path = "crates/execution/primitives" }
+base-execution-rpc = { path = "crates/execution/rpc" }
+base-execution-storage = { path = "crates/execution/storage" }
+base-execution-trie = { path = "crates/execution/trie" }
+base-execution-txpool = { path = "crates/execution/txpool" }
 
 # Infra
 based = { path = "crates/infra/based" }
 basectl-cli = { path = "crates/infra/basectl" }
 audit-archiver-lib = { path = "crates/infra/audit" }
-system-tests = { path = "crates/infra/system-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
@@ -210,17 +209,19 @@ kona-executor = { path = "crates/proof/executor", default-features = false }
 kona-preimage = { path = "crates/proof/preimage", default-features = false }
 kona-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
 kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
-op-enclave-core = { path = "crates/proof/tee/op-enclave-core" }
-op-enclave-client = { path = "crates/proof/tee/op-enclave-client" }
-op-enclave-server = { path = "crates/proof/tee/op-enclave-server" }
+base-enclave = { path = "crates/proof/tee/core" }
+base-enclave-client = { path = "crates/proof/tee/client" }
+base-enclave-server = { path = "crates/proof/tee/server" }
+base-proposer = { path = "crates/proof/proposer" }
 
-# Shared
+# Utilities
 base-jwt = { path = "crates/utilities/jwt" }
 base-cli-utils = { path = "crates/utilities/cli" }
 base-txpool-rpc = { path = "crates/utilities/txpool-rpc" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
+base-macros = { path = "crates/utilities/macros", default-features = false }
 
 # revm
 revm = { version = "34.0.0", default-features = false }
@@ -444,8 +445,6 @@ axum = { version = "0.8.3", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 libc = "0.2"
 arbitrary = { version = "1", default-features = false }
-indicatif = "0.17"
-rand_chacha = "0.9"
 serial_test = "3"
 mockall = "0.13"
 wiremock = { version = "0.6.2", default-features = false }

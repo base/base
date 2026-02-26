@@ -22,10 +22,10 @@ reth-evm.workspace = true
 reth-revm.workspace = true
 reth-provider.workspace = true
 reth-trie-common.workspace = true
-reth-optimism-evm.workspace = true
+base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
-reth-optimism-chainspec.workspace = true
-reth-optimism-primitives.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-primitives.workspace = true
 
 # revm
 revm-database.workspace = true
@@ -61,7 +61,7 @@ base-client-node = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-db-common.workspace = true
-reth-optimism-node.workspace = true
+base-execution-node.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 

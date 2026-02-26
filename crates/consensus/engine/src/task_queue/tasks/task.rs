@@ -208,7 +208,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
         while let Err(e) = self.execute_inner(state).await {
             let severity = e.severity();
 
-            kona_macros::inc!(
+            base_macros::inc!(
                 counter,
                 crate::Metrics::ENGINE_TASK_FAILURE,
                 self.task_metrics_label() => severity.to_string()
@@ -216,7 +216,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
 
             match severity {
                 EngineTaskErrorSeverity::Temporary => {
-                    trace!(target: "engine", "{e}");
+                    trace!(target: "engine", error = %e, "Temporary engine error");
 
                     // Yield the task to allow other tasks to execute to avoid starvation.
                     yield_now().await;
@@ -224,7 +224,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
                     continue;
                 }
                 EngineTaskErrorSeverity::Critical => {
-                    error!(target: "engine", "{e}");
+                    error!(target: "engine", error = %e, "Critical engine error");
                     return Err(e);
                 }
                 EngineTaskErrorSeverity::Reset => {
@@ -238,7 +238,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
             }
         }
 
-        kona_macros::inc!(counter, crate::Metrics::ENGINE_TASK_SUCCESS, self.task_metrics_label());
+        base_macros::inc!(counter, crate::Metrics::ENGINE_TASK_SUCCESS, self.task_metrics_label());
 
         Ok(())
     }

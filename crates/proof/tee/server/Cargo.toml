@@ -1,0 +1,80 @@
+[package]
+name = "base-enclave-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "enclave"
+path = "src/bin/enclave.rs"
+
+[[bin]]
+name = "proxy"
+path = "src/bin/proxy.rs"
+
+[dependencies]
+base-enclave.workspace = true
+
+# Cryptography
+rsa.workspace = true
+k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
+sha2.workspace = true
+rand_08.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-consensus = { workspace = true, features = ["serde"] }
+kona-genesis.workspace = true
+hex.workspace = true
+
+# NSM and Attestation
+aws-nitro-enclaves-nsm-api.workspace = true
+aws-nitro-enclaves-cose.workspace = true
+
+# X.509 and PKIX
+spki.workspace = true
+x509-cert.workspace = true
+openssl.workspace = true
+
+# Encoding
+zip.workspace = true
+base64.workspace = true
+ciborium.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_bytes.workspace = true
+serde_json.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Sync primitives
+parking_lot.workspace = true
+
+# Async runtime
+tokio.workspace = true
+
+# RPC
+tower.workspace = true
+tower-http.workspace = true
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio", "server", "http1"] }
+jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
+http-body-util.workspace = true
+async-trait.workspace = true
+
+# Vsock (Unix only)
+[target.'cfg(unix)'.dependencies]
+vsock.workspace = true
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["json", "blocking"] }
+
+[package.metadata.cargo-udeps.ignore]
+normal = ["aws-nitro-enclaves-nsm-api"]
+
+[lints]
+workspace = true

@@ -7,9 +7,9 @@ use base_builder_core::{
         setup_test_instance_with_node_config,
     },
 };
+use base_execution_chainspec::OpChainSpec;
 use reth_node_builder::NodeConfig;
 use reth_node_core::args::TxPoolArgs;
-use reth_optimism_chainspec::OpChainSpec;
 
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {

@@ -66,7 +66,7 @@ impl<F: ChainProvider> PollingTraversal<F> {
     fn update_origin(&mut self, block: BlockInfo) {
         self.done = false;
         self.block = Some(block);
-        kona_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
+        base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
     }
 
     /// Update the origin block in the traversal stage.
@@ -113,13 +113,13 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
         match self.system_config.update_with_receipts(&receipts[..], addr, active) {
             Ok(true) => {
                 let next = next_l1_origin.number as f64;
-                kona_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next);
-                info!(target: "l1_traversal", "System config updated at block {next}.");
+                base_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next);
+                info!(target: "l1_traversal", block_number = next_l1_origin.number, "System config updated");
             }
             Ok(false) => { /* Ignore, no update applied */ }
             Err(err) => {
-                error!(target: "l1_traversal", ?err, "Failed to update system config at block {}", next_l1_origin.number);
-                kona_macros::set!(
+                error!(target: "l1_traversal", error = ?err, block_number = next_l1_origin.number, "Failed to update system config");
+                base_macros::set!(
                     gauge,
                     crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,
                     next_l1_origin.number as f64
@@ -138,7 +138,7 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
         #[cfg(feature = "metrics")]
         {
             let duration = start_time.elapsed();
-            kona_macros::record!(
+            base_macros::record!(
                 histogram,
                 crate::metrics::Metrics::PIPELINE_ORIGIN_ADVANCE,
                 duration.as_secs_f64()

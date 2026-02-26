@@ -155,7 +155,7 @@ fn create_filter_from_query(query: FilterQuery) -> FilterType {
         Some("all") => MatchMode::All,
         Some("any") | None => MatchMode::Any,
         Some(other) => {
-            warn!("Invalid match parameter '{}', defaulting to 'any'", other);
+            warn!(param = %other, "Invalid match parameter, defaulting to 'any'");
             MatchMode::Any
         }
     };

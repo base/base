@@ -7,6 +7,8 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_client_node::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_execution_chainspec::OpChainSpec;
+use base_execution_node::args::RollupArgs;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
@@ -21,8 +23,6 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::args::RollupArgs;
 use reth_provider::providers::BlockchainProvider;
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use url::Url;

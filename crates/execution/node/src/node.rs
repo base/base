@@ -6,6 +6,23 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
 use base_alloy_consensus::OpPooledTransaction;
 use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
+use base_execution_chainspec::OpChainSpec;
+use base_execution_consensus::OpBeaconConsensus;
+use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
+use base_execution_forks::OpHardforks;
+use base_execution_payload_builder::{
+    OpAttributes, OpBuiltPayload, OpPayloadPrimitives,
+    builder::OpPayloadTransactions,
+    config::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig},
+};
+use base_execution_primitives::{DepositReceipt, OpPrimitives};
+use base_execution_rpc::{
+    eth::OpEthApiBuilder,
+    miner::{MinerApiExtServer, OpMinerExtApi},
+    witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
+};
+use base_execution_storage::OpStorage;
+use base_execution_txpool::OpPooledTx;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_network::{
@@ -30,23 +47,6 @@ use reth_node_builder::{
         RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_consensus::OpBeaconConsensus;
-use reth_optimism_evm::{OpEvmConfig, OpRethReceiptBuilder};
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_payload_builder::{
-    OpAttributes, OpBuiltPayload, OpPayloadPrimitives,
-    builder::OpPayloadTransactions,
-    config::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig},
-};
-use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
-use reth_optimism_rpc::{
-    eth::OpEthApiBuilder,
-    miner::{MinerApiExtServer, OpMinerExtApi},
-    witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
-};
-use reth_optimism_storage::OpStorage;
-use reth_optimism_txpool::OpPooledTx;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
@@ -260,8 +260,8 @@ impl OpNode {
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
     ///
     /// ```no_run
-    /// use reth_optimism_chainspec::BASE_MAINNET;
-    /// use reth_optimism_node::OpNode;
+    /// use base_execution_chainspec::BASE_MAINNET;
+    /// use base_execution_node::OpNode;
     ///
     /// fn demo(runtime: reth_tasks::Runtime) {
     ///     let factory = OpNode::provider_factory_builder()
@@ -273,8 +273,8 @@ impl OpNode {
     /// # Open a Providerfactory with custom config
     ///
     /// ```no_run
-    /// use reth_optimism_chainspec::OpChainSpecBuilder;
-    /// use reth_optimism_node::OpNode;
+    /// use base_execution_chainspec::OpChainSpecBuilder;
+    /// use base_execution_node::OpNode;
     /// use reth_provider::providers::ReadOnlyConfig;
     ///
     /// fn demo(runtime: reth_tasks::Runtime) {
@@ -562,7 +562,7 @@ where
     ) -> eyre::Result<Self::Handle> {
         let Self { rpc_add_ons, da_config, gas_limit_config, .. } = self;
 
-        let builder = reth_optimism_payload_builder::OpPayloadBuilder::new(
+        let builder = base_execution_payload_builder::OpPayloadBuilder::new(
             ctx.node.pool().clone(),
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
@@ -991,7 +991,7 @@ where
     Attrs: OpAttributes<Transaction = TxTy<Node::Types>>,
 {
     type PayloadBuilder =
-        reth_optimism_payload_builder::OpPayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
+        base_execution_payload_builder::OpPayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
 
     async fn build_payload_builder(
         self,
@@ -999,17 +999,18 @@ where
         pool: Pool,
         evm_config: Evm,
     ) -> eyre::Result<Self::PayloadBuilder> {
-        let payload_builder = reth_optimism_payload_builder::OpPayloadBuilder::with_builder_config(
-            pool,
-            ctx.provider().clone(),
-            evm_config,
-            OpBuilderConfig {
-                da_config: self.da_config.clone(),
-                gas_limit_config: self.gas_limit_config.clone(),
-            },
-        )
-        .with_transactions(self.best_transactions.clone())
-        .set_compute_pending_block(self.compute_pending_block);
+        let payload_builder =
+            base_execution_payload_builder::OpPayloadBuilder::with_builder_config(
+                pool,
+                ctx.provider().clone(),
+                evm_config,
+                OpBuilderConfig {
+                    da_config: self.da_config.clone(),
+                    gas_limit_config: self.gas_limit_config.clone(),
+                },
+            )
+            .with_transactions(self.best_transactions.clone())
+            .set_compute_pending_block(self.compute_pending_block);
         Ok(payload_builder)
     }
 }

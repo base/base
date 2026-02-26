@@ -2,18 +2,18 @@
 
 use std::{sync::Arc, time::Duration};
 
+use base_execution_chainspec::OpChainSpec;
+use base_execution_exex::OpProofsExEx;
+use base_execution_rpc::{
+    debug::{DebugApiExt, DebugApiOverrideServer},
+    eth::proofs::{EthApiExt, EthApiOverrideServer},
+};
+use base_execution_trie::{OpProofsStorage, db::MdbxProofsStorage};
 use eyre::ErrReport;
 use futures_util::FutureExt;
 use reth_db::DatabaseEnv;
 use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_node_builder::{FullNodeComponents, NodeBuilder, WithLaunchContext};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_exex::OpProofsExEx;
-use reth_optimism_rpc::{
-    debug::{DebugApiExt, DebugApiOverrideServer},
-    eth::proofs::{EthApiExt, EthApiOverrideServer},
-};
-use reth_optimism_trie::{OpProofsStorage, db::MdbxProofsStorage};
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::info;

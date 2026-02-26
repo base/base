@@ -106,7 +106,7 @@ impl Registry {
                                     }
                                 }
                             } else {
-                                trace!("Filter did not match for client {}", client_id);
+                                trace!(client_id = %client_id, "Filter did not match");
                             }
                         }
                         Err(RecvError::Closed) => {

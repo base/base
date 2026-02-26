@@ -24,8 +24,8 @@ base-builder-metering.workspace = true
 base-txpool-rpc.workspace = true
 
 # reth
-reth-optimism-cli = { workspace = true, features = ["otlp"] }
-reth-optimism-node.workspace = true
+base-execution-cli = { workspace = true, features = ["otlp"] }
+base-execution-node.workspace = true
 reth-cli-util.workspace = true
 
 # cli
@@ -43,4 +43,4 @@ rstest.workspace = true
 
 [features]
 default = [ "jemalloc" ]
-jemalloc = [ "base-builder-core/jemalloc", "reth-optimism-cli/jemalloc" ]
+jemalloc = [ "base-builder-core/jemalloc", "base-execution-cli/jemalloc" ]

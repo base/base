@@ -18,6 +18,9 @@ default:
 # Runs all ci checks
 ci: fix check lychee zepter check-no-std
 
+# Runs ci checks with tests scoped to crates affected by changes
+pr: fix check-format check-udeps check-clippy test-affected check-deny lychee zepter check-no-std
+
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
     @command -v lychee >/dev/null 2>&1 || cargo install lychee
@@ -32,7 +35,7 @@ check-deny:
     cargo deny check bans --hide-inclusion-graph
 
 # Fixes formatting and clippy issues
-fix: format-fix clippy-fix zepter-fix
+fix: build-contracts format-fix clippy-fix zepter-fix
 
 # Runs zepter feature checks, installing zepter if necessary
 zepter:
@@ -52,7 +55,23 @@ install-nextest:
 
 # Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
+
+# Runs tests only for crates affected by changes vs main (excludes devnet)
+test-affected base="main": install-nextest build-contracts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
+    if [ -z "$affected" ]; then
+        echo "No affected crates to test."
+        exit 0
+    fi
+    pkg_args=""
+    while IFS= read -r crate; do
+        pkg_args="$pkg_args -p $crate"
+    done <<< "$affected"
+    echo "Testing affected crates:$pkg_args"
+    RUSTFLAGS="-D warnings" cargo nextest run --all-features $pkg_args
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build-contracts
@@ -66,8 +85,8 @@ devnet-tests: install-nextest build-contracts
 devnet-tests-ci: install-nextest build-contracts
     cargo nextest run -p devnet --cargo-profile ci
 
-# Pre-pulls Docker images needed for system tests
-system-tests-pull-images:
+# Pre-pulls Docker images needed for devnet tests
+devnet-pull-images:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.10.2
     docker pull sigp/lighthouse:v8.0.1

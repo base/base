@@ -9,6 +9,16 @@ use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_alloy_consensus::{OpDepositReceipt, OpTxType};
 use base_alloy_evm::OpReceiptBuilder;
+use base_execution_chainspec::OpChainSpec;
+use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_forks::OpHardforks;
+use base_execution_node::OpPayloadBuilderAttributes;
+use base_execution_payload_builder::{
+    config::{OpDAConfig, OpGasLimitConfig},
+    error::OpPayloadBuilderError,
+};
+use base_execution_primitives::{OpReceipt, OpTransactionSigned};
+use base_execution_txpool::estimated_da_size::DataAvailabilitySized;
 use base_revm::{L1BlockInfo, OpSpecId};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -16,16 +26,6 @@ use reth_evm::{
     ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
 };
 use reth_node_api::PayloadBuilderError;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_node::OpPayloadBuilderAttributes;
-use reth_optimism_payload_builder::{
-    config::{OpDAConfig, OpGasLimitConfig},
-    error::OpPayloadBuilderError,
-};
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_optimism_txpool::estimated_da_size::DataAvailabilitySized;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives::SealedHeader;
@@ -463,7 +463,7 @@ impl OpPayloadBuilderCtx {
         match fbal_db.finish() {
             Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
             Err(err) => {
-                error!("Failed to finalize FBALBuilder: {}", err);
+                error!(error = %err, "Failed to finalize FBALBuilder");
             }
         }
 
@@ -733,7 +733,7 @@ impl OpPayloadBuilderCtx {
                 info.extra.access_list_builder = fbal_builder;
             }
             Err(err) => {
-                error!("Failed to finalize FBALBuilder: {}", err);
+                error!(error = %err, "Failed to finalize FBALBuilder");
             }
         }
 

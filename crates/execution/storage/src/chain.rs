@@ -1,5 +1,5 @@
 use alloy_consensus::Header;
-use reth_optimism_primitives::OpTransactionSigned;
+use base_execution_primitives::OpTransactionSigned;
 use reth_storage_api::EmptyBodyStorage;
 
 /// Optimism storage implementation.

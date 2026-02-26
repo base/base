@@ -11,11 +11,11 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, b256};
     use base_alloy_consensus::TxDeposit;
+    use base_execution_chainspec::{OpChainSpec, OpChainSpecBuilder};
+    use base_execution_primitives::{OpReceipt, OpTransactionSigned};
     use base_revm::L1_BLOCK_CONTRACT;
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::execute::{BasicBlockExecutor, Executor};
-    use reth_optimism_chainspec::{OpChainSpec, OpChainSpecBuilder};
-    use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, RecoveredBlock};
     use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
 

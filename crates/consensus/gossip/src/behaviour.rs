@@ -5,6 +5,7 @@ use libp2p::{
     gossipsub::{Config, IdentTopic, MessageAuthenticity},
     swarm::NetworkBehaviour,
 };
+use tracing::info;
 
 use crate::{Event, Handler};
 
@@ -78,10 +79,10 @@ impl Behaviour {
             .collect::<Result<Vec<String>, BehaviourError>>()?;
 
         if !subscriptions.is_empty() {
-            tracing::info!(target: "gossip", "Subscribed to topics:");
+            info!(target: "gossip", "Subscribed to topics:");
         }
         for topic in subscriptions {
-            tracing::info!(target: "gossip", "-> {}", topic);
+            info!(target: "gossip", topic = %topic, "Subscribed");
         }
 
         Ok(Self { identify, ping, gossipsub, sync_req_resp })

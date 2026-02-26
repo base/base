@@ -44,7 +44,7 @@ where
     /// Get the data corresponding to the currently set key from the host. Return the data in a new
     /// heap allocated `Vec<u8>`
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
-        trace!(target: "oracle_client", "Requesting data from preimage oracle. Key {key}");
+        trace!(target: "oracle_client", key = %key, "Requesting data from preimage oracle");
 
         let length = self.write_key(key).await?;
 
@@ -54,12 +54,12 @@ where
 
         let mut data_buffer = alloc::vec![0; length];
 
-        trace!(target: "oracle_client", "Reading data from preimage oracle. Key {key}");
+        trace!(target: "oracle_client", key = %key, "Reading data from preimage oracle");
 
         // Grab a read lock on the preimage channel to read the data.
         self.channel.read_exact(&mut data_buffer).await?;
 
-        trace!(target: "oracle_client", "Successfully read data from preimage oracle. Key: {key}");
+        trace!(target: "oracle_client", key = %key, "Successfully read data from preimage oracle");
 
         Ok(data_buffer)
     }
@@ -67,12 +67,12 @@ where
     /// Get the data corresponding to the currently set key from the host. Write the data into the
     /// provided buffer
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
-        trace!(target: "oracle_client", "Requesting data from preimage oracle. Key {key}");
+        trace!(target: "oracle_client", key = %key, "Requesting data from preimage oracle");
 
         // Write the key to the host and read the length of the preimage.
         let length = self.write_key(key).await?;
 
-        trace!(target: "oracle_client", "Reading data from preimage oracle. Key {key}");
+        trace!(target: "oracle_client", key = %key, "Reading data from preimage oracle");
 
         // Ensure the buffer is the correct size.
         if buf.len() != length {
@@ -85,7 +85,7 @@ where
 
         self.channel.read_exact(buf).await?;
 
-        trace!(target: "oracle_client", "Successfully read data from preimage oracle. Key: {key}");
+        trace!(target: "oracle_client", key = %key, "Successfully read data from preimage oracle");
 
         Ok(())
     }
@@ -121,7 +121,7 @@ where
         self.channel.read_exact(&mut buf).await?;
         let preimage_key = PreimageKey::try_from(buf)?;
 
-        trace!(target: "oracle_server", "Fetching preimage for key {preimage_key}");
+        trace!(target: "oracle_server", key = %preimage_key, "Fetching preimage");
 
         // Fetch the preimage value from the preimage getter.
         let value = fetcher.get_preimage(preimage_key).await?;
@@ -130,7 +130,7 @@ where
         self.channel.write(value.len().to_be_bytes().as_ref()).await?;
         self.channel.write(value.as_ref()).await?;
 
-        trace!(target: "oracle_server", "Successfully wrote preimage data for key {preimage_key}");
+        trace!(target: "oracle_server", key = %preimage_key, "Successfully wrote preimage data");
 
         Ok(())
     }

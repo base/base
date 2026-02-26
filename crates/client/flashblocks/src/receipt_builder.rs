@@ -5,9 +5,9 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
+use base_execution_forks::OpHardforks;
+use base_execution_primitives::OpReceipt;
 use reth_evm::Evm;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_primitives::OpReceipt;
 use revm::{Database, context::result::ExecutionResult};
 
 /// Error type for receipt building operations.
@@ -131,10 +131,10 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
     use base_alloy_consensus::TxDeposit;
+    use base_execution_chainspec::OpChainSpecBuilder;
+    use base_execution_evm::OpEvmConfig;
     use base_revm::OpHaltReason;
     use reth_evm::ConfigureEvm;
-    use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_evm::OpEvmConfig;
     use revm::database::InMemoryDB;
 
     use super::*;
@@ -246,7 +246,7 @@ mod tests {
 
     /// Helper to create an EVM instance for testing
     fn create_test_evm(
-        chain_spec: Arc<reth_optimism_chainspec::OpChainSpec>,
+        chain_spec: Arc<base_execution_chainspec::OpChainSpec>,
         db: &mut InMemoryDB,
     ) -> impl Evm<HaltReason = OpHaltReason, DB = &mut InMemoryDB> + '_ {
         let evm_config = OpEvmConfig::optimism(chain_spec);

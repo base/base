@@ -124,7 +124,7 @@ impl EngineSyncState {
     #[cfg(feature = "metrics")]
     #[inline]
     fn update_block_label_metric(label: &'static str, number: u64) {
-        kona_macros::set!(gauge, Metrics::BLOCK_LABELS, "label", label, number as f64);
+        base_macros::set!(gauge, Metrics::BLOCK_LABELS, "label", label, number as f64);
     }
 
     /// Updates a block label metric, keyed by the label.

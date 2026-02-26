@@ -1,0 +1,75 @@
+[package]
+name = "base-proposer"
+description = "Base Proposer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Alloy
+alloy-transport-http.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-signer-local.workspace = true
+alloy-rpc-client.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-consensus.workspace = true
+alloy-rpc-types.workspace = true
+alloy-transport.workspace = true
+alloy-contract.workspace = true
+alloy-provider.workspace = true
+alloy-network.workspace = true
+alloy-signer.workspace = true
+alloy-eips.workspace = true
+
+# Base Alloy
+base-alloy-rpc-types.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
+base-alloy-network.workspace = true
+
+# Enclave
+op-enclave-client.workspace = true
+op-enclave-core.workspace = true
+
+# Async
+async-trait.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+tokio.workspace = true
+
+# Tracing
+tracing-subscriber.workspace = true
+tracing.workspace = true
+
+# Serialization
+serde_json.workspace = true
+serde.workspace = true
+
+# Error handling
+thiserror.workspace = true
+eyre.workspace = true
+
+# CLI
+base-cli-utils.workspace = true
+clap.workspace = true
+
+# Misc
+humantime.workspace = true
+jsonrpsee.workspace = true
+metrics.workspace = true
+backon.workspace = true
+bytes.workspace = true
+moka = { workspace = true, features = ["future"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
+hex.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true, features = ["json"] }

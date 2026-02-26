@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::{net::TcpListener, sync::broadcast::Receiver};
 use tokio_tungstenite::{accept_async, tungstenite::Utf8Bytes};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 use crate::{BroadcastLoop, PublisherMetrics};
 
@@ -43,7 +44,7 @@ impl Listener {
 
         let listen_addr =
             listener.local_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into());
-        tracing::info!("WebSocketPublisher listening on {listen_addr}");
+        info!(addr = %listen_addr, "WebSocketPublisher listening");
 
         loop {
             tokio::select! {
@@ -67,7 +68,7 @@ impl Listener {
                                 async move {
                                     metrics.on_connection_opened();
                                     let connected_at = std::time::Instant::now();
-                                    tracing::debug!("WebSocket connection established with {peer_addr}");
+                                    debug!(peer_addr = %peer_addr, "WebSocket connection established");
 
                                     BroadcastLoop::new(
                                         stream,
@@ -79,13 +80,13 @@ impl Listener {
                                     .await;
 
                                     metrics.on_connection_closed(connected_at.elapsed());
-                                    tracing::debug!("WebSocket connection closed for {peer_addr}");
+                                    debug!(peer_addr = %peer_addr, "WebSocket connection closed");
                                 }
                             });
                         }
                         Err(e) => {
                             metrics.on_handshake_error();
-                            tracing::warn!("Failed to accept WebSocket connection from {peer_addr}: {e}");
+                            warn!(peer_addr = %peer_addr, error = %e, "Failed to accept WebSocket connection");
                         }
                     }
                 }

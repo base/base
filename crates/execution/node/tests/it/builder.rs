@@ -4,6 +4,10 @@ use core::marker::PhantomData;
 use std::sync::OnceLock;
 
 use alloy_primitives::{Bytes, address};
+use base_execution_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OpChainSpec};
+use base_execution_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethReceiptBuilder};
+use base_execution_node::{OpEvmConfig, OpExecutorBuilder, OpNode, args::RollupArgs};
+use base_execution_primitives::OpPrimitives;
 use base_revm::{
     OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction, OpTransactionError,
 };
@@ -14,10 +18,6 @@ use reth_node_builder::{
     BuilderContext, FullNodeTypes, Node, NodeBuilder, NodeConfig, NodeTypes,
     components::ExecutorBuilder,
 };
-use reth_optimism_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OpChainSpec};
-use reth_optimism_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethReceiptBuilder};
-use reth_optimism_node::{OpEvmConfig, OpExecutorBuilder, OpNode, args::RollupArgs};
-use reth_optimism_primitives::OpPrimitives;
 use reth_provider::providers::BlockchainProvider;
 use revm::{
     Inspector,

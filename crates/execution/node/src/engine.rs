@@ -7,6 +7,10 @@ use base_alloy_rpc_types_engine::{
     OpExecutionData, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
     OpPayloadAttributes,
 };
+use base_execution_consensus::isthmus;
+use base_execution_forks::OpHardforks;
+use base_execution_payload_builder::{OpExecutionPayloadValidator, OpPayloadTypes};
+use base_execution_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, OpBlock};
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -17,10 +21,6 @@ use reth_node_api::{
     },
     validate_version_specific_fields,
 };
-use reth_optimism_consensus::isthmus;
-use reth_optimism_forks::OpHardforks;
-use reth_optimism_payload_builder::{OpExecutionPayloadValidator, OpPayloadTypes};
-use reth_optimism_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, OpBlock};
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransaction};
 use reth_provider::StateProviderFactory;
 use reth_trie_common::{HashedPostState, KeyHasher};
@@ -305,7 +305,7 @@ mod test {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_alloy_hardforks::BASE_SEPOLIA_JOVIAN_TIMESTAMP;
-    use reth_optimism_chainspec::BASE_SEPOLIA;
+    use base_execution_chainspec::BASE_SEPOLIA;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 

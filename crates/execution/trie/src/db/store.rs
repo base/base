@@ -2,6 +2,7 @@ use std::{ops::RangeBounds, path::Path};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
 use reth_db::{
@@ -17,6 +18,7 @@ use reth_trie_common::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
     updates::{StorageTrieUpdates, TrieUpdates},
 };
+use tracing::error;
 
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
 use crate::{
@@ -1083,9 +1085,6 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
     }
 
     fn gauge_metrics(&self) -> Vec<(&'static str, f64, Vec<Label>)> {
-        use eyre::WrapErr;
-        use tracing::error;
-
         let mut metrics = Vec::new();
 
         let _ = self
@@ -2927,8 +2926,6 @@ mod tests {
 
     #[test]
     fn store_trie_updates_wiped_storage_trie_nodes() {
-        use reth_trie::updates::StorageTrieUpdates;
-
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
 

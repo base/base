@@ -1,5 +1,5 @@
 [package]
-name = "reth-optimism-chainspec"
+name = "base-execution-chainspec"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,8 +19,8 @@ reth-primitives-traits.workspace = true
 reth-network-peers.workspace = true
 
 # op-reth
-reth-optimism-forks.workspace = true
-reth-optimism-primitives.workspace = true
+base-execution-forks.workspace = true
+base-execution-primitives.workspace = true
 
 # ethereum
 alloy-chains.workspace = true
@@ -54,12 +54,12 @@ std = [
 	"alloy-primitives/std",
 	"base-alloy-consensus/std",
 	"base-alloy-rpc-types/std",
+	"base-execution-forks/std",
+	"base-execution-primitives/std",
 	"derive_more/std",
 	"reth-chainspec/std",
 	"reth-ethereum-forks/std",
 	"reth-network-peers/std",
-	"reth-optimism-forks/std",
-	"reth-optimism-primitives/std",
 	"reth-primitives-traits/std",
 	"serde?/std",
 	"serde_json/std",
@@ -72,8 +72,8 @@ serde = [
 	"alloy-primitives/serde",
 	"base-alloy-consensus/serde",
 	"base-alloy-rpc-types/serde",
+	"base-execution-forks/serde",
+	"base-execution-primitives/serde",
 	"reth-ethereum-forks/serde",
-	"reth-optimism-forks/serde",
-	"reth-optimism-primitives/serde",
 	"reth-primitives-traits/serde",
 ]

@@ -1,6 +1,22 @@
-[test-groups.system-tests]
+[test-groups.system-test-serial]
+max-threads = 1
+
+[test-groups.e2e-tests]
+max-threads = 1
+
+[test-groups.builder-integration]
 max-threads = 1
 
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
-test-group = 'system-tests'
+test-group = 'system-test-serial'
+retries = 2
+
+[[profile.default.overrides]]
+filter = 'binary(e2e_testsuite)'
+test-group = 'e2e-tests'
+
+[[profile.default.overrides]]
+filter = 'package(base-builder-core) & (binary(data_availability) | binary(flashblocks) | binary(txpool))'
+test-group = 'builder-integration'
+retries = 1

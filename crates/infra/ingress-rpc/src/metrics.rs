@@ -52,14 +52,6 @@ pub struct Metrics {
     #[metric(describe = "Duration of send_raw_transaction")]
     pub send_raw_transaction_duration: Histogram,
 
-    /// Total backrun bundles received.
-    #[metric(describe = "Total backrun bundles received")]
-    pub backrun_bundles_received_total: Counter,
-
-    /// Duration to send backrun bundle to op-rbuilder.
-    #[metric(describe = "Duration to send backrun bundle to op-rbuilder")]
-    pub backrun_bundles_sent_duration: Histogram,
-
     /// Total raw transactions forwarded to additional endpoint.
     #[metric(describe = "Total raw transactions forwarded to additional endpoint")]
     pub raw_tx_forwards_total: Counter,
