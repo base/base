@@ -2628,10 +2628,12 @@ dependencies = [
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "clap",
  "dirs-next",
  "eyre",
  "libc",
+ "libp2p",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",
@@ -2639,6 +2641,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -2655,7 +2658,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
- "base-consensus-cli",
+ "base-cli-utils",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-genesis",
@@ -2741,7 +2744,6 @@ dependencies = [
  "alloy-primitives",
  "base-cli-utils",
  "base-client-cli",
- "base-consensus-cli",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-engine",
@@ -2755,20 +2757,6 @@ dependencies = [
  "metrics",
  "serde",
  "strum",
- "tracing",
-]
-
-[[package]]
-name = "base-consensus-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-cli-utils",
- "base-consensus-genesis",
- "base-consensus-registry",
- "clap",
- "libp2p",
- "thiserror 2.0.18",
  "tracing",
 ]
 

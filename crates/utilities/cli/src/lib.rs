@@ -30,6 +30,11 @@ pub use version::Version;
 mod logs_dir;
 pub use logs_dir::LogsDir;
 
+#[cfg(feature = "secrets")]
+mod secrets;
+#[cfg(feature = "secrets")]
+pub use secrets::{KeypairError, ParseKeyError, SecretKeyLoader};
+
 mod cli;
 
 mod runtime;

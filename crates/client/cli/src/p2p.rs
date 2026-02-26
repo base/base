@@ -506,7 +506,7 @@ impl P2PArgs {
     pub fn keypair(&self) -> Result<Keypair> {
         // Attempt the parse the private key if specified.
         if let Some(mut private_key) = self.private_key {
-            let keypair = base_consensus_cli::SecretKeyLoader::parse(&mut private_key.0)
+            let keypair = base_cli_utils::SecretKeyLoader::parse(&mut private_key.0)
                 .map_err(|e| eyre::eyre!(e))?;
             info!(
                 target: "p2p::config",
@@ -520,7 +520,7 @@ impl P2PArgs {
             eyre::bail!("Neither a raw private key nor a private key file path was provided.");
         };
 
-        base_consensus_cli::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
+        base_cli_utils::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
     }
 }
 
