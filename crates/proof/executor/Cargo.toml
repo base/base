@@ -68,5 +68,5 @@ test-utils = [
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
-	"base-consensus-registry?/test-utils",
+	"base-consensus-registry?/test-utils"
 ]

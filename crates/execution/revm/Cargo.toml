@@ -41,6 +41,7 @@ std = [
 	"serde?/std",
 	"serde_json/std",
 	"sha2/std",
+	"alloy-evm?/std"
 ]
 dev = [
 	"memory_limit",
