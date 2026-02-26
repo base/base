@@ -40,6 +40,7 @@ serde_json.workspace = true
 tracing.workspace = true
 
 # Error handling
+eyre.workspace = true
 thiserror.workspace = true
 
 # Sync primitives

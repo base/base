@@ -23,11 +23,7 @@ const VSOCK_READ_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Run the HTTP-to-vsock proxy.
 #[cfg(unix)]
-pub async fn run(
-    cid: u32,
-    vsock_port: u32,
-    http_port: u16,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(cid: u32, vsock_port: u32, http_port: u16) -> eyre::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], http_port));
 
     info!(
@@ -63,12 +59,8 @@ pub async fn run(
 
 /// Run the HTTP-to-vsock proxy (unsupported on non-Unix platforms).
 #[cfg(not(unix))]
-pub async fn run(
-    _cid: u32,
-    _vsock_port: u32,
-    _http_port: u16,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    Err("vsock proxy is only supported on Unix platforms".into())
+pub async fn run(_cid: u32, _vsock_port: u32, _http_port: u16) -> eyre::Result<()> {
+    Err(eyre::eyre!("vsock proxy is only supported on Unix platforms"))
 }
 
 /// Connection pool for vsock connections.
@@ -166,6 +158,7 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
 
     let mut response = Vec::new();
     let mut buffer = [0u8; 8192];
+    let mut clean = false;
 
     loop {
         match conn.read(&mut buffer) {
@@ -175,6 +168,7 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
                 if let Ok(s) = std::str::from_utf8(&response)
                     && serde_json::from_str::<serde_json::Value>(s).is_ok()
                 {
+                    clean = true;
                     break;
                 }
             }
@@ -192,7 +186,9 @@ fn forward_to_vsock(pool: &VsockPool, request: &[u8]) -> Option<Vec<u8>> {
     if response.is_empty() {
         None
     } else {
-        pool.put(conn);
+        if clean {
+            pool.put(conn);
+        }
         Some(response)
     }
 }

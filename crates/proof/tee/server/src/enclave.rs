@@ -18,7 +18,7 @@ use crate::{
 const VSOCK_READ_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Run the enclave server. Tries vsock first, falls back to HTTP.
-pub async fn run(config: TransportConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(config: TransportConfig) -> eyre::Result<()> {
     let server = Arc::new(Server::new()?);
 
     info!(
@@ -47,10 +47,7 @@ pub async fn run(config: TransportConfig) -> Result<(), Box<dyn std::error::Erro
 
 /// Try to start a vsock server.
 #[cfg(unix)]
-async fn try_vsock_server(
-    server: Arc<Server>,
-    config: &TransportConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn try_vsock_server(server: Arc<Server>, config: &TransportConfig) -> eyre::Result<()> {
     use std::io::{Read, Write};
 
     use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
@@ -142,10 +139,7 @@ async fn try_vsock_server(
 }
 
 /// Run the HTTP server.
-async fn run_http_server(
-    server: Arc<Server>,
-    config: &TransportConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn run_http_server(server: Arc<Server>, config: &TransportConfig) -> eyre::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.http_port));
 
     info!(port = config.http_port, body_limit = config.http_body_limit, "listening on HTTP");

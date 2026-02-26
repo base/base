@@ -2829,6 +2829,7 @@ dependencies = [
  "base-enclave",
  "base64 0.22.1",
  "ciborium",
+ "eyre",
  "hex",
  "http-body-util",
  "hyper 1.8.1",

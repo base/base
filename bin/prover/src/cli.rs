@@ -60,12 +60,11 @@ impl Cli {
             Command::Nitro(args) => {
                 let config =
                     TransportConfig::new(args.vsock_port, args.http_port, args.http_body_limit);
-                base_enclave_server::run_enclave(config).await.map_err(|e| eyre::eyre!(e))
+                base_enclave_server::run_enclave(config).await
             }
             Command::Proxy(args) => {
                 base_enclave_server::run_proxy(args.vsock_cid, args.vsock_port, args.http_port)
                     .await
-                    .map_err(|e| eyre::eyre!(e))
             }
         }
     }
