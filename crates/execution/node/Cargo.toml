@@ -1,5 +1,5 @@
 [package]
-name = "base-execution-node"
+name = "base-node-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -85,7 +85,7 @@ alloy-genesis = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
-base-execution-node = { workspace = true, features = ["test-utils"] }
+base-node-core = { workspace = true, features = ["test-utils"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
@@ -106,17 +106,17 @@ futures.workspace = true
 default = [ "reth-codec" ]
 asm-keccak = [
 	"alloy-primitives/asm-keccak",
-	"base-execution-node/asm-keccak",
+	"base-node-core/asm-keccak",
 	"reth-node-core/asm-keccak",
 	"revm/asm-keccak",
 ]
 keccak-cache-global = [
 	"alloy-primitives/keccak-cache-global",
-	"base-execution-node/keccak-cache-global",
+	"base-node-core/keccak-cache-global",
 	"reth-node-core/keccak-cache-global",
 ]
 js-tracer = [
-	"base-execution-node/js-tracer",
+	"base-node-core/js-tracer",
 	"reth-node-builder/js-tracer",
 	"reth-rpc-eth-types/js-tracer",
 	"reth-rpc/js-tracer",
@@ -124,8 +124,8 @@ js-tracer = [
 test-utils = [
 	"alloy-genesis",
 	"base-execution-exex/test-utils",
-	"base-execution-node/test-utils",
 	"base-execution-primitives/arbitrary",
+	"base-node-core/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-codec",
 	"reth-consensus/test-utils",

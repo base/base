@@ -12,10 +12,10 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{
     BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, test_utils::get_available_port,
 };
-use base_client_node::BaseNode;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_node::{args::RollupArgs, node::OpPoolBuilder};
 use base_execution_txpool::OpPooledTransaction;
+use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
+use base_node_runner::BaseNode;
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{
@@ -130,10 +130,10 @@ impl InProcessBuilder {
 
         let base_node = BaseNode::new(rollup_args.clone());
 
-        let addons: base_client_node::BaseAddOns<
+        let addons: base_node_runner::BaseAddOns<
             _,
             base_execution_rpc::OpEthApiBuilder,
-            base_execution_node::OpEngineValidatorBuilder,
+            base_node_core::OpEngineValidatorBuilder,
         > = base_node
             .add_ons_builder()
             .with_sequencer(rollup_args.sequencer.clone())

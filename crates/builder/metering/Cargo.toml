@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 base-builder-core.workspace = true
 base-bundles.workspace = true
-base-client-node.workspace = true
+base-node-runner.workspace = true
 alloy-primitives.workspace = true
 dashmap.workspace = true
 concurrent-queue.workspace = true

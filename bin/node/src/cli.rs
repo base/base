@@ -1,7 +1,7 @@
 //! Contains the CLI arguments
 
-use base_execution_node::args::RollupArgs;
 use base_flashblocks::FlashblocksConfig;
+use base_node_core::args::RollupArgs;
 use url::Url;
 
 /// CLI Arguments

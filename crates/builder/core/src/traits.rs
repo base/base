@@ -2,9 +2,9 @@
 
 use alloy_consensus::Header;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_node::OpEngineTypes;
 use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
 use base_execution_txpool::OpPooledTx;
+use base_node_core::OpEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};

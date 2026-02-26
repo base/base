@@ -22,19 +22,19 @@ use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_client_node::{
+use base_execution_chainspec::OpChainSpec;
+use base_execution_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use base_flashblocks::{
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
+    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
+};
+use base_node_runner::{
     BaseNodeExtension, NodeHooks,
     test_utils::{
         Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode,
         LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
         init_silenced_tracing,
     },
-};
-use base_execution_chainspec::OpChainSpec;
-use base_execution_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
-use base_flashblocks::{
-    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
-    FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,
 };
 use derive_more::Deref;
 use eyre::Result;

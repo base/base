@@ -95,7 +95,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256, bytes};
     use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_network::TxSignerSync;
-    use base_client_node::test_utils::{Account as BaseAccount, SignerSync};
+    use base_node_runner::test_utils::{Account as BaseAccount, SignerSync};
     use revm_bytecode::eip7702::Eip7702Bytecode;
 
     use super::*;

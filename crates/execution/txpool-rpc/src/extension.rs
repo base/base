@@ -1,6 +1,6 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
-use base_client_node::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
 use crate::{
     TransactionStatusApiImpl, TransactionStatusApiServer, TxPoolManagementApiImpl,

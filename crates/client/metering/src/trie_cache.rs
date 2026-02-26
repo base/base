@@ -90,7 +90,7 @@ impl Default for PendingTrieCache {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
-    use base_client_node::test_utils::{Account, TestHarness};
+    use base_node_runner::test_utils::{Account, TestHarness};
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use revm_database::states::BundleState;

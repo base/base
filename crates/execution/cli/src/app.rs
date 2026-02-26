@@ -2,7 +2,7 @@ use std::{fmt, sync::Arc};
 
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
-use base_execution_node::{OpExecutorProvider, OpNode};
+use base_node_core::{OpExecutorProvider, OpNode};
 use eyre::{Result, eyre};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::Launcher;

@@ -12,11 +12,11 @@ use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use base_alloy_flashblocks::FlashblocksPayloadV1;
 use base_alloy_network::Base;
-use base_client_node::BaseNode;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_node::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
 use base_execution_rpc::OpEthApiBuilder;
 use base_execution_txpool::OpPooledTransaction;
+use base_node_core::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
+use base_node_runner::BaseNode;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
 use parking_lot::Mutex;
@@ -100,7 +100,7 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: base_client_node::BaseAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+        let addons: base_node_runner::BaseAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
             base_node
                 .add_ons_builder()
                 .with_da_config(da_config.clone())

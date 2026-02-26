@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use base_client_node::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_flashblocks::{FlashblocksConfig, FlashblocksState};
+use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_provider::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;

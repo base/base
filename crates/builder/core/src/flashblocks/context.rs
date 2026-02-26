@@ -12,13 +12,13 @@ use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_forks::OpHardforks;
-use base_execution_node::OpPayloadBuilderAttributes;
 use base_execution_payload_builder::{
     config::{OpDAConfig, OpGasLimitConfig},
     error::OpPayloadBuilderError,
 };
 use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use base_execution_txpool::estimated_da_size::DataAvailabilitySized;
+use base_node_core::OpPayloadBuilderAttributes;
 use base_revm::{L1BlockInfo, OpSpecId};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};

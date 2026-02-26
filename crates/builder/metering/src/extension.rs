@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_builder_core::SharedMeteringProvider;
-use base_client_node::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
 use crate::{BaseApiExtServer, MeteringStore, MeteringStoreExt};
 

@@ -7,8 +7,8 @@ pub mod cli;
 
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
-use base_client_node::BaseNodeRunner;
 use base_execution_cli::{Cli, chainspec::OpChainSpecParser};
+use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 
 type BuilderCli = Cli<OpChainSpecParser, cli::Args>;

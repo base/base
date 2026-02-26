@@ -13,7 +13,7 @@ workspace = true
 
 [features]
 test-utils = [
-	"base-client-node/test-utils",
+	"base-node-runner/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
@@ -40,7 +40,7 @@ test-utils = [
 [dependencies]
 # workspace
 base-flashblocks.workspace = true
-base-client-node.workspace = true
+base-node-runner.workspace = true
 # reth
 reth-chain-state.workspace = true
 reth-provider = { workspace = true, optional = true }
@@ -73,7 +73,7 @@ derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]
 # workspace
-base-client-node = { workspace = true, features = ["test-utils"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
 
 # reth
@@ -84,7 +84,7 @@ reth-tracing.workspace = true
 reth-primitives.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-testing-utils.workspace = true
-base-execution-node = { workspace = true, features = ["test-utils"] }
+base-node-core = { workspace = true, features = ["test-utils"] }
 reth-db.workspace = true
 
 # revm

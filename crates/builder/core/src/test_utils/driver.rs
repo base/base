@@ -8,7 +8,7 @@ use alloy_rpc_types_eth::Block;
 use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use base_alloy_network::Base;
 use base_alloy_rpc_types::Transaction;
-use base_execution_node::OpPayloadAttributes;
+use base_node_core::OpPayloadAttributes;
 
 use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
