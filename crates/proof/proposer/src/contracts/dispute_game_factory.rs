@@ -4,7 +4,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
 
 use crate::ProposerError;
@@ -71,12 +71,11 @@ pub trait DisputeGameFactoryClient: Send + Sync {
 
 /// The 4-byte selector for `GameAlreadyExists(bytes32)`.
 pub const fn game_already_exists_selector() -> [u8; 4] {
-    use alloy_sol_types::SolError;
     IDisputeGameFactory::GameAlreadyExists::SELECTOR
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
-#[allow(missing_debug_implementations)]
+#[derive(Debug)]
 pub struct DisputeGameFactoryContractClient {
     contract: IDisputeGameFactory::IDisputeGameFactoryInstance<RootProvider>,
 }

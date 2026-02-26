@@ -10,7 +10,7 @@ use alloy_rpc_types_eth::{BlockId, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use op_enclave_core::{AccountResult, executor::ExecutionWitness};
+use base_enclave::{AccountResult, executor::ExecutionWitness};
 use url::Url;
 
 use super::{

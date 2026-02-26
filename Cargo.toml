@@ -23,6 +23,7 @@ members = [
     "crates/proof/tee/core",
     "crates/proof/tee/client",
     "crates/proof/tee/server",
+    "crates/proof/proposer",
     "crates/utilities/*",
     "crates/builder/*",
     "crates/infra/*",
@@ -39,6 +40,7 @@ default-members = [
     "bin/ingress-rpc",
     "bin/audit-archiver",
     "bin/mempool-rebroadcaster",
+    "bin/proposer",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]

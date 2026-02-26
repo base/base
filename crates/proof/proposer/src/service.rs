@@ -1,18 +1,4 @@
-//! Proposer binary entry point.
-//!
-//! Implements the full service lifecycle matching Go's `ProposerService`:
-//!
-//! 1. Parse and validate configuration
-//! 2. Initialise logging and metrics
-//! 3. Create RPC clients (L1, L2, rollup, enclave)
-//! 4. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
-//! 5. Create prover, output proposer, and driver
-//! 6. Recover parent game state from onchain data
-//! 7. Start health / admin HTTP server
-//! 8. Start balance monitor (if metrics enabled)
-//! 9. Start the driver loop
-//! 10. Wait for SIGTERM or SIGINT
-//! 11. Graceful shutdown in reverse order
+//! Full proposer service lifecycle.
 
 use std::{
     net::SocketAddr,
@@ -20,152 +6,36 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use alloy_primitives::{Address, B256};
-use base_proposer::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
-    Cli, DisputeGameFactoryClient, DisputeGameFactoryContractClient, Driver, DriverConfig,
-    DriverHandle, L1Client, L1ClientConfig, L1ClientImpl, L2ClientConfig, ProposerConfig,
-    ProposerDriverControl, Prover, RollupClient, RollupClientConfig, RollupClientImpl,
-    SigningConfig, create_enclave_client, create_l2_client, create_output_proposer,
-    rollup_config_to_per_chain_config,
-};
-use clap::Parser;
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
-// ---------------------------------------------------------------------------
-// Balance monitor
-// ---------------------------------------------------------------------------
+use crate::{
+    AggregateVerifierContractClient, AnchorStateRegistryContractClient, DisputeGameFactoryClient,
+    DisputeGameFactoryContractClient, Driver, DriverConfig, DriverHandle, L1ClientConfig,
+    L1ClientImpl, L2ClientConfig, ProposerConfig, ProposerDriverControl, Prover, RollupClient,
+    RollupClientConfig, RollupClientImpl, SigningConfig, create_enclave_client, create_l2_client,
+    create_output_proposer, rollup_config_to_per_chain_config,
+};
 
-/// Balance polling interval.
-const BALANCE_POLL_INTERVAL: Duration = Duration::from_secs(30);
-
-/// Periodically polls the L1 balance of `address` and records it as a Prometheus gauge.
-async fn balance_monitor<L1: L1Client>(
-    l1_client: Arc<L1>,
-    address: Address,
-    cancel: CancellationToken,
-) {
-    loop {
-        tokio::select! {
-            () = cancel.cancelled() => break,
-            () = tokio::time::sleep(BALANCE_POLL_INTERVAL) => {
-                match l1_client.get_balance(address).await {
-                    Ok(balance) => {
-                        // U256 -> f64 conversion: safe enough for gauge display.
-                        let balance_f64: f64 = balance.to_string().parse().unwrap_or(f64::MAX);
-                        metrics::gauge!(base_proposer::ACCOUNT_BALANCE_WEI).set(balance_f64);
-                    }
-                    Err(e) => {
-                        debug!(error = %e, "Failed to fetch account balance");
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Signal handling
-// ---------------------------------------------------------------------------
-
-/// Installs SIGTERM + SIGINT handlers that cancel the given token.
-fn setup_signal_handler(cancel: CancellationToken) {
-    tokio::spawn(async move {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-            tokio::select! {
-                result = tokio::signal::ctrl_c() => {
-                    result.expect("failed to listen for SIGINT");
-                    info!("Received SIGINT");
-                }
-                _ = sigterm.recv() => {
-                    info!("Received SIGTERM");
-                }
-            }
-        }
-
-        #[cfg(not(unix))]
-        {
-            tokio::signal::ctrl_c().await.expect("failed to listen for SIGINT");
-            info!("Received SIGINT");
-        }
-
-        cancel.cancel();
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Parent game state recovery
-// ---------------------------------------------------------------------------
-
-/// Recovers parent game state from onchain data on startup.
+/// Runs the full proposer service lifecycle.
 ///
-/// Walks backwards through the `DisputeGameFactory` to find the most recent
-/// game of the correct `game_type`. Returns `(game_index, output_root, l2_block_number)`
-/// if found, or `None` if no matching game exists.
-async fn recover_parent_game_state_standalone(
-    factory: &DisputeGameFactoryContractClient,
-    verifier: &AggregateVerifierContractClient,
-    game_type: u32,
-) -> Result<Option<(u32, alloy_primitives::B256, u64)>> {
-    let count = factory.game_count().await?;
-    if count == 0 {
-        info!("No existing games found, will start from anchor registry");
-        return Ok(None);
-    }
-
-    let search_count = count.min(base_proposer::MAX_GAME_RECOVERY_LOOKBACK);
-
-    for i in 0..search_count {
-        let game_index = count - 1 - i;
-        let game = factory.game_at_index(game_index).await?;
-
-        if game.game_type != game_type {
-            continue;
-        }
-
-        let game_info = verifier.game_info(game.proxy).await?;
-
-        let idx: u32 = game_index
-            .try_into()
-            .map_err(|_| eyre::eyre!("game index {game_index} exceeds u32"))?;
-
-        info!(
-            game_index,
-            game_proxy = %game.proxy,
-            output_root = ?game_info.root_claim,
-            l2_block_number = game_info.l2_block_number,
-            "Recovered parent game state from onchain"
-        );
-        return Ok(Some((idx, game_info.root_claim, game_info.l2_block_number)));
-    }
-
-    info!(
-        game_type,
-        searched = search_count,
-        "No games found for our game type in recent history, will start from anchor registry"
-    );
-    Ok(None)
-}
-
-// ---------------------------------------------------------------------------
-// Service lifecycle
-// ---------------------------------------------------------------------------
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // ── 1. Parse CLI and validate configuration ──────────────────────────
-    let cli = Cli::parse();
-    let config = ProposerConfig::from_cli(cli)?;
+/// Steps:
+/// 1. Initialise logging, TLS, and metrics
+/// 2. Create RPC clients (L1, L2, rollup, enclave)
+/// 3. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
+/// 4. Create prover, output proposer, and driver
+/// 5. Recover parent game state from onchain data
+/// 6. Start health / admin HTTP server
+/// 7. Start balance monitor (if metrics enabled)
+/// 8. Start the driver loop
+/// 9. Wait for SIGTERM or SIGINT
+/// 10. Graceful shutdown in reverse order
+pub async fn run(config: ProposerConfig) -> Result<()> {
     config.log.init_tracing_subscriber()?;
 
     // Install the default rustls CryptoProvider before any TLS connections are created.
@@ -174,11 +44,11 @@ async fn main() -> Result<()> {
 
     info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
 
-    // ── 2. Global cancellation token and signal handler ──────────────────
+    // ── 1. Global cancellation token and signal handler ──────────────────
     let cancel = CancellationToken::new();
-    setup_signal_handler(cancel.clone());
+    crate::setup_signal_handler(cancel.clone());
 
-    // ── 3. Metrics recorder and HTTP server (if enabled) ─────────────────
+    // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
     if config.metrics.enabled {
         let addr = SocketAddr::new(config.metrics.addr, config.metrics.port);
         metrics_exporter_prometheus::PrometheusBuilder::new()
@@ -189,9 +59,9 @@ async fn main() -> Result<()> {
     }
 
     // Record startup metrics (no-ops if no recorder installed).
-    base_proposer::record_startup_metrics(env!("CARGO_PKG_VERSION"));
+    crate::record_startup_metrics(env!("CARGO_PKG_VERSION"));
 
-    // ── 4. Create RPC clients ────────────────────────────────────────────
+    // ── 3. Create RPC clients ────────────────────────────────────────────
     let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
@@ -226,7 +96,7 @@ async fn main() -> Result<()> {
         create_enclave_client(config.enclave_rpc.as_str(), config.skip_tls_verify)?;
     info!(endpoint = %config.enclave_rpc, "Enclave client initialized");
 
-    // ── 5. Create contract clients and read onchain config ──────────────
+    // ── 4. Create contract clients and read onchain config ──────────────
     let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
         config.anchor_state_registry_addr,
         config.l1_eth_rpc.clone(),
@@ -276,7 +146,7 @@ async fn main() -> Result<()> {
     // Wrap in Arc for shared ownership.
     let factory_client = Arc::new(factory_client);
 
-    // ── 6. Create prover and output proposer ─────────────────────────────
+    // ── 5. Create prover and output proposer ─────────────────────────────
     let proposer_address = match &config.signing {
         SigningConfig::Local { signer } => signer.address(),
         SigningConfig::Remote { address, .. } => *address,
@@ -303,25 +173,26 @@ async fn main() -> Result<()> {
     )?;
     info!("Output proposer initialized");
 
-    // ── 7. Recover parent game state before creating driver ─────────────
+    // ── 6. Recover parent game state before creating driver ─────────────
     // Recovery needs direct access to the factory client before it's moved
     // into the driver. We store the recovered state and set it after driver creation.
-    let recovered_state: Option<(u32, B256, u64)> = match recover_parent_game_state_standalone(
-        &factory_client,
-        &verifier_client,
-        config.game_type,
-    )
-    .await
-    {
-        Ok(Some(state)) => Some(state),
-        Ok(None) => None,
-        Err(e) => {
-            warn!(error = %e, "Failed to recover parent game state, will start from anchor");
-            None
-        }
-    };
+    let recovered_state: Option<(u32, B256, u64)> =
+        match crate::recover_parent_game_state_standalone(
+            &factory_client,
+            &verifier_client,
+            config.game_type,
+        )
+        .await
+        {
+            Ok(Some(state)) => Some(state),
+            Ok(None) => None,
+            Err(e) => {
+                warn!(error = %e, "Failed to recover parent game state, will start from anchor");
+                None
+            }
+        };
 
-    // ── 8. Create driver + lifecycle handle ───────────────────────────────
+    // ── 7. Create driver + lifecycle handle ───────────────────────────────
     let driver_config = DriverConfig {
         poll_interval: config.poll_interval,
         block_interval,
@@ -362,15 +233,18 @@ async fn main() -> Result<()> {
         let addr = SocketAddr::new(config.rpc.addr, config.rpc.port);
         let ready_flag = Arc::clone(&ready);
         let health_cancel = cancel.clone();
-        tokio::spawn(async move {
-            base_proposer::serve(addr, ready_flag, admin_driver, health_cancel).await
-        })
+        tokio::spawn(
+            async move { crate::serve(addr, ready_flag, admin_driver, health_cancel).await },
+        )
     };
 
     // ── 9. Start balance monitor (if metrics enabled) ────────────────────
     let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled {
-        let handle =
-            tokio::spawn(balance_monitor(Arc::clone(&l1_client), proposer_address, cancel.clone()));
+        let handle = tokio::spawn(crate::balance_monitor(
+            Arc::clone(&l1_client),
+            proposer_address,
+            cancel.clone(),
+        ));
         info!(%proposer_address, "Balance monitor started");
         Some(handle)
     } else {

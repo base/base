@@ -71,13 +71,13 @@ async fn readiness(State(state): State<ServerState>) -> StatusCode {
 #[derive(Deserialize)]
 struct JsonRpcRequest {
     /// Must be "2.0".
-    #[allow(dead_code)]
-    jsonrpc: String,
+    #[serde(rename = "jsonrpc")]
+    _jsonrpc: String,
     /// Method name.
     method: String,
     /// Unused — admin methods take no parameters.
-    #[allow(dead_code)]
-    params: Option<serde_json::Value>,
+    #[serde(rename = "params")]
+    _params: Option<serde_json::Value>,
     /// Caller-chosen request id.
     id: serde_json::Value,
 }
