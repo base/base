@@ -3,8 +3,11 @@
 use alloc::{vec, vec::Vec};
 use core::ops;
 
-use alloc_no_stdlib::*;
-use brotli::*;
+use alloc_no_stdlib::{
+    declare_stack_allocator_struct, define_stack_allocator_traits, static_array, AllocatedStackMemory,
+    Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, bzero,
+};
+use brotli::{BrotliState, HuffmanCode};
 
 use crate::MAX_SPAN_BATCH_ELEMENTS;
 

@@ -233,7 +233,7 @@ mod tests {
     use kona_genesis::{RollupConfig, SystemConfig};
 
     use super::*;
-    use crate::{DerivationPipeline, test_utils::*};
+    use crate::{DerivationPipeline, test_utils::{new_test_pipeline, TestL2ChainProvider, TestNextAttributes}};
 
     fn default_test_payload_attributes() -> OpAttributesWithParent {
         OpAttributesWithParent {
