@@ -2,7 +2,7 @@
 
 use alloy_provider::ProviderBuilder;
 use audit_archiver_lib::{
-    BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher, load_kafka_config_from_file,
+    AuditConnector, BundleEvent, KafkaBundleEventPublisher, load_kafka_config_from_file,
 };
 use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
 
     let audit_publisher = KafkaBundleEventPublisher::new(audit_producer, config.audit_topic);
     let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
-    connect_audit_to_publisher(audit_rx, audit_publisher);
+    AuditConnector::connect(audit_rx, audit_publisher);
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
