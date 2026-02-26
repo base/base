@@ -212,6 +212,7 @@ kona-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = f
 base-enclave = { path = "crates/proof/tee/core" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-enclave-server = { path = "crates/proof/tee/server" }
+base-proposer = { path = "crates/proof/proposer" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
