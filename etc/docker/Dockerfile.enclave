@@ -67,7 +67,7 @@ RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./crates
 
 
 # Stage 5: EIF - Build EIF using aws-nitro-enclaves-image-format
-FROM rust:1.93 AS eif
+FROM rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS eif
 
 # Set reproducible build timestamp
 ENV SOURCE_DATE_EPOCH=0
@@ -102,7 +102,7 @@ RUN ./target/release/eif_build \
 
 # Stage 6: Final - Minimal container for artifact extraction via `docker cp`.
 # Nothing here runs directly; the enclave binary executes inside the Nitro Enclave ramdisk.
-FROM busybox
+FROM busybox@sha256:70ce0a747f09cd7c09c2d6eaeab69d60adb0398f569296e8c0e844599388ebd6
 
 WORKDIR /build
 
