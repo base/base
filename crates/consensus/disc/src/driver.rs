@@ -476,7 +476,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_online_discv5_driver_bootstrap_mainnet() {
-        kona_cli::init_test_tracing();
+        base_cli_utils::init_test_tracing();
 
         // Use a test file to make sure bootstore
         // doesn't conflict with a local bootstore.

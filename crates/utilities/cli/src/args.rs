@@ -29,12 +29,12 @@ pub struct LogArgs {
     pub level: u8,
 
     /// Suppress stdout logging.
-    #[arg(long = "quiet", short = 'q', global = true)]
+    #[arg(long = "logs.stdout.quiet", short = 'q', global = true)]
     pub stdout_quiet: bool,
 
     /// Stdout log format.
     #[arg(
-        long = "log-format",
+        long = "logs.stdout.format",
         default_value = "full",
         env = "BASE_NODE_LOG_FORMAT",
         global = true
@@ -42,15 +42,15 @@ pub struct LogArgs {
     pub stdout_format: LogFormat,
 
     /// Directory for file logging (enables file logging when set).
-    #[arg(long = "log-dir", env = "BASE_NODE_LOG_DIR", global = true)]
+    #[arg(long = "logs.file.directory", env = "BASE_NODE_LOG_DIR", global = true)]
     pub file_directory: Option<PathBuf>,
 
     /// File log format.
-    #[arg(long = "log-file-format", default_value = "json", global = true)]
+    #[arg(long = "logs.file.format", default_value = "json", global = true)]
     pub file_format: LogFormat,
 
     /// File log rotation strategy.
-    #[arg(long = "log-rotation", default_value = "never", global = true)]
+    #[arg(long = "logs.file.rotation", default_value = "never", global = true)]
     pub file_rotation: LogRotation,
 }
 
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn quiet_mode_long_flag() {
-        assert!(parse_log_args(&["--quiet"]).stdout_quiet);
+        assert!(parse_log_args(&["--logs.stdout.quiet"]).stdout_quiet);
     }
 
     #[rstest]
@@ -167,7 +167,7 @@ mod tests {
     #[case::pretty("pretty", LogFormat::Pretty)]
     #[case::logfmt("logfmt", LogFormat::Logfmt)]
     fn stdout_format_parsing(#[case] format_str: &str, #[case] expected: LogFormat) {
-        assert_eq!(parse_log_args(&["--log-format", format_str]).stdout_format, expected);
+        assert_eq!(parse_log_args(&["--logs.stdout.format", format_str]).stdout_format, expected);
     }
 
     #[test]
@@ -266,22 +266,22 @@ mod tests {
                 "verbose should use BASE_NODE_LOG_LEVEL env var"
             );
 
-            // Find the log-format arg and check its env var
-            let format_arg = args.iter().find(|a| a.get_long() == Some("log-format"));
-            assert!(format_arg.is_some(), "log-format arg should exist");
+            // Find the logs.stdout.format arg and check its env var
+            let format_arg = args.iter().find(|a| a.get_long() == Some("logs.stdout.format"));
+            assert!(format_arg.is_some(), "logs.stdout.format arg should exist");
             assert_eq!(
                 format_arg.unwrap().get_env().map(|s| s.to_str().unwrap()),
                 Some("BASE_NODE_LOG_FORMAT"),
-                "log-format should use BASE_NODE_LOG_FORMAT env var"
+                "logs.stdout.format should use BASE_NODE_LOG_FORMAT env var"
             );
 
-            // Find the log-dir arg and check its env var
-            let dir_arg = args.iter().find(|a| a.get_long() == Some("log-dir"));
-            assert!(dir_arg.is_some(), "log-dir arg should exist");
+            // Find the logs.file.directory arg and check its env var
+            let dir_arg = args.iter().find(|a| a.get_long() == Some("logs.file.directory"));
+            assert!(dir_arg.is_some(), "logs.file.directory arg should exist");
             assert_eq!(
                 dir_arg.unwrap().get_env().map(|s| s.to_str().unwrap()),
                 Some("BASE_NODE_LOG_DIR"),
-                "log-dir should use BASE_NODE_LOG_DIR env var"
+                "logs.file.directory should use BASE_NODE_LOG_DIR env var"
             );
         }
     }
