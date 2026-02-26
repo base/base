@@ -652,7 +652,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
- "arbitrary",
  "derive_more",
  "ethereum_ssz",
  "ethereum_ssz_derive",
