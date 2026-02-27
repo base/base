@@ -3,7 +3,6 @@ use std::io::Write;
 use anyhow::Result;
 use base_alloy_flashblocks::Flashblock;
 use tokio::sync::mpsc;
-use tracing::warn;
 
 use super::{App, Resources, ViewId, views::create_view};
 use crate::{
