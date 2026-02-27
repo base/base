@@ -1,15 +1,23 @@
-# Multi-stage Dockerfile for building Rust enclave EIF
-# Mirrors the Go setup in op-enclave/Dockerfile
+# Multi-stage Dockerfile for building Rust base-enclave EIF
 
 # Stage 1: Bootstrap - AWS Nitro SDK bootstrap image for kernel + NSM
 FROM ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc1920208e93d222533a36f9f5dc85615591cbfe56a03312b0 AS bootstrap
 
-
-# Stage 2: Builder - Alpine-based Rust image with musl toolchain
-FROM rust:1.88-alpine AS builder
+# Stage 2: Chef base image - Alpine provides musl libc, which produces fully static
+# binaries required for the Nitro Enclave ramdisk (no libc available at runtime).
+FROM lukemathwalker/cargo-chef:latest-rust-1.93-alpine3.21@sha256:7d9f8f8e78087879b8988fd4e55d477a2b7f949d45a1e52903d466df99ae8c66 AS chef
+WORKDIR /app
 
 # Set reproducible build timestamp
 ENV SOURCE_DATE_EPOCH=0
+
+# Set musl static linking flags
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes"
+
+# Set OpenSSL static linking environment variables
+ENV OPENSSL_STATIC=1
+ENV OPENSSL_LIB_DIR=/usr/lib
+ENV OPENSSL_INCLUDE_DIR=/usr/include
 
 # Install build dependencies for musl static builds
 RUN apk add --no-cache \
@@ -20,68 +28,46 @@ RUN apk add --no-cache \
     perl \
     make \
     clang \
-    git \
-    go
+    git
 
-# Set OpenSSL static linking environment variables
-ENV OPENSSL_STATIC=1
-ENV OPENSSL_LIB_DIR=/usr/lib
-ENV OPENSSL_INCLUDE_DIR=/usr/include
+# Stage 3: Planner - analyze dependencies
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Install linuxkit at the specific commit
+# Stage 4: Builder - cook dependencies, then build
+FROM chef AS builder
+
+# Install go + linuxkit (only needed here for ramdisk assembly)
+RUN apk add --no-cache go
 RUN go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@270fd1c5aa1986977b31af6c743c6a2681f67a29
 ENV PATH="${PATH}:/root/go/bin"
 
-WORKDIR /build
+# Copy ONLY the recipe (dependency metadata)
+COPY --from=planner /app/recipe.json recipe.json
 
-# Add musl target
-RUN rustup target add x86_64-unknown-linux-musl
+# Build dependencies - THIS LAYER IS CACHED until Cargo.toml/Cargo.lock change
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --release --target x86_64-unknown-linux-musl --package base-prover --recipe-path recipe.json
 
-# Copy Cargo files first for dependency caching
-COPY Cargo.toml Cargo.lock ./
-COPY .cargo .cargo/
-COPY core/Cargo.toml core/
-COPY server/Cargo.toml server/
-COPY client/Cargo.toml client/
-
-# Create dummy source files for dependency compilation
-RUN mkdir -p core/src server/src client/src && \
-    echo "pub fn dummy() {}" > core/src/lib.rs && \
-    mkdir -p server/src/bin && \
-    echo "fn main() {}" > server/src/lib.rs && \
-    echo "fn main() {}" > server/src/bin/enclave.rs && \
-    echo "fn main() {}" > client/src/lib.rs
-
-# Build dependencies (cached layer)
-RUN cargo build --release --target x86_64-unknown-linux-musl --package base-enclave-server --bin enclave || true
-
-# Copy actual source code
-COPY core core/
-COPY server server/
-COPY client client/
-
-# Touch source files to invalidate cache
-RUN touch core/src/lib.rs server/src/lib.rs
-
-# Build the enclave binary with musl target
-RUN cargo build --release --target x86_64-unknown-linux-musl --package base-enclave-server --bin enclave
+# Now copy source and build (only your code compiles here)
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin prover
 
 # Strip debug symbols for smaller binary
-RUN strip target/x86_64-unknown-linux-musl/release/enclave
+RUN strip target/x86_64-unknown-linux-musl/release/prover
 
 # Copy EIF configuration and build ramdisks
-COPY eif eif/
 COPY --from=bootstrap /build/out bootstrap
-
-# Build init ramdisk (init-ramdisk.yaml copied from Go setup)
-RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./eif/init-ramdisk.yaml
-
-# Build user ramdisk with Rust binary
-RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./eif/user-ramdisk-rust.yaml
+RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./crates/proof/tee/eif/init-ramdisk.yaml
+RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./crates/proof/tee/eif/user-ramdisk-rust.yaml
 
 
-# Stage 3: EIF - Build EIF using aws-nitro-enclaves-image-format
-FROM rust:1.88 AS eif
+# Stage 5: EIF - Build EIF using aws-nitro-enclaves-image-format
+FROM rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS eif
 
 # Set reproducible build timestamp
 ENV SOURCE_DATE_EPOCH=0
@@ -98,11 +84,11 @@ RUN git init && \
 
 RUN cargo build --all --release
 
-# Copy cmdline (copied from Go setup)
-COPY eif/cmdline-x86_64 cmdline
+# Copy cmdline and build artifacts
+COPY crates/proof/tee/eif/cmdline-x86_64 cmdline
 COPY --from=bootstrap /build/out bootstrap
-COPY --from=builder /build/init-ramdisk-initrd.img .
-COPY --from=builder /build/user-ramdisk-initrd.img .
+COPY --from=builder /app/init-ramdisk-initrd.img .
+COPY --from=builder /app/user-ramdisk-initrd.img .
 
 # Build the EIF
 RUN ./target/release/eif_build \
@@ -114,10 +100,11 @@ RUN ./target/release/eif_build \
     --output eif.bin
 
 
-# Stage 4: Final - Extract EIF to minimal container
-FROM busybox
+# Stage 6: Final - Minimal container for artifact extraction via `docker cp`.
+# Nothing here runs directly; the enclave binary executes inside the Nitro Enclave ramdisk.
+FROM busybox@sha256:70ce0a747f09cd7c09c2d6eaeab69d60adb0398f569296e8c0e844599388ebd6
 
 WORKDIR /build
 
 COPY --from=eif /build/eif.bin .
-COPY --from=builder /build/target/x86_64-unknown-linux-musl/release/enclave .
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/prover .
