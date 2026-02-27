@@ -34,18 +34,9 @@ dirs-next.workspace = true
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["full"] }
 
-# `secrets` feature
-alloy-primitives = { workspace = true, optional = true }
-thiserror = { workspace = true, features = ["std"], optional = true }
-libp2p = { workspace = true, features = ["secp256k1"], optional = true }
-
 [dev-dependencies]
 rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
-
-[features]
-default = []
-secrets = ["dep:alloy-primitives", "dep:thiserror", "dep:libp2p"]

@@ -42,3 +42,6 @@ pub use utils::{
 
 mod monitoring;
 pub use monitoring::PeerMonitoring;
+
+mod secrets;
+pub use secrets::{KeypairError, ParseKeyError, SecretKeyLoader};
