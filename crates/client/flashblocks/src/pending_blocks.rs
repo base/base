@@ -11,13 +11,20 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
+use base_alloy_consensus::OpTxType;
+use base_alloy_evm::OpTxResult;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use base_revm::OpHaltReason;
+use reth_evm::eth::EthTxResult;
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use revm::state::EvmState;
+use revm::{
+    context::result::ExecResultAndState, context_interface::result::ExecutionResult,
+    state::EvmState,
+};
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
 
@@ -35,6 +42,7 @@ pub struct PendingBlocksBuilder {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
+    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
 
     bundle_state: BundleState,
 }
@@ -58,6 +66,7 @@ impl PendingBlocksBuilder {
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
+            transaction_results: HashMap::new(),
             state_overrides: None,
             bundle_state: BundleState::default(),
         }
@@ -129,6 +138,16 @@ impl PendingBlocksBuilder {
         self
     }
 
+    #[inline]
+    pub(crate) fn with_transaction_result(
+        &mut self,
+        hash: B256,
+        result: ExecutionResult<OpHaltReason>,
+    ) -> &Self {
+        self.transaction_results.insert(hash, result);
+        self
+    }
+
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
@@ -151,6 +170,7 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
+            transaction_results: self.transaction_results,
         })
     }
 }
@@ -171,6 +191,7 @@ pub struct PendingBlocks {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
+    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
 
     bundle_state: BundleState,
 }
@@ -244,12 +265,11 @@ impl PendingBlocks {
     }
 
     /// Returns all transactions for a specific block number.
-    pub fn get_transactions_for_block(&self, block_number: BlockNumber) -> Vec<Transaction> {
-        self.transactions
-            .iter()
-            .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
-            .cloned()
-            .collect()
+    pub fn get_transactions_for_block(
+        &self,
+        block_number: BlockNumber,
+    ) -> impl Iterator<Item = &Transaction> {
+        self.transactions.iter().filter(move |tx| tx.block_number.unwrap_or(0) == block_number)
     }
 
     /// Returns all withdrawals collected from flashblocks.
@@ -261,7 +281,8 @@ impl PendingBlocks {
     pub fn get_latest_block(&self, full: bool) -> RpcBlock<Base> {
         let header = self.latest_header();
         let block_number = header.number;
-        let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
+        let block_transactions: Vec<Transaction> =
+            self.get_transactions_for_block(block_number).cloned().collect();
 
         let transactions = if full {
             BlockTransactions::Full(block_transactions)
@@ -279,13 +300,43 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt for a transaction.
-    pub fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
-        self.transaction_receipts.get(&tx_hash).cloned()
+    pub fn get_receipt(&self, tx_hash: TxHash) -> Option<&OpTransactionReceipt> {
+        self.transaction_receipts.get(&tx_hash)
+    }
+
+    /// Returns the execution result for a transaction.
+    pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<&ExecutionResult<OpHaltReason>> {
+        self.transaction_results.get(tx_hash)
+    }
+
+    /// Returns the receipt and state for a transaction.
+    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+        let (((result, state), tx), sender) = self
+            .get_transaction_result(tx_hash)
+            .zip(self.get_transaction_state(tx_hash))
+            .zip(self.get_transaction_by_hash(*tx_hash))
+            .zip(self.get_transaction_sender(tx_hash))?;
+
+        let eth_tx_result = EthTxResult {
+            result: ExecResultAndState::new(result.clone(), state),
+            blob_gas_used: 0,
+            tx_type: tx.inner.inner.tx_type(),
+        };
+
+        let op_tx_result =
+            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+
+        Some(op_tx_result)
     }
 
     /// Returns a transaction by its hash.
-    pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<Transaction> {
-        self.transactions_by_hash.get(&tx_hash).cloned()
+    pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<&Transaction> {
+        self.transactions_by_hash.get(&tx_hash)
+    }
+
+    /// Returns true if the transaction hash is in the pending blocks.
+    pub fn has_transaction_hash(&self, tx_hash: &B256) -> bool {
+        self.transactions_by_hash.contains_key(tx_hash)
     }
 
     /// Returns the transaction count for an address in pending state.
@@ -430,14 +481,14 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         &self,
         tx_hash: alloy_primitives::TxHash,
     ) -> Option<RpcReceipt<Base>> {
-        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
+        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash).cloned())
     }
 
     fn get_transaction_by_hash(
         &self,
         tx_hash: alloy_primitives::TxHash,
     ) -> Option<RpcTransaction<Base>> {
-        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash).cloned())
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {

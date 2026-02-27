@@ -136,7 +136,7 @@ where
 
         // Check for reorg by comparing transaction sets
         let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
-        let tracked_txn_hashes: Vec<_> = tracked_txns.iter().map(|tx| tx.tx_hash()).collect();
+        let tracked_txn_hashes: Vec<_> = tracked_txns.map(|tx| tx.tx_hash()).collect();
         let block_txn_hashes: Vec<_> = block.body().transactions().map(|tx| tx.tx_hash()).collect();
 
         let reorg_result = ReorgDetector::detect(&tracked_txn_hashes, &block_txn_hashes);
@@ -396,6 +396,8 @@ where
                 pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
                 pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
                 pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
+                pending_blocks_builder
+                    .with_transaction_result(tx_hash, executed_transaction.result);
             }
 
             (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();

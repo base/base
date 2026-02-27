@@ -12,10 +12,14 @@ use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_execution_forks::OpHardforks;
 use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
-use base_revm::L1BlockInfo;
+use base_revm::{L1BlockInfo, OpHaltReason};
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use revm::{Database, DatabaseCommit, context::result::ResultAndState, state::EvmState};
+use revm::{
+    Database, DatabaseCommit,
+    context::result::{ExecutionResult, ResultAndState},
+    state::EvmState,
+};
 
 use crate::{ExecutionError, PendingBlocks, StateProcessorError, UnifiedReceiptBuilder};
 
@@ -28,6 +32,8 @@ pub struct ExecutedPendingTransaction {
     pub receipt: OpTransactionReceipt,
     /// The updated EVM state.
     pub state: EvmState,
+    /// The execution result of the transaction.
+    pub result: ExecutionResult<OpHaltReason>,
 }
 
 /// Executes or fetches cached values for transactions in a flashblock.
@@ -47,7 +53,7 @@ pub struct PendingStateBuilder<E, ChainSpec> {
 
 impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
 where
-    E: Evm<DB = DB>,
+    E: Evm<DB = DB, HaltReason = OpHaltReason>,
     DB: Database + DatabaseCommit,
     E::Tx: FromRecoveredTx<OpTxEnvelope>,
     ChainSpec: OpHardforks,
@@ -103,13 +109,21 @@ where
         let cached_data = self.prev_pending_blocks.as_ref().and_then(|p| {
             let receipt = p.get_receipt(tx_hash)?;
             let state = p.get_transaction_state(&tx_hash)?;
-            Some((receipt, state))
+            let result = p.get_transaction_result(&tx_hash)?;
+            Some((receipt, state, result))
         });
 
         // If cached, we can fill out pending block data using previous execution results
         // If not cached, we need to execute the transaction and build pending block data from scratch
-        if let Some((receipt, state)) = cached_data {
-            self.execute_with_cached_data(transaction, receipt, state, idx, effective_gas_price)
+        if let Some((receipt, state, result)) = cached_data {
+            self.execute_with_cached_data(
+                transaction,
+                receipt.clone(),
+                state,
+                result.clone(),
+                idx,
+                effective_gas_price,
+            )
         } else {
             self.execute_with_evm(transaction, idx, effective_gas_price)
         }
@@ -121,6 +135,7 @@ where
         transaction: Recovered<OpTxEnvelope>,
         receipt: OpTransactionReceipt,
         state: EvmState,
+        result: ExecutionResult<OpHaltReason>,
         idx: usize,
         effective_gas_price: u128,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
@@ -152,7 +167,7 @@ where
             .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
-        Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state })
+        Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state, result })
     }
 
     /// Executes the transaction through the EVM and builds the result from scratch.
@@ -193,7 +208,7 @@ where
                 let receipt = self.receipt_builder.build(
                     &mut self.evm,
                     &transaction,
-                    result,
+                    &result,
                     self.cumulative_gas_used,
                     self.pending_block.timestamp,
                 )?;
@@ -250,7 +265,12 @@ where
                 };
                 self.evm.db_mut().commit(state.clone());
 
-                Ok(ExecutedPendingTransaction { rpc_transaction, receipt: op_receipt, state })
+                Ok(ExecutedPendingTransaction {
+                    rpc_transaction,
+                    receipt: op_receipt,
+                    state,
+                    result,
+                })
             }
             Err(e) => Err(ExecutionError::TransactionFailed {
                 tx_hash,
