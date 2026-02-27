@@ -20,9 +20,7 @@ use tracing::info;
 
 use crate::{OpNode, args::RollupArgs};
 
-/// - no proofs history (plain node),
-/// - in-mem proofs storage,
-/// - MDBX proofs storage.
+/// Launches a node optionally configured with on-disk MDBX proofs history.
 pub async fn launch_node_with_proof_history(
     builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
     args: RollupArgs,
@@ -42,7 +40,7 @@ pub async fn launch_node_with_proof_history(
         let path = args
             .proofs_history_storage_path
             .clone()
-            .expect("Path must be provided if not using in-memory storage");
+            .expect("--proofs-history.storage-path is required when --proofs-history is enabled");
         info!(target: "reth::cli", "Using on-disk storage for proofs history");
 
         let mdbx = Arc::new(

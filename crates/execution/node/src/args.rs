@@ -46,6 +46,7 @@ pub struct RollupArgs {
     #[arg(
         long = "proofs-history",
         value_name = "PROOFS_HISTORY",
+        requires = "proofs_history_storage_path",
         default_value_ifs([
             ("proofs-history.storage-path", ArgPredicate::IsPresent, "true")
         ])
