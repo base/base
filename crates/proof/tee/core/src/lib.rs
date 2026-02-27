@@ -24,7 +24,7 @@ pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderE
 // Re-export executor types
 pub use executor::{
     DEPOSIT_EVENT_TOPIC, EnclaveTrieDB, ExecutionResult, ExecutionWitness, L1_ATTRIBUTES_DEPOSITOR,
-    L1_ATTRIBUTES_PREDEPLOYED, L2_TO_L1_MESSAGE_PASSER, MAX_SEQUENCER_DRIFT_FJORD,
+    L1_ATTRIBUTES_PREDEPLOYED, L2_TO_L1_MESSAGE_PASSER, MAX_SEQUENCER_DRIFT_FJORD, Oracle,
     TransformedWitness, execute_stateless, extract_deposits_from_receipts, l2_block_to_block_info,
     transform_witness, validate_not_deposit, validate_sequencer_drift,
 };

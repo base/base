@@ -24,19 +24,23 @@ base-alloy-evm.workspace = true
 base-alloy-consensus = { workspace = true, features = ["serde"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
-# proof
+# Proof
+base-proof.workspace = true
 base-proof-mpt.workspace = true
+base-proof-driver.workspace = true
 base-proof-executor.workspace = true
+base-proof-preimage.workspace = true
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Consensus
 base-protocol = { workspace = true, features = ["serde"] }
 
-# Serialization
+# Misc
 hex = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 hex-literal.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
