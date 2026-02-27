@@ -3084,7 +3084,6 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "spin 0.9.8",
  "thiserror 2.0.18",
  "tracing",
 ]

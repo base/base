@@ -52,6 +52,12 @@ impl BlockDeriver {
             .map_err(|e| {
                 ExecutorError::DerivationFailed(format!("failed to get output root preimage: {e}"))
             })?;
+        if output_preimage.len() < 128 {
+            return Err(ExecutorError::DerivationFailed(format!(
+                "output root preimage too short: expected 128 bytes, got {}",
+                output_preimage.len()
+            )));
+        }
         let l2_head_hash = B256::from_slice(&output_preimage[96..128]);
 
         // Create providers backed by the oracle.

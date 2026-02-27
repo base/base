@@ -44,7 +44,6 @@ serde_json.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-spin.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
