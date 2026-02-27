@@ -101,6 +101,8 @@ alloy-network.workspace = true
 base-alloy-hardforks.workspace = true
 base-alloy-network.workspace = true
 futures.workspace = true
+alloy-eips.workspace = true
+base-test-utils.workspace = true
 
 [features]
 default = [ "reth-codec" ]

@@ -3538,6 +3538,7 @@ dependencies = [
  "base-execution-primitives",
  "base-revm",
  "c-kzg",
+ "chrono",
  "derive_more",
  "parking_lot",
  "reth-chainspec",
@@ -3729,6 +3730,7 @@ name = "base-node-core"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
@@ -3751,6 +3753,7 @@ dependencies = [
  "base-execution-txpool",
  "base-node-core",
  "base-revm",
+ "base-test-utils",
  "clap",
  "eyre",
  "futures",

@@ -11,7 +11,7 @@ mod validator;
 pub use validator::{OpL1BlockInfo, OpTransactionValidator};
 
 mod transaction;
-pub use transaction::{OpPooledTransaction, OpPooledTx};
+pub use transaction::{OpPooledTransaction, OpPooledTx, TimestampedTransaction};
 
 pub mod estimated_da_size;
 

@@ -2,7 +2,6 @@ use core::fmt::Debug;
 use std::{
     borrow::Cow,
     sync::{Arc, OnceLock},
-    time::Instant,
 };
 
 use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
@@ -40,8 +39,8 @@ pub struct OpPooledTransaction<
     _pd: core::marker::PhantomData<Pooled>,
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
-    /// Timestamp when this transaction was created/received.
-    timestamp: Instant,
+    /// Timestamp (millis since Unix epoch) when this transaction was received.
+    received_at: i64,
 }
 
 impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
@@ -52,7 +51,7 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
             estimated_tx_compressed_size: Default::default(),
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
-            timestamp: Instant::now(),
+            received_at: chrono::Utc::now().timestamp_millis(),
         }
     }
 
@@ -71,9 +70,9 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
     }
 
-    /// Returns the timestamp when this transaction was created/received.
-    pub const fn timestamp(&self) -> Instant {
-        self.timestamp
+    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
+    pub const fn received_at(&self) -> i64 {
+        self.received_at
     }
 }
 
@@ -265,6 +264,22 @@ where
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
+    }
+}
+
+/// Trait for transactions that expose their timestamp.
+pub trait TimestampedTransaction {
+    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
+    fn timestamp(&self) -> i64;
+}
+
+impl<Cons, Pooled> TimestampedTransaction for OpPooledTransaction<Cons, Pooled>
+where
+    Cons: SignedTransaction,
+    Pooled: Send + Sync + 'static,
+{
+    fn timestamp(&self) -> i64 {
+        self.received_at()
     }
 }
 
