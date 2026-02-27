@@ -8,7 +8,6 @@ use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
-use base_consensus_cli::OverrideArgs;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
 use base_consensus_registry::Registry;
 use clap::Parser;
@@ -84,9 +83,6 @@ pub struct Cli {
     /// SEQUENCER CLI arguments.
     #[command(flatten)]
     pub sequencer_flags: SequencerArgs,
-    /// Hardfork override arguments.
-    #[command(flatten)]
-    pub overrides: OverrideArgs,
 }
 
 impl Cli {
@@ -119,9 +115,7 @@ impl Cli {
 
     /// Run the Node subcommand.
     pub async fn exec(&self) -> eyre::Result<()> {
-        let cfg = self
-            .overrides
-            .apply(self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?);
+        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
 
         info!(
             target: "rollup_node",

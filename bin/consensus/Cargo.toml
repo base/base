@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 # workspace
-base-consensus-cli.workspace = true
 base-cli-utils.workspace = true
 base-client-cli.workspace = true
 

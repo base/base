@@ -26,7 +26,6 @@ base-consensus-genesis.workspace = true
 base-consensus-registry.workspace = true
 base-consensus-node.workspace = true
 base-consensus-providers.workspace = true
-base-consensus-cli = { workspace = true, features = ["secrets"] }
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
