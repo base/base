@@ -3,22 +3,23 @@
 //! This module provides the core prover functionality for generating
 //! TEE-signed proposals for L2 block transitions.
 
-pub(crate) mod types;
-
+mod types;
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, BloomInput, Bytes};
 use alloy_rpc_types_eth::TransactionReceipt;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
-use op_enclave_client::ExecuteStatelessRequest;
-use op_enclave_core::{
+use base_enclave::{
     AggregateRequest, ChainConfig, L2_TO_L1_MESSAGE_PASSER, Proposal, l2_block_to_block_info,
     output_root_v0, types::config::RollupConfig,
 };
+use base_enclave_client::ExecuteStatelessRequest;
 pub use types::ProverProposal;
+#[cfg(test)]
+pub(crate) use types::test_helpers;
 
 use crate::{
     ProposerError,
@@ -432,7 +433,6 @@ fn convert_receipt_envelope(
 /// Withdrawals are detected by checking if the `L2ToL1MessagePasser` address
 /// appears in the logs bloom filter.
 fn check_withdrawals(header: &Header) -> bool {
-    use alloy_primitives::BloomInput;
     header.logs_bloom.contains_input(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()))
 }
 
@@ -521,7 +521,7 @@ mod tests {
 
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
     use async_trait::async_trait;
-    use op_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use types::test_helpers::test_proposal;
 
     use super::*;

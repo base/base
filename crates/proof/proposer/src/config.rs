@@ -6,11 +6,14 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::k256::ecdsa::SigningKey;
 use alloy_signer_local::PrivateKeySigner;
 use backon::ExponentialBuilder;
-use base_cli_utils::LogConfig;
+use base_cli_utils::{LogConfig, StdoutLogConfig, verbosity_to_level_filter};
 use thiserror::Error;
 use url::Url;
 
-use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
+use crate::{
+    cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs},
+    constants::{DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY, DEFAULT_RPC_MAX_RETRIES},
+};
 
 /// Errors that can occur during configuration validation.
 #[derive(Debug, Error)]
@@ -240,8 +243,6 @@ fn build_signing_config(
 
 impl From<LogArgs> for LogConfig {
     fn from(args: LogArgs) -> Self {
-        use base_cli_utils::{StdoutLogConfig, verbosity_to_level_filter};
-
         let stdout_logs = if args.stdout_quiet {
             None
         } else {
@@ -321,9 +322,6 @@ impl From<&ProposerArgs> for RetryConfig {
 
 impl Default for RetryConfig {
     fn default() -> Self {
-        use crate::constants::{
-            DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY, DEFAULT_RPC_MAX_RETRIES,
-        };
         Self {
             max_attempts: DEFAULT_RPC_MAX_RETRIES,
             initial_delay: DEFAULT_RETRY_INITIAL_DELAY,

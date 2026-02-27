@@ -11,26 +11,27 @@ pub type HttpProvider = RootProvider<Ethereum>;
 pub type L2HttpProvider = RootProvider<Base>;
 
 mod cache;
-mod error;
-mod l1_client;
-mod l2_client;
-mod reth_client;
-mod rollup_client;
-mod traits;
-mod types;
-
-// Re-export cache types
 pub use cache::{CacheMetrics, MeteredCache};
-// Re-export error types
+
+mod error;
 pub use error::{RpcError, RpcResult};
-// Re-export client configurations
+
+mod l1_client;
 pub use l1_client::{L1ClientConfig, L1ClientImpl};
+
+mod l2_client;
 pub use l2_client::{L2ClientConfig, L2ClientImpl, ProofCacheKey};
+
+mod reth_client;
 pub use reth_client::RethL2Client;
+
+mod rollup_client;
 pub use rollup_client::{RollupClientConfig, RollupClientImpl};
-// Re-export traits
+
+mod traits;
 pub use traits::{L1Client, L2Client, RollupClient};
-// Re-export custom types
+
+mod types;
 pub use types::{
     GenesisL2BlockRef, L1BlockId, L1BlockRef, L2BlockRef, OpBlock, RethExecutionWitness, SyncStatus,
 };

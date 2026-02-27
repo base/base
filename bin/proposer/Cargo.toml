@@ -1,0 +1,22 @@
+[package]
+name = "base-proposer-bin"
+description = "Base Proposer Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "proposer"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-proposer.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+eyre.workspace = true
+tokio = { workspace = true, features = ["full"] }

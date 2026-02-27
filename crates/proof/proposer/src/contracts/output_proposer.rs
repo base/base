@@ -16,6 +16,7 @@ use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
+use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use tokio::sync::OnceCell;
 use tracing::info;
 use url::Url;
@@ -345,8 +346,6 @@ impl OutputProposer for RemoteOutputProposer {
         parent_index: u32,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
-        use jsonrpsee::core::{client::ClientT, params::ArrayParams};
-
         let proof_data = build_proof_data(proposal)?;
         let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
         let calldata = encode_create_calldata(
@@ -436,7 +435,7 @@ pub fn create_output_proposer(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prover::types::test_helpers::test_proposal;
+    use crate::prover::test_helpers::test_proposal;
 
     // ========================================================================
     // Gas margin tests

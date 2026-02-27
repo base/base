@@ -3577,6 +3577,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proposer"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "alloy-transport-http",
+ "async-trait",
+ "axum",
+ "backon",
+ "base-alloy-consensus",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
+ "base-cli-utils",
+ "base-enclave",
+ "base-enclave-client",
+ "bytes",
+ "clap",
+ "eyre",
+ "futures",
+ "hex",
+ "humantime",
+ "jsonrpsee",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "moka",
+ "reqwest 0.13.2",
+ "rustls 0.23.37",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
+]
+
+[[package]]
+name = "base-proposer-bin"
+version = "0.0.0"
+dependencies = [
+ "base-proposer",
+ "clap",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base-protocol"
 version = "0.0.0"
 dependencies = [

@@ -748,14 +748,14 @@ mod tests {
 
     use alloy_primitives::{B256, Bytes};
     use async_trait::async_trait;
-    use op_enclave_client::{ClientError, ExecuteStatelessRequest};
-    use op_enclave_core::{Proposal, types::config::RollupConfig};
+    use base_enclave::{Proposal, types::config::RollupConfig};
+    use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
         enclave::EnclaveClientTrait,
-        prover::{Prover, types::test_helpers::test_proposal},
+        prover::{Prover, test_helpers::test_proposal},
         rpc::SyncStatus,
         test_utils::{
             MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
@@ -778,7 +778,7 @@ mod tests {
         }
         async fn aggregate(
             &self,
-            _: op_enclave_core::AggregateRequest,
+            _: base_enclave::AggregateRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
@@ -798,7 +798,7 @@ mod tests {
         }
         async fn aggregate(
             &self,
-            request: op_enclave_core::AggregateRequest,
+            request: base_enclave::AggregateRequest,
         ) -> Result<Proposal, ClientError> {
             let last = request.proposals.last().unwrap();
             Ok(Proposal {

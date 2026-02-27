@@ -2,6 +2,9 @@
 #![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+mod balance;
+pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
+
 mod cli;
 pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
 
@@ -46,6 +49,9 @@ pub use metrics::{
 mod prover;
 pub use prover::{Prover, ProverProposal};
 
+mod recovery;
+pub use recovery::recover_parent_game_state_standalone;
+
 mod rpc;
 pub use rpc::{
     CacheMetrics, GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L1Client, L1ClientConfig,
@@ -53,6 +59,12 @@ pub use rpc::{
     OpBlock, ProofCacheKey, RethExecutionWitness, RethL2Client, RollupClient, RollupClientConfig,
     RollupClientImpl, RpcError, RpcResult, SyncStatus, create_l2_client,
 };
+
+mod service;
+pub use service::run;
+
+mod signal;
+pub use signal::setup_signal_handler;
 
 #[cfg(test)]
 pub mod test_utils;

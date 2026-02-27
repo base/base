@@ -7,7 +7,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use op_enclave_core::types::config::RollupConfig;
+use base_enclave::types::config::RollupConfig;
 use serde_json::Value;
 use url::Url;
 

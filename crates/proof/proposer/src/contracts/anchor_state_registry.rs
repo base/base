@@ -57,7 +57,7 @@ pub trait AnchorStateRegistryClient: Send + Sync {
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
-#[allow(missing_debug_implementations)]
+#[derive(Debug)]
 pub struct AnchorStateRegistryContractClient {
     contract: IAnchorStateRegistry::IAnchorStateRegistryInstance<RootProvider>,
 }
