@@ -458,9 +458,8 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
 mod tests {
     use alloy_consensus::{Header, Receipt, ReceiptWithBloom, Sealed, Signed};
     use alloy_primitives::{Bloom, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind};
-    use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_consensus::OpTxEnvelope;
-    use base_alloy_flashblocks::{ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata};
+    use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
+    use base_alloy_flashblocks::{ExecutionPayloadFlashblockDeltaV1, Metadata};
 
     use super::*;
 
@@ -519,11 +518,10 @@ mod tests {
             removed: false,
         };
 
-        use base_alloy_consensus::OpReceipt;
         let op_receipt = OpReceipt::Legacy(Receipt {
             status: alloy_consensus::Eip658Value::Eip658(true),
             cumulative_gas_used: 21_000,
-            logs: vec![log.clone()],
+            logs: vec![log],
         });
 
         OpTransactionReceipt {
@@ -545,7 +543,7 @@ mod tests {
         }
     }
 
-    /// Builds a [`PendingBlocks`] with the supplied (hash, log_address) pairs
+    /// Builds a [`PendingBlocks`] with the supplied (hash, `log_address`) pairs
     /// inserted in the given order.
     fn build_pending_blocks(entries: &[(B256, Address)]) -> PendingBlocks {
         let header = Sealed::new_unchecked(Header::default(), B256::ZERO);
