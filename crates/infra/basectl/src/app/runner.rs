@@ -110,7 +110,7 @@ pub async fn run_flashblocks_json(config: ChainConfig) -> Result<()> {
 
     tokio::spawn(async move {
         while let Some(toast) = toast_rx.recv().await {
-            warn!(msg = %toast.message, "connection status");
+            eprintln!("connection status: {}", toast.message);
         }
     });
 
