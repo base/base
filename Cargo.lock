@@ -2334,6 +2334,10 @@ dependencies = [
 [[package]]
 name = "base-alloy-flz"
 version = "0.0.0"
+dependencies = [
+ "hex-literal",
+ "rstest",
+]
 
 [[package]]
 name = "base-alloy-hardforks"
