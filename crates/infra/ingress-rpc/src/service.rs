@@ -319,7 +319,6 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use base_bundles::test_utils::create_test_meter_bundle_response;
-    use base_cli_utils::{LogFormat, LogLevel};
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
@@ -345,11 +344,8 @@ mod tests {
             ingress_topic: String::new(),
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
-            log_level: LogLevel::Info,
-            log_format: LogFormat::Pretty,
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
-            metrics_addr: SocketAddr::from(([127, 0, 0, 1], 9002)),
             block_time_milliseconds: 1000,
             meter_bundle_timeout_ms: 5000,
             builder_rpcs: vec![],

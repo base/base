@@ -9,9 +9,7 @@ mod cli;
 pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
 
 mod config;
-pub use config::{
-    ConfigError, MetricsConfig, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig,
-};
+pub use config::{ConfigError, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig};
 
 mod constants;
 pub use constants::*;

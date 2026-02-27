@@ -6,12 +6,12 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::k256::ecdsa::SigningKey;
 use alloy_signer_local::PrivateKeySigner;
 use backon::ExponentialBuilder;
-use base_cli_utils::{LogConfig, StdoutLogConfig, verbosity_to_level_filter};
+use base_cli_utils::{LogConfig, MetricsConfig};
 use thiserror::Error;
 use url::Url;
 
 use crate::{
-    cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs},
+    cli::{Cli, ProposerArgs, RpcServerArgs},
     constants::{DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY, DEFAULT_RPC_MAX_RETRIES},
 };
 
@@ -183,7 +183,7 @@ impl ProposerConfig {
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
             log: LogConfig::from(cli.logging),
-            metrics: MetricsConfig::from(cli.metrics),
+            metrics: cli.metrics.into(),
             rpc: RpcServerConfig::from(cli.rpc),
         })
     }
@@ -238,41 +238,6 @@ fn build_signing_config(
         (None, None, Some(_)) => {
             Err(ConfigError::Signing("--signer-address requires --signer-endpoint".to_string()))
         }
-    }
-}
-
-impl From<LogArgs> for LogConfig {
-    fn from(args: LogArgs) -> Self {
-        let stdout_logs = if args.stdout_quiet {
-            None
-        } else {
-            Some(StdoutLogConfig { format: args.stdout_format })
-        };
-
-        Self { global_level: verbosity_to_level_filter(args.level), stdout_logs, file_logs: None }
-    }
-}
-
-/// Validated metrics server configuration.
-#[derive(Debug, Clone)]
-pub struct MetricsConfig {
-    /// Whether metrics are enabled.
-    pub enabled: bool,
-    /// Metrics server bind address.
-    pub addr: IpAddr,
-    /// Metrics server port.
-    pub port: u16,
-}
-
-impl From<MetricsArgs> for MetricsConfig {
-    fn from(args: MetricsArgs) -> Self {
-        Self { enabled: args.enabled, addr: args.addr, port: args.port }
-    }
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self { enabled: false, addr: "0.0.0.0".parse().unwrap(), port: 7300 }
     }
 }
 
@@ -346,7 +311,7 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-    use crate::cli::{Cli, ProposerArgs};
+    use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs};
 
     fn minimal_cli() -> Cli {
         Cli {
@@ -379,8 +344,18 @@ mod tests {
                 signer_endpoint: None,
                 signer_address: None,
             },
-            logging: LogArgs { level: 3, stdout_quiet: false, stdout_format: LogFormat::Full },
-            metrics: MetricsArgs { enabled: false, addr: "0.0.0.0".parse().unwrap(), port: 7300 },
+            logging: LogArgs {
+                level: 3,
+                stdout_quiet: false,
+                stdout_format: LogFormat::Full,
+                ..Default::default()
+            },
+            metrics: MetricsArgs {
+                enabled: false,
+                addr: "0.0.0.0".parse().unwrap(),
+                port: 7300,
+                ..Default::default()
+            },
             rpc: RpcServerArgs {
                 enable_admin: false,
                 addr: "127.0.0.1".parse().unwrap(),
@@ -450,21 +425,36 @@ mod tests {
         use tracing::level_filters::LevelFilter;
 
         // Test verbosity level 4 (DEBUG)
-        let args = LogArgs { level: 4, stdout_quiet: false, stdout_format: LogFormat::Json };
+        let args = LogArgs {
+            level: 4,
+            stdout_quiet: false,
+            stdout_format: LogFormat::Json,
+            ..Default::default()
+        };
         let config = LogConfig::from(args);
         assert_eq!(config.global_level, LevelFilter::DEBUG);
         assert!(config.stdout_logs.is_some());
         assert!(config.file_logs.is_none());
 
         // Test stdout_quiet suppresses stdout logging
-        let args = LogArgs { level: 3, stdout_quiet: true, stdout_format: LogFormat::Full };
+        let args = LogArgs {
+            level: 3,
+            stdout_quiet: true,
+            stdout_format: LogFormat::Full,
+            ..Default::default()
+        };
         let config = LogConfig::from(args);
         assert!(config.stdout_logs.is_none());
     }
 
     #[test]
     fn test_metrics_config_from_args() {
-        let args = MetricsArgs { enabled: true, addr: "127.0.0.1".parse().unwrap(), port: 9090 };
+        let args = MetricsArgs {
+            enabled: true,
+            addr: "127.0.0.1".parse().unwrap(),
+            port: 9090,
+            ..Default::default()
+        };
         let config = MetricsConfig::from(args);
         assert!(config.enabled);
         assert_eq!(config.port, 9090);

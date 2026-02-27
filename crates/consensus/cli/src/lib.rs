@@ -7,11 +7,8 @@ pub use base_cli_utils::{
     init_test_tracing,
 };
 
-mod error;
-pub use error::{CliError, CliResult};
-
 mod flags;
-pub use flags::{GlobalArgs, LogArgs, MetricsArgs, OverrideArgs};
+pub use flags::OverrideArgs;
 
 #[cfg(feature = "secrets")]
 mod secrets;
