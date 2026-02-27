@@ -4180,6 +4180,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "auto_impl",
+ "base-alloy-flz",
  "reth-evm",
  "revm",
  "rstest",

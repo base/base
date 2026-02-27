@@ -14,8 +14,6 @@ pub use constants::*;
 mod evm;
 pub use evm::OpEvm;
 
-mod fast_lz;
-
 mod handler;
 pub use handler::{IsTxError, OpHandler};
 
