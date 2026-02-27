@@ -7,8 +7,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(unused)]
-extern crate alloc;
 
 // Re-export predeploys
 pub use base_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
@@ -21,7 +19,7 @@ pub use base_alloy_consensus::OpReceipt;
 pub use receipt::DepositReceipt;
 
 /// Optimism-specific block type.
-pub type OpBlock = alloy_consensus::Block<OpTransactionSigned>;
+pub use base_alloy_consensus::OpBlock;
 
 /// Optimism-specific block body type.
 pub type OpBlockBody = <OpBlock as reth_primitives_traits::Block>::Body;
