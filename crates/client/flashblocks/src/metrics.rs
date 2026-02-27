@@ -104,6 +104,10 @@ pub struct Metrics {
     )]
     pub rpc_get_block_transaction_count_by_number: Counter,
 
+    /// Count of retries waiting for a canonical header to become available.
+    #[metric(describe = "Count of retries waiting for a canonical header to become available")]
+    pub canonical_header_retries: Counter,
+
     /// Time taken to clone bundle state.
     #[metric(describe = "Time taken to clone bundle state")]
     pub bundle_state_clone_duration: Histogram,

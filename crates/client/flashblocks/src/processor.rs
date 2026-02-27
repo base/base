@@ -1,6 +1,6 @@
 //! Flashblocks state processor.
 
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, time::Duration, time::Instant};
 
 use alloy_consensus::{
     Header,
@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
-    PendingStateBuilder, ProviderError, Result,
+    PendingStateBuilder, ProviderError, Result, StateProcessorError,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -96,7 +96,13 @@ where
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
-                    match self.process_flashblock(prev_pending_blocks, flashblock) {
+                    let result = self
+                        .with_header_retry(|| {
+                            let prev = self.pending_blocks.load_full();
+                            self.process_flashblock(prev, flashblock.clone())
+                        })
+                        .await;
+                    match result {
                         Ok(new_pending_blocks) => {
                             if new_pending_blocks.is_some() {
                                 _ = self.sender.send(new_pending_blocks.clone().unwrap())
@@ -111,6 +117,43 @@ where
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Retries an operation when a [`ProviderError::MissingCanonicalHeader`] error occurs.
+    ///
+    /// After a node restart, snapshot restore, or during initial sync, canonical headers
+    /// may not be immediately available. This method retries with exponential backoff
+    /// to allow the header to become available rather than discarding the update.
+    async fn with_header_retry<F>(&self, mut f: F) -> Result<Option<Arc<PendingBlocks>>>
+    where
+        F: FnMut() -> Result<Option<Arc<PendingBlocks>>>,
+    {
+        const MAX_RETRIES: u32 = 10;
+        const INITIAL_BACKOFF_MS: u64 = 200;
+        const MAX_BACKOFF_MS: u64 = 1000;
+
+        let mut attempts = 0;
+        loop {
+            match f() {
+                Err(StateProcessorError::Provider(
+                    ProviderError::MissingCanonicalHeader { block_number },
+                )) if attempts < MAX_RETRIES => {
+                    attempts += 1;
+                    let backoff_ms = (INITIAL_BACKOFF_MS * 2u64.pow(attempts - 1))
+                        .min(MAX_BACKOFF_MS);
+                    warn!(
+                        message = "canonical header not yet available, retrying",
+                        block_number,
+                        attempt = attempts,
+                        max_retries = MAX_RETRIES,
+                        backoff_ms,
+                    );
+                    self.metrics.canonical_header_retries.increment(1);
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                }
+                result => return result,
             }
         }
     }
