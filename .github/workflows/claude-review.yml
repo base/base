@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   # This allows posting comments and reviews
   # It does not allow pushing any commits or modifying any files in the repo
   pull-requests: write
