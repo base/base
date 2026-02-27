@@ -54,7 +54,7 @@ impl BlockDeriver {
             })?;
         if output_preimage.len() != 128 {
             return Err(ExecutorError::DerivationFailed(format!(
-                "output root preimage too short: expected 128 bytes, got {}",
+                "invalid output root preimage length: expected 128 bytes, got {}",
                 output_preimage.len()
             )));
         }
