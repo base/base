@@ -35,7 +35,7 @@ base-consensus-genesis = { workspace = true, features = ["serde"] }
 # Consensus
 base-protocol = { workspace = true, features = ["serde"] }
 
-# Serialization
+# Misc
 hex = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 hex-literal.workspace = true
