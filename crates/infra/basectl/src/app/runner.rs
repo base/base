@@ -3,6 +3,7 @@ use std::io::Write;
 use anyhow::Result;
 use base_alloy_flashblocks::Flashblock;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use super::{App, Resources, ViewId, views::create_view};
 use crate::{
@@ -103,9 +104,15 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
 /// Streams flashblocks as JSON lines to stdout.
 pub async fn run_flashblocks_json(config: ChainConfig) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Flashblock>(100);
-    let (toast_tx, _toast_rx) = mpsc::channel::<crate::tui::Toast>(50);
+    let (toast_tx, mut toast_rx) = mpsc::channel::<Toast>(50);
 
     tokio::spawn(run_flashblock_ws(config.flashblocks_ws.to_string(), tx, toast_tx));
+
+    tokio::spawn(async move {
+        while let Some(toast) = toast_rx.recv().await {
+            warn!(msg = %toast.message, "connection status");
+        }
+    });
 
     let stdout = std::io::stdout();
     let mut writer = std::io::BufWriter::new(stdout.lock());
