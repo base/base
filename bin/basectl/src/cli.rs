@@ -6,18 +6,18 @@ use clap::{Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "basectl")]
 #[command(about = "Base infrastructure control CLI")]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Chain configuration (mainnet, sepolia, devnet, or path to config file)
     #[arg(short = 'c', long = "config", default_value = "mainnet", global = true)]
-    pub config: String,
+    pub(crate) config: String,
 
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    pub(crate) command: Option<Commands>,
 }
 
 /// Subcommands for the basectl CLI.
 #[derive(Debug, Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Chain configuration operations
     #[command(visible_alias = "c")]
     Config,
