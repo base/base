@@ -159,7 +159,8 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.builder
       args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+        # TODO: change this to dev once reth includes paradigmxyz/reth#22505 as part of an official release
+        - PROFILE=${CARGO_PROFILE:-release}
     container_name: base-builder
     depends_on:
       setup-l2:
@@ -322,7 +323,8 @@ services:
       context: ../..
       dockerfile: etc/docker/Dockerfile.client
       args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+        # TODO: change this to dev once reth includes paradigmxyz/reth#22505 as part of an official release
+        - PROFILE=${CARGO_PROFILE:-release}
     container_name: base-client
     depends_on:
       setup-l2:
