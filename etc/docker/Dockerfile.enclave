@@ -55,10 +55,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin prover
+    cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin base-prover
 
 # Strip debug symbols for smaller binary
-RUN strip target/x86_64-unknown-linux-musl/release/prover
+RUN strip target/x86_64-unknown-linux-musl/release/base-prover
 
 # Copy EIF configuration and build ramdisks
 COPY --from=bootstrap /build/out bootstrap
@@ -107,4 +107,4 @@ FROM busybox@sha256:70ce0a747f09cd7c09c2d6eaeab69d60adb0398f569296e8c0e844599388
 WORKDIR /build
 
 COPY --from=eif /build/eif.bin .
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/prover .
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/base-prover .
