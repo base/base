@@ -38,11 +38,11 @@ std = [
 	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
+	"base-alloy-flz/std",
 	"revm/std",
 	"serde?/std",
 	"serde_json/std",
 	"sha2/std",
-	"base-alloy-flz/std",
 ]
 dev = [
 	"memory_limit",
