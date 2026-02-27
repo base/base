@@ -8,6 +8,10 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "base-reth-node"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 

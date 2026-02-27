@@ -6,7 +6,7 @@ license.workspace = true
 
 [[bin]]
 name = "basectl"
-path = "main.rs"
+path = "src/main.rs"
 
 [lints]
 workspace = true
