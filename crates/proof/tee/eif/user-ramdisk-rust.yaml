@@ -35,11 +35,11 @@ files:
               ff02::2 ip6-allrouters
               "
     mode: "0755"
-  - path: rootfs/bin/prover
-    source: target/x86_64-unknown-linux-musl/release/prover
+  - path: rootfs/bin/base-prover
+    source: target/x86_64-unknown-linux-musl/release/base-prover
     mode: "0755"
   - path: cmd
-    contents: "/bin/prover"
+    contents: "/bin/base-prover"
     mode: "0644"
   - path: env
     contents: ""
