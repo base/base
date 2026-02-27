@@ -81,3 +81,4 @@ derive_more = { workspace = true, features = ["from"] }
 [dev-dependencies]
 rstest.workspace = true
 base-execution-chainspec.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
