@@ -98,7 +98,7 @@ async fn main() {
         BlockProductionHealthChecker::new(node, client, config, metrics);
 
     // Spawn decoupled status emitter at 2s cadence
-    let _status_handle = checker.spawn_status_emitter(2000);
+    let status_handle = checker.spawn_status_emitter(2000);
 
     // Basic run path: poll until Ctrl+C
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -111,6 +111,7 @@ async fn main() {
         _ = checker.poll_for_health_checks() => {},
         _ = &mut shutdown_rx => {
             info!("Shutdown signal received, exiting");
+            status_handle.abort();
         }
     }
 }

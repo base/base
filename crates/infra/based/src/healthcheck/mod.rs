@@ -354,4 +354,38 @@ mod tests {
         checker.run_health_check().await;
         assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
     }
+
+    #[derive(Clone)]
+    struct SlowMockClient {
+        header: Arc<Mutex<HeaderSummary>>,
+    }
+
+    #[async_trait]
+    impl EthClient for SlowMockClient {
+        async fn latest_header(
+            &self,
+        ) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>> {
+            tokio::time::sleep(Duration::from_secs(3)).await; // Simulate a 3-second delay
+            Ok(self.header.lock().unwrap().clone())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn slow_client_triggers_timeout() {
+        let cfg = HealthcheckConfig::new(1_000, 5_000, 15_000);
+        let start = now_secs();
+        let shared_header = Arc::new(Mutex::new(HeaderSummary {
+            number: 1,
+            timestamp_unix_seconds: start,
+            transaction_count: 5,
+        }));
+        let client = SlowMockClient { header: Arc::clone(&shared_header) };
+        let node = Node::new("http://localhost:8545", false);
+        let metrics = mock_metrics();
+        let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
+
+        // slow client result in timeout and error status
+        checker.run_health_check().await;
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Error.code());
+    }
 }
