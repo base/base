@@ -52,7 +52,7 @@ impl BlockDeriver {
             .map_err(|e| {
                 ExecutorError::DerivationFailed(format!("failed to get output root preimage: {e}"))
             })?;
-        if output_preimage.len() < 128 {
+        if output_preimage.len() != 128 {
             return Err(ExecutorError::DerivationFailed(format!(
                 "output root preimage too short: expected 128 bytes, got {}",
                 output_preimage.len()
@@ -61,7 +61,7 @@ impl BlockDeriver {
         let l2_head_hash = B256::from_slice(&output_preimage[96..128]);
 
         // Create providers backed by the oracle.
-        let l1_provider = OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&self.oracle));
+        let mut l1_provider = OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&self.oracle));
         let mut l2_provider =
             OracleL2ChainProvider::new(l2_head_hash, Arc::clone(&cfg), Arc::clone(&self.oracle));
         let blob_provider = OracleBlobProvider::new(Arc::clone(&self.oracle));
@@ -80,7 +80,7 @@ impl BlockDeriver {
         let cursor = new_oracle_pipeline_cursor(
             &cfg,
             safe_header,
-            &mut l1_provider.clone(),
+            &mut l1_provider,
             &mut l2_provider,
         )
         .await
