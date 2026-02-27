@@ -37,6 +37,9 @@ pub type BaseRpcContext<'a> = RpcContext<'a, OpNodeAdapter, OpEthApi>;
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;
 
+/// Hook type for extending add-ons.
+type AddOnsHook = Box<dyn FnOnce(OpAddOns) -> OpAddOns>;
+
 /// Hook type for node-started callbacks.
 type NodeStartedHook = Box<dyn FnOnce(OpFullNode) -> Result<()> + Send + 'static>;
 
@@ -67,13 +70,19 @@ pub(crate) type RethNodeBuilder<CB> =
 pub struct NodeHooks {
     rpc_hooks: Vec<RpcModuleHook>,
     node_started_hooks: Vec<NodeStartedHook>,
+    add_ons_hooks: Vec<AddOnsHook>,
     exex_hooks: Vec<(String, BoxExExFactory)>,
 }
 
 impl NodeHooks {
     /// Create a new, empty `NodeHooks`.
     pub fn new() -> Self {
-        Self { rpc_hooks: Vec::new(), node_started_hooks: Vec::new(), exex_hooks: Vec::new() }
+        Self {
+            rpc_hooks: Vec::new(),
+            node_started_hooks: Vec::new(),
+            exex_hooks: Vec::new(),
+            add_ons_hooks: Vec::new(),
+        }
     }
 
     /// Applies all accumulated hooks to the given configured builder.
@@ -84,11 +93,15 @@ impl NodeHooks {
     where
         CB: NodeComponentsBuilder<OpNodeTypes, Components = BaseComponents>,
     {
-        let Self { rpc_hooks, node_started_hooks, exex_hooks } = self;
+        let Self { rpc_hooks, node_started_hooks, exex_hooks, add_ons_hooks } = self;
 
         // Install ExEx hooks
         for (id, factory) in exex_hooks {
             builder = builder.install_exex(id, move |ctx: ExExContext<OpNodeAdapter>| factory(ctx));
+        }
+
+        for hook in add_ons_hooks {
+            builder = builder.map_add_ons(hook);
         }
 
         // Install RPC hooks
@@ -120,6 +133,15 @@ impl NodeHooks {
         F: FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static,
     {
         self.rpc_hooks.push(Box::new(hook));
+        self
+    }
+
+    /// Adds an add-ons hook that will run when the add-ons are configured.
+    pub fn add_add_ons_hook<F>(mut self, hook: F) -> Self
+    where
+        F: FnOnce(OpAddOns) -> OpAddOns + Send + 'static,
+    {
+        self.add_ons_hooks.push(Box::new(hook));
         self
     }
 

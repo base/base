@@ -1,5 +1,6 @@
 //! Base Node types config.
 
+use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 use base_execution_primitives::OpPrimitives;
@@ -15,7 +16,6 @@ use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
     node::{FullNodeTypes, NodeTypes},
-    rpc::BasicEngineValidatorBuilder,
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
@@ -147,7 +147,7 @@ where
         OpEthApiBuilder,
         OpEngineValidatorBuilder,
         OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        BasicEngineValidatorBuilder<OpEngineValidatorBuilder>,
+        BaseEngineValidatorBuilder<OpEngineValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {

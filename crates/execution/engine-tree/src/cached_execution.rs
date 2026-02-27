@@ -6,16 +6,80 @@ use base_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType};
 use base_alloy_evm::{OpBlockExecutor, OpTxResult};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
-use base_revm::OpTransaction;
+use base_flashblocks::{FlashblocksAPI, FlashblocksState};
+use base_revm::{OpHaltReason, OpTransaction};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
     Evm, RecoveredTx,
     block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
 };
 use reth_primitives_traits::Recovered;
+use reth_provider::BlockNumReader;
 use reth_revm::State;
 use revm::{Database, context::TxEnv};
 use revm_primitives::B256;
+use tracing::warn;
+
+/// Provider that fetches cached execution results for transactions.
+#[derive(Debug, Clone)]
+pub struct FlashblocksCachedExecutionProvider<P> {
+    flashblocks_state: Option<Arc<FlashblocksState>>,
+
+    provider: P,
+}
+
+impl<P> FlashblocksCachedExecutionProvider<P> {
+    /// Creates a new [`FlashblocksCachedExecutionProvider`].
+    pub const fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
+        Self { provider, flashblocks_state }
+    }
+}
+
+impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
+    for FlashblocksCachedExecutionProvider<P>
+where
+    P: BlockNumReader,
+{
+    fn get_cached_execution_for_tx(
+        &self,
+        parent_block_hash: &B256,
+        prev_cached_hash: Option<&B256>,
+        tx_hash: &B256,
+    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+        let flashblocks_state = self.flashblocks_state.as_ref()?;
+
+        // if block_number is not found, we can't use cached execution
+        let parent_block_number = self.provider.block_number(*parent_block_hash).ok().flatten()?;
+
+        let this_block_number = parent_block_number.checked_add(1).unwrap();
+
+        let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
+
+        if let Some(prev_cached_hash) = prev_cached_hash {
+            // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
+            if !pending_blocks.has_transaction_hash(prev_cached_hash) {
+                warn!(
+                    prev_cached_hash = ?prev_cached_hash,
+                    "Not using cached results - previous transaction not cached",
+                );
+                return None;
+            }
+        } else {
+            // must be the first tx in the block
+            if pending_blocks
+                .get_transactions_for_block(this_block_number)
+                .next()
+                .map(|tx| tx.inner.inner.tx_hash())
+                != Some(*tx_hash)
+            {
+                warn!(tx_hash = ?tx_hash, "Not using cached results - first transaction not cached");
+                return None;
+            }
+        }
+
+        pending_blocks.get_op_tx_result(tx_hash)
+    }
+}
 
 /// Trait for providers that fetch cached execution results for transactions.
 pub trait CachedExecutionProvider<TxResult> {

@@ -160,10 +160,7 @@ base-builder-metering = { path = "crates/builder/metering" }
 # Client
 base-client-cli = { path = "crates/client/cli" }
 base-metering = { path = "crates/client/metering" }
-base-client-engine = { path = "crates/client/engine" }
-base-flashblocks = { path = "crates/client/flashblocks" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }
-base-engine-tree = { path = "crates/client/engine-tree" }
 
 # Consensus
 base-consensus-rpc = { path = "crates/consensus/rpc" }
@@ -184,8 +181,10 @@ base-consensus-providers = { path = "crates/consensus/providers-alloy", default-
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-cli = { path = "crates/execution/cli" }
 base-execution-consensus = { path = "crates/execution/consensus" }
+base-engine-tree = { path = "crates/execution/engine-tree" }
 base-execution-evm = { path = "crates/execution/evm" }
 base-execution-exex = { path = "crates/execution/exex" }
+base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-forks = { path = "crates/execution/hardforks" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-execution-primitives = { path = "crates/execution/primitives" }

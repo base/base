@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    fmt::Debug,
     panic::{self, AssertUnwindSafe},
     sync::{Arc, mpsc::RecvTimeoutError},
     time::Instant,
@@ -22,6 +23,8 @@ use base_alloy_rpc_types_engine::OpExecutionData;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
 use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
+use base_flashblocks::FlashblocksState;
+use base_node_core::OpEngineTypes;
 use base_revm::OpHaltReason;
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
@@ -43,6 +46,11 @@ use reth_evm::{
     ConfigureEvm, EvmEnvFor, ExecutionCtxFor, SpecFor, block::BlockExecutor,
     execute::ExecutableTxFor,
 };
+use reth_node_api::{AddOnsContext, BlockTy, FullNodeComponents, FullNodeTypes, NodeTypes};
+use reth_node_builder::{
+    invalid_block_hook::InvalidBlockHookExt,
+    rpc::{ChangesetCache, EngineValidatorBuilder, PayloadValidatorBuilder},
+};
 use reth_payload_primitives::{
     BuiltPayload, InvalidPayloadAttributesError, NewPayloadError, PayloadTypes,
 };
@@ -61,12 +69,13 @@ use reth_revm::{
     db::{State, states::bundle_state::BundleRetention},
 };
 use reth_trie::{HashedPostState, StateRoot, updates::TrieUpdates};
-use reth_trie_db::ChangesetCache;
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
 use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
-use crate::cached_execution::{CachedExecutionProvider, CachedExecutor};
+use crate::cached_execution::{
+    CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
+};
 
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
@@ -1517,5 +1526,96 @@ where
             block.recovered_block.block_with_parent(),
             &block.execution_output.state,
         );
+    }
+}
+
+/// Basic implementation of [`EngineValidatorBuilder`].
+///
+/// This builder creates a [`BaseEngineValidator`] using the provided payload validator builder.
+#[derive(Debug, Clone)]
+pub struct BaseEngineValidatorBuilder<EV> {
+    /// The payload validator builder used to create the engine validator.
+    payload_validator_builder: EV,
+
+    /// The flashblocks state used to create the engine validator.
+    flashblocks_state: Option<Arc<FlashblocksState>>,
+}
+
+impl<EV> BaseEngineValidatorBuilder<EV> {
+    /// Creates a new instance with the given payload validator builder.
+    pub const fn new(payload_validator_builder: EV) -> Self {
+        Self { payload_validator_builder, flashblocks_state: None }
+    }
+
+    /// Sets the flashblocks state used to create the engine validator.
+    pub fn with_flashblocks_state(mut self, flashblocks_state: Arc<FlashblocksState>) -> Self {
+        self.flashblocks_state = Some(flashblocks_state);
+        self
+    }
+}
+
+impl<EV> Default for BaseEngineValidatorBuilder<EV>
+where
+    EV: Default,
+{
+    fn default() -> Self {
+        Self::new(EV::default())
+    }
+}
+
+impl<Node, EV> EngineValidatorBuilder<Node> for BaseEngineValidatorBuilder<EV>
+where
+    Node: FullNodeComponents<
+            Types: NodeTypes<
+                Payload = OpEngineTypes,
+                ChainSpec = OpChainSpec,
+                Primitives = OpPrimitives,
+            >,
+            Evm: ConfigureEngineEvm<OpExecutionData>
+                     + ConfigureEvm<
+                BlockExecutorFactory = OpBlockExecutorFactory<
+                    OpRethReceiptBuilder,
+                    Arc<OpChainSpec>,
+                >,
+            >,
+        >,
+    <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
+        PayloadTypes<ExecutionData = OpExecutionData>,
+    EV: PayloadValidatorBuilder<Node>,
+    EV::Validator: reth_engine_primitives::PayloadValidator<
+            <Node::Types as NodeTypes>::Payload,
+            Block = BlockTy<Node::Types>,
+        >,
+{
+    type EngineValidator = BaseEngineValidator<
+        Node::Provider,
+        Node::Evm,
+        EV::Validator,
+        FlashblocksCachedExecutionProvider<Node::Provider>,
+    >;
+
+    async fn build_tree_validator(
+        self,
+        ctx: &AddOnsContext<'_, Node>,
+        tree_config: TreeConfig,
+        changeset_cache: ChangesetCache,
+    ) -> eyre::Result<Self::EngineValidator> {
+        let validator = self.payload_validator_builder.build(ctx).await?;
+        let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
+        let invalid_block_hook = ctx.create_invalid_block_hook(&data_dir).await?;
+        Ok(BaseEngineValidator::new(
+            ctx.node.provider().clone(),
+            std::sync::Arc::new(ctx.node.consensus().clone()),
+            ctx.node.evm_config().clone(),
+            validator,
+            tree_config,
+            invalid_block_hook,
+            FlashblocksCachedExecutionProvider::new(
+                ctx.node.provider().clone(),
+                self.flashblocks_state.clone(),
+            ),
+            changeset_cache,
+            ctx.node.task_executor().clone(),
+        ))
     }
 }
