@@ -61,7 +61,8 @@ impl BlockDeriver {
         let l2_head_hash = B256::from_slice(&output_preimage[96..128]);
 
         // Create providers backed by the oracle.
-        let mut l1_provider = OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&self.oracle));
+        let mut l1_provider =
+            OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&self.oracle));
         let mut l2_provider =
             OracleL2ChainProvider::new(l2_head_hash, Arc::clone(&cfg), Arc::clone(&self.oracle));
         let blob_provider = OracleBlobProvider::new(Arc::clone(&self.oracle));
@@ -77,16 +78,14 @@ impl BlockDeriver {
             .seal_slow();
 
         // Create the pipeline cursor at the safe head.
-        let cursor = new_oracle_pipeline_cursor(
-            &cfg,
-            safe_header,
-            &mut l1_provider,
-            &mut l2_provider,
-        )
-        .await
-        .map_err(|e| {
-            ExecutorError::DerivationFailed(format!("failed to create pipeline cursor: {e}"))
-        })?;
+        let cursor =
+            new_oracle_pipeline_cursor(&cfg, safe_header, &mut l1_provider, &mut l2_provider)
+                .await
+                .map_err(|e| {
+                    ExecutorError::DerivationFailed(format!(
+                        "failed to create pipeline cursor: {e}"
+                    ))
+                })?;
 
         // Set cursor on L2 provider so it tracks derivation progress.
         l2_provider.set_cursor(Arc::clone(&cursor));
