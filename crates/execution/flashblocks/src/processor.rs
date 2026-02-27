@@ -279,11 +279,8 @@ where
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
         // Early return if no flashblocks to process.
-        // Prevents panic when retain() filters out all flashblocks during reorg
-        // or depth limit exceeded.
-        if flashblocks.is_empty() {
-            warn!(target: "flashblocks", "empty flashblocks after retain, returning None");
-            return Ok(None);
+        if let Some(result) = check_empty_flashblocks(flashblocks) {
+            return result;
         }
 
         // BTreeMap guarantees ascending order of keys while iterating
@@ -426,61 +423,84 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use base_primitives::Metadata;
 
-    #[test]
-    fn test_empty_flashblocks_returns_none() {
-        let flashblocks: Vec<Flashblock> = vec![];
-        assert!(flashblocks.is_empty());
-    }
 
-    #[test]
-    fn test_flashblocks_retain_to_empty() {
-        let mut flashblocks = vec![
-            Flashblock {
-                payload_id: Default::default(),
-                index: 0,
-                base: None,
-                diff: Default::default(),
-                metadata: Metadata { block_number: 10 },
-            }
-        ];
-        flashblocks.retain(|f| f.metadata.block_number > 100);
-        assert!(flashblocks.is_empty());
+/// Checks if the flashblocks slice is empty and returns early with Ok(None).
+/// Extracted to allow unit testing without requiring a full Client mock.
+pub(crate) fn check_empty_flashblocks(
+    flashblocks: &[Flashblock],
+) -> Option<Result<Option<Arc<PendingBlocks>>>> {
+    if flashblocks.is_empty() {
+        warn!(target: "flashblocks", "empty flashblocks after retain, returning None");
+        Some(Ok(None))
+    } else {
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base_primitives::Metadata;
+    use base_primitives::{Flashblock, Metadata};
+    use alloy_rpc_types_engine::PayloadId;
 
-    #[test]
-    fn test_empty_flashblocks_early_return() {
-        // Verifica che flashblocks vuoto venga gestito correttamente
-        // Questo test copre il fix per il panic che avveniva quando
-        // retain() filtrava tutti i flashblocks durante reorg
-        let flashblocks: Vec<Flashblock> = vec![];
-        assert!(flashblocks.is_empty());
+    fn make_flashblock(block_number: u64, index: u64) -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index,
+            base: None,
+            diff: Default::default(),
+            metadata: Metadata { block_number },
+        }
     }
 
+    /// Before fix: build_pending_state panicked with empty flashblocks.
+    /// After fix: returns Ok(None). This test verifies the fix directly.
     #[test]
-    fn test_flashblocks_retain_scenario() {
-        // Simula lo scenario di reorg dove retain() filtra tutti i flashblocks
+    fn test_empty_flashblocks_returns_none() {
+        let result = check_empty_flashblocks(&[]);
+        assert!(result.is_some(), "should catch empty flashblocks");
+        let inner = result.unwrap();
+        assert!(inner.is_ok());
+        assert!(inner.unwrap().is_none());
+    }
+
+    /// Simulates HandleReorg path: retain() filters all flashblocks -> empty -> Ok(None)
+    #[test]
+    fn test_empty_after_reorg_retain_returns_none() {
         let mut flashblocks = vec![
-            Flashblock {
-                payload_id: Default::default(),
-                index: 0,
-                base: None,
-                diff: Default::default(),
-                metadata: Metadata { block_number: 50 },
-            },
+            make_flashblock(50, 0),
+            make_flashblock(60, 0),
         ];
-        
+        // Exact code from process_canonical_block HandleReorg branch
         flashblocks.retain(|fb| fb.metadata.block_number > 100);
         assert!(flashblocks.is_empty());
+
+        let result = check_empty_flashblocks(&flashblocks);
+        assert!(result.is_some());
+        assert!(result.unwrap().unwrap().is_none());
+    }
+
+    /// Simulates DepthLimitExceeded path: same retain logic, same fix applies
+    #[test]
+    fn test_empty_after_depth_limit_retain_returns_none() {
+        let mut flashblocks = vec![
+            make_flashblock(10, 0),
+            make_flashblock(11, 0),
+        ];
+        flashblocks.retain(|fb| fb.metadata.block_number > 100);
+        assert!(flashblocks.is_empty());
+
+        let result = check_empty_flashblocks(&flashblocks);
+        assert!(result.is_some());
+        assert!(result.unwrap().unwrap().is_none());
+    }
+
+    /// Non-empty flashblocks: check_empty_flashblocks returns None (normal path continues)
+    #[test]
+    fn test_non_empty_flashblocks_returns_none_option() {
+        let flashblocks = vec![make_flashblock(100, 0)];
+        let result = check_empty_flashblocks(&flashblocks);
+        assert!(result.is_none(), "should not intercept non-empty flashblocks");
     }
 }
