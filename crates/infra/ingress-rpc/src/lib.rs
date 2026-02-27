@@ -146,35 +146,38 @@ pub struct Config {
     pub send_to_builder: bool,
 }
 
-/// Spawns a background task that forwards metering data to the builder RPC.
-pub fn connect_ingress_to_builder(
-    metering_rx: broadcast::Receiver<MeterBundleResponse>,
-    builder_rpc: Url,
-) {
-    let builder: RootProvider<Base> = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect_http(builder_rpc);
+/// Connects ingress metering data to builder RPCs.
+#[derive(Debug)]
+pub struct BuilderConnector;
 
-    tokio::spawn(async move {
-        let mut event_rx = metering_rx;
-        while let Ok(event) = event_rx.recv().await {
-            if event.results.is_empty() {
-                warn!(message = "received metering information with no transactions", hash=%event.bundle_hash);
-                continue;
-            }
+impl BuilderConnector {
+    /// Spawns a background task that forwards metering data to the builder RPC.
+    pub fn connect(metering_rx: broadcast::Receiver<MeterBundleResponse>, builder_rpc: Url) {
+        let builder: RootProvider<Base> = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_http(builder_rpc);
 
-            let tx_hash = event.results[0].tx_hash;
-            if let Err(e) = builder
-                .client()
-                .request::<(TxHash, MeterBundleResponse), ()>(
-                    "base_setMeteringInformation",
-                    (tx_hash, event),
-                )
-                .await
-            {
-                error!(error = %e, tx_hash = %tx_hash, "Failed to set metering information");
+        tokio::spawn(async move {
+            let mut event_rx = metering_rx;
+            while let Ok(event) = event_rx.recv().await {
+                if event.results.is_empty() {
+                    warn!(message = "received metering information with no transactions", hash=%event.bundle_hash);
+                    continue;
+                }
+
+                let tx_hash = event.results[0].tx_hash;
+                if let Err(e) = builder
+                    .client()
+                    .request::<(TxHash, MeterBundleResponse), ()>(
+                        "base_setMeteringInformation",
+                        (tx_hash, event),
+                    )
+                    .await
+                {
+                    error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+                }
             }
-        }
-    });
+        });
+    }
 }
