@@ -3070,6 +3070,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
  "base-consensus-genesis",
  "base-proof",
  "base-proof-driver",

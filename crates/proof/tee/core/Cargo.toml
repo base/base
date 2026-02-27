@@ -33,6 +33,7 @@ base-proof-preimage.workspace = true
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Consensus
+base-consensus-derive.workspace = true
 base-protocol = { workspace = true, features = ["serde"] }
 
 # Misc
