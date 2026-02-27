@@ -1,5 +1,5 @@
 [package]
-name = "kona-disc"
+name = "base-consensus-disc"
 version.workspace = true
 description = "Discovery service for the OP Stack"
 
@@ -13,10 +13,10 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# Kona
-kona-peers.workspace = true
+# consensus
+base-consensus-peers.workspace = true
 base-macros.workspace = true
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 
 # Alloy
 alloy-rlp = { workspace = true, features = ["std"] }

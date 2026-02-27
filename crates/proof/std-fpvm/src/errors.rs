@@ -1,4 +1,4 @@
-//! Errors for the `kona-std-fpvm` crate.
+//! Errors for the `base-proof-std-fpvm` crate.
 
 use thiserror::Error;
 

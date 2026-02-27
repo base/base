@@ -15,12 +15,12 @@ pub struct MetricsArgs {
         long = "metrics.enabled",
         global = true,
         default_value_t = false,
-        env = "KONA_METRICS_ENABLED"
+        env = "BASE_METRICS_ENABLED"
     )]
     pub enabled: bool,
 
     /// The port to serve Prometheus metrics on.
-    #[arg(long = "metrics.port", global = true, default_value = "9090", env = "KONA_METRICS_PORT")]
+    #[arg(long = "metrics.port", global = true, default_value = "9090", env = "BASE_METRICS_PORT")]
     pub port: u16,
 
     /// The IP address to use for Prometheus metrics.
@@ -28,7 +28,7 @@ pub struct MetricsArgs {
         long = "metrics.addr",
         global = true,
         default_value = "0.0.0.0",
-        env = "KONA_METRICS_ADDR"
+        env = "BASE_METRICS_ADDR"
     )]
     pub addr: IpAddr,
 }

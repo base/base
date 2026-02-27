@@ -12,10 +12,13 @@ pub mod types;
 
 // Re-export commonly used types from alloy
 pub use alloy_consensus::Header;
-// Re-export kona_genesis types for ecosystem compatibility
+// Re-export base_consensus_genesis types for ecosystem compatibility
 pub use alloy_eips::eip1898::BlockNumHash;
 pub use alloy_primitives::{Address, B256, Bytes, U256};
 pub use base_alloy_consensus::OpReceiptEnvelope;
+pub use base_consensus_genesis::{
+    ChainConfig, ChainGenesis, HardForkConfig, L1ChainConfig, SystemConfig,
+};
 // Re-export error types
 pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderError, Result};
 // Re-export executor types
@@ -25,7 +28,6 @@ pub use executor::{
     TransformedWitness, execute_stateless, extract_deposits_from_receipts, l2_block_to_block_info,
     transform_witness, validate_not_deposit, validate_sequencer_drift,
 };
-pub use kona_genesis::{ChainConfig, ChainGenesis, HardForkConfig, L1ChainConfig, SystemConfig};
 // Re-export provider types
 pub use providers::{
     BlockInfoWrapper, L1ReceiptsFetcher, L2SystemConfigFetcher, compute_receipt_root,

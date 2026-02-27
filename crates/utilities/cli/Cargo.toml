@@ -12,8 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# kona
-kona-registry.workspace = true
+# consensus
+base-consensus-registry.workspace = true
 
 # reth
 reth-node-core.workspace = true

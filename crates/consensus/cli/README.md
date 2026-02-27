@@ -1,3 +1,3 @@
-# `kona-cli`
+# `base-consensus-cli`
 
-Shared utilities for binaries in the `kona` repository.
+Shared utilities for binaries in the `base` repository.

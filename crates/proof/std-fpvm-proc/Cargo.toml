@@ -1,6 +1,6 @@
 [package]
-name = "kona-std-fpvm-proc"
-description = "Proc macro entry point for kona-std-fpvm targeted programs."
+name = "base-proof-std-fpvm-proc"
+description = "Proc macro entry point for base-proof-std-fpvm targeted programs."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-std-fpvm.workspace = true
+base-proof-std-fpvm.workspace = true
 
 # General
 cfg-if.workspace = true
@@ -26,4 +26,4 @@ proc-macro2.workspace = true
 syn = { workspace = true, features = ["full"] }
 
 [package.metadata.cargo-udeps.ignore]
-normal = ["kona-std-fpvm"]
+normal = ["base-proof-std-fpvm"]

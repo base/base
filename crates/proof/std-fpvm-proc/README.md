@@ -1,3 +1,3 @@
-# `kona-std-fpvm-proc`
+# `base-proof-std-fpvm-proc`
 
-Proc macro entry point for `kona-std-fpvm` targeted programs.
+Proc macro entry point for `base-proof-std-fpvm` targeted programs.

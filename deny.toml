@@ -42,7 +42,7 @@ deny = ["reth"]
 multiple-versions = "deny"
 
 # Skip crates with multiple versions from upstream dependencies that we cannot control
-# These are primarily from reth, alloy, and kona dependencies
+# These are primarily from reth, alloy, and upstream dependencies
 skip = [
     # Windows platform crates - different versions used by various upstream deps
     "windows-sys",
@@ -136,7 +136,7 @@ skip = [
     # mach2 version mismatch: tracing-samply uses 0.5.0, metrics-process uses 0.6.0
     "mach2",
 
-    # reqwest version mismatch: alloy/kona use 0.12.x, newer deps use 0.13.x
+    # reqwest version mismatch: alloy use 0.12.x, newer deps use 0.13.x
     "reqwest",
 
     # rlimit version mismatch: base-builder-core uses 0.10.x, metrics-process uses 0.11.x
@@ -162,7 +162,7 @@ skip = [
     "rustls-webpki",
     "tokio-rustls",
 
-    # toml/serde stack version mismatches from kona upstream deps
+    # toml/serde stack version mismatches from upstream deps
     "serde_spanned",
     "syn",
     "toml",

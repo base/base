@@ -1,4 +1,4 @@
-//! Primitive types for `kona-derive`.
+//! Primitive types for `base-consensus-derive`.
 
 mod results;
 pub use results::{PipelineResult, StepResult};

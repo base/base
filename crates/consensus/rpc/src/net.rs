@@ -1,6 +1,6 @@
 //! Network types
 
-use kona_gossip::P2pRpcRequest;
+use base_consensus_gossip::P2pRpcRequest;
 
 /// A type alias for the sender of a [`P2pRpcRequest`].
 type P2pReqSender = tokio::sync::mpsc::Sender<P2pRpcRequest>;

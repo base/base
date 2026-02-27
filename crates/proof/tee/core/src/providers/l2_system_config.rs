@@ -5,8 +5,8 @@
 
 use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes, U256};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{L1BlockInfoIsthmusBaseFields, L1BlockInfoJovianBaseFields, L1BlockInfoTx};
-use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::error::ProviderError;
 
@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use crate::{config::default_rollup_config, providers::test_utils::test_header};
 
-    // Test vectors from kona-protocol crate - these are real L1BlockInfo calldata bytes
+    // Test vectors from base-protocol crate - these are real L1BlockInfo calldata bytes
     // from mainnet/testnet blocks.
 
     /// Bedrock format calldata (260 bytes): selector + 8x 32-byte ABI-encoded slots

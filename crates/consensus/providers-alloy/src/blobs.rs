@@ -7,8 +7,8 @@ use alloy_eips::eip4844::{
 };
 use alloy_primitives::FixedBytes;
 use async_trait::async_trait;
+use base_consensus_derive::{BlobProvider, BlobProviderError};
 use base_protocol::BlockInfo;
-use kona_derive::{BlobProvider, BlobProviderError};
 
 use crate::BeaconClient;
 #[cfg(feature = "metrics")]

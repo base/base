@@ -15,18 +15,18 @@ workspace = true
 # workspace
 base-jwt = { workspace = true, features = ["engine-validation"] }
 
-# kona
+# consensus
 base-consensus-rpc.workspace = true
-kona-disc.workspace = true
-kona-peers.workspace = true
-kona-derive.workspace = true
-kona-gossip.workspace = true
-kona-sources.workspace = true
-kona-genesis.workspace = true
-kona-registry.workspace = true
-kona-node-service.workspace = true
-kona-providers-alloy.workspace = true
-kona-cli = { workspace = true, features = ["secrets"] }
+base-consensus-disc.workspace = true
+base-consensus-peers.workspace = true
+base-consensus-derive.workspace = true
+base-consensus-gossip.workspace = true
+base-consensus-sources.workspace = true
+base-consensus-genesis.workspace = true
+base-consensus-registry.workspace = true
+base-consensus-node.workspace = true
+base-consensus-providers.workspace = true
+base-consensus-cli = { workspace = true, features = ["secrets"] }
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }

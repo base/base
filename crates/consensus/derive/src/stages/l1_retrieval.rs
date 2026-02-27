@@ -24,7 +24,7 @@ pub trait L1RetrievalProvider {
     /// [`PollingTraversal`]: crate::PollingTraversal
     async fn next_l1_block(&mut self) -> PipelineResult<Option<BlockInfo>>;
 
-    /// Returns the batcher [`Address`] from the [`kona_genesis::SystemConfig`].
+    /// Returns the batcher [`Address`] from the [`base_consensus_genesis::SystemConfig`].
     fn batcher_addr(&self) -> Address;
 }
 

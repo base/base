@@ -3,13 +3,13 @@
 use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 
 use alloy_primitives::map::{HashMap, HashSet};
+use base_consensus_disc::Discv5Handler;
+use base_consensus_peers::OpStackEnr;
 use discv5::{
     enr::{NodeId, k256::ecdsa},
     multiaddr::Protocol,
 };
 use ipnet::IpNet;
-use kona_disc::Discv5Handler;
-use kona_peers::OpStackEnr;
 use libp2p::{Multiaddr, PeerId, gossipsub::TopicHash};
 use tokio::sync::oneshot::Sender;
 
@@ -24,10 +24,10 @@ use crate::{ConnectionGate, GossipDriver, GossipScores};
 pub enum P2pRpcRequest {
     /// Returns [`PeerInfo`] for the p2p network.
     PeerInfo(Sender<PeerInfo>),
-    /// Dumps the node's discovery table from the [`kona_disc::Discv5Driver`].
+    /// Dumps the node's discovery table from the [`base_consensus_disc::Discv5Driver`].
     DiscoveryTable(Sender<Vec<String>>),
     /// Returns the current peer count for both the
-    /// - Discovery Service ([`kona_disc::Discv5Driver`])
+    /// - Discovery Service ([`base_consensus_disc::Discv5Driver`])
     /// - Gossip Service ([`crate::GossipDriver`])
     PeerCount(Sender<(Option<usize>, usize)>),
     /// Returns a [`PeerDump`] containing detailed information about connected peers.
@@ -96,7 +96,7 @@ pub enum P2pRpcRequest {
     /// Request to list all blocked Subnets.
     ListBlockedSubnets(Sender<Vec<IpNet>>),
     /// Returns the current peer stats for both the
-    /// - Discovery Service ([`kona_disc::Discv5Driver`])
+    /// - Discovery Service ([`base_consensus_disc::Discv5Driver`])
     /// - Gossip Service ([`crate::GossipDriver`])
     ///
     /// This information can be used to briefly monitor the current state of the p2p network for a
@@ -319,7 +319,7 @@ impl P2pRpcRequest {
             })
             .collect();
 
-        // We consider that kona-nodes are gossiping blocks if their peers are subscribed to any of
+        // We consider that base-nodes are gossiping blocks if their peers are subscribed to any of
         // the blocks topics.
         // This is the same heuristic as the one used in the op-node (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-node/p2p/rpc_server.go#L179-L183>`).
         let peer_gossip_info = gossip
@@ -510,7 +510,7 @@ impl P2pRpcRequest {
             let peer_info = PeerInfo {
                 peer_id: peer_id.to_string(),
                 node_id,
-                user_agent: "kona".to_string(),
+                user_agent: "base".to_string(),
                 protocol_version: String::new(),
                 enr: Some(enr.to_string()),
                 addresses,

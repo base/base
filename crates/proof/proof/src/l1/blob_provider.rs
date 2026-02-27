@@ -9,9 +9,9 @@ use alloy_primitives::{B256, keccak256};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, BigInteger256, Field, PrimeField};
 use async_trait::async_trait;
+use base_consensus_derive::BlobProvider;
+use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_protocol::BlockInfo;
-use kona_derive::BlobProvider;
-use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use spin::Lazy;
 use tracing::info;
 

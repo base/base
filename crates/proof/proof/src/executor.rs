@@ -10,15 +10,15 @@ use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_evm::OpTxEnv;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_consensus_genesis::RollupConfig;
+use base_proof_driver::Executor;
+use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
+use base_proof_mpt::TrieHinter;
 use base_revm::OpSpecId;
-use kona_driver::Executor;
-use kona_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
-use kona_genesis::RollupConfig;
-use kona_mpt::TrieHinter;
 
 /// An executor wrapper type.
 #[derive(Debug)]
-pub struct KonaExecutor<'a, P, H, Evm>
+pub struct BaseExecutor<'a, P, H, Evm>
 where
     P: TrieDBProvider + Send + Sync + Clone,
     H: TrieHinter + Send + Sync + Clone,
@@ -36,7 +36,7 @@ where
     inner: Option<StatelessL2Builder<'a, P, H, Evm>>,
 }
 
-impl<'a, P, H, Evm> KonaExecutor<'a, P, H, Evm>
+impl<'a, P, H, Evm> BaseExecutor<'a, P, H, Evm>
 where
     P: TrieDBProvider + Send + Sync + Clone,
     H: TrieHinter + Send + Sync + Clone,
@@ -55,7 +55,7 @@ where
 }
 
 #[async_trait]
-impl<P, H, Evm> Executor for KonaExecutor<'_, P, H, Evm>
+impl<P, H, Evm> Executor for BaseExecutor<'_, P, H, Evm>
 where
     P: TrieDBProvider + Debug + Send + Sync + Clone,
     H: TrieHinter + Debug + Send + Sync + Clone,
@@ -63,11 +63,11 @@ where
     <Evm as EvmFactory>::Tx:
         FromTxWithEncoded<OpTxEnvelope> + FromRecoveredTx<OpTxEnvelope> + OpTxEnv,
 {
-    type Error = kona_executor::ExecutorError;
+    type Error = base_proof_executor::ExecutorError;
 
     /// Waits for the executor to be ready.
     async fn wait_until_ready(&mut self) {
-        /* no-op for the kona executor */
+        /* no-op for the stateless executor */
         /* This is used when an engine api is used instead of a stateless block executor */
     }
 
@@ -91,7 +91,7 @@ where
         attributes: OpPayloadAttributes,
     ) -> Result<BlockBuildingOutcome, Self::Error> {
         self.inner.as_mut().map_or_else(
-            || Err(kona_executor::ExecutorError::MissingExecutor),
+            || Err(base_proof_executor::ExecutorError::MissingExecutor),
             |e| e.build_block(attributes),
         )
     }
@@ -99,7 +99,7 @@ where
     /// Computes the output root.
     fn compute_output_root(&mut self) -> Result<B256, Self::Error> {
         self.inner.as_mut().map_or_else(
-            || Err(kona_executor::ExecutorError::MissingExecutor),
+            || Err(base_proof_executor::ExecutorError::MissingExecutor),
             |e| e.compute_output_root(),
         )
     }

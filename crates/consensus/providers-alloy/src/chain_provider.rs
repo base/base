@@ -8,8 +8,8 @@ use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
+use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind};
 use base_protocol::BlockInfo;
-use kona_derive::{ChainProvider, PipelineError, PipelineErrorKind};
 use lru::LruCache;
 
 #[cfg(feature = "metrics")]

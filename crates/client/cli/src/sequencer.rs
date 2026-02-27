@@ -6,8 +6,8 @@
 
 use std::{num::ParseIntError, time::Duration};
 
+use base_consensus_node::SequencerConfig;
 use clap::Parser;
-use kona_node_service::SequencerConfig;
 use url::Url;
 
 /// Sequencer CLI Flags

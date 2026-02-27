@@ -3,8 +3,8 @@
 use std::net::IpAddr;
 
 use alloy_rlp::Encodable;
+use base_consensus_peers::{BootNodes, BootStoreFile, OpStackEnr};
 use discv5::{Config, Discv5, Enr, enr::k256};
-use kona_peers::{BootNodes, BootStoreFile, OpStackEnr};
 use tokio::time::Duration;
 
 use crate::{Discv5BuilderError, Discv5Driver};
@@ -190,8 +190,8 @@ impl Discv5Builder {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 
+    use base_consensus_peers::EnrValidation;
     use discv5::{ConfigBuilder, ListenConfig, enr::CombinedKey};
-    use kona_peers::EnrValidation;
 
     use super::*;
 

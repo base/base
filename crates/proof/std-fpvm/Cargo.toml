@@ -1,5 +1,5 @@
 [package]
-name = "kona-std-fpvm"
+name = "base-proof-std-fpvm"
 description = "Platform specific APIs for interacting with Fault Proof VM kernels."
 version.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-preimage.workspace = true
+base-proof-preimage.workspace = true
 
 # External
 cfg-if.workspace = true

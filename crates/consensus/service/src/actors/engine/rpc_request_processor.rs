@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use base_consensus_engine::{EngineClient, EngineState};
+use base_consensus_genesis::RollupConfig;
 use derive_more::Constructor;
-use kona_engine::{EngineClient, EngineState};
-use kona_genesis::RollupConfig;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,

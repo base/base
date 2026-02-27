@@ -1,3 +1,3 @@
-# `kona-proof`
+# `base-proof`
 
-`kona-proof` is an OP Stack state transition proof SDK.
+`base-proof` is an OP Stack state transition proof SDK.

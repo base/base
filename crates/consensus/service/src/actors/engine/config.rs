@@ -3,8 +3,8 @@ use std::sync::Arc;
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_alloy_network::Base;
-use kona_engine::{EngineClientBuilder, OpEngineClient};
-use kona_genesis::RollupConfig;
+use base_consensus_engine::{EngineClientBuilder, OpEngineClient};
+use base_consensus_genesis::RollupConfig;
 use url::Url;
 
 use crate::NodeMode;

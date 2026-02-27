@@ -20,14 +20,14 @@ workspace = true
 base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
-# kona
-kona-genesis.workspace = true
-kona-derive = { workspace = true, features = ["metrics"] }
-kona-disc = { workspace = true, features = ["metrics"] }
-kona-gossip = { workspace = true, features = ["metrics"] }
-kona-engine = { workspace = true, features = ["metrics"] }
-kona-node-service = { workspace = true, features = ["metrics"] }
-kona-providers-alloy = { workspace = true, features = ["metrics"] }
+# consensus
+base-consensus-genesis.workspace = true
+base-consensus-derive = { workspace = true, features = ["metrics"] }
+base-consensus-disc = { workspace = true, features = ["metrics"] }
+base-consensus-gossip = { workspace = true, features = ["metrics"] }
+base-consensus-engine = { workspace = true, features = ["metrics"] }
+base-consensus-node = { workspace = true, features = ["metrics"] }
+base-consensus-providers = { workspace = true, features = ["metrics"] }
 
 # cli
 strum.workspace = true

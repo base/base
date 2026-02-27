@@ -230,15 +230,15 @@ where
                     }
 
                     // Missing header errors are not recoverable from the proposer side.
-                    // The enclave's kona executor needs all referenced headers in its
+                    // The enclave's executor needs all referenced headers in its
                     // trie DB, and it looks them up by computing the hash from the
-                    // consensus header. If the kona version doesn't correctly hash
+                    // consensus header. If the executor version doesn't correctly hash
                     // post-Pectra headers, this lookup will always fail regardless of
                     // whether the header data is present.
                     if extract_missing_header_hash(&err_str).is_some() {
                         tracing::warn!(
                             block_number = block.header.number,
-                            "Enclave cannot find header by hash -- this is likely a kona executor version issue with post-Pectra header hashing"
+                            "Enclave cannot find header by hash -- this is likely an executor version issue with post-Pectra header hashing"
                         );
                         return Err(ProposerError::Enclave(err_str));
                     }
@@ -436,7 +436,7 @@ fn check_withdrawals(header: &Header) -> bool {
     header.logs_bloom.contains_input(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()))
 }
 
-/// Builds the `kona_genesis::ChainConfig` envelope expected by enclave RPC.
+/// Builds the `base_consensus_genesis::ChainConfig` envelope expected by enclave RPC.
 fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
     let mut config = ChainConfig {
         name: "base-proposer".to_string(),
@@ -459,7 +459,7 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
         addresses: Some(Default::default()),
     };
 
-    // These address fields are required by kona_genesis::ChainConfig but are not
+    // These address fields are required by base_consensus_genesis::ChainConfig but are not
     // consumed by the enclave — it only reads deposit_contract_address and
     // l1_system_config_address from the PerChainConfig. The address_manager value
     // is mapped to protocol_versions_address solely to satisfy the struct; the

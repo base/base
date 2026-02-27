@@ -11,7 +11,7 @@ use core::{
 };
 
 use async_trait::async_trait;
-use kona_preimage::{
+use base_proof_preimage::{
     Channel,
     errors::{ChannelError, ChannelResult},
 };

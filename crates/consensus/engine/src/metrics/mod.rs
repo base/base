@@ -16,7 +16,7 @@
 ///
 /// ```rust,ignore
 /// use metrics::{counter, gauge, histogram};
-/// use kona_engine::Metrics;
+/// use base_consensus_engine::Metrics;
 ///
 /// // Track successful task execution
 /// counter!(Metrics::ENGINE_TASK_SUCCESS, "task" => Metrics::INSERT_TASK_LABEL);
@@ -32,7 +32,7 @@ pub struct Metrics;
 
 impl Metrics {
     /// Identifier for the gauge that tracks block labels.
-    pub const BLOCK_LABELS: &str = "kona_node_block_labels";
+    pub const BLOCK_LABELS: &str = "base_node_block_labels";
     /// Unsafe block label.
     pub const UNSAFE_BLOCK_LABEL: &str = "unsafe";
     /// Cross-unsafe block label.
@@ -45,9 +45,9 @@ impl Metrics {
     pub const FINALIZED_BLOCK_LABEL: &str = "finalized";
 
     /// Identifier for the counter that records engine task counts.
-    pub const ENGINE_TASK_SUCCESS: &str = "kona_node_engine_task_count";
+    pub const ENGINE_TASK_SUCCESS: &str = "base_node_engine_task_count";
     /// Identifier for the counter that records engine task counts.
-    pub const ENGINE_TASK_FAILURE: &str = "kona_node_engine_task_failure";
+    pub const ENGINE_TASK_FAILURE: &str = "base_node_engine_task_failure";
 
     /// Insert task label.
     pub const INSERT_TASK_LABEL: &str = "insert";
@@ -63,7 +63,7 @@ impl Metrics {
     pub const FINALIZE_TASK_LABEL: &str = "finalize";
 
     /// Identifier for the histogram that tracks engine method call time.
-    pub const ENGINE_METHOD_REQUEST_DURATION: &str = "kona_node_engine_method_request_duration";
+    pub const ENGINE_METHOD_REQUEST_DURATION: &str = "base_node_engine_method_request_duration";
     /// `engine_forkchoiceUpdatedV<N>` label
     pub const FORKCHOICE_UPDATE_METHOD: &str = "engine_forkchoiceUpdated";
     /// `engine_newPayloadV<N>` label.
@@ -72,7 +72,7 @@ impl Metrics {
     pub const GET_PAYLOAD_METHOD: &str = "engine_getPayload";
 
     /// Identifier for the counter that tracks the number of times the engine has been reset.
-    pub const ENGINE_RESET_COUNT: &str = "kona_node_engine_reset_count";
+    pub const ENGINE_RESET_COUNT: &str = "base_node_engine_reset_count";
 
     /// Initializes metrics for the engine.
     ///
@@ -85,7 +85,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona_engine`][crate].
+    /// Describes metrics used in [`base_consensus_engine`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         // Block labels

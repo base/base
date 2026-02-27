@@ -1,4 +1,4 @@
-# `kona-preimage`
+# `base-proof-preimage`
 
 This crate offers a high-level API over the [`Preimage Oracle`][preimage-abi-spec]. It is `no_std` compatible to be used in
 `client` programs, and the `host` handles are `async` colored to allow for the `host` programs to reach out to external

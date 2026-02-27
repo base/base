@@ -2,7 +2,7 @@
 //!
 //! [`EngineActor`]: super::EngineActor
 
-use kona_engine::{EngineResetError, EngineTaskErrors};
+use base_consensus_engine::{EngineResetError, EngineTaskErrors};
 
 /// An error from the [`EngineActor`].
 ///

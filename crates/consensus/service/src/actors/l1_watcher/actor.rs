@@ -7,10 +7,12 @@ use alloy_eips::BlockId;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use async_trait::async_trait;
+use base_consensus_genesis::{
+    RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
+};
 use base_consensus_rpc::{L1State, L1WatcherQueries};
 use base_protocol::BlockInfo;
 use futures::{Stream, StreamExt};
-use kona_genesis::{RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate};
 use tokio::{
     select,
     sync::{

@@ -4,8 +4,8 @@ use alloc::boxed::Box;
 use core::iter::Iterator;
 
 use async_trait::async_trait;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{L2BlockInfo, OpAttributesWithParent};
-use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::{OriginProvider, PipelineErrorKind, StepResult};
 

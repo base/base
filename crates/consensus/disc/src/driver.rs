@@ -1,9 +1,11 @@
 //! Discovery Module.
 
 use backon::{ExponentialBuilder, RetryableWithContext};
+use base_consensus_peers::{
+    BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, enr_to_multiaddr,
+};
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, enr::NodeId};
-use kona_peers::{BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, enr_to_multiaddr};
 use tokio::{
     sync::mpsc::channel,
     time::{Duration, sleep},
@@ -376,12 +378,12 @@ impl Discv5Driver {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+    use base_consensus_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
     use discv5::{
         ConfigBuilder,
         enr::{CombinedKey, CombinedPublicKey},
         handler::NodeContact,
     };
-    use kona_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
     use tempfile::tempdir;
 
     use super::*;

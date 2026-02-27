@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use alloy_primitives::Address;
+use base_consensus_disc::{Discv5Handler, HandlerRequest};
+use base_consensus_gossip::{ConnectionGate, ConnectionGater, GossipDriver};
+use base_consensus_sources::BlockSignerHandler;
 use discv5::Enr;
-use kona_disc::{Discv5Handler, HandlerRequest};
-use kona_gossip::{ConnectionGate, ConnectionGater, GossipDriver};
-use kona_sources::BlockSignerHandler;
 use tokio::sync::{mpsc, watch};
 
 /// A network handler used to communicate with the network once it is started.
@@ -45,7 +45,7 @@ impl NetworkHandler {
                 // Record the peer score in the metrics.
                 base_macros::record!(
                     histogram,
-                    kona_gossip::Metrics::PEER_SCORES,
+                    base_consensus_gossip::Metrics::PEER_SCORES,
                     "peer",
                     peer_id.to_string(),
                     score
@@ -75,7 +75,7 @@ impl NetworkHandler {
                             let peer_duration = start_time.elapsed();
                             base_macros::record!(
                                 histogram,
-                                kona_gossip::Metrics::GOSSIP_PEER_CONNECTION_DURATION_SECONDS,
+                                base_consensus_gossip::Metrics::GOSSIP_PEER_CONNECTION_DURATION_SECONDS,
                                 peer_duration.as_secs_f64()
                             );
                         }
@@ -83,7 +83,7 @@ impl NetworkHandler {
                 if let Some(info) = self.gossip.peerstore.remove(&peer_to_remove) {
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
-                    base_macros::inc!(gauge, kona_gossip::Metrics::BANNED_PEERS, "peer_id" => peer_to_remove.to_string(), "score" => score.to_string());
+                    base_macros::inc!(gauge, base_consensus_gossip::Metrics::BANNED_PEERS, "peer_id" => peer_to_remove.to_string(), "score" => score.to_string());
                     return Some(info.listen_addrs);
                 }
 

@@ -4,8 +4,8 @@ use alloc::{boxed::Box, sync::Arc};
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
-use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,

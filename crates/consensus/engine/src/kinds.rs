@@ -11,7 +11,7 @@ use derive_more::{Display, FromStr};
 /// # Examples
 ///
 /// ```rust
-/// use kona_engine::EngineKind;
+/// use base_consensus_engine::EngineKind;
 /// use std::str::FromStr;
 ///
 /// // Parse from string

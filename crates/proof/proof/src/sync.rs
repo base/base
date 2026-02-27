@@ -5,10 +5,10 @@ use core::fmt::Debug;
 
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
+use base_consensus_derive::ChainProvider;
+use base_consensus_genesis::RollupConfig;
+use base_proof_driver::{PipelineCursor, TipCursor};
 use base_protocol::BatchValidationProvider;
-use kona_derive::ChainProvider;
-use kona_driver::{PipelineCursor, TipCursor};
-use kona_genesis::RollupConfig;
 use spin::RwLock;
 
 use crate::errors::OracleProviderError;

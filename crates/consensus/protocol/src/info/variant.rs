@@ -5,7 +5,7 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256, address};
 use base_alloy_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
-use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -393,8 +393,8 @@ mod test {
     use alloc::{string::ToString, vec::Vec};
 
     use alloy_primitives::{address, b256};
-    use kona_genesis::HardForkConfig;
-    use kona_registry::L1Config;
+    use base_consensus_genesis::HardForkConfig;
+    use base_consensus_registry::L1Config;
     use rstest::rstest;
 
     use super::*;

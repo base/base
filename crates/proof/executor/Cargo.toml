@@ -1,5 +1,5 @@
 [package]
-name = "kona-executor"
+name = "base-proof-executor"
 description = "A no_std stateless block builder for the OP Stack"
 edition.workspace = true
 license.workspace = true
@@ -12,9 +12,9 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-mpt.workspace = true
+base-proof-mpt.workspace = true
 base-protocol.workspace = true
-kona-genesis = { workspace = true, features = ["revm"] }
+base-consensus-genesis = { workspace = true, features = ["revm"] }
 
 # Alloy
 alloy-eips.workspace = true
@@ -45,7 +45,7 @@ serde = { workspace = true, features = ["derive"], optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tempfile = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-kona-registry = { workspace = true, optional = true }
+base-consensus-registry = { workspace = true, optional = true }
 alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
 alloy-rpc-client = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
@@ -55,18 +55,18 @@ rocksdb = { workspace = true, features = ["snappy"], optional = true }
 
 [features]
 test-utils = [
+	"base-consensus-registry?/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types-engine",
 	"dep:alloy-transport",
 	"dep:alloy-transport-http",
-	"dep:kona-registry",
+	"dep:base-consensus-registry",
 	"dep:rand",
 	"dep:rocksdb",
 	"dep:serde",
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
-	"kona-registry?/test-utils",
 ]

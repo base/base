@@ -1,5 +1,5 @@
 [package]
-name = "kona-genesis"
+name = "base-consensus-genesis"
 version.workspace = true
 description = "Optimism genesis types"
 

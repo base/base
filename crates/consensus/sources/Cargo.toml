@@ -1,7 +1,7 @@
 [package]
-name = "kona-sources"
+name = "base-consensus-sources"
 version.workspace = true
-description = "Data source types and utilities for the kona-node"
+description = "Data source types and utilities for the base-consensus-node"
 
 edition.workspace = true
 rust-version.workspace = true

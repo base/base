@@ -1,4 +1,4 @@
-//! Test Utilities for `kona-derive`.
+//! Test Utilities for `base-consensus-derive`.
 
 mod pipeline;
 pub use pipeline::{

@@ -6,13 +6,13 @@ use std::fmt::Debug;
 
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
+use base_consensus_engine::EngineState;
+use base_consensus_genesis::RollupConfig;
 use base_protocol::SyncStatus;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
-use kona_engine::EngineState;
-use kona_genesis::RollupConfig;
 
 use crate::{
     EngineRpcClient, L1State, L1WatcherQueries, OutputResponse, RollupNodeApiServer,
@@ -24,7 +24,7 @@ use crate::{
 /// This is a server implementation of [`crate::RollupNodeApiServer`].
 #[derive(Debug)]
 pub struct RollupRpc<EngineRpcClient_> {
-    /// The channel to send [`kona_engine::EngineQueries`]s.
+    /// The channel to send [`base_consensus_engine::EngineQueries`]s.
     pub engine_client: EngineRpcClient_,
     /// The channel to send [`crate::L1WatcherQueries`]s.
     pub l1_watcher_sender: L1WatcherQuerySender,

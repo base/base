@@ -13,10 +13,10 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-gossip.workspace = true
-kona-engine.workspace = true
+base-consensus-gossip.workspace = true
+base-consensus-engine.workspace = true
 base-macros.workspace = true
-kona-genesis = { workspace = true, features = ["serde", "std"] }
+base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 
 # Base Alloy
@@ -57,8 +57,8 @@ client = [
 	"jsonrpsee/http-client",
 ]
 metrics = [
+	"base-consensus-engine/metrics",
+	"base-consensus-gossip/metrics",
 	"dep:metrics",
-	"kona-engine/metrics",
-	"kona-gossip/metrics",
 	"libp2p/metrics",
 ]

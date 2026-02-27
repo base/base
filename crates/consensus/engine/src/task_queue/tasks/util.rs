@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use base_consensus_genesis::RollupConfig;
 use base_protocol::OpAttributesWithParent;
-use kona_genesis::RollupConfig;
 
 use super::{BuildTask, BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
 use crate::{EngineClient, EngineState};

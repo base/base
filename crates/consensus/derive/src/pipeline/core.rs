@@ -4,8 +4,8 @@ use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
 use core::fmt::Debug;
 
 use async_trait::async_trait;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
-use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     ActivationSignal, L2ChainProvider, NextAttributes, OriginAdvancer, OriginProvider, Pipeline,
@@ -229,8 +229,8 @@ mod tests {
 
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_consensus_genesis::{RollupConfig, SystemConfig};
     use base_protocol::{L2BlockInfo, OpAttributesWithParent};
-    use kona_genesis::{RollupConfig, SystemConfig};
 
     use super::*;
     use crate::{

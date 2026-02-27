@@ -6,101 +6,104 @@ pub struct Metrics;
 
 impl Metrics {
     /// Identifier for the pipeline origin gauge.
-    pub const PIPELINE_ORIGIN: &str = "kona_derive_pipeline_origin";
+    pub const PIPELINE_ORIGIN: &str = "base_consensus_derive_pipeline_origin";
 
     /// Identifier for the latest l2 block the pipeline stepped on.
-    pub const PIPELINE_STEP_BLOCK: &str = "kona_derive_pipeline_step_block";
+    pub const PIPELINE_STEP_BLOCK: &str = "base_consensus_derive_pipeline_step_block";
 
     /// Identifier for if the batch reader is set.
-    pub const PIPELINE_BATCH_READER_SET: &str = "kona_derive_batch_reader_set";
+    pub const PIPELINE_BATCH_READER_SET: &str = "base_consensus_derive_batch_reader_set";
 
     /// Identifier to track the amount of time it takes to advance the pipeline origin.
-    pub const PIPELINE_ORIGIN_ADVANCE: &str = "kona_derive_pipeline_origin_advance";
+    pub const PIPELINE_ORIGIN_ADVANCE: &str = "base_consensus_derive_pipeline_origin_advance";
 
     /// Identifier for the histogram that tracks when the system config is updated.
-    pub const SYSTEM_CONFIG_UPDATE: &str = "kona_derive_system_config_update";
+    pub const SYSTEM_CONFIG_UPDATE: &str = "base_consensus_derive_system_config_update";
 
     /// Identifier for the number of frames in the frame queue pipeline stage.
-    pub const PIPELINE_FRAME_QUEUE_BUFFER: &str = "kona_derive_frame_queue_buffer";
+    pub const PIPELINE_FRAME_QUEUE_BUFFER: &str = "base_consensus_derive_frame_queue_buffer";
 
     /// Identifier for the frame queue buffer memory overhead gauge.
-    pub const PIPELINE_FRAME_QUEUE_MEM: &str = "kona_derive_frame_queue_mem";
+    pub const PIPELINE_FRAME_QUEUE_MEM: &str = "base_consensus_derive_frame_queue_mem";
 
     /// Identifier for the number of channels held in the pipeline.
-    pub const PIPELINE_CHANNEL_BUFFER: &str = "kona_derive_channel_buffer";
+    pub const PIPELINE_CHANNEL_BUFFER: &str = "base_consensus_derive_channel_buffer";
 
     /// Identifier for the channel buffer memory overhead gauge.
-    pub const PIPELINE_CHANNEL_MEM: &str = "kona_derive_channel_mem";
+    pub const PIPELINE_CHANNEL_MEM: &str = "base_consensus_derive_channel_mem";
 
     /// Identifier for a gauge that tracks the number of blocks until the next channel times out.
-    pub const PIPELINE_CHANNEL_TIMEOUT: &str = "kona_derive_blocks_until_channel_timeout";
+    pub const PIPELINE_CHANNEL_TIMEOUT: &str = "base_consensus_derive_blocks_until_channel_timeout";
 
     /// Identifier for the gauge that tracks the maximum rlp byte size per channel.
-    pub const PIPELINE_MAX_RLP_BYTES: &str = "kona_derive_max_rlp_bytes";
+    pub const PIPELINE_MAX_RLP_BYTES: &str = "base_consensus_derive_max_rlp_bytes";
 
     /// Identifier for the batch stream stage singular batch buffer size.
-    pub const PIPELINE_BATCH_BUFFER: &str = "kona_derive_batch_buffer";
+    pub const PIPELINE_BATCH_BUFFER: &str = "base_consensus_derive_batch_buffer";
 
     /// Identifier for the batch stream stage batch memory overhead gauge.
-    pub const PIPELINE_BATCH_MEM: &str = "kona_derive_batch_mem";
+    pub const PIPELINE_BATCH_MEM: &str = "base_consensus_derive_batch_mem";
 
     /// Identifier for the size of batches read by the channel reader.
-    pub const PIPELINE_READ_BATCHES: &str = "kona_derive_read_batches";
+    pub const PIPELINE_READ_BATCHES: &str = "base_consensus_derive_read_batches";
 
     /// Identifier for the gauge that tracks the number of pipeline steps.
-    pub const PIPELINE_STEPS: &str = "kona_derive_pipeline_steps";
+    pub const PIPELINE_STEPS: &str = "base_consensus_derive_pipeline_steps";
 
     /// Identifier for the gauge that tracks the number of prepared attributes.
-    pub const PIPELINE_PREPARED_ATTRIBUTES: &str = "kona_derive_prepared_attributes";
+    pub const PIPELINE_PREPARED_ATTRIBUTES: &str = "base_consensus_derive_prepared_attributes";
 
     /// Identifier tracking the number of pipeline signals.
-    pub const PIPELINE_SIGNALS: &str = "kona_derive_pipeline_signals";
+    pub const PIPELINE_SIGNALS: &str = "base_consensus_derive_pipeline_signals";
 
     /// Identifier that tracks the batch validator l1 blocks start.
-    pub const PIPELINE_L1_BLOCKS_START: &str = "kona_derive_l1_blocks_start";
+    pub const PIPELINE_L1_BLOCKS_START: &str = "base_consensus_derive_l1_blocks_start";
 
     /// Identifier that tracks the batch validator l1 blocks end.
-    pub const PIPELINE_L1_BLOCKS_END: &str = "kona_derive_l1_blocks_end";
+    pub const PIPELINE_L1_BLOCKS_END: &str = "base_consensus_derive_l1_blocks_end";
 
     /// Identifier to track the size of the current derived span batch.
-    pub const PIPELINE_DERIVED_SPAN_SIZE: &str = "kona_derive_span_size";
+    pub const PIPELINE_DERIVED_SPAN_SIZE: &str = "base_consensus_derive_span_size";
 
     /// Identifier to track the number of transactions in the latest derived payload attributes.
-    pub const PIPELINE_LATEST_PAYLOAD_TX_COUNT: &str = "kona_derive_payload_tx_count";
+    pub const PIPELINE_LATEST_PAYLOAD_TX_COUNT: &str = "base_consensus_derive_payload_tx_count";
 
     /// Identifier for the data availability provider data.
-    pub const PIPELINE_DATA_AVAILABILITY_PROVIDER: &str = "kona_derive_dap_sources";
+    pub const PIPELINE_DATA_AVAILABILITY_PROVIDER: &str = "base_consensus_derive_dap_sources";
 
     /// Identifier for a gauge that tracks batch validity.
-    pub const PIPELINE_BATCH_VALIDITY: &str = "kona_derive_batch_validity";
+    pub const PIPELINE_BATCH_VALIDITY: &str = "base_consensus_derive_batch_validity";
 
     /// Identifier for the histogram that tracks the amount of time it takes to validate a
     /// span batch.
-    pub const PIPELINE_CHECK_BATCH_PREFIX: &str = "kona_derive_check_batch_prefix_duration";
+    pub const PIPELINE_CHECK_BATCH_PREFIX: &str =
+        "base_consensus_derive_check_batch_prefix_duration";
 
     /// Identifier for the histogram that tracks the amount of time it takes to build payload
     /// attributes.
-    pub const PIPELINE_ATTRIBUTES_BUILD_DURATION: &str = "kona_derive_attributes_build_duration";
+    pub const PIPELINE_ATTRIBUTES_BUILD_DURATION: &str =
+        "base_consensus_derive_attributes_build_duration";
 
     /// Identifier for the gauge that tracks the number of payload attributes buffered in the
     /// pipeline.
-    pub const PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER: &str = "kona_derive_payload_attributes_buffer";
+    pub const PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER: &str =
+        "base_consensus_derive_payload_attributes_buffer";
 
     /// Identifier for a gauge that tracks the latest block number for a system config update.
     pub const PIPELINE_LATEST_SYS_CONFIG_UPDATE: &'static str =
-        "kona_genesis_latest_system_config_update";
+        "base_consensus_genesis_latest_system_config_update";
 
     /// Identifier for a gauge that tracks the block height at which a system config update errored.
     pub const PIPELINE_SYS_CONFIG_UPDATE_ERROR: &'static str =
-        "kona_genesis_sys_config_update_error";
+        "base_consensus_genesis_sys_config_update_error";
 
     /// Gauge that tracks the latest decompressed batch size.
     pub const PIPELINE_LATEST_DECOMPRESSED_BATCH_SIZE: &str =
-        "kona_derive_latest_decompressed_batch_size";
+        "base_consensus_derive_latest_decompressed_batch_size";
 
     /// Gauge that tracks the latest decompressed batch type.
     pub const PIPELINE_LATEST_DECOMPRESSED_BATCH_TYPE: &str =
-        "kona_derive_latest_decompressed_batch_type";
+        "base_consensus_derive_latest_decompressed_batch_type";
 }
 
 impl Metrics {

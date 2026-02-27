@@ -6,36 +6,36 @@ pub struct Metrics;
 
 impl Metrics {
     /// Identifier for the counter that tracks the number of times the L1 has reorganized.
-    pub const L1_REORG_COUNT: &str = "kona_node_l1_reorg_count";
+    pub const L1_REORG_COUNT: &str = "base_node_l1_reorg_count";
 
     /// Identifier for the counter that tracks the L1 origin of the derivation pipeline.
-    pub const DERIVATION_L1_ORIGIN: &str = "kona_node_derivation_l1_origin";
+    pub const DERIVATION_L1_ORIGIN: &str = "base_node_derivation_l1_origin";
 
     /// Identifier for the counter of critical derivation errors (strictly for alerting.)
-    pub const DERIVATION_CRITICAL_ERROR: &str = "kona_node_derivation_critical_errors";
+    pub const DERIVATION_CRITICAL_ERROR: &str = "base_node_derivation_critical_errors";
 
     /// Identifier for the counter that tracks sequencer state flags.
-    pub const SEQUENCER_STATE: &str = "kona_node_sequencer_state";
+    pub const SEQUENCER_STATE: &str = "base_node_sequencer_state";
 
     /// Gauge for the sequencer's attributes builder duration.
     pub const SEQUENCER_ATTRIBUTES_BUILDER_DURATION: &str =
-        "kona_node_sequencer_attributes_build_duration";
+        "base_node_sequencer_attributes_build_duration";
 
     /// Gauge for the sequencer's block building start task duration.
     pub const SEQUENCER_BLOCK_BUILDING_START_TASK_DURATION: &str =
-        "kona_node_sequencer_block_building_start_task_duration";
+        "base_node_sequencer_block_building_start_task_duration";
 
     /// Gauge for the sequencer's block building seal task duration.
     pub const SEQUENCER_BLOCK_BUILDING_SEAL_TASK_DURATION: &str =
-        "kona_node_sequencer_block_building_seal_task_duration";
+        "base_node_sequencer_block_building_seal_task_duration";
 
     /// Gauge for the sequencer's conductor commitment duration.
     pub const SEQUENCER_CONDUCTOR_COMMITMENT_DURATION: &str =
-        "kona_node_sequencer_conductor_commitment_duration";
+        "base_node_sequencer_conductor_commitment_duration";
 
     /// Total number of transactions of sequenced by sequencer.
     pub const SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED: &str =
-        "kona_node_sequencer_total_transactions_sequenced";
+        "base_node_sequencer_total_transactions_sequenced";
 
     /// Initializes metrics for the node service.
     ///
@@ -48,7 +48,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona-node-service`][crate].
+    /// Describes metrics used in [`base-consensus-node`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         // L1 reorg count

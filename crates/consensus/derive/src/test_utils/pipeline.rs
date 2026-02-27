@@ -3,8 +3,8 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
+use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
-use kona_genesis::RollupConfig;
 
 // Re-export these types used internally to the test pipeline.
 use crate::{

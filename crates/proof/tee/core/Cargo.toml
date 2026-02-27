@@ -24,10 +24,10 @@ base-alloy-evm.workspace = true
 base-alloy-consensus = { workspace = true, features = ["serde"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
-# Kona
-kona-mpt.workspace = true
-kona-executor.workspace = true
-kona-genesis = { workspace = true, features = ["serde"] }
+# proof
+base-proof-mpt.workspace = true
+base-proof-executor.workspace = true
+base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Consensus
 base-protocol = { workspace = true, features = ["serde"] }

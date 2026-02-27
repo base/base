@@ -16,10 +16,10 @@ pub enum DerivationState {
     /// [`crate::DerivationActor`] is waiting for confirmation that they were processed into a safe
     /// head.
     AwaitingSafeHeadConfirmation,
-    /// A reorg or some other inconsistency was detected, necessitating a [`kona_derive::Signal`] to
+    /// A reorg or some other inconsistency was detected, necessitating a [`base_consensus_derive::Signal`] to
     /// be processed before continuing derivation.
     AwaitingSignal,
-    /// After receiving a [`kona_derive::Signal`], we need an update of L1 data or a new engine
+    /// After receiving a [`base_consensus_derive::Signal`], we need an update of L1 data or a new engine
     /// safe head to start deriving again. This represents the state waiting for one of the two.
     AwaitingUpdateAfterSignal,
     /// The [`crate::DerivationActor`] is actively attempting derivation.
@@ -42,10 +42,10 @@ pub enum DerivationStateUpdate {
     /// The EL has confirmed the derived [`base_protocol::OpAttributesWithParent`] as the new safe
     /// head.
     NewAttributesConfirmed(Box<L2BlockInfo>),
-    /// A [`kona_derive::Signal`] is necessary to update the derivation pipeline in order to
+    /// A [`base_consensus_derive::Signal`] is necessary to update the derivation pipeline in order to
     /// continue.
     SignalNeeded,
-    /// A [`kona_derive::Signal`] has been received and processed.
+    /// A [`base_consensus_derive::Signal`] has been received and processed.
     SignalProcessed,
 }
 
@@ -155,8 +155,8 @@ fn transition(
 /// confirmation at any given time.
 ///
 /// ## Signal handling
-/// Certain conditions require a [`kona_derive::Signal`] to be processed by the
-/// [`kona_derive::Pipeline`], updating derivation state before continuing derivation. This struct
+/// Certain conditions require a [`base_consensus_derive::Signal`] to be processed by the
+/// [`base_consensus_derive::Pipeline`], updating derivation state before continuing derivation. This struct
 /// allows a caller to register that it is waiting on a signal as well as mark that it was
 /// processed.
 #[derive(Debug)]

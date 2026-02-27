@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
+use base_consensus_disc::{Discv5Builder, LocalNode};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_gossip::{GaterConfig, GossipDriverBuilder};
+use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_sources::BlockSigner;
 use discv5::Config as Discv5Config;
-use kona_disc::{Discv5Builder, LocalNode};
-use kona_genesis::RollupConfig;
-use kona_gossip::{GaterConfig, GossipDriverBuilder};
-use kona_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
-use kona_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
 
 use crate::{

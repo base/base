@@ -5,8 +5,8 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex, map::HashMap};
 use async_trait::async_trait;
+use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, Channel, ChannelId, Frame};
-use kona_genesis::RollupConfig;
 
 use crate::{
     ChannelReaderProvider, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError,
@@ -243,7 +243,7 @@ where
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use kona_genesis::HardForkConfig;
+    use base_consensus_genesis::HardForkConfig;
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -516,8 +516,8 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         let configs: [RollupConfig; 2] = [
-            kona_registry::Registry::rollup_config(8453).cloned().unwrap(),
-            kona_registry::Registry::rollup_config(84532).cloned().unwrap(),
+            base_consensus_registry::Registry::rollup_config(8453).cloned().unwrap(),
+            base_consensus_registry::Registry::rollup_config(84532).cloned().unwrap(),
         ];
 
         for cfg in configs {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use kona_derive::test_utils::TestAttributesBuilder;
-use kona_genesis::RollupConfig;
+use base_consensus_derive::test_utils::TestAttributesBuilder;
+use base_consensus_genesis::RollupConfig;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::Bytes;
 use alloy_rlp::Decodable;
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 use miniz_oxide::inflate::decompress_to_vec_zlib;
 
 use crate::{Batch, BrotliDecompressionError, decompress_brotli};
@@ -129,7 +129,7 @@ impl BatchReader {
 
 #[cfg(test)]
 mod test {
-    use kona_genesis::{
+    use base_consensus_genesis::{
         HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
     };
 

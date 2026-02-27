@@ -1,7 +1,7 @@
 use alloy_rpc_types_engine::PayloadId;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_consensus_engine::{BuildTaskError, ConsolidateInput, EngineQueries, SealTaskError};
 use base_protocol::OpAttributesWithParent;
-use kona_engine::{BuildTaskError, ConsolidateInput, EngineQueries, SealTaskError};
 use thiserror::Error;
 use tokio::sync::mpsc;
 

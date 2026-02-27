@@ -1,12 +1,12 @@
-//! Custom RPC subscription endpoints to for the kona node to stream internal state/data.
+//! Custom RPC subscription endpoints for the base node to stream internal state/data.
 
+use base_consensus_engine::EngineState;
 use base_protocol::L2BlockInfo;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, to_json_raw_value},
     tracing::warn,
 };
-use kona_engine::EngineState;
 
 use crate::{EngineRpcClient, jsonrpsee::WsServer};
 

@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 
 # alloy
 alloy-rlp.workspace = true
@@ -52,7 +52,7 @@ rstest.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 alloy-sol-types.workspace = true
-kona-registry.workspace = true
+base-consensus-registry.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
@@ -75,9 +75,9 @@ std = [
 	"alloy-rpc-types-eth/std",
 	"base-alloy-consensus/std",
 	"base-alloy-rpc-types-engine/std",
+	"base-consensus-genesis/std",
 	"brotli/std",
 	"derive_more/std",
-	"kona-genesis/std",
 	"miniz_oxide/std",
 	"serde?/std",
 	"spin?/std",
@@ -93,8 +93,8 @@ serde = [
 	"alloy-rpc-types-eth/serde",
 	"base-alloy-consensus/serde",
 	"base-alloy-rpc-types-engine/serde",
+	"base-consensus-genesis/serde",
 	"dep:serde",
-	"kona-genesis/serde",
 	"miniz_oxide/serde",
 	"tracing-subscriber?/serde",
 ]
@@ -107,7 +107,7 @@ arbitrary = [
 	"alloy-rpc-types-eth/arbitrary",
 	"base-alloy-consensus/arbitrary",
 	"base-alloy-rpc-types-engine/arbitrary",
+	"base-consensus-genesis/arbitrary",
 	"dep:arbitrary",
-	"kona-genesis/arbitrary",
 	"std",
 ]

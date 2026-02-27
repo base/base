@@ -1,5 +1,5 @@
 [package]
-name = "kona-proof"
+name = "base-proof"
 description = "OP Stack Proof SDK"
 version.workspace = true
 edition.workspace = true
@@ -12,14 +12,14 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-mpt.workspace = true
-kona-derive.workspace = true
-kona-driver.workspace = true
-kona-preimage.workspace = true
-kona-executor.workspace = true
+base-proof-mpt.workspace = true
+base-consensus-derive.workspace = true
+base-proof-driver.workspace = true
+base-proof-preimage.workspace = true
+base-proof-executor.workspace = true
 base-protocol.workspace = true
-kona-registry.workspace = true
-kona-genesis = { workspace = true, features = ["serde"] }
+base-consensus-registry.workspace = true
+base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-rlp.workspace = true
@@ -75,12 +75,12 @@ std = [
 	"base-alloy-consensus/std",
 	"base-alloy-evm/std",
 	"base-alloy-rpc-types-engine/std",
+	"base-consensus-genesis/std",
+	"base-consensus-registry/std",
+	"base-proof-preimage/std",
 	"base-protocol/std",
 	"base-revm/std",
 	"dep:tokio",
-	"kona-genesis/std",
-	"kona-preimage/std",
-	"kona-registry/std",
 	"serde/std",
 	"serde_json/std",
 	"spin/std",

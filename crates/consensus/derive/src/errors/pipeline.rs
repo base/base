@@ -3,8 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::B256;
+use base_consensus_genesis::SystemConfigUpdateError;
 use base_protocol::{DepositError, SpanBatchError};
-use kona_genesis::SystemConfigUpdateError;
 use thiserror::Error;
 
 use crate::BuilderError;
@@ -234,7 +234,7 @@ pub enum PipelineError {
     /// fails due to invalid parameters, version mismatches, or other
     /// configuration-related issues.
     ///
-    /// [`SystemConfig`]: kona_genesis::SystemConfig
+    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
     #[error("Error updating system config: {0}")]
     SystemConfigUpdate(SystemConfigUpdateError),
     /// Block attributes construction failed with detailed error information.

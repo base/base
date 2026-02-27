@@ -1,9 +1,9 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope};
+use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::NetworkAdminQuery;
-use kona_gossip::P2pRpcRequest;
-use kona_sources::BlockSignerError;
+use base_consensus_sources::BlockSignerError;
 use libp2p::TransportError;
 use thiserror::Error;
 use tokio::{self, select, sync::mpsc};
@@ -25,7 +25,7 @@ use crate::{
 /// ## Example
 ///
 /// ```rust,ignore
-/// use kona_gossip::NetworkDriver;
+/// use base_consensus_gossip::NetworkDriver;
 /// use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 ///
 /// let chain_id = 10;
@@ -188,7 +188,7 @@ impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
                 }
                 Some(block) = self.publish_rx.recv(), if !self.publish_rx.is_closed() => {
                     let timestamp = block.execution_payload.timestamp();
-                    let selector = |handler: &kona_gossip::BlockHandler| {
+                    let selector = |handler: &base_consensus_gossip::BlockHandler| {
                         handler.topic(timestamp)
                     };
                     let Some(signer) = handler.signer.as_ref() else {

@@ -1,4 +1,4 @@
-//! This module contains the local types for the `kona-std-fpvm` crate.
+//! This module contains the local types for the `base-proof-std-fpvm` crate.
 
 /// File descriptors available to the `client` within the FPVM kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

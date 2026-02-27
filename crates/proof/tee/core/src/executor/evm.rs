@@ -1,6 +1,6 @@
 //! EVM execution wrapper for stateless block execution.
 //!
-//! This module provides a wrapper around the kona-executor's `StatelessL2Builder`
+//! This module provides a wrapper around the base-proof-executor's `StatelessL2Builder`
 //! for executing L2 blocks in a stateless manner within an enclave.
 
 use alloy_consensus::{Header, Sealed};
@@ -9,6 +9,9 @@ use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_evm::OpEvm;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_consensus_genesis::RollupConfig;
+use base_proof_executor::StatelessL2Builder;
+use base_proof_mpt::TrieHinter;
 use base_protocol::L1BlockInfoTx;
 // Re-export L1BlockInfo for use by callers
 pub use base_revm::L1BlockInfo;
@@ -16,9 +19,6 @@ use base_revm::{
     DefaultOp, OpBuilder, OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction,
     OpTransactionError,
 };
-use kona_executor::StatelessL2Builder;
-use kona_genesis::RollupConfig;
-use kona_mpt::TrieHinter;
 use revm::{
     Inspector,
     context::{BlockEnv, TxEnv},

@@ -1,4 +1,4 @@
-//! Result types for the `kona-derive` pipeline.
+//! Result types for the `base-consensus-derive` pipeline.
 
 use crate::PipelineErrorKind;
 

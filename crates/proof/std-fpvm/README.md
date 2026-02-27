@@ -1,4 +1,4 @@
-# `kona-std-fpvm`
+# `base-proof-std-fpvm`
 
 Platform specific [Fault Proof VM][g-fault-proof-vm] kernel APIs.
 

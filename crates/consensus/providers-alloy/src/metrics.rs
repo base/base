@@ -6,43 +6,43 @@ pub struct Metrics;
 
 impl Metrics {
     /// Identifier for the gauge that tracks chain provider cache hits.
-    pub const CHAIN_PROVIDER_CACHE_HITS: &str = "kona_providers_chain_cache_hits";
+    pub const CHAIN_PROVIDER_CACHE_HITS: &str = "base_providers_chain_cache_hits";
 
     /// Identifier for the gauge that tracks chain provider cache misses.
-    pub const CHAIN_PROVIDER_CACHE_MISSES: &str = "kona_providers_chain_cache_misses";
+    pub const CHAIN_PROVIDER_CACHE_MISSES: &str = "base_providers_chain_cache_misses";
 
     /// Identifier for the gauge that tracks chain provider RPC calls.
-    pub const CHAIN_PROVIDER_RPC_CALLS: &str = "kona_providers_chain_rpc_calls";
+    pub const CHAIN_PROVIDER_RPC_CALLS: &str = "base_providers_chain_rpc_calls";
 
     /// Identifier for the gauge that tracks chain provider RPC errors.
-    pub const CHAIN_PROVIDER_RPC_ERRORS: &str = "kona_providers_chain_rpc_errors";
+    pub const CHAIN_PROVIDER_RPC_ERRORS: &str = "base_providers_chain_rpc_errors";
 
     /// Identifier for the gauge that tracks beacon client requests.
-    pub const BEACON_CLIENT_REQUESTS: &str = "kona_providers_beacon_requests";
+    pub const BEACON_CLIENT_REQUESTS: &str = "base_providers_beacon_requests";
 
     /// Identifier for the gauge that tracks beacon client errors.
-    pub const BEACON_CLIENT_ERRORS: &str = "kona_providers_beacon_errors";
+    pub const BEACON_CLIENT_ERRORS: &str = "base_providers_beacon_errors";
 
     /// Identifier for the gauge that tracks L2 chain provider requests.
-    pub const L2_CHAIN_PROVIDER_REQUESTS: &str = "kona_providers_l2_chain_requests";
+    pub const L2_CHAIN_PROVIDER_REQUESTS: &str = "base_providers_l2_chain_requests";
 
     /// Identifier for the gauge that tracks L2 chain provider errors.
-    pub const L2_CHAIN_PROVIDER_ERRORS: &str = "kona_providers_l2_chain_errors";
+    pub const L2_CHAIN_PROVIDER_ERRORS: &str = "base_providers_l2_chain_errors";
 
     /// Identifier for the gauge that tracks blob fetches.
-    pub const BLOB_FETCHES: &str = "kona_providers_blob_fetches";
+    pub const BLOB_FETCHES: &str = "base_providers_blob_fetches";
 
     /// Identifier for the gauge that tracks blob fetch errors.
-    pub const BLOB_FETCH_ERRORS: &str = "kona_providers_blob_fetch_errors";
+    pub const BLOB_FETCH_ERRORS: &str = "base_providers_blob_fetch_errors";
 
     /// Identifier for the histogram that tracks provider request duration.
-    pub const PROVIDER_REQUEST_DURATION: &str = "kona_providers_request_duration";
+    pub const PROVIDER_REQUEST_DURATION: &str = "base_providers_request_duration";
 
     /// Identifier for the gauge that tracks active cache entries.
-    pub const CACHE_ENTRIES: &str = "kona_providers_cache_entries";
+    pub const CACHE_ENTRIES: &str = "base_providers_cache_entries";
 
     /// Identifier for the gauge that tracks cache memory usage.
-    pub const CACHE_MEMORY_USAGE: &str = "kona_providers_cache_memory_bytes";
+    pub const CACHE_MEMORY_USAGE: &str = "base_providers_cache_memory_bytes";
 
     /// Initializes metrics for the Alloy providers.
     ///
@@ -55,7 +55,7 @@ impl Metrics {
         Self::zero();
     }
 
-    /// Describes metrics used in [`kona_providers_alloy`][crate].
+    /// Describes metrics used in [`base_consensus_providers`][crate].
     #[cfg(feature = "metrics")]
     pub fn describe() {
         metrics::describe_gauge!(

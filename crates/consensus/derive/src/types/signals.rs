@@ -1,11 +1,11 @@
-//! Signal types for the `kona-derive` pipeline.
+//! Signal types for the `base-consensus-derive` pipeline.
 //!
 //! Signals are the primary method of communication in the downwards direction
 //! of the pipeline. They allow the pipeline driver to perform actions such as
 //! resetting all stages in the pipeline through message passing.
 
+use base_consensus_genesis::SystemConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};
-use kona_genesis::SystemConfig;
 
 /// A signal to send to the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

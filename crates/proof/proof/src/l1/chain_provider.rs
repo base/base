@@ -7,10 +7,10 @@ use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
+use base_consensus_derive::ChainProvider;
+use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
+use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_protocol::BlockInfo;
-use kona_derive::ChainProvider;
-use kona_mpt::{OrderedListWalker, TrieNode, TrieProvider};
-use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 
 use crate::{HintType, errors::OracleProviderError};
 

@@ -1,5 +1,5 @@
 [package]
-name = "kona-registry"
+name = "base-consensus-registry"
 version.workspace = true
 description = "A registry of chain configs"
 
@@ -15,7 +15,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-kona-genesis = { workspace = true, features = ["serde"] }
+base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-primitives = { workspace = true, features = ["map"] }
@@ -45,7 +45,7 @@ std = [
 	"alloy-eips/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
-	"kona-genesis/std",
+	"base-consensus-genesis/std",
 	"toml/std",
 ]
 test-utils = []

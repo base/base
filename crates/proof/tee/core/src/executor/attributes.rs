@@ -6,9 +6,9 @@
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Log, address};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{L1BlockInfoTx, decode_deposit};
 use hex_literal::hex;
-use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 
 use crate::error::ExecutorError;
 
@@ -80,7 +80,7 @@ pub fn extract_deposits_from_receipts(
                 && !log.topics().is_empty()
                 && log.topics()[0] == DEPOSIT_EVENT_TOPIC
             {
-                // Parse the deposit transaction using kona-protocol
+                // Parse the deposit transaction using base-protocol
                 let deposit_tx = decode_deposit(l1_origin_hash, log_index, log).map_err(|e| {
                     ExecutorError::AttributesBuildFailed(format!("failed to decode deposit: {e}"))
                 })?;
@@ -117,7 +117,7 @@ fn build_l1_info_deposit_tx(
     l2_timestamp: u64,
     sequence_number: u64,
 ) -> Result<Bytes, ExecutorError> {
-    // Use kona-protocol's L1BlockInfoTx to build the deposit transaction
+    // Use base-protocol's L1BlockInfoTx to build the deposit transaction
     let (_l1_info, deposit_tx) = L1BlockInfoTx::try_new_with_deposit_tx(
         rollup_config,
         l1_config,

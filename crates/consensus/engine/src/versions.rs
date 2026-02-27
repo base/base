@@ -12,7 +12,7 @@
 //!
 //! Adapted from the [OP Node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
 
-use kona_genesis::RollupConfig;
+use base_consensus_genesis::RollupConfig;
 
 /// Engine API version for `engine_forkchoiceUpdated` method calls.
 ///

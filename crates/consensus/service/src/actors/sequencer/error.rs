@@ -1,5 +1,5 @@
-use kona_derive::PipelineErrorKind;
-use kona_engine::BuildTaskError;
+use base_consensus_derive::PipelineErrorKind;
+use base_consensus_engine::BuildTaskError;
 
 use crate::{
     L1OriginSelectorError, UnsafePayloadGossipClientError, actors::engine::EngineClientError,

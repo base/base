@@ -1,5 +1,5 @@
 [package]
-name = "kona-peers"
+name = "base-consensus-peers"
 version.workspace = true
 description = "Network peers library for the OP Stack"
 
@@ -13,8 +13,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# Kona
-kona-registry.workspace = true
+# consensus
+base-consensus-registry.workspace = true
 
 # Alloy
 alloy-rlp = { workspace = true, features = ["std"] }
@@ -48,7 +48,7 @@ tempfile.workspace = true
 multihash.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
-kona-genesis.workspace = true
+base-consensus-genesis.workspace = true
 
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }

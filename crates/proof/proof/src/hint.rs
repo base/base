@@ -7,7 +7,7 @@ use alloc::{
 use core::{fmt::Display, str::FromStr};
 
 use alloy_primitives::{Bytes, hex};
-use kona_preimage::HintWriterClient;
+use base_proof_preimage::HintWriterClient;
 
 use crate::errors::{HintParsingError, OracleProviderError};
 

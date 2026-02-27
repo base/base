@@ -2629,10 +2629,10 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
+ "base-consensus-registry",
  "clap",
  "dirs-next",
  "eyre",
- "kona-registry",
  "libc",
  "metrics",
  "metrics-exporter-prometheus",
@@ -2657,21 +2657,21 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
+ "base-consensus-cli",
+ "base-consensus-derive",
+ "base-consensus-disc",
+ "base-consensus-genesis",
+ "base-consensus-gossip",
+ "base-consensus-node",
+ "base-consensus-peers",
+ "base-consensus-providers",
+ "base-consensus-registry",
  "base-consensus-rpc",
+ "base-consensus-sources",
  "base-jwt",
  "clap",
  "discv5",
  "eyre",
- "kona-cli",
- "kona-derive",
- "kona-disc",
- "kona-genesis",
- "kona-gossip",
- "kona-node-service",
- "kona-peers",
- "kona-providers-alloy",
- "kona-registry",
- "kona-sources",
  "libp2p",
  "reqwest 0.13.2",
  "rstest",
@@ -2741,18 +2741,332 @@ version = "0.0.0"
 dependencies = [
  "base-cli-utils",
  "base-client-cli",
+ "base-consensus-derive",
+ "base-consensus-disc",
+ "base-consensus-engine",
+ "base-consensus-genesis",
+ "base-consensus-gossip",
+ "base-consensus-node",
+ "base-consensus-providers",
  "clap",
  "eyre",
- "kona-derive",
- "kona-disc",
- "kona-engine",
- "kona-genesis",
- "kona-gossip",
- "kona-node-service",
- "kona-providers-alloy",
  "metrics",
  "strum",
  "tracing",
+]
+
+[[package]]
+name = "base-consensus-cli"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-primitives",
+ "base-cli-utils",
+ "base-consensus-genesis",
+ "base-consensus-registry",
+ "clap",
+ "libp2p",
+ "rstest",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "base-consensus-derive"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-genesis",
+ "base-consensus-hardforks",
+ "base-consensus-registry",
+ "base-macros",
+ "base-protocol",
+ "metrics",
+ "proptest",
+ "serde",
+ "serde_json",
+ "spin 0.9.8",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
+name = "base-consensus-disc"
+version = "0.0.0"
+dependencies = [
+ "alloy-rlp",
+ "backon",
+ "base-cli-utils",
+ "base-consensus-genesis",
+ "base-consensus-peers",
+ "base-macros",
+ "derive_more",
+ "discv5",
+ "libp2p",
+ "metrics",
+ "rand 0.9.2",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-consensus-engine"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-transport",
+ "alloy-transport-http",
+ "arbitrary",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-network",
+ "base-alloy-provider",
+ "base-alloy-rpc-types",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-genesis",
+ "base-consensus-registry",
+ "base-macros",
+ "base-protocol",
+ "derive_more",
+ "http-body-util",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "rand 0.9.2",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-consensus-genesis"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "arbitrary",
+ "base-alloy-hardforks",
+ "base-revm",
+ "derive_more",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml 1.0.3+spec-1.1.0",
+]
+
+[[package]]
+name = "base-consensus-gossip"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "arbitrary",
+ "base-alloy-consensus",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-disc",
+ "base-consensus-genesis",
+ "base-consensus-peers",
+ "base-macros",
+ "derive_more",
+ "discv5",
+ "futures",
+ "ipnet",
+ "lazy_static",
+ "libp2p",
+ "libp2p-identity",
+ "libp2p-stream",
+ "metrics",
+ "multihash",
+ "openssl",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "snap",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-consensus-hardforks"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "base-alloy-consensus",
+ "base-protocol",
+ "base-revm",
+ "revm",
+]
+
+[[package]]
+name = "base-consensus-node"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-transport",
+ "alloy-transport-http",
+ "anyhow",
+ "arbitrary",
+ "async-stream",
+ "async-trait",
+ "backon",
+ "base-alloy-consensus",
+ "base-alloy-network",
+ "base-alloy-provider",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
+ "base-consensus-disc",
+ "base-consensus-engine",
+ "base-consensus-genesis",
+ "base-consensus-gossip",
+ "base-consensus-peers",
+ "base-consensus-providers",
+ "base-consensus-rpc",
+ "base-consensus-sources",
+ "base-macros",
+ "base-protocol",
+ "derive_more",
+ "discv5",
+ "futures",
+ "http 1.4.0",
+ "http-body-util",
+ "jsonrpsee",
+ "libp2p",
+ "libp2p-stream",
+ "metrics",
+ "mockall",
+ "rand 0.9.2",
+ "rstest",
+ "strum",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-consensus-peers"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-rlp",
+ "arbitrary",
+ "arbtest",
+ "base-consensus-genesis",
+ "base-consensus-registry",
+ "derive_more",
+ "dirs",
+ "discv5",
+ "lazy_static",
+ "libp2p",
+ "libp2p-identity",
+ "multihash",
+ "secp256k1 0.30.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+ "unsigned-varint 0.8.0",
+ "url",
+]
+
+[[package]]
+name = "base-consensus-providers"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-beacon",
+ "alloy-rpc-types-engine",
+ "alloy-serde",
+ "alloy-transport",
+ "alloy-transport-http",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-network",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-macros",
+ "base-protocol",
+ "c-kzg",
+ "http-body-util",
+ "httpmock",
+ "lru 0.16.3",
+ "metrics",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "url",
+]
+
+[[package]]
+name = "base-consensus-registry"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "base-alloy-hardforks",
+ "base-consensus-genesis",
+ "lazy_static",
+ "toml 1.0.3+spec-1.1.0",
 ]
 
 [[package]]
@@ -2765,14 +3079,14 @@ dependencies = [
  "backon",
  "base-alloy-rpc-jsonrpsee",
  "base-alloy-rpc-types-engine",
+ "base-consensus-engine",
+ "base-consensus-genesis",
+ "base-consensus-gossip",
  "base-macros",
  "base-protocol",
  "getrandom 0.3.4",
  "ipnet",
  "jsonrpsee",
- "kona-engine",
- "kona-genesis",
- "kona-gossip",
  "libp2p",
  "metrics",
  "serde",
@@ -2780,6 +3094,28 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "base-consensus-sources"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-client",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-transport",
+ "alloy-transport-http",
+ "base-alloy-rpc-types-engine",
+ "derive_more",
+ "notify",
+ "rustls 0.23.37",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2797,13 +3133,13 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
+ "base-consensus-genesis",
+ "base-proof-executor",
+ "base-proof-mpt",
  "base-protocol",
  "base-revm",
  "hex",
  "hex-literal",
- "kona-executor",
- "kona-genesis",
- "kona-mpt",
  "revm",
  "serde",
  "serde_json",
@@ -2835,6 +3171,7 @@ dependencies = [
  "async-trait",
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
+ "base-consensus-genesis",
  "base-enclave",
  "base64 0.22.1",
  "ciborium",
@@ -2845,7 +3182,6 @@ dependencies = [
  "hyper-util",
  "jsonrpsee",
  "k256",
- "kona-genesis",
  "openssl",
  "parking_lot",
  "rand 0.8.5",
@@ -3387,8 +3723,8 @@ dependencies = [
  "backon",
  "base-alloy-network",
  "base-alloy-provider",
+ "base-consensus-engine",
  "eyre",
- "kona-engine",
  "thiserror 2.0.18",
  "tracing",
  "url",
@@ -3561,6 +3897,155 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "ark-bls12-381",
+ "ark-ff 0.5.0",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-evm",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-consensus-registry",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "base-protocol",
+ "base-revm",
+ "c-kzg",
+ "lazy_static",
+ "lru 0.16.3",
+ "rand 0.9.2",
+ "rayon",
+ "rstest",
+ "serde",
+ "serde_json",
+ "spin 0.9.8",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-driver"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-rlp",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-proof-executor",
+ "base-protocol",
+ "spin 0.9.8",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-executor"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-rpc-types-engine",
+ "alloy-transport",
+ "alloy-transport-http",
+ "alloy-trie",
+ "base-alloy-consensus",
+ "base-alloy-evm",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-genesis",
+ "base-consensus-registry",
+ "base-proof-mpt",
+ "base-protocol",
+ "base-revm",
+ "rand 0.9.2",
+ "revm",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-mpt"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "alloy-transport-http",
+ "alloy-trie",
+ "base-alloy-rpc-types-engine",
+ "proptest",
+ "rand 0.9.2",
+ "reqwest 0.13.2",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "base-proof-preimage"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-channel",
+ "async-trait",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-std-fpvm"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-proof-preimage",
+ "buddy_system_allocator",
+ "cfg-if",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-std-fpvm-proc"
+version = "0.0.0"
+dependencies = [
+ "base-proof-std-fpvm",
+ "cfg-if",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
@@ -3654,10 +4139,10 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
+ "base-consensus-genesis",
+ "base-consensus-registry",
  "brotli",
  "derive_more",
- "kona-genesis",
- "kona-registry",
  "miniz_oxide 0.9.0",
  "proptest",
  "rand 0.9.2",
@@ -8272,491 +8757,6 @@ checksum = "b646a74e746cd25045aa0fd42f4f7f78aa6d119380182c7e63a5593c4ab8df6f"
 dependencies = [
  "digest 0.10.7",
  "sha3-asm",
-]
-
-[[package]]
-name = "kona-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-primitives",
- "base-cli-utils",
- "clap",
- "kona-genesis",
- "kona-registry",
- "libp2p",
- "rstest",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "kona-derive"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-rpc-types-engine",
- "base-macros",
- "base-protocol",
- "kona-genesis",
- "kona-hardforks",
- "kona-registry",
- "metrics",
- "proptest",
- "serde",
- "serde_json",
- "spin 0.9.8",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.22",
-]
-
-[[package]]
-name = "kona-disc"
-version = "0.0.0"
-dependencies = [
- "alloy-rlp",
- "backon",
- "base-cli-utils",
- "base-macros",
- "derive_more",
- "discv5",
- "kona-genesis",
- "kona-peers",
- "libp2p",
- "metrics",
- "rand 0.9.2",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "kona-driver"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-evm",
- "alloy-primitives",
- "alloy-rlp",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-rpc-types-engine",
- "base-protocol",
- "kona-derive",
- "kona-executor",
- "kona-genesis",
- "spin 0.9.8",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "kona-engine"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-transport",
- "alloy-transport-http",
- "arbitrary",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-network",
- "base-alloy-provider",
- "base-alloy-rpc-types",
- "base-alloy-rpc-types-engine",
- "base-macros",
- "base-protocol",
- "derive_more",
- "http-body-util",
- "kona-genesis",
- "kona-registry",
- "metrics",
- "metrics-exporter-prometheus",
- "rand 0.9.2",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "kona-executor"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-evm",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rlp",
- "alloy-rpc-client",
- "alloy-rpc-types-engine",
- "alloy-transport",
- "alloy-transport-http",
- "alloy-trie",
- "base-alloy-consensus",
- "base-alloy-evm",
- "base-alloy-rpc-types-engine",
- "base-protocol",
- "base-revm",
- "kona-genesis",
- "kona-mpt",
- "kona-registry",
- "rand 0.9.2",
- "revm",
- "rocksdb",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "kona-genesis"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
- "alloy-hardforks",
- "alloy-primitives",
- "alloy-sol-types",
- "arbitrary",
- "base-alloy-hardforks",
- "base-revm",
- "derive_more",
- "rand 0.9.2",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml 1.0.3+spec-1.1.0",
-]
-
-[[package]]
-name = "kona-gossip"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "arbitrary",
- "base-alloy-consensus",
- "base-alloy-rpc-types-engine",
- "base-macros",
- "derive_more",
- "discv5",
- "futures",
- "ipnet",
- "kona-disc",
- "kona-genesis",
- "kona-peers",
- "lazy_static",
- "libp2p",
- "libp2p-identity",
- "libp2p-stream",
- "metrics",
- "multihash",
- "openssl",
- "rand 0.9.2",
- "serde",
- "serde_json",
- "serde_repr",
- "snap",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "kona-hardforks"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-alloy-consensus",
- "base-protocol",
- "base-revm",
- "revm",
-]
-
-[[package]]
-name = "kona-mpt"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rlp",
- "alloy-rpc-types",
- "alloy-transport-http",
- "alloy-trie",
- "base-alloy-rpc-types-engine",
- "proptest",
- "rand 0.9.2",
- "reqwest 0.13.2",
- "serde",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "kona-node-service"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-transport",
- "alloy-transport-http",
- "anyhow",
- "arbitrary",
- "async-stream",
- "async-trait",
- "backon",
- "base-alloy-consensus",
- "base-alloy-network",
- "base-alloy-provider",
- "base-alloy-rpc-types-engine",
- "base-consensus-rpc",
- "base-macros",
- "base-protocol",
- "derive_more",
- "discv5",
- "futures",
- "http 1.4.0",
- "http-body-util",
- "jsonrpsee",
- "kona-derive",
- "kona-disc",
- "kona-engine",
- "kona-genesis",
- "kona-gossip",
- "kona-peers",
- "kona-providers-alloy",
- "kona-sources",
- "libp2p",
- "libp2p-stream",
- "metrics",
- "mockall",
- "rand 0.9.2",
- "rstest",
- "strum",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "kona-peers"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-rlp",
- "arbitrary",
- "arbtest",
- "derive_more",
- "dirs",
- "discv5",
- "kona-genesis",
- "kona-registry",
- "lazy_static",
- "libp2p",
- "libp2p-identity",
- "multihash",
- "secp256k1 0.30.0",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "tracing",
- "unsigned-varint 0.8.0",
- "url",
-]
-
-[[package]]
-name = "kona-preimage"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-channel",
- "async-trait",
- "serde",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "kona-proof"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-evm",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "ark-bls12-381",
- "ark-ff 0.5.0",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-evm",
- "base-alloy-rpc-types-engine",
- "base-protocol",
- "base-revm",
- "c-kzg",
- "kona-derive",
- "kona-driver",
- "kona-executor",
- "kona-genesis",
- "kona-mpt",
- "kona-preimage",
- "kona-registry",
- "lazy_static",
- "lru 0.16.3",
- "rand 0.9.2",
- "rayon",
- "rstest",
- "serde",
- "serde_json",
- "spin 0.9.8",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "kona-providers-alloy"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-rpc-types-beacon",
- "alloy-rpc-types-engine",
- "alloy-serde",
- "alloy-transport",
- "alloy-transport-http",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-network",
- "base-macros",
- "base-protocol",
- "c-kzg",
- "http-body-util",
- "httpmock",
- "kona-derive",
- "kona-genesis",
- "lru 0.16.3",
- "metrics",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "url",
-]
-
-[[package]]
-name = "kona-registry"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-eips",
- "alloy-genesis",
- "alloy-hardforks",
- "alloy-primitives",
- "base-alloy-hardforks",
- "kona-genesis",
- "lazy_static",
- "toml 1.0.3+spec-1.1.0",
-]
-
-[[package]]
-name = "kona-sources"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rpc-client",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-transport",
- "alloy-transport-http",
- "base-alloy-rpc-types-engine",
- "derive_more",
- "notify",
- "rustls 0.23.37",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "kona-std-fpvm"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "buddy_system_allocator",
- "cfg-if",
- "kona-preimage",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "kona-std-fpvm-proc"
-version = "0.0.0"
-dependencies = [
- "cfg-if",
- "kona-std-fpvm",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]

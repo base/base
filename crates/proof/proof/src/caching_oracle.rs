@@ -1,19 +1,19 @@
 //! Contains the [`CachingOracle`], which is a wrapper around an
-//! [`OracleReader`](kona_preimage::OracleReader) and [`HintWriter`](kona_preimage::HintWriter)
+//! [`OracleReader`](base_proof_preimage::OracleReader) and [`HintWriter`](base_proof_preimage::HintWriter)
 //! that stores a configurable number of responses in an [`LruCache`] for quick retrieval.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::num::NonZeroUsize;
 
 use async_trait::async_trait;
-use kona_preimage::{
+use base_proof_preimage::{
     HintWriterClient, PreimageKey, PreimageOracleClient, errors::PreimageOracleResult,
 };
 use lru::LruCache;
 use spin::Mutex;
 
-/// A wrapper around an [`OracleReader`](kona_preimage::OracleReader) and
-/// [`HintWriter`](kona_preimage::HintWriter) that stores a configurable number of responses in an
+/// A wrapper around an [`OracleReader`](base_proof_preimage::OracleReader) and
+/// [`HintWriter`](base_proof_preimage::HintWriter) that stores a configurable number of responses in an
 /// [`LruCache`] for quick retrieval.
 #[derive(Debug, Clone)]
 pub struct CachingOracle<OR, HW>
@@ -35,7 +35,7 @@ where
     HW: HintWriterClient,
 {
     /// Creates a new [`CachingOracle`] that wraps the given
-    /// [`OracleReader`](kona_preimage::OracleReader) and stores up to `N` responses in the cache.
+    /// [`OracleReader`](base_proof_preimage::OracleReader) and stores up to `N` responses in the cache.
     pub fn new(cache_size: usize, oracle_reader: OR, hint_writer: HW) -> Self {
         Self {
             cache: Arc::new(Mutex::new(LruCache::new(

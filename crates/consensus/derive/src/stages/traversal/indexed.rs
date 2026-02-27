@@ -4,8 +4,8 @@ use alloc::{boxed::Box, sync::Arc};
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
-use kona_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,
@@ -167,7 +167,7 @@ mod tests {
 
     use alloy_consensus::Receipt;
     use alloy_primitives::{B256, Bytes, Log, LogData, address, b256, hex};
-    use kona_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};

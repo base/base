@@ -2,8 +2,8 @@
 
 use std::{collections::BinaryHeap, sync::Arc};
 
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpBlockConversionError, to_system_config};
-use kona_genesis::{RollupConfig, SystemConfig};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
 
