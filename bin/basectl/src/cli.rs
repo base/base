@@ -23,7 +23,11 @@ pub(crate) enum Commands {
     Config,
     /// Flashblocks operations
     #[command(visible_alias = "f")]
-    Flashblocks,
+    Flashblocks {
+        /// Output flashblocks as JSON lines instead of the TUI
+        #[arg(long)]
+        json: bool,
+    },
     /// DA (Data Availability) backlog monitor
     #[command(visible_alias = "d")]
     Da,
