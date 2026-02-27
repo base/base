@@ -1,8 +1,8 @@
-//! Integration tests verifying that [`kona_registry`] rollup configs agree with
+//! Integration tests verifying that [`base_consensus_registry`] rollup configs agree with
 //! [`base_alloy_hardforks`] chain hardfork schedules for every [`OpHardfork`] variant.
 
 use base_alloy_hardforks::{OpChainHardforks, OpHardfork, OpHardforks};
-use kona_registry::test_utils::{BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONFIG};
+use base_consensus_registry::test_utils::{BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONFIG};
 
 #[test]
 fn mainnet_rollup_config_matches_chain_hardforks() {
