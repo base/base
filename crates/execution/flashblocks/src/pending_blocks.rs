@@ -685,7 +685,7 @@ mod tests {
                     receipt: OpReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 21_000,
-                        logs: vec![log.clone()],
+                        logs: vec![log],
                     }),
                     logs_bloom: Bloom::default(),
                 },
@@ -728,7 +728,7 @@ mod tests {
         (tx_hash, builder.build().expect("should build pending blocks"))
     }
 
-    /// Builds a [`PendingBlocks`] with the supplied (hash, log_address) pairs
+    /// Builds a [`PendingBlocks`] with the supplied (hash, `log_address`) pairs
     /// inserted in the given order.
     fn build_pending_blocks_with_logs(entries: &[(B256, Address)]) -> PendingBlocks {
         let header = Sealed::new_unchecked(Header::default(), B256::ZERO);
