@@ -42,7 +42,7 @@ std = [
 	"serde?/std",
 	"serde_json/std",
 	"sha2/std",
-	"base-alloy-flz/std"
+	"base-alloy-flz/std",
 ]
 dev = [
 	"memory_limit",
