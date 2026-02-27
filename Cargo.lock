@@ -3070,6 +3070,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
  "base-consensus-genesis",
  "base-proof",
  "base-proof-driver",
@@ -3083,6 +3084,7 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
+ "spin 0.9.8",
  "thiserror 2.0.18",
  "tracing",
 ]
