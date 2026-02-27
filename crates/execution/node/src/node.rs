@@ -63,8 +63,8 @@ use crate::{
     OpEngineApiBuilder, OpEngineTypes,
     args::RollupArgs,
     engine::OpEngineValidator,
-    ordering::{TimestampOrdering, TimestampedTransaction},
-    txpool::{OpTransactionPool, OpTransactionValidator},
+    ordering::TimestampOrdering,
+    txpool::{OpTransactionPool, OpTransactionValidator, TimestampedTransaction},
 };
 
 /// Marker trait for Optimism node types with standard engine, chain spec, and primitives.

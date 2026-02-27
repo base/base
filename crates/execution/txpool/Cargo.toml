@@ -38,6 +38,7 @@ base-execution-primitives.workspace = true
 c-kzg.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time"] }
