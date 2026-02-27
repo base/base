@@ -1,5 +1,9 @@
 use core::fmt::{Debug, Formatter};
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{
+    io,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+};
 
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -7,10 +11,13 @@ use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{Listener, PublisherMetrics, PublishingMetrics};
+use crate::{Listener, PublisherMetrics, PublishingMetrics, RingBuffer, RingBufferEntry};
 
 /// Default broadcast channel capacity.
 const DEFAULT_CHANNEL_CAPACITY: usize = 100;
+
+/// Default ring buffer capacity (~10s replay window).
+const DEFAULT_RING_BUFFER_CAPACITY: usize = 55;
 
 /// A WebSocket publisher that accepts connections from clients and broadcasts
 /// serialized messages to all connected subscribers.
@@ -24,39 +31,51 @@ pub struct WebSocketPublisher {
     cancel: CancellationToken,
     pipe: broadcast::Sender<Utf8Bytes>,
     metrics: Arc<dyn PublisherMetrics>,
+    ring_buffer: Arc<RwLock<RingBuffer>>,
 }
 
 impl WebSocketPublisher {
     /// Creates a new `WebSocketPublisher` bound to the given address with the
-    /// default broadcast channel capacity (100).
+    /// default broadcast channel capacity (100) and ring buffer capacity (16).
     ///
     /// Spawns a background listener task that accepts WebSocket connections
     /// and broadcasts messages published via [`Self::publish`]. Metrics are
     /// registered automatically under the `base_builder` scope.
     pub fn new(addr: SocketAddr) -> io::Result<Self> {
-        Self::with_capacity(addr, DEFAULT_CHANNEL_CAPACITY)
+        Self::with_capacity(addr, DEFAULT_CHANNEL_CAPACITY, DEFAULT_RING_BUFFER_CAPACITY)
     }
 
-    /// Creates a new `WebSocketPublisher` with a custom broadcast channel capacity.
+    /// Creates a new `WebSocketPublisher` with custom broadcast channel and ring buffer capacities.
     ///
-    /// The capacity determines how many messages can be buffered before slow
-    /// subscribers begin lagging. Larger values use more memory per subscriber
-    /// but reduce dropped messages under load.
-    pub fn with_capacity(addr: SocketAddr, capacity: usize) -> io::Result<Self> {
+    /// The broadcast `capacity` determines how many messages can be buffered before slow
+    /// subscribers begin lagging. The `ring_buffer_capacity` controls how many flashblocks
+    /// are kept for reconnecting subscribers to replay.
+    pub fn with_capacity(
+        addr: SocketAddr,
+        capacity: usize,
+        ring_buffer_capacity: usize,
+    ) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(capacity);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(PublishingMetrics::default());
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(ring_buffer_capacity)));
 
         let std_listener = std::net::TcpListener::bind(addr)?;
         std_listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
 
         tokio::spawn(
-            Listener::new(listener, Arc::clone(&metrics), pipe.subscribe(), cancel.child_token())
-                .run(),
+            Listener::new(
+                listener,
+                Arc::clone(&metrics),
+                pipe.subscribe(),
+                cancel.child_token(),
+                Arc::clone(&ring_buffer),
+            )
+            .run(),
         );
 
-        Ok(Self { cancel, pipe, metrics })
+        Ok(Self { cancel, pipe, metrics, ring_buffer })
     }
 
     /// Serializes the payload to JSON and broadcasts it to all connected subscribers.
@@ -66,6 +85,37 @@ impl WebSocketPublisher {
         let serialized = serde_json::to_string(payload)?;
         let utf8_bytes = Utf8Bytes::from(serialized);
         let size = utf8_bytes.len();
+        self.pipe
+            .send(utf8_bytes)
+            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
+        self.metrics.on_payload_size(size);
+        Ok(size)
+    }
+
+    /// Serializes the payload to JSON, stores it in the ring buffer keyed by
+    /// `(block_number, flashblock_index)`, then broadcasts to all connected subscribers.
+    ///
+    /// Reconnecting subscribers that supply `?block_number=N&flashblock_index=M` on
+    /// their upgrade request will receive all buffered entries after that position
+    /// before joining the live stream.
+    ///
+    /// Returns the byte size of the serialized payload on success.
+    pub fn publish_flashblock(
+        &self,
+        payload: &impl Serialize,
+        block_number: u64,
+        flashblock_index: u64,
+    ) -> io::Result<usize> {
+        let serialized = serde_json::to_string(payload)?;
+        let utf8_bytes = Utf8Bytes::from(serialized);
+        let size = utf8_bytes.len();
+
+        self.ring_buffer.write().unwrap().push(RingBufferEntry {
+            block_number,
+            flashblock_index,
+            payload: utf8_bytes.clone(),
+        });
+
         self.pipe
             .send(utf8_bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
@@ -126,7 +176,7 @@ mod tests {
     #[tokio::test]
     async fn publish_with_custom_capacity() {
         let addr = ephemeral_addr();
-        let publisher = WebSocketPublisher::with_capacity(addr, 8).unwrap();
+        let publisher = WebSocketPublisher::with_capacity(addr, 8, 4).unwrap();
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -166,5 +216,36 @@ mod tests {
         let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
         let debug_str = format!("{publisher:?}");
         assert!(debug_str.contains("WebSocketPublisher"));
+    }
+
+    #[tokio::test]
+    async fn publish_flashblock_stores_in_ring_buffer() {
+        let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
+        let payload = serde_json::json!({"index": 1});
+
+        publisher.publish_flashblock(&payload, 42, 1).unwrap();
+
+        let buf = publisher.ring_buffer.read().unwrap();
+        let entries = buf.entries_after(42, 0);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn publish_flashblock_broadcasts_live() {
+        let addr = ephemeral_addr();
+        let publisher = WebSocketPublisher::new(addr).unwrap();
+
+        let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let payload = serde_json::json!({"index": 0, "metadata": {"block_number": 1}});
+        publisher.publish_flashblock(&payload, 1, 0).unwrap();
+
+        let msg = client.next().await.unwrap().unwrap();
+        if let Message::Text(text) = msg {
+            assert!(text.contains("block_number"));
+        } else {
+            panic!("expected text message");
+        }
     }
 }

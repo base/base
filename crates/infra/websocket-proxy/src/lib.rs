@@ -18,6 +18,9 @@ pub use rate_limit::*;
 mod registry;
 pub use registry::*;
 
+mod ring_buffer;
+pub use ring_buffer::{FlashblocksRingBuffer, FlashblocksRingBufferEntry};
+
 mod server;
 pub use server::*;
 

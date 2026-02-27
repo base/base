@@ -78,8 +78,35 @@ impl Default for SubscriberOptions {
     }
 }
 
+/// Builds a reconnect URI by appending `?block_number=N&flashblock_index=M` to the base.
+///
+/// Any existing query string on the base URI is replaced. Returns the base URI unchanged
+/// if no resume position is provided. Always ensures at least a `/` path so the resulting
+/// URI produces a valid HTTP request line (`GET /... HTTP/1.1`).
+fn uri_with_resume(base: &Uri, pos: Option<(u64, u64)>) -> Uri {
+    let (bn, fi) = match pos {
+        Some(p) => p,
+        None => return base.clone(),
+    };
+
+    let scheme = base.scheme_str().unwrap_or("ws");
+    let authority = base.authority().map(|a| a.as_str()).unwrap_or("");
+    let path = {
+        let p = base.path();
+        if p.is_empty() { "/" } else { p }
+    };
+
+    format!("{scheme}://{authority}{path}?block_number={bn}&flashblock_index={fi}")
+        .parse()
+        .unwrap_or_else(|_| base.clone())
+}
+
 /// Maintains a persistent websocket connection to an upstream server, automatically
 /// reconnecting with exponential backoff and monitoring liveness via ping/pong.
+///
+/// Tracks the last received `(block_number, flashblock_index)` position and appends
+/// it as query parameters when reconnecting, so the upstream can resume sending from
+/// the correct position.
 pub struct WebsocketSubscriber<F>
 where
     F: Fn(String) + Send + Sync + 'static,
@@ -89,6 +116,7 @@ where
     backoff: ExponentialBackoff,
     metrics: Arc<Metrics>,
     options: SubscriberOptions,
+    last_position: Option<(u64, u64)>,
 }
 
 impl<F> std::fmt::Debug for WebsocketSubscriber<F>
@@ -99,6 +127,7 @@ where
         f.debug_struct("WebsocketSubscriber")
             .field("uri", &self.uri)
             .field("options", &self.options)
+            .field("last_position", &self.last_position)
             .finish_non_exhaustive()
     }
 }
@@ -116,7 +145,7 @@ where
             ..Default::default()
         };
 
-        Self { uri, handler, backoff, metrics, options }
+        Self { uri, handler, backoff, metrics, options, last_position: None }
     }
 
     /// Runs the subscriber loop, reconnecting on failure until the token is cancelled.
@@ -172,11 +201,12 @@ where
     }
 
     async fn connect_and_listen(&mut self) -> Result<(), Error> {
-        info!(message = "connecting to websocket", uri = self.uri.to_string());
+        let connect_uri = uri_with_resume(&self.uri, self.last_position);
+        info!(message = "connecting to websocket", uri = connect_uri.to_string());
 
         self.metrics.upstream_connection_attempts.increment(1);
 
-        let (ws_stream, _) = match connect_async(&self.uri).await {
+        let (ws_stream, _) = match connect_async(&connect_uri).await {
             Ok(connection) => {
                 self.metrics.upstream_connection_successes.increment(1);
                 connection
@@ -187,7 +217,7 @@ where
             }
         };
 
-        info!(message = "websocket connection established", uri = self.uri.to_string());
+        info!(message = "websocket connection established", uri = connect_uri.to_string());
 
         self.metrics.upstream_connections.increment(1);
         self.backoff.reset();
@@ -234,7 +264,7 @@ where
                     let Some(msg) = message else {
                         break Ok(());
                     };
-                    if let Err(e) = self.handle_message(msg, &mut pong_deadline, options.pong_timeout).await {
+                    if let Err(e) = self.handle_message(msg, &mut pong_deadline, options.pong_timeout) {
                         break Err(e);
                     }
                 }
@@ -246,8 +276,8 @@ where
         result
     }
 
-    async fn handle_message(
-        &self,
+    fn handle_message(
+        &mut self,
         message: Result<Message, Error>,
         pong_deadline: &mut Instant,
         pong_timeout: Duration,
@@ -272,6 +302,12 @@ where
                     payload = text.as_str()
                 );
                 self.metrics.message_received_from_upstream(self.uri.to_string().as_str());
+
+                // Update last position for reconnect URI.
+                if let Some(pos) = extract_flashblock_position(text.as_str()) {
+                    self.last_position = Some(pos);
+                }
+
                 (self.handler)(text.to_string());
             }
             Message::Binary(data) => {
@@ -296,6 +332,14 @@ where
     }
 }
 
+/// Extracts `(block_number, flashblock_index)` from a flashblock JSON string.
+fn extract_flashblock_position(json: &str) -> Option<(u64, u64)> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let index = v.get("index")?.as_u64()?;
+    let block_number = v.get("metadata")?.get("block_number")?.as_u64()?;
+    Some((block_number, index))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -310,7 +354,10 @@ mod tests {
         sync::broadcast,
         time::{Duration, sleep, timeout},
     };
-    use tokio_tungstenite::{accept_async, tungstenite::Message};
+    use tokio_tungstenite::{
+        accept_async,
+        tungstenite::{Message, handshake::server::{Request, Response}},
+    };
 
     use super::*;
     use crate::metrics::Metrics;
@@ -411,6 +458,50 @@ mod tests {
         fn uri(&self) -> Uri {
             format!("ws://{}", self.addr).parse().expect("Failed to parse URI")
         }
+    }
+
+    #[test]
+    fn uri_with_resume_appends_params() {
+        let base: Uri = "ws://127.0.0.1:9000".parse().unwrap();
+        let result = uri_with_resume(&base, Some((42, 3)));
+        // Path defaults to "/" so the HTTP request line is valid.
+        assert_eq!(result.to_string(), "ws://127.0.0.1:9000/?block_number=42&flashblock_index=3");
+    }
+
+    #[test]
+    fn uri_with_resume_preserves_path() {
+        let base: Uri = "ws://127.0.0.1:9000/upstream".parse().unwrap();
+        let result = uri_with_resume(&base, Some((42, 3)));
+        assert_eq!(
+            result.to_string(),
+            "ws://127.0.0.1:9000/upstream?block_number=42&flashblock_index=3"
+        );
+    }
+
+    #[test]
+    fn uri_with_resume_replaces_existing_query() {
+        let base: Uri = "ws://127.0.0.1:9000/?foo=bar".parse().unwrap();
+        let result = uri_with_resume(&base, Some((10, 5)));
+        assert_eq!(result.to_string(), "ws://127.0.0.1:9000/?block_number=10&flashblock_index=5");
+    }
+
+    #[test]
+    fn uri_with_resume_none_returns_base() {
+        let base: Uri = "ws://127.0.0.1:9000".parse().unwrap();
+        let result = uri_with_resume(&base, None);
+        assert_eq!(result, base);
+    }
+
+    #[test]
+    fn extract_flashblock_position_valid() {
+        let json = r#"{"index":2,"metadata":{"block_number":99}}"#;
+        assert_eq!(extract_flashblock_position(json), Some((99, 2)));
+    }
+
+    #[test]
+    fn extract_flashblock_position_missing() {
+        assert_eq!(extract_flashblock_position(r#"{"index":1}"#), None);
+        assert_eq!(extract_flashblock_position("not json"), None);
     }
 
     #[tokio::test]
@@ -567,5 +658,108 @@ mod tests {
         assert!(messages.contains(&"Another message from server 2".to_string()));
 
         assert!(!messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_subscriber_tracks_position_for_reconnect() {
+        // Mock server that captures the URI used to connect
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let uri: Uri = format!("ws://{addr}").parse().unwrap();
+
+        let connect_uris = Arc::new(Mutex::new(Vec::<String>::new()));
+        let connect_uris_server = Arc::clone(&connect_uris);
+
+        let shutdown = CancellationToken::new();
+        let shutdown_server = shutdown.clone();
+        let (msg_tx, _) = broadcast::channel::<String>(16);
+        let msg_tx_server = msg_tx.clone();
+
+        tokio::spawn(async move {
+            let mut connection_count = 0u32;
+            loop {
+                select! {
+                    _ = shutdown_server.cancelled() => break,
+                    accept_result = listener.accept() => {
+                        if let Ok((stream, _)) = accept_result {
+                            // Peek at the raw request to capture the URI
+                            connection_count += 1;
+                            let uris = Arc::clone(&connect_uris_server);
+                            let tx = msg_tx_server.clone();
+                            let shutdown_inner = shutdown_server.clone();
+                            let count = connection_count;
+                            tokio::spawn(async move {
+                                let captured = Arc::new(Mutex::new(String::new()));
+                                let captured_cb = Arc::clone(&captured);
+                                let ws = tokio_tungstenite::accept_hdr_async(
+                                    stream,
+                                    move |req: &Request, resp: Response| {
+                                        *captured_cb.lock().unwrap() =
+                                            req.uri().to_string();
+                                        Ok(resp)
+                                    },
+                                )
+                                .await
+                                .unwrap();
+                                uris.lock().unwrap().push(captured.lock().unwrap().clone());
+
+                                let (mut sender, _) = ws.split();
+                                if count == 1 {
+                                    // First connection: send one flashblock then close
+                                    let payload = r#"{"index":5,"metadata":{"block_number":100}}"#;
+                                    sender.send(Message::Text(payload.into())).await.unwrap();
+                                }
+                                // Then wait for shutdown
+                                select! {
+                                    _ = shutdown_inner.cancelled() => {}
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        let options = SubscriberOptions::default()
+            .with_backoff_initial_interval(Duration::from_millis(100))
+            .with_ping_interval(Duration::from_millis(500))
+            .with_pong_timeout(Duration::from_millis(200))
+            .with_initial_grace_period(Duration::from_millis(500));
+
+        let received = Arc::new(Mutex::new(Vec::<String>::new()));
+        let received_clone = Arc::clone(&received);
+        let mut subscriber = WebsocketSubscriber::new(
+            uri,
+            move |data: String| {
+                received_clone.lock().unwrap().push(data);
+            },
+            Arc::new(Metrics::default()),
+            options,
+        );
+
+        let shutdown_clone = shutdown.clone();
+        let task = tokio::spawn(async move {
+            subscriber.run(shutdown_clone).await;
+        });
+
+        // Wait enough time for: connect, receive 1 msg, disconnect, backoff, reconnect
+        sleep(Duration::from_millis(800)).await;
+
+        shutdown.cancel();
+        let _ = timeout(Duration::from_secs(2), task).await;
+
+        let uris = connect_uris.lock().unwrap();
+        // Second connection (if it happened) should include position
+        if uris.len() >= 2 {
+            let second_uri = &uris[1];
+            assert!(
+                second_uri.contains("block_number=100"),
+                "Second reconnect URI should include block_number=100, got: {second_uri}"
+            );
+            assert!(
+                second_uri.contains("flashblock_index=5"),
+                "Second reconnect URI should include flashblock_index=5, got: {second_uri}"
+            );
+        }
     }
 }

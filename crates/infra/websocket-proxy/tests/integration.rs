@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, hash_map::Entry},
     error::Error,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
@@ -18,7 +18,7 @@ use tokio::{
 use tokio_tungstenite::connect_async;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
-use websocket_proxy::{Authentication, InMemoryRateLimit, Metrics, Registry, Server};
+use websocket_proxy::{Authentication, FlashblocksRingBuffer, InMemoryRateLimit, Metrics, Registry, Server};
 
 struct TestHarness {
     received_messages: Arc<Mutex<HashMap<usize, Vec<String>>>>,
@@ -44,6 +44,7 @@ impl TestHarness {
     fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> Self {
         let (sender, _) = broadcast::channel(5);
         let metrics = Arc::new(Metrics::default());
+        let ring_buffer = Arc::new(RwLock::new(FlashblocksRingBuffer::new(16)));
         let registry = Registry::new(
             sender.clone(),
             Arc::clone(&metrics),
@@ -51,6 +52,7 @@ impl TestHarness {
             false,
             120000,
             Duration::from_millis(1000),
+            ring_buffer,
         );
         let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
@@ -374,6 +376,7 @@ async fn test_ping_timeout_disconnects_client() {
 
     let (sender, _) = broadcast::channel(5);
     let metrics = Arc::new(Metrics::default());
+    let ring_buffer = Arc::new(RwLock::new(FlashblocksRingBuffer::new(16)));
     let registry = Registry::new(
         sender.clone(),
         Arc::clone(&metrics),
@@ -381,6 +384,7 @@ async fn test_ping_timeout_disconnects_client() {
         true,
         1000,
         Duration::from_millis(1000),
+        ring_buffer,
     );
     let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 

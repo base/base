@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{Arc, RwLock},
+    time::Instant,
+};
 
 use axum::extract::ws::Message;
 use futures::{SinkExt, stream::StreamExt};
@@ -8,7 +11,7 @@ use tokio::{
 };
 use tracing::{debug, info, trace, warn};
 
-use crate::{client::ClientConnection, metrics::Metrics};
+use crate::{client::ClientConnection, metrics::Metrics, ring_buffer::FlashblocksRingBuffer};
 
 fn get_message_size(msg: &Message) -> u64 {
     match msg {
@@ -27,25 +30,40 @@ pub struct Registry {
     ping_enabled: bool,
     pong_timeout_ms: u64,
     send_timeout_ms: Duration,
+    ring_buffer: Arc<RwLock<FlashblocksRingBuffer>>,
 }
 
 impl Registry {
-    /// Creates a new registry with the given broadcast sender and configuration.
-    pub const fn new(
+    /// Creates a new registry with the given broadcast sender, configuration, and ring buffer.
+    pub fn new(
         sender: Sender<Message>,
         metrics: Arc<Metrics>,
         compressed: bool,
         ping_enabled: bool,
         pong_timeout_ms: u64,
         send_timeout_ms: Duration,
+        ring_buffer: Arc<RwLock<FlashblocksRingBuffer>>,
     ) -> Self {
-        Self { sender, metrics, compressed, ping_enabled, pong_timeout_ms, send_timeout_ms }
+        Self {
+            sender,
+            metrics,
+            compressed,
+            ping_enabled,
+            pong_timeout_ms,
+            send_timeout_ms,
+            ring_buffer,
+        }
     }
 
     /// Subscribes a client to the broadcast channel and forwards matching messages.
+    ///
+    /// If the client has a `resume_position`, buffered entries after that position are sent
+    /// first, then the client joins the live broadcast. Brief overlap with the live stream
+    /// is acceptable; clients should deduplicate by `(payload_id, index)`.
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
+        // Subscribe to the live channel before draining the ring buffer to avoid a gap.
         let mut receiver = self.sender.subscribe();
         let metrics = Arc::clone(&self.metrics);
         metrics.new_connections.increment(1);
@@ -53,10 +71,66 @@ impl Registry {
         let filter = client.filter.clone();
         let compressed = self.compressed;
         let client_id = client.id();
+        let resume_position = client.resume_position;
         let (mut ws_sender, ws_receiver) = client.websocket.split();
 
         let (pong_error_tx, mut pong_error_rx) = tokio::sync::oneshot::channel();
         let client_reader = self.start_reader(ws_receiver, client_id.clone(), pong_error_tx);
+
+        // Replay ring buffer entries before joining the live stream.
+        if let Some((bn, fi)) = resume_position {
+            let entries = self.ring_buffer.read().unwrap().entries_after(bn, fi);
+            debug!(
+                client = client_id,
+                block_number = bn,
+                flashblock_index = fi,
+                count = entries.len(),
+                "Replaying ring buffer entries to client"
+            );
+            for payload in entries {
+                let msg = if compressed {
+                    Message::Binary(payload.into())
+                } else {
+                    match String::from_utf8(payload) {
+                        Ok(text) => Message::Text(text.into()),
+                        Err(e) => {
+                            warn!(
+                                client = client_id,
+                                error = %e,
+                                "Failed to decode ring buffer entry as UTF-8"
+                            );
+                            continue;
+                        }
+                    }
+                };
+                let send_result =
+                    timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                match send_result {
+                    Ok(Ok(())) => {
+                        metrics.sent_messages.increment(1);
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            client = client_id,
+                            error = %e,
+                            "Failed to send ring buffer entry to client"
+                        );
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                    Err(_) => {
+                        warn!(
+                            client = client_id,
+                            "Send timeout during ring buffer replay"
+                        );
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                }
+            }
+        }
 
         loop {
             tokio::select! {
