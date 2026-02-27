@@ -48,7 +48,11 @@ bincode = { workspace = true, features = ["serde"] }
 parking_lot.workspace = true
 thiserror.workspace = true
 auto_impl.workspace = true
+<<<<<<< HEAD
 eyre = { workspace = true, optional = true }
+=======
+eyre = { workspace = true }
+>>>>>>> b87cfc64 (fix(flashblocks): prevent panic on empty flashblocks - Fixes #781)
 strum = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 derive_more.workspace = true
@@ -91,7 +95,6 @@ serde-bincode-compat = [
 	"reth-trie/serde-bincode-compat",
 ]
 metrics = [
-	"dep:eyre",
 	"dep:metrics",
 	"dep:reth-metrics",
 	"reth-evm/metrics",

@@ -3582,7 +3582,12 @@ dependencies = [
  "base-execution-rpc",
  "base-revm",
  "derive_more",
+<<<<<<< HEAD
  "futures",
+=======
+ "eyre",
+ "futures-util",
+>>>>>>> b87cfc64 (fix(flashblocks): prevent panic on empty flashblocks - Fixes #781)
  "jsonrpsee",
  "jsonrpsee-types",
  "metrics",
