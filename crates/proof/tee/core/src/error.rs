@@ -85,6 +85,18 @@ pub enum ExecutorError {
     #[error("stateless execution failed: {0}")]
     ExecutionFailed(String),
 
+    /// Failed to load boot info from preimage oracle.
+    #[error("boot info load failed: {0}")]
+    BootInfoLoadFailed(String),
+
+    /// L2 derivation pipeline failed.
+    #[error("derivation failed: {0}")]
+    DerivationFailed(String),
+
+    /// Target L2 attributes were not produced by derivation.
+    #[error("missing target attributes")]
+    MissingTargetAttributes,
+
     /// Failed to prepare payload attributes.
     #[error("failed to prepare payload attributes: {0}")]
     AttributesBuildFailed(String),
