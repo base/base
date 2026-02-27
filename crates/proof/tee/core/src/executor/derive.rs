@@ -9,7 +9,7 @@ use base_proof::{
 use base_proof_driver::DriverPipeline;
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
-use base_protocol::OpAttributesWithParent;
+use base_protocol::{OpAttributesWithParent, OutputRoot};
 
 use crate::{error::ExecutorError, executor::Oracle};
 
@@ -42,9 +42,7 @@ impl BlockDeriver {
         let cfg = Arc::new(boot_info.rollup_config.clone());
         let l1_cfg = Arc::new(boot_info.l1_config.clone());
 
-        // Resolve the L2 safe head block hash from the agreed output root.
-        // Output root v0 preimage layout:
-        //   version(32) ++ state_root(32) ++ msg_passer_root(32) ++ block_hash(32)
+        // Resolve the L2 safe head block hash from the agreed output root preimage.
         let output_preimage = self
             .oracle
             .get(PreimageKey::new_keccak256(*boot_info.agreed_l2_output_root))
@@ -52,13 +50,25 @@ impl BlockDeriver {
             .map_err(|e| {
                 ExecutorError::DerivationFailed(format!("failed to get output root preimage: {e}"))
             })?;
-        if output_preimage.len() != 128 {
+        if output_preimage.len() != OutputRoot::ENCODED_LENGTH {
             return Err(ExecutorError::DerivationFailed(format!(
-                "invalid output root preimage length: expected 128 bytes, got {}",
+                "invalid output root preimage length: expected {} bytes, got {}",
+                OutputRoot::ENCODED_LENGTH,
                 output_preimage.len()
             )));
         }
-        let l2_head_hash = B256::from_slice(&output_preimage[96..128]);
+        let version = B256::from_slice(&output_preimage[0..32]);
+        if version != B256::ZERO {
+            return Err(ExecutorError::DerivationFailed(format!(
+                "unsupported output root version: {version}"
+            )));
+        }
+        let output_root = OutputRoot::from_parts(
+            B256::from_slice(&output_preimage[32..64]),
+            B256::from_slice(&output_preimage[64..96]),
+            B256::from_slice(&output_preimage[96..128]),
+        );
+        let l2_head_hash = output_root.block_hash;
 
         // Create providers backed by the oracle.
         let mut l1_provider =
