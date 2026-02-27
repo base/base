@@ -63,6 +63,7 @@ use crate::{
     OpEngineApiBuilder, OpEngineTypes,
     args::RollupArgs,
     engine::OpEngineValidator,
+    ordering::{TimestampOrdering, TimestampedTransaction},
     txpool::{OpTransactionPool, OpTransactionValidator},
 };
 
@@ -862,10 +863,10 @@ impl<T> OpPoolBuilder<T> {
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for OpPoolBuilder<T>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks>>,
-    T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx,
+    T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx + TimestampedTransaction,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T>;
+    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, TimestampOrdering<T>>;
 
     async fn build_pool(
         self,
@@ -900,7 +901,12 @@ where
 
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
-            .build_and_spawn_maintenance_task(blob_store, final_pool_config)?;
+            //.build_and_spawn_maintenance_task(blob_store, final_pool_config)?;
+            .build_with_ordering_and_spawn_maintenance_task(
+                TimestampOrdering::default(),
+                blob_store,
+                final_pool_config,
+            )?;
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
