@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use anyhow::Result;
 use base_alloy_flashblocks::Flashblock;
 use tokio::sync::mpsc;
@@ -96,4 +98,23 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
             let _ = sys_config_tx.send(cfg).await;
         }
     });
+}
+
+/// Streams flashblocks as JSON lines to stdout.
+pub async fn run_flashblocks_json(config: ChainConfig) -> Result<()> {
+    let (tx, mut rx) = mpsc::channel::<Flashblock>(100);
+    let (toast_tx, _toast_rx) = mpsc::channel::<crate::tui::Toast>(50);
+
+    tokio::spawn(run_flashblock_ws(config.flashblocks_ws.to_string(), tx, toast_tx));
+
+    let stdout = std::io::stdout();
+    let mut writer = std::io::BufWriter::new(stdout.lock());
+
+    while let Some(fb) = rx.recv().await {
+        serde_json::to_writer(&mut writer, &fb)?;
+        writeln!(writer)?;
+        writer.flush()?;
+    }
+
+    Ok(())
 }

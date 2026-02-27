@@ -2,7 +2,7 @@
 
 mod cli;
 
-use basectl_cli::{ChainConfig, ViewId, run_app, run_app_with_view};
+use basectl_cli::{ChainConfig, ViewId, run_app, run_app_with_view, run_flashblocks_json};
 use clap::Parser;
 
 #[tokio::main]
@@ -16,7 +16,8 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Some(cli::Commands::Config) => run_app_with_view(chain_config, ViewId::Config).await,
-        Some(cli::Commands::Flashblocks) => {
+        Some(cli::Commands::Flashblocks { json: true }) => run_flashblocks_json(chain_config).await,
+        Some(cli::Commands::Flashblocks { json: false }) => {
             run_app_with_view(chain_config, ViewId::Flashblocks).await
         }
         Some(cli::Commands::Da) => run_app_with_view(chain_config, ViewId::DaMonitor).await,
