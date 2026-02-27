@@ -34,6 +34,8 @@ pub use version::OP_NAME_CLIENT;
 
 pub mod proof_history;
 
+pub mod ordering;
+
 /// Helpers for running test node instances.
 #[cfg(feature = "test-utils")]
 pub mod utils;
