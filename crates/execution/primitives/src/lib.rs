@@ -15,11 +15,11 @@ pub mod transaction;
 pub use transaction::*;
 
 mod receipt;
-pub use base_alloy_consensus::OpReceipt;
-pub use receipt::DepositReceipt;
 
 /// Optimism-specific block type.
 pub use base_alloy_consensus::OpBlock;
+pub use base_alloy_consensus::OpReceipt;
+pub use receipt::DepositReceipt;
 
 /// Optimism-specific block body type.
 pub type OpBlockBody = <OpBlock as reth_primitives_traits::Block>::Body;
