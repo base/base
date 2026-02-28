@@ -148,6 +148,5 @@ pub struct SystemAddresses;
 impl SystemAddresses {
     /// The depositor address of the L1 attributes transaction (`L1Block` contract depositor).
     /// <https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction>
-    pub const L1_ATTRIBUTES_DEPOSITOR: Address =
-        address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
+    pub const DEPOSITOR_ACCOUNT: Address = address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
 }
