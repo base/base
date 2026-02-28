@@ -20,7 +20,7 @@ FROM debian:trixie-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd -r -s /sbin/nologin base
+    useradd -r -m -s /sbin/nologin base
 
 WORKDIR /app
 COPY --from=builder /app/base-client ./

@@ -3,9 +3,9 @@
 # Stage 1: Bootstrap - AWS Nitro SDK bootstrap image for kernel + NSM
 FROM ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc1920208e93d222533a36f9f5dc85615591cbfe56a03312b0 AS bootstrap
 
-# Stage 2: Chef base image - Alpine provides musl libc, which produces fully static
+# Stage 2: Builder - Alpine provides musl libc, which produces fully static
 # binaries required for the Nitro Enclave ramdisk (no libc available at runtime).
-FROM lukemathwalker/cargo-chef:latest-rust-1.93-alpine3.21@sha256:7d9f8f8e78087879b8988fd4e55d477a2b7f949d45a1e52903d466df99ae8c66 AS chef
+FROM rust:1.93-alpine3.21@sha256:7d9f8f8e78087879b8988fd4e55d477a2b7f949d45a1e52903d466df99ae8c66 AS builder
 WORKDIR /app
 
 # Set reproducible build timestamp
@@ -28,42 +28,26 @@ RUN apk add --no-cache \
     perl \
     make \
     clang \
-    git
+    git \
+    go
 
-# Stage 3: Planner - analyze dependencies
-FROM chef AS planner
-COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
-
-# Stage 4: Builder - cook dependencies, then build
-FROM chef AS builder
-
-# Install go + linuxkit (only needed here for ramdisk assembly)
-RUN apk add --no-cache go
+# Install linuxkit (needed for ramdisk assembly)
 RUN go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@270fd1c5aa1986977b31af6c743c6a2681f67a29
 ENV PATH="${PATH}:/root/go/bin"
 
-# Copy ONLY the recipe (dependency metadata)
-COPY --from=planner /app/recipe.json recipe.json
-
-# Build dependencies - THIS LAYER IS CACHED until Cargo.toml/Cargo.lock change
-RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo chef cook --release --target x86_64-unknown-linux-musl --package base-prover --recipe-path recipe.json
-
-# Now copy source and build (only your code compiles here)
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin base-prover
+    --mount=type=cache,target=/app/target,id=enclave-target,sharing=locked \
+    cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin base-prover && \
+    cp /app/target/x86_64-unknown-linux-musl/release/base-prover /app/base-prover
 
-# Copy EIF configuration and build ramdisks
+# Build ramdisks
 COPY --from=bootstrap /build/out bootstrap
 RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./crates/proof/tee/eif/init-ramdisk.yaml
 RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./crates/proof/tee/eif/user-ramdisk-rust.yaml
 
-
-# Stage 5: EIF - Build EIF using aws-nitro-enclaves-image-format
+# Stage 3: EIF - Build EIF using aws-nitro-enclaves-image-format
 FROM rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS eif
 
 # Set reproducible build timestamp
@@ -96,12 +80,11 @@ RUN ./target/release/eif_build \
     --ramdisk user-ramdisk-initrd.img \
     --output eif.bin
 
-
-# Stage 6: Final - Minimal container for artifact extraction via `docker cp`.
+# Stage 4: Final - Minimal container for artifact extraction via `docker cp`.
 # Nothing here runs directly; the enclave binary executes inside the Nitro Enclave ramdisk.
 FROM busybox@sha256:70ce0a747f09cd7c09c2d6eaeab69d60adb0398f569296e8c0e844599388ebd6
 
 WORKDIR /build
 
 COPY --from=eif /build/eif.bin .
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/base-prover .
+COPY --from=builder /app/base-prover .

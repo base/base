@@ -223,7 +223,11 @@ services:
     restart: unless-stopped
 
   base-builder-cl:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.consensus
+      args:
+        - PROFILE=${CARGO_PROFILE:-dev}
     container_name: base-builder-cl
     depends_on:
       base-builder:
@@ -237,20 +241,24 @@ services:
       - ../../.devnet/l2/builder-cl:/data
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: /app/base-consensus
     command:
-      - op-node
-      - --l1
+      - --chain
+      - ${L2_CHAIN_ID}
+      - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1.beacon
+      - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
-      - --l2
+      - --l2-engine-rpc
       - http://base-builder:${L2_BUILDER_AUTH_PORT}
-      - --l2.jwt-secret
+      - --l2-engine-jwt-secret
       - /genesis/jwt.hex
-      - --rollup.config
+      - --l2-config-file
       - /genesis/l2/rollup.json
-      - --rollup.l1-chain-config
-      - /genesis/el/genesis.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
       - --rpc.addr
       - "0.0.0.0"
       - --rpc.port
@@ -259,6 +267,8 @@ services:
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
       - "${L2_BUILDER_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-builder-cl
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
       - --metrics.enabled
@@ -266,17 +276,16 @@ services:
       - "0.0.0.0"
       - --metrics.port
       - "${L2_BUILDER_CL_METRICS_PORT}"
-      - --sequencer.enabled
+      - --mode
+      - Sequencer
       - --sequencer.l1-confs
       - "0"
       - --p2p.sequencer.key
       - ${SEQUENCER_KEY}
-      - --p2p.scoring.peers
-      - none
-      - --p2p.ban.peers
-      - "false"
+      - --p2p.scoring
+      - Off
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:${L2_BUILDER_CL_RPC_PORT}"]
+      test: ["CMD", "curl", "-sf", "http://localhost:${L2_BUILDER_CL_RPC_PORT}/healthz"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -382,10 +391,16 @@ services:
     restart: unless-stopped
 
   base-client-cl:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
+    build:
+      context: ../..
+      dockerfile: etc/docker/Dockerfile.consensus
+      args:
+        - PROFILE=${CARGO_PROFILE:-dev}
     container_name: base-client-cl
     depends_on:
       base-client:
+        condition: service_healthy
+      base-builder-cl:
         condition: service_healthy
     ports:
       - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
@@ -396,20 +411,24 @@ services:
       - ../../.devnet/l2/client-cl:/data
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: /app/base-consensus
     command:
-      - op-node
-      - --l1
+      - --chain
+      - ${L2_CHAIN_ID}
+      - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
-      - --l1.beacon
+      - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
-      - --l2
+      - --l2-engine-rpc
       - http://base-client:${L2_CLIENT_AUTH_PORT}
-      - --l2.jwt-secret
+      - --l2-engine-jwt-secret
       - /genesis/jwt.hex
-      - --rollup.config
+      - --l2-config-file
       - /genesis/l2/rollup.json
-      - --rollup.l1-chain-config
-      - /genesis/el/genesis.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
       - --rpc.addr
       - "0.0.0.0"
       - --rpc.port
@@ -418,19 +437,19 @@ services:
       - "${L2_CLIENT_CL_P2P_PORT}"
       - --p2p.listen.udp
       - "${L2_CLIENT_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-client-cl
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"
       - --metrics.port
       - "${L2_CLIENT_CL_METRICS_PORT}"
-      - --p2p.static
-      - /dns4/base-builder-cl/tcp/${L2_BUILDER_CL_P2P_PORT}/p2p/${BUILDER_LIBP2P_PEER_ID}
-      - --p2p.scoring.peers
-      - none
-      - --p2p.ban.peers
-      - "false"
+      - --p2p.bootnodes
+      - enode://${BUILDER_ENODE_ID}@base-builder-cl:${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.scoring
+      - Off
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:${L2_CLIENT_CL_RPC_PORT}"]
+      test: ["CMD", "curl", "-sf", "http://localhost:${L2_CLIENT_CL_RPC_PORT}/healthz"]
       interval: 250ms
       timeout: 1s
       retries: 240

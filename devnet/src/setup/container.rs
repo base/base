@@ -16,7 +16,7 @@ const SETUP_IMAGE_TAG: &str = "devnet-setup:local";
 const DEPLOY_TIMEOUT_SECS: u64 = 300;
 
 /// Builder enode ID
-pub const BUILDER_ENODE_ID: &str = "8318535b54105d4a7aae60c08fc45f9687181b4fdfc625bd1a753fa7397fed753547f11ca8696646f2f3acb08e31016afac23e630c5d11f59f61fef57b0d2aa5";
+pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
 
 /// Builder op-node libp2p peer ID
 /// This is used by the client op-node to connect to the builder op-node via P2P.

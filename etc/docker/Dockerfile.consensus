@@ -11,9 +11,9 @@ ARG PROFILE=release
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/app/target,id=builder-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-builder /app/base-builder
+    --mount=type=cache,target=/app/target,id=consensus-target,sharing=locked \
+    cargo build --profile $PROFILE --bin base-consensus && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-consensus /app/base-consensus
 
 # --- Runtime ---
 FROM debian:trixie-slim
@@ -23,6 +23,6 @@ RUN apt-get update && \
     useradd -r -m -s /sbin/nologin base
 
 WORKDIR /app
-COPY --from=builder /app/base-builder ./
+COPY --from=builder /app/base-consensus ./
 USER base
-ENTRYPOINT ["./base-builder"]
+ENTRYPOINT ["./base-consensus"]
