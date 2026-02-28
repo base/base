@@ -14,7 +14,7 @@ static INIT: Lazy<(HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genes
 static ROLLUP_CONFIGS: Lazy<HashMap<u64, RollupConfig>> = Lazy::new(|| INIT.0.clone());
 
 /// L1 chain configurations built from known L1 genesis data.
-static L1_CONFIGS: Lazy<HashMap<u64, L1ChainConfig>> = Lazy::new(|| L1Config::build_l1_configs());
+static L1_CONFIGS: Lazy<HashMap<u64, L1ChainConfig>> = Lazy::new(L1Config::build_l1_configs);
 
 /// A registry of chain configurations for Base networks.
 ///

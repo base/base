@@ -21,6 +21,9 @@ base-alloy-hardforks.workspace = true
 # ethereum
 alloy-primitives.workspace = true
 
+# misc
+spin.workspace = true
+
 [features]
 default = [ "std" ]
 std = [ "alloy-primitives/std", "reth-ethereum-forks/std" ]

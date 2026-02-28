@@ -1,9 +1,9 @@
 use alloc::vec;
-use std::sync::LazyLock;
 
 use alloy_primitives::U256;
 use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
+use spin::Lazy;
 
 /// Extension trait to convert alloy's [`OpChainHardforks`] into reth's [`ChainHardforks`].
 pub trait OpChainHardforksExt {
@@ -66,13 +66,13 @@ impl OpChainHardforksExt for OpChainHardforks {
 }
 
 /// Dev hardforks.
-pub static DEV_HARDFORKS: LazyLock<ChainHardforks> =
-    LazyLock::new(|| OpChainHardforks::devnet().to_chain_hardforks());
+pub static DEV_HARDFORKS: Lazy<ChainHardforks> =
+    Lazy::new(|| OpChainHardforks::devnet().to_chain_hardforks());
 
 /// Base Sepolia list of hardforks.
-pub static BASE_SEPOLIA_HARDFORKS: LazyLock<ChainHardforks> =
-    LazyLock::new(|| OpChainHardforks::base_sepolia().to_chain_hardforks());
+pub static BASE_SEPOLIA_HARDFORKS: Lazy<ChainHardforks> =
+    Lazy::new(|| OpChainHardforks::base_sepolia().to_chain_hardforks());
 
 /// Base mainnet list of hardforks.
-pub static BASE_MAINNET_HARDFORKS: LazyLock<ChainHardforks> =
-    LazyLock::new(|| OpChainHardforks::base_mainnet().to_chain_hardforks());
+pub static BASE_MAINNET_HARDFORKS: Lazy<ChainHardforks> =
+    Lazy::new(|| OpChainHardforks::base_mainnet().to_chain_hardforks());
