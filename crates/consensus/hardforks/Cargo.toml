@@ -1,5 +1,5 @@
 [package]
-name = "base-consensus-hardforks"
+name = "base-consensus-upgrades"
 version.workspace = true
 description = "Consensus hardfork types for the OP Stack"
 

@@ -2720,8 +2720,8 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
- "base-consensus-hardforks",
  "base-consensus-registry",
+ "base-consensus-upgrades",
  "base-macros",
  "base-protocol",
  "metrics",
@@ -2856,18 +2856,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-consensus-hardforks"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-alloy-consensus",
- "base-protocol",
- "base-revm",
- "revm",
 ]
 
 [[package]]
@@ -3052,6 +3040,18 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "base-consensus-upgrades"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "base-alloy-consensus",
+ "base-protocol",
+ "base-revm",
+ "revm",
 ]
 
 [[package]]

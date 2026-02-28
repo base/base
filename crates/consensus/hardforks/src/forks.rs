@@ -12,21 +12,21 @@ use crate::{Ecotone, Fjord, Isthmus, Jovian};
 ///
 /// Build ecotone hardfork upgrade transaction:
 /// ```rust
-/// use base_consensus_hardforks::{Hardfork, Hardforks};
+/// use base_consensus_upgrades::{Hardfork, Hardforks};
 /// let ecotone_upgrade_tx = Hardforks::ECOTONE.txs();
 /// assert_eq!(ecotone_upgrade_tx.collect::<Vec<_>>().len(), 6);
 /// ```
 ///
 /// Build fjord hardfork upgrade transactions:
 /// ```rust
-/// use base_consensus_hardforks::{Hardfork, Hardforks};
+/// use base_consensus_upgrades::{Hardfork, Hardforks};
 /// let fjord_upgrade_txs = Hardforks::FJORD.txs();
 /// assert_eq!(fjord_upgrade_txs.collect::<Vec<_>>().len(), 3);
 /// ```
 ///
 /// Build isthmus hardfork upgrade transaction:
 /// ```rust
-/// use base_consensus_hardforks::{Hardfork, Hardforks};
+/// use base_consensus_upgrades::{Hardfork, Hardforks};
 /// let isthmus_upgrade_tx = Hardforks::ISTHMUS.txs();
 /// assert_eq!(isthmus_upgrade_tx.collect::<Vec<_>>().len(), 8);
 /// ```

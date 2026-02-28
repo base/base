@@ -1,4 +1,4 @@
-//! Test utilities for the `base-consensus-hardforks` crate.
+//! Test utilities for the `base-consensus-upgrades` crate.
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, keccak256};

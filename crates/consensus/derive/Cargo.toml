@@ -15,7 +15,7 @@ workspace = true
 base-macros.workspace = true
 base-consensus-genesis.workspace = true
 base-protocol.workspace = true
-base-consensus-hardforks.workspace = true
+base-consensus-upgrades.workspace = true
 
 # Alloy
 alloy-eips.workspace = true

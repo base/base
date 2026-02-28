@@ -15,7 +15,7 @@ no_std_packages=(
   # consensus protocol crates
   base-macros
   base-consensus-genesis
-  base-consensus-hardforks
+  base-consensus-upgrades
   base-consensus-registry
   base-consensus-derive
   base-protocol
