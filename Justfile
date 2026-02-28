@@ -148,7 +148,6 @@ devnet-pull-images:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.10.2
     docker pull sigp/lighthouse:v8.0.1
-    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.16.5
     docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
 
 # Checks that no_std crates compile without std

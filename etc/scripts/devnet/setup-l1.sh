@@ -54,8 +54,10 @@ echo "=== Generating Execution Layer Genesis ==="
 export CHAIN_ID GENESIS_TIME_HEX BALANCE
 
 envsubst < "$TEMPLATE_DIR/l1-el-genesis.json.template" > "$OUTPUT_DIR/el/genesis.json"
+jq '.config' "$OUTPUT_DIR/el/genesis.json" > "$OUTPUT_DIR/el/chain-config.json"
 
 echo "EL genesis written to $OUTPUT_DIR/el/genesis.json"
+echo "L1 chain config written to $OUTPUT_DIR/el/chain-config.json"
 
 # =============================================================================
 # Generate CL (Consensus Layer) Genesis

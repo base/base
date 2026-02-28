@@ -1,7 +1,7 @@
 FROM golang:1.25-alpine AS builder
 
 # Install build dependencies for CGO (required for BLS library)
-RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl
+RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certificates
 
 # Download op-deployer binary
 # URL format: op-deployer-{version_no_v}-linux-{arch}.tar.gz
