@@ -108,7 +108,6 @@ lto = "thin"
 debug = "none"
 strip = "symbols"
 panic = "unwind"
-overflow-checks = true
 codegen-units = 16
 
 [profile.maxperf]

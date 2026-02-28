@@ -62,7 +62,7 @@ jobs:
           rust-cache-shared-key: "stable"
       - name: Run tests
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             just test-affected-ci "origin/$BASE_REF"
           else
             just test-ci

@@ -51,11 +51,14 @@ runs:
         packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
         version: 1.2
 
-    - name: Install Rust (stable)
+    - name: Install Rust (stable via rust-toolchain.toml)
       if: inputs.toolchain == 'stable'
-      uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      with:
-        components: ${{ inputs.components }}
+      shell: bash
+      run: |
+        rustup show active-toolchain
+        if [ -n "${{ inputs.components }}" ]; then
+          rustup component add ${{ inputs.components }}
+        fi
 
     - name: Install Rust (nightly)
       if: inputs.toolchain == 'nightly'
