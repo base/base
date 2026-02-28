@@ -138,7 +138,7 @@ impl Jovian {
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle_enable_jovian(),
-                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
+                from: SystemAddresses::DEPOSITOR_ACCOUNT,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,

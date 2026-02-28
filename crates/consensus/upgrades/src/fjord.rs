@@ -92,7 +92,7 @@ impl Fjord {
             // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-enable-fjord>
             TxDeposit {
                 source_hash: Self::enable_fjord_source(),
-                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
+                from: SystemAddresses::DEPOSITOR_ACCOUNT,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,

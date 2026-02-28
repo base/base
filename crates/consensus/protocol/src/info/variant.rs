@@ -204,7 +204,7 @@ impl L1BlockInfoTx {
 
         let mut deposit_tx = TxDeposit {
             source_hash: source.source_hash(),
-            from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
+            from: SystemAddresses::DEPOSITOR_ACCOUNT,
             to: TxKind::Call(Predeploys::L1_BLOCK_INFO),
             mint: 0,
             value: U256::ZERO,
@@ -1045,7 +1045,7 @@ mod test {
         .unwrap();
 
         assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-        assert_eq!(deposit_tx.from, SystemAddresses::L1_ATTRIBUTES_DEPOSITOR);
+        assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::L1_BLOCK_INFO));
         assert_eq!(deposit_tx.mint, 0);
         assert_eq!(deposit_tx.value, U256::ZERO);

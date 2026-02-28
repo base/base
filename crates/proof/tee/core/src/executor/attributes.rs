@@ -152,7 +152,7 @@ mod tests {
     fn test_l1_attributes_addresses() {
         // Verify the predefined addresses are correct
         assert_eq!(
-            SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
+            SystemAddresses::DEPOSITOR_ACCOUNT,
             address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001")
         );
         assert_eq!(Predeploys::L1_BLOCK_INFO, address!("4200000000000000000000000000000000000015"));

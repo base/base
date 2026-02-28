@@ -161,7 +161,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
             TxDeposit {
                 source_hash: Self::enable_ecotone_source(),
-                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
+                from: SystemAddresses::DEPOSITOR_ACCOUNT,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,
