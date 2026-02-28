@@ -14,7 +14,7 @@ use alloy_eips::eip1898::BlockWithParent;
 use base_execution_trie::{
     OpProofStoragePrunerTask, OpProofsStorage, OpProofsStore, live::LiveTrieCollector,
 };
-use futures_util::TryStreamExt;
+use futures::TryStreamExt;
 use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
@@ -117,7 +117,7 @@ where
 /// We are currently using it in optimism/bin/src/main.rs.
 ///
 /// ```
-/// use futures_util::FutureExt;
+/// use futures::FutureExt;
 /// use reth_db::test_utils::create_test_rw_db;
 /// use reth_node_api::NodeTypesWithDBAdapter;
 /// use reth_node_builder::{NodeBuilder, NodeConfig};

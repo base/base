@@ -111,7 +111,7 @@ base-alloy-rpc-types.workspace = true
 tokio-tungstenite.workspace = true
 
 # async
-futures-util.workspace = true
+futures.workspace = true
 
 # tracing
 tracing-subscriber.workspace = true

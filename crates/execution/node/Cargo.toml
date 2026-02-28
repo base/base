@@ -76,7 +76,7 @@ clap.workspace = true
 serde.workspace = true
 eyre.workspace = true
 humantime.workspace = true
-futures-util.workspace = true
+futures.workspace = true
 tracing.workspace = true
 
 # test-utils dependencies

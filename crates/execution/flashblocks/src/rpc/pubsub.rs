@@ -9,7 +9,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
 use base_alloy_network::Base;
-use futures_util::stream;
+use futures::stream;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, async_trait},
@@ -100,7 +100,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        futures_util::StreamExt::flat_map(
+        futures::StreamExt::flat_map(
             StreamExt::filter_map(
                 BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
                 move |result| {
@@ -134,7 +134,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        futures_util::StreamExt::flat_map(
+        futures::StreamExt::flat_map(
             StreamExt::filter_map(
                 BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
                 |result| {
@@ -166,7 +166,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        futures_util::StreamExt::flat_map(
+        futures::StreamExt::flat_map(
             StreamExt::filter_map(
                 BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
                 |result| {

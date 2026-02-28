@@ -145,7 +145,6 @@ tokio-tungstenite.workspace = true
 # async
 futures.workspace = true
 async-trait.workspace = true
-futures-util.workspace = true
 
 # rpc
 jsonrpsee.workspace = true

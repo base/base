@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_alloy_flashblocks::Flashblock;
-use futures_util::{SinkExt as _, StreamExt};
+use futures::{SinkExt as _, StreamExt};
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
