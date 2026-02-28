@@ -46,7 +46,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: ${{ github.event_name == 'push' && 1 || 0 }}
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
       - uses: ./.github/actions/setup
         with:
           free-disk: "true"
@@ -59,10 +59,10 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            just test-ci
-          else
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             just test-affected-ci "origin/$BASE_REF"
+          else
+            just test-ci
           fi
 
   fmt:
