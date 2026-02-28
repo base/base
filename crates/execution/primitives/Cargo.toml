@@ -21,7 +21,6 @@ alloy-consensus.workspace = true
 
 # base
 base-alloy-consensus = { workspace = true, features = ["reth"] }
-base-protocol.workspace = true
 
 # codec
 serde = { workspace = true, optional = true }
@@ -52,7 +51,6 @@ std = [
 	"alloy-consensus/std",
 	"alloy-primitives/std",
 	"base-alloy-consensus/std",
-	"base-protocol/std",
 	"bytes/std",
 	"reth-primitives-traits/std",
 	"reth-zstd-compressors/std",
@@ -67,7 +65,6 @@ serde = [
 	"alloy-consensus/serde",
 	"alloy-primitives/serde",
 	"base-alloy-consensus/serde",
-	"base-protocol/serde",
 	"bytes/serde",
 	"dep:serde",
 	"rand/serde",
@@ -86,7 +83,6 @@ arbitrary = [
 	"alloy-consensus/arbitrary",
 	"alloy-primitives/arbitrary",
 	"base-alloy-consensus/arbitrary",
-	"base-protocol/arbitrary",
 	"reth-codecs/arbitrary",
 	"reth-primitives-traits/arbitrary",
 	"std",
