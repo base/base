@@ -48,7 +48,7 @@ pub const GOSSIP_HEARTBEAT: Duration = Duration::from_millis(500);
 
 /// The seen messages TTL.
 /// Limits the duration that message IDs are remembered for gossip deduplication purposes.
-pub const SEEN_MESSAGES_TTL: Duration = Duration::from_millis(130 * 500);
+pub const SEEN_MESSAGES_TTL: Duration = Duration::from_millis(130 * GOSSIP_HEARTBEAT.as_millis() as u64);
 
 /// The peer score inspect frequency.
 /// The frequency at which peer scores are inspected.
