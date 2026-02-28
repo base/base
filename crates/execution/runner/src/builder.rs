@@ -6,7 +6,7 @@
 use std::fmt;
 
 use eyre::Result;
-use futures_util::future::BoxFuture;
+use futures::future::BoxFuture;
 use reth_exex::ExExContext;
 use reth_node_builder::{
     NodeAdapter, NodeBuilderWithComponents, NodeComponentsBuilder, WithLaunchContext,

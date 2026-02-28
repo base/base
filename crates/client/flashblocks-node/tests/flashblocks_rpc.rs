@@ -19,7 +19,7 @@ use base_alloy_rpc_types::OpTransactionRequest;
 use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_node_runner::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
 use eyre::Result;
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use reth_revm::context::TransactionType;
 use reth_rpc_eth_api::RpcReceipt;
 use serde_json::json;

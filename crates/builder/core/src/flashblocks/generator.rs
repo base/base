@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use futures_util::{Future, FutureExt};
+use futures::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,

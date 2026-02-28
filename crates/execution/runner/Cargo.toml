@@ -102,7 +102,7 @@ jsonrpsee = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
 eyre.workspace = true
 tracing = { workspace = true, features = ["std"] }
-futures-util.workspace = true
+futures.workspace = true
 url = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }

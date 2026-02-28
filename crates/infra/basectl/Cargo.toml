@@ -21,7 +21,7 @@ base-alloy-flashblocks.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
-futures-util = { workspace = true }
+futures = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 base-alloy-network = { workspace = true }

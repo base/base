@@ -59,7 +59,7 @@ tokio-stream.workspace = true
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 # async
-futures-util.workspace = true
+futures.workspace = true
 
 # rpc
 serde = { workspace = true, features = ["std"] }

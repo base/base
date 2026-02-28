@@ -335,7 +335,6 @@ tokio-tungstenite = "0.28.0"
 # async
 futures = "0.3.31"
 reqwest = "0.13.1"
-futures-util = "0.3.31"
 async-trait = "0.1.83"
 
 # rpc
@@ -409,10 +408,8 @@ auto_impl = "1.2.0"
 serde_with = "3.8.1"
 httpmock = "0.8.2"
 dirs-next = "2.0.0"
-once_cell = "1.21.3"
 hyper-util = "0.1.11"
 derive_more = { version = "2.1.0", default-features = false }
-lazy_static = "1.4.0"
 parking_lot = "0.12.3"
 shellexpand = "3.1"
 serde_bytes = "0.11"
