@@ -20,9 +20,9 @@ FROM debian:trixie-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd -r -s /sbin/nologin app
+    useradd -r -s /sbin/nologin base
 
 WORKDIR /app
 COPY --from=builder /app/ingress-rpc ./
-USER app
+USER base
 ENTRYPOINT ["./ingress-rpc"]

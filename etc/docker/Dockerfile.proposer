@@ -20,10 +20,10 @@ FROM debian:trixie-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd -r -s /sbin/nologin proposer
+    useradd -r -s /sbin/nologin base
 
 WORKDIR /app
 COPY --from=builder /app/proposer ./
-USER proposer
+USER base
 EXPOSE 9090
 ENTRYPOINT ["./proposer"]
