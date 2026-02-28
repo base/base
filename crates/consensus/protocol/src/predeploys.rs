@@ -1,8 +1,7 @@
-//! This module contains the addresses of various predeploy contracts in the OP Stack.
+//! This module contains predeploy contract addresses and system addresses for the OP Stack.
 //! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
 
 use alloy_primitives::{Address, address};
-use base_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 
 /// Container for all predeploy contract addresses
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -93,7 +92,8 @@ impl Predeploys {
 
     /// The L2 contract `L2ToL1MessagePasser`, stores commitments to withdrawal transactions.
     /// <https://specs.optimism.io/protocol/predeploys.html#l2tol1messagepasser>
-    pub const L2_TO_L1_MESSAGE_PASSER: Address = L2_TO_L1_MESSAGE_PASSER_ADDRESS;
+    pub const L2_TO_L1_MESSAGE_PASSER: Address =
+        address!("0x4200000000000000000000000000000000000016");
 
     /// The L2 ERC721 bridge proxy address.
     /// <https://specs.optimism.io/protocol/predeploys.html>
