@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # --- Runtime ---
 FROM debian:trixie-slim
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates jq curl && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/* && \
     useradd -r -m -s /sbin/nologin base
 
