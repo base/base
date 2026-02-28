@@ -187,8 +187,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.settings.arch }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=release-docker
-          cache-to: type=gha,mode=max,scope=release-docker
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }}
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }},mode=max
 
       - name: Export digest
         run: |

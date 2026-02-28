@@ -17,16 +17,16 @@ RUN ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g') && \
 
 # Build eth-beacon-genesis from source (has replace directives, can't use go install)
 WORKDIR /build
-RUN git clone https://github.com/ethpandaops/eth-beacon-genesis.git .
+RUN git clone --depth 1 https://github.com/ethpandaops/eth-beacon-genesis.git .
 ENV CGO_ENABLED=1
 RUN go build -o /go/bin/eth-genesis-state-generator ./cmd/eth-genesis-state-generator
 
 # Build eth2-val-tools for validator keystore generation
 WORKDIR /build2
-RUN git clone https://github.com/protolambda/eth2-val-tools.git .
+RUN git clone --depth 1 https://github.com/protolambda/eth2-val-tools.git .
 RUN go build -o /go/bin/eth2-val-tools .
 
-FROM alpine:latest
+FROM alpine:3.21
 
 RUN apk add --no-cache bash jq openssl curl gettext
 
