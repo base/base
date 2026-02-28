@@ -98,7 +98,7 @@ impl FlashblocksReceiver for FlashblocksState {
         let block_number = flashblock.metadata.block_number;
         match self.queue.send(StateUpdate::Flashblock(flashblock)) {
             Ok(_) => {
-                info!(
+                debug!(
                     message = "added flashblock to processing queue",
                     block_number, flashblock_index,
                 );
