@@ -36,10 +36,14 @@ pub struct L2StackConfig {
     pub sequencer_key: B256,
     /// Batcher private key (hex-encoded string, e.g., "0x...").
     pub batcher_key: B256,
-    /// L1 RPC endpoint URL.
+    /// L1 RPC endpoint URL (Docker-internal, used by the batcher container).
     pub l1_rpc_url: String,
-    /// L1 beacon API endpoint URL.
+    /// L1 beacon API endpoint URL (Docker-internal).
     pub l1_beacon_url: String,
+    /// L1 RPC endpoint URL (host-accessible, used by in-process consensus nodes).
+    pub l1_host_rpc_url: String,
+    /// L1 beacon API endpoint URL (host-accessible, used by in-process consensus nodes).
+    pub l1_host_beacon_url: String,
     /// Optional container configuration for stable naming and port binding.
     pub container_config: Option<L2ContainerConfig>,
 }
@@ -87,8 +91,10 @@ impl L2Stack {
     pub async fn start(config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
-        let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
-        let l1_beacon_url: Url = config.l1_beacon_url.parse().wrap_err("Invalid L1 beacon URL")?;
+        let l1_host_rpc_url: Url =
+            config.l1_host_rpc_url.parse().wrap_err("Invalid L1 host RPC URL")?;
+        let l1_host_beacon_url: Url =
+            config.l1_host_beacon_url.parse().wrap_err("Invalid L1 host beacon URL")?;
 
         let rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
             .wrap_err("Failed to parse rollup config")?;
@@ -114,8 +120,8 @@ impl L2Stack {
             rollup_config: rollup_config.clone(),
             l1_chain_config: l1_chain_config.clone(),
             jwt_secret: config.jwt_secret,
-            l1_rpc_url: l1_rpc_url.clone(),
-            l1_beacon_url: l1_beacon_url.clone(),
+            l1_rpc_url: l1_host_rpc_url.clone(),
+            l1_beacon_url: l1_host_beacon_url.clone(),
             l2_engine_url: builder.engine_url()?,
             mode: NodeMode::Sequencer,
             sequencer_key: Some(config.sequencer_key),
@@ -164,8 +170,8 @@ impl L2Stack {
             rollup_config,
             l1_chain_config,
             jwt_secret: config.jwt_secret,
-            l1_rpc_url,
-            l1_beacon_url,
+            l1_rpc_url: l1_host_rpc_url,
+            l1_beacon_url: l1_host_beacon_url,
             l2_engine_url: client.engine_url()?,
             mode: NodeMode::Validator,
             sequencer_key: None,
