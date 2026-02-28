@@ -13,9 +13,10 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
-    AggregateRequest, ChainConfig, L2_TO_L1_MESSAGE_PASSER, Proposal, l2_block_to_block_info,
-    output_root_v0, types::config::RollupConfig,
+    AggregateRequest, ChainConfig, Proposal, l2_block_to_block_info, output_root_v0,
+    types::config::RollupConfig,
 };
+use base_protocol::Predeploys;
 use base_enclave_client::ExecuteStatelessRequest;
 pub use types::ProverProposal;
 #[cfg(test)]
@@ -143,9 +144,9 @@ where
             l1_receipts_result,
         ) = tokio::join!(
             self.l2_client.execution_witness(block.header.number),
-            self.l2_client.get_proof(L2_TO_L1_MESSAGE_PASSER, block_hash),
+            self.l2_client.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, block_hash),
             self.l2_client.block_by_hash(block.header.parent_hash),
-            self.l2_client.get_proof(L2_TO_L1_MESSAGE_PASSER, block.header.parent_hash),
+            self.l2_client.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, block.header.parent_hash),
             self.l1_client.header_by_hash(l1_origin_hash),
             self.l1_client.block_receipts(l1_origin_hash),
         );
@@ -433,7 +434,7 @@ fn convert_receipt_envelope(
 /// Withdrawals are detected by checking if the `L2ToL1MessagePasser` address
 /// appears in the logs bloom filter.
 fn check_withdrawals(header: &Header) -> bool {
-    header.logs_bloom.contains_input(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()))
+    header.logs_bloom.contains_input(BloomInput::Raw(Predeploys::L2_TO_L1_MESSAGE_PASSER.as_slice()))
 }
 
 /// Builds the `base_consensus_genesis::ChainConfig` envelope expected by enclave RPC.
@@ -581,7 +582,7 @@ mod tests {
     #[test]
     fn test_check_withdrawals_with_message_passer() {
         let mut bloom = Bloom::default();
-        bloom.accrue(BloomInput::Raw(L2_TO_L1_MESSAGE_PASSER.as_slice()));
+        bloom.accrue(BloomInput::Raw(Predeploys::L2_TO_L1_MESSAGE_PASSER.as_slice()));
         let header = Header { logs_bloom: bloom, ..Default::default() };
         assert!(check_withdrawals(&header));
     }

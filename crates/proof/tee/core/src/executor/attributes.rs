@@ -5,18 +5,12 @@
 
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, Bytes, Log, address};
+use alloy_primitives::{B256, Bytes, Log};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{L1BlockInfoTx, decode_deposit};
 use hex_literal::hex;
 
 use crate::error::ExecutorError;
-
-/// The L1 Attributes Depositor address (`L1Block` contract depositor).
-pub const L1_ATTRIBUTES_DEPOSITOR: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
-
-/// The L1 Attributes Predeployed Contract address.
-pub const L1_ATTRIBUTES_PREDEPLOYED: Address = address!("4200000000000000000000000000000000000015");
 
 /// Deposit event topic (`TransactionDeposited` event).
 /// keccak256("TransactionDeposited(address,address,uint256,bytes)")
@@ -139,6 +133,9 @@ fn build_l1_info_deposit_tx(
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::address;
+    use base_protocol::Predeploys;
+
     use super::*;
 
     #[test]
@@ -154,7 +151,10 @@ mod tests {
     #[test]
     fn test_l1_attributes_addresses() {
         // Verify the predefined addresses are correct
-        assert_eq!(L1_ATTRIBUTES_DEPOSITOR, address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001"));
-        assert_eq!(L1_ATTRIBUTES_PREDEPLOYED, address!("4200000000000000000000000000000000000015"));
+        assert_eq!(
+            Predeploys::L1_ATTRIBUTES_DEPOSITOR,
+            address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001")
+        );
+        assert_eq!(Predeploys::L1_BLOCK_INFO, address!("4200000000000000000000000000000000000015"));
     }
 }
