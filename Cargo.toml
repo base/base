@@ -168,7 +168,7 @@ base-consensus-gossip = { path = "crates/consensus/gossip", default-features = f
 base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
 base-consensus-genesis = { path = "crates/consensus/genesis", default-features = false }
 base-consensus-registry = { path = "crates/consensus/registry", default-features = false }
-base-consensus-upgrades = { path = "crates/consensus/hardforks", default-features = false }
+base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features = false }
 base-consensus-node = { path = "crates/consensus/service", default-features = false }
 base-consensus-providers = { path = "crates/consensus/providers-alloy", default-features = false }
 
