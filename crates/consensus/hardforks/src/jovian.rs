@@ -9,7 +9,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex, keccak256};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::{Predeploys, SystemAddresses};
+use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::{Hardfork, upgrade_to_calldata};
 
@@ -18,15 +18,8 @@ use crate::{Hardfork, upgrade_to_calldata};
 pub struct Jovian;
 
 impl Jovian {
-    /// L1 Block Deployer Address
-    pub const L1_BLOCK_DEPLOYER: Address = address!("4210000000000000000000000000000000000006");
-
     /// Zero address
     pub const ZERO_ADDRESS: Address = address!("0x0000000000000000000000000000000000000000");
-
-    /// The Gas Price Oracle Deployer Address
-    pub const GAS_PRICE_ORACLE_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000007");
 
     /// Returns the source hash for the deployment of the l1 block contract.
     pub fn deploy_l1_block_source() -> B256 {
@@ -54,14 +47,14 @@ impl Jovian {
     /// This is computed by using `Address::create` function,
     /// with the L1 Block Deployer Address and nonce 0.
     pub fn l1_block_address() -> Address {
-        Self::L1_BLOCK_DEPLOYER.create(0)
+        Deployers::JOVIAN_L1_BLOCK_DEPLOYER.create(0)
     }
 
     /// The Jovian Gas Price Oracle Address
     /// This is computed by using `Address::create` function,
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub fn gas_price_oracle_address() -> Address {
-        Self::GAS_PRICE_ORACLE_DEPLOYER.create(0)
+        Deployers::JOVIAN_GAS_PRICE_ORACLE_DEPLOYER.create(0)
     }
 
     /// Returns the source hash to the enable the gas price oracle for Jovian.
@@ -98,7 +91,7 @@ impl Jovian {
         ([
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
-                from: Self::L1_BLOCK_DEPLOYER,
+                from: Deployers::JOVIAN_L1_BLOCK_DEPLOYER,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -118,7 +111,7 @@ impl Jovian {
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle(),
-                from: Self::GAS_PRICE_ORACLE_DEPLOYER,
+                from: Deployers::JOVIAN_GAS_PRICE_ORACLE_DEPLOYER,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,

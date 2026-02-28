@@ -150,3 +150,42 @@ impl SystemAddresses {
     /// <https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction>
     pub const DEPOSITOR_ACCOUNT: Address = address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
 }
+
+/// Container for system deployer addresses used during protocol upgrades.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Deployers;
+
+impl Deployers {
+    /// L1 Block Deployer Address
+    pub const ECOTONE_L1_BLOCK_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000000");
+
+    /// The Gas Price Oracle Deployer Address
+    pub const ECOTONE_GAS_PRICE_ORACLE_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000001");
+
+    /// Fjord Gas Price Oracle Deployer Address.
+    pub const FJORD_GAS_PRICE_ORACLE_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000002");
+
+    /// L1 Block Deployer Address
+    pub const ISTHMUS_L1_BLOCK_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000003");
+
+    /// The Gas Price Oracle Deployer Address
+    pub const ISTHMUS_GAS_PRICE_ORACLE_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000004");
+
+    /// The Operator Fee Vault Deployer Address
+    pub const ISTHMUS_OPERATOR_FEE_VAULT_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000005");
+
+    /// L1 Block Deployer Address
+    pub const JOVIAN_L1_BLOCK_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000006");
+
+    /// The Gas Price Oracle Deployer Address
+    pub const JOVIAN_GAS_PRICE_ORACLE_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000007");
+}
