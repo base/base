@@ -134,7 +134,7 @@ fn build_l1_info_deposit_tx(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
-    use base_protocol::Predeploys;
+    use base_protocol::{Predeploys, SystemAddresses};
 
     use super::*;
 
@@ -152,7 +152,7 @@ mod tests {
     fn test_l1_attributes_addresses() {
         // Verify the predefined addresses are correct
         assert_eq!(
-            Predeploys::L1_ATTRIBUTES_DEPOSITOR,
+            SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
             address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001")
         );
         assert_eq!(Predeploys::L1_BLOCK_INFO, address!("4200000000000000000000000000000000000015"));

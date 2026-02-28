@@ -9,7 +9,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex, keccak256};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::Predeploys;
+use base_protocol::{Predeploys, SystemAddresses};
 
 use crate::{Hardfork, upgrade_to_calldata};
 
@@ -18,9 +18,6 @@ use crate::{Hardfork, upgrade_to_calldata};
 pub struct Jovian;
 
 impl Jovian {
-    /// The depositor account address.
-    pub const DEPOSITOR_ACCOUNT: Address = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
-
     /// L1 Block Deployer Address
     pub const L1_BLOCK_DEPLOYER: Address = address!("4210000000000000000000000000000000000006");
 
@@ -141,7 +138,7 @@ impl Jovian {
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle_enable_jovian(),
-                from: Self::DEPOSITOR_ACCOUNT,
+                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,

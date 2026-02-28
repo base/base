@@ -138,7 +138,14 @@ impl Predeploys {
 
     /// The `L2ToL2CrossDomainMessenger` proxy address.
     pub const L2_TO_L2_XDM: Address = address!("0x4200000000000000000000000000000000000023");
+}
 
+/// Container for system addresses that are not predeploy contracts.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SystemAddresses;
+
+impl SystemAddresses {
     /// The depositor address of the L1 attributes transaction (`L1Block` contract depositor).
     /// <https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction>
     pub const L1_ATTRIBUTES_DEPOSITOR: Address =

@@ -9,7 +9,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::Predeploys;
+use base_protocol::{Predeploys, SystemAddresses};
 
 use crate::Hardfork;
 
@@ -18,9 +18,6 @@ use crate::Hardfork;
 pub struct Isthmus;
 
 impl Isthmus {
-    /// The depositor account address.
-    pub const DEPOSITOR_ACCOUNT: Address = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
-
     /// The Enable Isthmus Input Method 4Byte Signature.
     ///
     /// Derive this by running `cast sig "setIsthmus()"`.
@@ -211,7 +208,7 @@ impl Isthmus {
             },
             TxDeposit {
                 source_hash: Self::enable_isthmus_source(),
-                from: Self::DEPOSITOR_ACCOUNT,
+                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,
