@@ -36,14 +36,10 @@ pub struct L2StackConfig {
     pub sequencer_key: B256,
     /// Batcher private key (hex-encoded string, e.g., "0x...").
     pub batcher_key: B256,
-    /// L1 RPC endpoint URL (Docker-internal, used by the batcher container).
+    /// L1 RPC endpoint URL (host-accessible).
     pub l1_rpc_url: String,
-    /// L1 beacon API endpoint URL (Docker-internal).
+    /// L1 beacon API endpoint URL (host-accessible).
     pub l1_beacon_url: String,
-    /// L1 RPC endpoint URL (host-accessible, used by in-process consensus nodes).
-    pub l1_host_rpc_url: String,
-    /// L1 beacon API endpoint URL (host-accessible, used by in-process consensus nodes).
-    pub l1_host_beacon_url: String,
     /// Optional container configuration for stable naming and port binding.
     pub container_config: Option<L2ContainerConfig>,
 }
@@ -91,10 +87,8 @@ impl L2Stack {
     pub async fn start(config: L2StackConfig) -> Result<Self> {
         let container_config = config.container_config.as_ref();
 
-        let l1_host_rpc_url: Url =
-            config.l1_host_rpc_url.parse().wrap_err("Invalid L1 host RPC URL")?;
-        let l1_host_beacon_url: Url =
-            config.l1_host_beacon_url.parse().wrap_err("Invalid L1 host beacon URL")?;
+        let l1_rpc_url: Url = config.l1_rpc_url.parse().wrap_err("Invalid L1 RPC URL")?;
+        let l1_beacon_url: Url = config.l1_beacon_url.parse().wrap_err("Invalid L1 beacon URL")?;
 
         let rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
             .wrap_err("Failed to parse rollup config")?;
@@ -120,8 +114,8 @@ impl L2Stack {
             rollup_config: rollup_config.clone(),
             l1_chain_config: l1_chain_config.clone(),
             jwt_secret: config.jwt_secret,
-            l1_rpc_url: l1_host_rpc_url.clone(),
-            l1_beacon_url: l1_host_beacon_url.clone(),
+            l1_rpc_url: l1_rpc_url.clone(),
+            l1_beacon_url: l1_beacon_url.clone(),
             l2_engine_url: builder.engine_url()?,
             mode: NodeMode::Sequencer,
             sequencer_key: Some(config.sequencer_key),
@@ -137,8 +131,14 @@ impl L2Stack {
             .wrap_err("Failed to start builder consensus")?;
 
         // 3. Start the batcher, pointing at builder consensus RPC.
+        // The batcher runs in Docker, so convert the host-accessible L1 URL to use the
+        // Docker host gateway address (e.g. host.docker.internal).
+        let l1_rpc_port = l1_rpc_url
+            .port()
+            .ok_or_else(|| eyre::eyre!("L1 RPC URL must have an explicit port"))?;
         let batcher_config = BatcherConfig {
-            l1_rpc_url: config.l1_rpc_url.clone(),
+            l1_rpc_url: format!("http://{}:{l1_rpc_port}", crate::host::host_address()),
+            l1_rpc_port,
             l2_rpc_url: builder.host_rpc_url(),
             l2_rpc_port: builder.rpc_port(),
             rollup_rpc_url: builder_consensus.host_rpc_url(),
@@ -170,8 +170,8 @@ impl L2Stack {
             rollup_config,
             l1_chain_config,
             jwt_secret: config.jwt_secret,
-            l1_rpc_url: l1_host_rpc_url,
-            l1_beacon_url: l1_host_beacon_url,
+            l1_rpc_url,
+            l1_beacon_url,
             l2_engine_url: client.engine_url()?,
             mode: NodeMode::Validator,
             sequencer_key: None,

@@ -35,6 +35,7 @@ test-utils = [
 	"reth-provider/test-utils",
 	"reth-revm/test-utils",
 	"reth-transaction-pool/test-utils",
+	"base-node-core/test-utils"
 ]
 
 [dependencies]

@@ -253,9 +253,6 @@ impl DevnetBuilder {
         let l1_genesis_bytes =
             std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
 
-        let l1_host_rpc_url = l1_stack.reth().rpc_url().await?.to_string();
-        let l1_host_beacon_url = l1_stack.beacon().beacon_url().await?;
-
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
@@ -264,10 +261,8 @@ impl DevnetBuilder {
             p2p_key: BUILDER.private_key,
             sequencer_key: SEQUENCER.private_key,
             batcher_key: BATCHER.private_key,
-            l1_rpc_url: l1_stack.reth().internal_rpc_url(),
-            l1_beacon_url: l1_stack.beacon().internal_beacon_url(),
-            l1_host_rpc_url,
-            l1_host_beacon_url,
+            l1_rpc_url: l1_stack.reth().rpc_url().await?.to_string(),
+            l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
         };
 
