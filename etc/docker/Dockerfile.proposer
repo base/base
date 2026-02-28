@@ -12,8 +12,8 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,id=proposer-target,sharing=locked \
-    cargo build --profile $PROFILE --package base-proposer-bin --bin proposer && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/proposer /app/proposer
+    cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-proposer /app/base-proposer
 
 # --- Runtime ---
 FROM debian:trixie-slim
@@ -23,7 +23,7 @@ RUN apt-get update && \
     useradd -r -s /sbin/nologin base
 
 WORKDIR /app
-COPY --from=builder /app/proposer ./
+COPY --from=builder /app/base-proposer ./
 USER base
 EXPOSE 9090
-ENTRYPOINT ["./proposer"]
+ENTRYPOINT ["./base-proposer"]
