@@ -730,7 +730,7 @@ impl OpPayloadBuilderCtx {
 
         match fbal_db.finish() {
             Ok(fbal_builder) => {
-                info.extra.access_list_builder = fbal_builder;
+                info.extra.access_list_builder.merge(fbal_builder);
             }
             Err(err) => {
                 error!(error = %err, "Failed to finalize FBALBuilder");
