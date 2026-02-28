@@ -67,6 +67,8 @@ struct FilterQuery {
     addresses: Option<String>,
     topics: Option<String>,
     r#match: Option<String>,
+    block_number: Option<u64>,
+    flashblock_index: Option<u64>,
 }
 
 impl Server {
@@ -146,9 +148,9 @@ fn parse_comma_separated(input: Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn create_filter_from_query(query: FilterQuery) -> FilterType {
-    let addresses = parse_comma_separated(query.addresses);
-    let topics = parse_comma_separated(query.topics);
+fn create_filter_from_query(query: &FilterQuery) -> FilterType {
+    let addresses = parse_comma_separated(query.addresses.clone());
+    let topics = parse_comma_separated(query.topics.clone());
 
     // Parse match mode, default to "any" if not specified
     let match_mode = match query.r#match.as_deref() {
@@ -166,6 +168,10 @@ fn create_filter_from_query(query: FilterQuery) -> FilterType {
         filter, addresses, topics, match_mode
     );
     filter
+}
+
+fn resume_position_from_query(query: &FilterQuery) -> Option<(u64, u64)> {
+    Some((query.block_number?, query.flashblock_index?))
 }
 
 async fn authenticated_websocket_handler(
@@ -188,7 +194,7 @@ async fn authenticated_websocket_handler(
         }
         Some(app) => {
             state.metrics.proxy_connections_by_app(app);
-            websocket_handler(state, ws, addr, headers, FilterType::None)
+            websocket_handler(state, ws, addr, headers, FilterType::None, None)
         }
     }
 }
@@ -214,8 +220,9 @@ async fn authenticated_filter_websocket_handler(
         }
         Some(app) => {
             state.metrics.proxy_connections_by_app(app);
-            let filter = create_filter_from_query(query.0);
-            websocket_handler(state, ws, addr, headers, filter)
+            let filter = create_filter_from_query(&query.0);
+            let resume = resume_position_from_query(&query.0);
+            websocket_handler(state, ws, addr, headers, filter, resume)
         }
     }
 }
@@ -225,8 +232,10 @@ async fn unauthenticated_websocket_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    query: Query<FilterQuery>,
 ) -> impl IntoResponse {
-    websocket_handler(state, ws, addr, headers, FilterType::None)
+    let resume = resume_position_from_query(&query.0);
+    websocket_handler(state, ws, addr, headers, FilterType::None, resume)
 }
 
 fn websocket_handler(
@@ -235,6 +244,7 @@ fn websocket_handler(
     addr: SocketAddr,
     headers: HeaderMap,
     filter: FilterType,
+    resume_position: Option<(u64, u64)>,
 ) -> Response {
     let connect_addr = addr.ip();
 
@@ -274,7 +284,8 @@ fn websocket_handler(
         )
     })
     .on_upgrade(async move |socket| {
-        let client = ClientConnection::new(client_addr, ticket, socket, filter);
+        let client =
+            ClientConnection::new(client_addr, ticket, socket, filter, resume_position);
         state.registry.subscribe(client).await;
     })
 }
@@ -333,18 +344,28 @@ mod tests {
     #[test]
     fn test_create_filter_from_query() {
         // Test addresses only
-        let query =
-            FilterQuery { addresses: Some("0x123,0x456".to_string()), topics: None, r#match: None };
-        let filter = create_filter_from_query(query);
+        let query = FilterQuery {
+            addresses: Some("0x123,0x456".to_string()),
+            topics: None,
+            r#match: None,
+            block_number: None,
+            flashblock_index: None,
+        };
+        let filter = create_filter_from_query(&query);
         match filter {
             FilterType::Addresses(_) => (),
             _ => panic!("Expected Addresses filter"),
         }
 
         // Test topics only
-        let query =
-            FilterQuery { addresses: None, topics: Some("0xabc,0xdef".to_string()), r#match: None };
-        let filter = create_filter_from_query(query);
+        let query = FilterQuery {
+            addresses: None,
+            topics: Some("0xabc,0xdef".to_string()),
+            r#match: None,
+            block_number: None,
+            flashblock_index: None,
+        };
+        let filter = create_filter_from_query(&query);
         match filter {
             FilterType::Topics(_) => (),
             _ => panic!("Expected Topics filter"),
@@ -355,20 +376,58 @@ mod tests {
             addresses: Some("0x123".to_string()),
             topics: Some("0xabc".to_string()),
             r#match: Some("all".to_string()),
+            block_number: None,
+            flashblock_index: None,
         };
-        let filter = create_filter_from_query(query);
+        let filter = create_filter_from_query(&query);
         match filter {
             FilterType::Combined { .. } => (),
             _ => panic!("Expected Combined filter"),
         }
 
         // Test none
-        let query = FilterQuery { addresses: None, topics: None, r#match: None };
-        let filter = create_filter_from_query(query);
+        let query = FilterQuery {
+            addresses: None,
+            topics: None,
+            r#match: None,
+            block_number: None,
+            flashblock_index: None,
+        };
+        let filter = create_filter_from_query(&query);
         match filter {
             FilterType::None => (),
             _ => panic!("Expected None filter"),
         }
+    }
+
+    #[test]
+    fn test_resume_position_from_query() {
+        let query = FilterQuery {
+            addresses: None,
+            topics: None,
+            r#match: None,
+            block_number: Some(42),
+            flashblock_index: Some(3),
+        };
+        assert_eq!(resume_position_from_query(&query), Some((42, 3)));
+
+        let query = FilterQuery {
+            addresses: None,
+            topics: None,
+            r#match: None,
+            block_number: Some(42),
+            flashblock_index: None,
+        };
+        assert_eq!(resume_position_from_query(&query), None);
+
+        let query = FilterQuery {
+            addresses: None,
+            topics: None,
+            r#match: None,
+            block_number: None,
+            flashblock_index: None,
+        };
+        assert_eq!(resume_position_from_query(&query), None);
     }
 
     #[tokio::test]

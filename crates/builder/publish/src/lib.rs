@@ -6,6 +6,9 @@
 mod metrics;
 pub use metrics::{NoopPublisherMetrics, PublisherMetrics, PublishingMetrics};
 
+mod ring_buffer;
+pub use ring_buffer::{RingBuffer, RingBufferEntry};
+
 mod broadcast;
 pub use broadcast::BroadcastLoop;
 

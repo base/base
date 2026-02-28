@@ -1,6 +1,9 @@
-//! Websocket proxy binary entry point.
-
-use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io::Write,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use axum::{extract::ws::Message, http::Uri};
 use base_cli_utils::LogConfig;
@@ -15,8 +18,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 use websocket_proxy::{
-    Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
-    WebsocketSubscriber,
+    Authentication, FlashblocksRingBuffer, InMemoryRateLimit, Metrics, RateLimit, Registry,
+    Server, SubscriberOptions, WebsocketSubscriber,
 };
 
 base_cli_utils::define_log_args!("WEBSOCKET_PROXY");
@@ -148,6 +151,14 @@ struct Args {
         help = "Timeout in milliseconds for sending messages to clients"
     )]
     client_send_timeout_ms: u64,
+
+    #[arg(
+        long,
+        env,
+        default_value = "55",
+        help = "Number of flashblocks to retain in the replay ring buffer (~10s replay window)"
+    )]
+    ring_buffer_capacity: usize,
 }
 
 #[tokio::main]
@@ -200,9 +211,12 @@ async fn main() {
     let metrics = Arc::new(Metrics::default());
     let metrics_clone = Arc::clone(&metrics);
 
+    let ring_buffer = Arc::new(RwLock::new(FlashblocksRingBuffer::new(args.ring_buffer_capacity)));
+
     let (send, _rec) = broadcast::channel(args.message_buffer_size);
     let sender = send.clone();
 
+    let ring_buffer_listener = Arc::clone(&ring_buffer);
     let listener = move |data: String| {
         trace!(message = "received data", data = data);
         // Subtract one from receiver count, as we have to keep one receiver open at all times (see _rec)
@@ -219,8 +233,11 @@ async fn main() {
             }
             compressed_data_bytes
         } else {
-            data.into_bytes()
+            data.as_bytes().to_vec()
         };
+
+        // Push to ring buffer before broadcasting.
+        ring_buffer_listener.write().unwrap().push(&data, message_data.clone());
 
         match send.send(message_data.into()) {
             Ok(_) => {
@@ -297,6 +314,7 @@ async fn main() {
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
         Duration::from_millis(args.client_send_timeout_ms),
+        ring_buffer,
     );
 
     let rate_limiter: Arc<dyn RateLimit> = Arc::new(InMemoryRateLimit::new(

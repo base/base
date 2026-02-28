@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use futures::{SinkExt, StreamExt};
 use tokio::{
@@ -13,18 +13,20 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::PublisherMetrics;
+use crate::{PublisherMetrics, RingBuffer};
 
 /// Per-client broadcast sender.
 ///
-/// Created for each connected WebSocket client. Forwards messages from the
-/// broadcast channel to the client's WebSocket stream. Exits on cancellation,
-/// channel close, or WebSocket error.
+/// Created for each connected WebSocket client. If `resume_from` is set, replays
+/// all ring-buffered entries after that position before forwarding live messages.
+/// Exits on cancellation, channel close, or WebSocket error.
 pub struct BroadcastLoop {
     stream: WebSocketStream<TcpStream>,
     metrics: Arc<dyn PublisherMetrics>,
     cancel: CancellationToken,
     blocks: broadcast::Receiver<Utf8Bytes>,
+    ring_buffer: Arc<RwLock<RingBuffer>>,
+    resume_from: Option<(u64, u64)>,
 }
 
 impl Debug for BroadcastLoop {
@@ -40,15 +42,41 @@ impl BroadcastLoop {
         metrics: Arc<dyn PublisherMetrics>,
         cancel: CancellationToken,
         blocks: broadcast::Receiver<Utf8Bytes>,
+        ring_buffer: Arc<RwLock<RingBuffer>>,
+        resume_from: Option<(u64, u64)>,
     ) -> Self {
-        Self { stream, metrics, cancel, blocks }
+        Self { stream, metrics, cancel, blocks, ring_buffer, resume_from }
     }
 
     /// Runs the broadcast loop until cancellation or error.
+    ///
+    /// If `resume_from` is set, buffered entries after that position are sent first,
+    /// then the loop joins the live broadcast channel. Brief overlap between replayed
+    /// and live messages is acceptable; clients deduplicate by `(payload_id, index)`.
     pub async fn run(mut self) {
         let Ok(peer_addr) = self.stream.get_ref().peer_addr() else {
             return;
         };
+
+        // Replay buffered entries before entering the live loop.
+        if let Some((bn, fi)) = self.resume_from {
+            let entries = self.ring_buffer.read().unwrap().entries_after(bn, fi);
+            debug!(
+                peer_addr = %peer_addr,
+                block_number = bn,
+                flashblock_index = fi,
+                count = entries.len(),
+                "Replaying ring buffer entries"
+            );
+            for payload in entries {
+                self.metrics.on_message_sent();
+                if let Err(e) = self.stream.send(Message::Text(payload)).await {
+                    self.metrics.on_send_error();
+                    debug!(peer_addr = %peer_addr, error = %e, "Error during ring buffer replay");
+                    return;
+                }
+            }
+        }
 
         loop {
             tokio::select! {
@@ -99,13 +127,17 @@ impl BroadcastLoop {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{
+        RwLock,
+        atomic::{AtomicU64, Ordering},
+    };
 
     use rstest::rstest;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, connect_async};
 
     use super::*;
+    use crate::{RingBuffer, RingBufferEntry};
 
     struct MockMetrics {
         sent: AtomicU64,
@@ -132,6 +164,24 @@ mod tests {
         fn on_handshake_error(&self) {}
     }
 
+    fn empty_ring_buffer() -> Arc<RwLock<RingBuffer>> {
+        Arc::new(RwLock::new(RingBuffer::new(16)))
+    }
+
+    fn ring_buffer_with_entries(entries: Vec<(u64, u64, &str)>) -> Arc<RwLock<RingBuffer>> {
+        let buf = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let mut locked = buf.write().unwrap();
+        for (bn, fi, payload) in entries {
+            locked.push(RingBufferEntry {
+                block_number: bn,
+                flashblock_index: fi,
+                payload: Utf8Bytes::from(payload),
+            });
+        }
+        drop(locked);
+        buf
+    }
+
     #[tokio::test]
     async fn broadcast_loop_forwards_messages() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -146,7 +196,7 @@ mod tests {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 let ws = accept_async(stream).await.unwrap();
-                BroadcastLoop::new(ws, metrics, cancel, rx).run().await;
+                BroadcastLoop::new(ws, metrics, cancel, rx, empty_ring_buffer(), None).run().await;
             }
         });
 
@@ -174,7 +224,7 @@ mod tests {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 let ws = accept_async(stream).await.unwrap();
-                BroadcastLoop::new(ws, metrics, cancel, rx).run().await;
+                BroadcastLoop::new(ws, metrics, cancel, rx, empty_ring_buffer(), None).run().await;
             }
         });
 
@@ -195,7 +245,7 @@ mod tests {
         let server_handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let ws = accept_async(stream).await.unwrap();
-            BroadcastLoop::new(ws, metrics, cancel, rx).run().await;
+            BroadcastLoop::new(ws, metrics, cancel, rx, empty_ring_buffer(), None).run().await;
         });
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
@@ -224,7 +274,9 @@ mod tests {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 let ws = accept_async(stream).await.unwrap();
-                BroadcastLoop::new(ws, metrics_clone, cancel, rx).run().await;
+                BroadcastLoop::new(ws, metrics_clone, cancel, rx, empty_ring_buffer(), None)
+                    .run()
+                    .await;
             }
         });
 
@@ -242,5 +294,48 @@ mod tests {
         }
 
         server_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn broadcast_loop_replays_ring_buffer_before_live() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let cancel = CancellationToken::new();
+        let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
+
+        let ring_buffer = ring_buffer_with_entries(vec![
+            (1, 0, "entry-1-0"),
+            (1, 1, "entry-1-1"),
+            (2, 0, "entry-2-0"),
+        ]);
+
+        let server_handle = tokio::spawn({
+            let metrics = Arc::clone(&metrics);
+            let cancel = cancel.clone();
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let ws = accept_async(stream).await.unwrap();
+                // Resume from (1, 0) — should get (1,1) and (2,0)
+                BroadcastLoop::new(ws, metrics, cancel, rx, ring_buffer, Some((1, 0))).run().await;
+            }
+        });
+
+        let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+
+        // First two messages are replayed from ring buffer
+        let msg1 = client.next().await.unwrap().unwrap();
+        assert_eq!(msg1, Message::Text(Utf8Bytes::from("entry-1-1")));
+
+        let msg2 = client.next().await.unwrap().unwrap();
+        assert_eq!(msg2, Message::Text(Utf8Bytes::from("entry-2-0")));
+
+        // Live messages follow
+        tx.send(Utf8Bytes::from("live")).unwrap();
+        let msg3 = client.next().await.unwrap().unwrap();
+        assert_eq!(msg3, Message::Text(Utf8Bytes::from("live")));
+
+        cancel.cancel();
+        let _ = server_handle.await;
     }
 }
