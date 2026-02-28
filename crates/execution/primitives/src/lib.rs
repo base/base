@@ -8,10 +8,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// The address of the `L2ToL1MessagePasser` predeploy, re-exported from [`base_protocol::Predeploys`].
-pub const L2_TO_L1_MESSAGE_PASSER_ADDRESS: alloy_primitives::Address =
-    base_protocol::Predeploys::L2_TO_L1_MESSAGE_PASSER;
-
 pub mod transaction;
 pub use transaction::*;
 

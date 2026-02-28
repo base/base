@@ -7,8 +7,9 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_execution_forks::OpHardforks;
-use base_execution_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, transaction::OpTransaction};
+use base_execution_primitives::transaction::OpTransaction;
 use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
+use base_protocol::Predeploys;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
@@ -431,7 +432,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         if ctx.chain_spec.is_isthmus_active_at_timestamp(ctx.attributes().timestamp()) {
             // force load `L2ToL1MessagePasser.sol` so l2 withdrawals root can be computed even if
             // no l2 withdrawals in block
-            _ = db.load_cache_account(L2_TO_L1_MESSAGE_PASSER_ADDRESS)?;
+            _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
         }
 
         let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =

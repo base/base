@@ -20,7 +20,7 @@ reth-network-peers.workspace = true
 
 # op-reth
 base-execution-forks.workspace = true
-base-execution-primitives.workspace = true
+base-protocol.workspace = true
 
 # ethereum
 alloy-chains.workspace = true
@@ -55,7 +55,7 @@ std = [
 	"base-alloy-consensus/std",
 	"base-alloy-rpc-types/std",
 	"base-execution-forks/std",
-	"base-execution-primitives/std",
+	"base-protocol/std",
 	"derive_more/std",
 	"reth-chainspec/std",
 	"reth-ethereum-forks/std",
@@ -73,7 +73,7 @@ serde = [
 	"base-alloy-consensus/serde",
 	"base-alloy-rpc-types/serde",
 	"base-execution-forks/serde",
-	"base-execution-primitives/serde",
+	"base-protocol/serde",
 	"reth-ethereum-forks/serde",
 	"reth-primitives-traits/serde",
 ]
