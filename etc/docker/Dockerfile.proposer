@@ -1,57 +1,29 @@
-# syntax=docker/dockerfile:1
-
-# Multi-stage Dockerfile for proposer
-# Uses cargo-chef for efficient layer caching
-
-# Stage 1: Chef - prepare recipe
-FROM rust:1.88-bookworm AS chef
-RUN cargo install cargo-chef
+# --- Builder ---
+FROM rust:1.93-trixie AS builder
 WORKDIR /app
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      git libclang-dev pkg-config curl build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
-# Stage 2: Planner - create build recipe
-FROM chef AS planner
+ARG PROFILE=release
+
 COPY . .
-RUN cargo chef prepare --recipe-path recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=proposer-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-proposer-bin --bin proposer && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/proposer /app/proposer
 
-# Stage 3: Builder - build the application
-FROM chef AS builder
+# --- Runtime ---
+FROM debian:trixie-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -r -s /sbin/nologin proposer
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    libclang-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy recipe and build dependencies first (cached layer)
-COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Copy source code
-COPY . .
-
-# Build the application
-RUN cargo build --release --bin base-proposer
-
-# Stage 4: Runtime - minimal runtime image
-FROM ubuntu:24.04 AS runtime
-
-# Install runtime dependencies and create non-root user
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -s /sbin/nologin proposer
-
-# Copy binary from builder
-COPY --from=builder /app/target/release/base-proposer /usr/local/bin/base-proposer
-
-# Set user and working directory
+WORKDIR /app
+COPY --from=builder /app/proposer ./
 USER proposer
-WORKDIR /home/proposer
-
-# Expose metrics port
 EXPOSE 9090
-
-# Set entrypoint
-ENTRYPOINT ["/usr/local/bin/base-proposer"]
+ENTRYPOINT ["./proposer"]
