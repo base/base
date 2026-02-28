@@ -1,6 +1,6 @@
 //! Gossipsub Config
 
-use std::{sync::LazyLock, time::Duration};
+use std::time::Duration;
 
 use libp2p::gossipsub::{Config, ConfigBuilder, Message, MessageId};
 use openssl::sha::sha256;
@@ -44,16 +44,15 @@ pub const DEFAULT_MESH_DLAZY: usize = 6;
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// The gossip heartbeat.
-pub static GOSSIP_HEARTBEAT: LazyLock<Duration> = LazyLock::new(|| Duration::from_millis(500));
+pub const GOSSIP_HEARTBEAT: Duration = Duration::from_millis(500);
 
 /// The seen messages TTL.
 /// Limits the duration that message IDs are remembered for gossip deduplication purposes.
-pub static SEEN_MESSAGES_TTL: LazyLock<Duration> = LazyLock::new(|| 130 * *GOSSIP_HEARTBEAT);
+pub const SEEN_MESSAGES_TTL: Duration = Duration::from_millis(130 * 500);
 
 /// The peer score inspect frequency.
 /// The frequency at which peer scores are inspected.
-pub static PEER_SCORE_INSPECT_FREQUENCY: LazyLock<Duration> =
-    LazyLock::new(|| 15 * Duration::from_secs(1));
+pub const PEER_SCORE_INSPECT_FREQUENCY: Duration = Duration::from_secs(15);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
@@ -79,7 +78,7 @@ pub fn default_config_builder() -> ConfigBuilder {
         .mesh_n_low(DEFAULT_MESH_DLO)
         .mesh_n_high(DEFAULT_MESH_DHI)
         .gossip_lazy(DEFAULT_MESH_DLAZY)
-        .heartbeat_interval(*GOSSIP_HEARTBEAT)
+        .heartbeat_interval(GOSSIP_HEARTBEAT)
         .fanout_ttl(Duration::from_secs(60))
         .history_length(12)
         .history_gossip(3)
