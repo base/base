@@ -2,6 +2,4 @@
 
 mod container;
 
-pub use container::{
-    BUILDER_ENODE_ID, BUILDER_LIBP2P_PEER_ID, L1GenesisOutput, L2DeploymentOutput, SetupContainer,
-};
+pub use container::{BUILDER_ENODE_ID, L1GenesisOutput, L2DeploymentOutput, SetupContainer};

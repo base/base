@@ -8,12 +8,6 @@ pub struct L2ContainerConfig {
     /// Network name for all containers
     pub network_name: Option<String>,
 
-    /// Host port for op-node RPC (maps to internal port 9545)
-    pub op_node_rpc_port: Option<u16>,
-    /// Host port for op-node P2P (maps to internal port 9222)
-    pub op_node_p2p_port: Option<u16>,
-    /// Host port for op-node follower RPC (maps to internal port 9545)
-    pub op_node_follower_rpc_port: Option<u16>,
     /// Host port for batcher metrics
     pub batcher_metrics_port: Option<u16>,
 
@@ -36,4 +30,17 @@ pub struct L2ContainerConfig {
     pub client_auth_port: Option<u16>,
     /// L2 Client P2P port
     pub client_p2p_port: Option<u16>,
+
+    /// Builder consensus RPC port
+    pub builder_consensus_rpc_port: Option<u16>,
+    /// Builder consensus P2P TCP port
+    pub builder_consensus_p2p_tcp_port: Option<u16>,
+    /// Builder consensus P2P UDP port
+    pub builder_consensus_p2p_udp_port: Option<u16>,
+    /// Client consensus RPC port
+    pub client_consensus_rpc_port: Option<u16>,
+    /// Client consensus P2P TCP port
+    pub client_consensus_p2p_tcp_port: Option<u16>,
+    /// Client consensus P2P UDP port
+    pub client_consensus_p2p_udp_port: Option<u16>,
 }

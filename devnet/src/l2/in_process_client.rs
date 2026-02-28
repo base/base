@@ -205,6 +205,12 @@ impl InProcessClient {
         Ok(url)
     }
 
+    /// Returns the Engine API URL (localhost).
+    pub fn engine_url(&self) -> Result<Url> {
+        Url::parse(&format!("http://{}", self.engine_addr))
+            .map_err(|e| eyre!("Failed to build Engine URL: {}", e))
+    }
+
     /// Returns the Engine API URL for Docker containers using testcontainers host port exposure.
     pub fn host_engine_url(&self) -> String {
         format!("http://{}:{}", crate::host::host_address(), self.engine_addr.port())
