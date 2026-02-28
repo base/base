@@ -54,10 +54,12 @@ runs:
     - name: Install Rust (stable via rust-toolchain.toml)
       if: inputs.toolchain == 'stable'
       shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
       run: |
         rustup show active-toolchain
-        if [ -n "${{ inputs.components }}" ]; then
-          rustup component add ${{ inputs.components }}
+        if [ -n "$COMPONENTS" ]; then
+          rustup component add $COMPONENTS
         fi
 
     - name: Install Rust (nightly)
