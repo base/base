@@ -39,6 +39,8 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.base_ref || 'main' }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
@@ -49,7 +51,7 @@ jobs:
           fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
       - name: Fetch base branch
         if: github.event_name == 'pull_request'
-        run: git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}
+        run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
       - uses: ./.github/actions/setup
         with:
           free-disk: "true"
@@ -59,8 +61,6 @@ jobs:
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Run tests
-        env:
-          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             just test-affected-ci "origin/$BASE_REF"
