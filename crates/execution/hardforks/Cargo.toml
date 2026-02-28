@@ -21,12 +21,9 @@ base-alloy-hardforks.workspace = true
 # ethereum
 alloy-primitives.workspace = true
 
-# misc
-once_cell.workspace = true
-
 [features]
 default = [ "std" ]
-std = [ "alloy-primitives/std", "once_cell/std", "reth-ethereum-forks/std" ]
+std = [ "alloy-primitives/std", "reth-ethereum-forks/std" ]
 serde = [
 	"alloy-primitives/serde",
 	"base-alloy-hardforks/serde",

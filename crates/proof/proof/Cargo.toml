@@ -45,7 +45,6 @@ tracing.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
-lazy_static.workspace = true
 
 # KZG
 ark-ff.workspace = true

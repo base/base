@@ -119,7 +119,6 @@ tracing-subscriber.workspace = true
 # misc
 rand.workspace = true
 rayon.workspace = true
-once_cell.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 

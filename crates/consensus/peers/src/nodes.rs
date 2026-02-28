@@ -1,8 +1,9 @@
 //! Bootnodes for consensus network discovery.
 
+use std::sync::LazyLock;
+
 use base_consensus_registry::Registry;
 use derive_more::Deref;
-use lazy_static::lazy_static;
 
 use crate::BootNode;
 
@@ -46,17 +47,14 @@ impl BootNodes {
     }
 }
 
-lazy_static! {
-    /// Default op bootnodes to use.
-    static ref OP_BOOTNODES: Vec<BootNode> = OP_RAW_BOOTNODES.iter()
-        .map(|raw| BootNode::parse_bootnode(raw))
-        .collect();
+/// Default op bootnodes to use.
+static OP_BOOTNODES: LazyLock<Vec<BootNode>> =
+    LazyLock::new(|| OP_RAW_BOOTNODES.iter().map(|raw| BootNode::parse_bootnode(raw)).collect());
 
-    /// Default op testnet bootnodes to use.
-    static ref OP_TESTNET_BOOTNODES: Vec<BootNode> = OP_RAW_TESTNET_BOOTNODES.iter()
-        .map(|raw| BootNode::parse_bootnode(raw))
-        .collect();
-}
+/// Default op testnet bootnodes to use.
+static OP_TESTNET_BOOTNODES: LazyLock<Vec<BootNode>> = LazyLock::new(|| {
+    OP_RAW_TESTNET_BOOTNODES.iter().map(|raw| BootNode::parse_bootnode(raw)).collect()
+});
 
 /// OP stack mainnet boot nodes.
 pub static OP_RAW_BOOTNODES: &[&str] = &[

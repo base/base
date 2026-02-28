@@ -1,8 +1,7 @@
 //! Gossipsub Config
 
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 
-use lazy_static::lazy_static;
 use libp2p::gossipsub::{Config, ConfigBuilder, Message, MessageId};
 use openssl::sha::sha256;
 use snap::raw::Decoder;
@@ -44,18 +43,17 @@ pub const DEFAULT_MESH_DLAZY: usize = 6;
 // Duration Constants
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-lazy_static! {
-    /// The gossip heartbeat.
-    pub static ref GOSSIP_HEARTBEAT: Duration = Duration::from_millis(500);
+/// The gossip heartbeat.
+pub static GOSSIP_HEARTBEAT: LazyLock<Duration> = LazyLock::new(|| Duration::from_millis(500));
 
-    /// The seen messages TTL.
-    /// Limits the duration that message IDs are remembered for gossip deduplication purposes.
-    pub static ref SEEN_MESSAGES_TTL: Duration = 130 * *GOSSIP_HEARTBEAT;
+/// The seen messages TTL.
+/// Limits the duration that message IDs are remembered for gossip deduplication purposes.
+pub static SEEN_MESSAGES_TTL: LazyLock<Duration> = LazyLock::new(|| 130 * *GOSSIP_HEARTBEAT);
 
-    /// The peer score inspect frequency.
-    /// The frequency at which peer scores are inspected.
-    pub static ref PEER_SCORE_INSPECT_FREQUENCY: Duration = 15 * Duration::from_secs(1);
-}
+/// The peer score inspect frequency.
+/// The frequency at which peer scores are inspected.
+pub static PEER_SCORE_INSPECT_FREQUENCY: LazyLock<Duration> =
+    LazyLock::new(|| 15 * Duration::from_secs(1));
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building

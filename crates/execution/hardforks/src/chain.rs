@@ -1,8 +1,8 @@
 use alloc::vec;
+use std::sync::LazyLock;
 
 use alloy_primitives::U256;
 use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
-use once_cell::sync::Lazy as LazyLock;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 
 /// Extension trait to convert alloy's [`OpChainHardforks`] into reth's [`ChainHardforks`].
