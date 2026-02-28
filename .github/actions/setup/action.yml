@@ -1,0 +1,98 @@
+name: Setup
+description: Shared CI setup for Rust projects
+
+inputs:
+  toolchain:
+    description: Rust toolchain channel (stable or nightly)
+    default: "stable"
+  components:
+    description: Rust components to install (e.g. clippy, rustfmt)
+    default: ""
+  tools:
+    description: Cargo tools to install via taiki-e/install-action
+    default: ""
+  foundry:
+    description: Install Foundry
+    default: "false"
+  mold:
+    description: Install mold linker
+    default: "false"
+  native-deps:
+    description: Install native build dependencies (clang, llvm, etc.)
+    default: "false"
+  free-disk:
+    description: Free disk space before building
+    default: "false"
+  rust-cache-shared-key:
+    description: Shared key for Rust cache (empty to skip caching)
+    default: ""
+  rust-cache-save:
+    description: Whether to save the Rust cache
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Free Disk Space
+      if: inputs.free-disk == 'true'
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        swap-storage: true
+
+    - name: Install native dependencies
+      if: inputs.native-deps == 'true'
+      uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      with:
+        packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
+        version: 1.2
+
+    - name: Install Rust (stable)
+      if: inputs.toolchain == 'stable'
+      uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Install Rust (nightly)
+      if: inputs.toolchain == 'nightly'
+      uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Install mold
+      if: inputs.mold == 'true'
+      uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+    - name: Rust cache
+      if: inputs.rust-cache-shared-key != ''
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      with:
+        cache-on-failure: true
+        shared-key: ${{ inputs.rust-cache-shared-key }}
+        save-if: ${{ inputs.rust-cache-save }}
+
+    - name: Install just
+      uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+
+    - name: Install cargo tools
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+      with:
+        tool: ${{ inputs.tools }}
+
+    - name: Install Foundry
+      if: inputs.foundry == 'true'
+      uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+      with:
+        version: stable
+
+    - name: Set LIBCLANG_PATH
+      if: inputs.native-deps == 'true'
+      shell: bash
+      run: |
+        LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
+        echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV

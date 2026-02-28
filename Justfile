@@ -97,7 +97,7 @@ install-nextest:
 
 # Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
+    cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
 
 # Runs tests only for crates affected by changes vs main (excludes devnet)
 test-affected base="main": install-nextest build-contracts
@@ -113,11 +113,27 @@ test-affected base="main": install-nextest build-contracts
         pkg_args="$pkg_args -p $crate"
     done <<< "$affected"
     echo "Testing affected crates:$pkg_args"
-    RUSTFLAGS="-D warnings" cargo nextest run --all-features $pkg_args
+    cargo nextest run --all-features $pkg_args
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
+    cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
+
+# Runs tests only for affected crates with ci profile (for PRs)
+test-affected-ci base="main": install-nextest build-contracts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
+    if [ -z "$affected" ]; then
+        echo "No affected crates to test."
+        exit 0
+    fi
+    pkg_args=""
+    while IFS= read -r crate; do
+        pkg_args="$pkg_args -p $crate"
+    done <<< "$affected"
+    echo "Testing affected crates:$pkg_args"
+    cargo nextest run --all-features --cargo-profile ci $pkg_args
 
 # Runs devnet tests (requires Docker)
 devnet-tests: install-nextest build-contracts
