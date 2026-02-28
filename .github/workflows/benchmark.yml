@@ -45,38 +45,15 @@ jobs:
           path: ~/bin
           key: ${{ runner.os }}-binaries-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'bin/**') }}
 
-      - name: Install native dependencies
+      - name: Setup Rust toolchain, cache, and dependencies
         if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+        uses: ./.github/actions/setup
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.1
-
-      - name: Set up Rust
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-
-      - name: Rust cache
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
-          add-rust-environment-hash-key: "false"
-          key: benchmark-${{ hashFiles('Cargo.lock') }}
-
-      - name: Install Foundry
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
-        with:
-          version: stable
-
-      - name: Set LIBCLANG_PATH
-        if: steps.cache-binaries.outputs.cache-hit != 'true'
-        run: |
-          LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
-          echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          rust-cache-shared-key: "benchmark"
+          rust-cache-save: "true"
 
       - name: Build base-reth-node
         if: steps.cache-binaries.outputs.cache-hit != 'true'
