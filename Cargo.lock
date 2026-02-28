@@ -3383,6 +3383,7 @@ dependencies = [
  "alloy-rlp",
  "arbitrary",
  "base-alloy-consensus",
+ "base-protocol",
  "bincode 2.0.1",
  "bytes",
  "modular-bitfield",
