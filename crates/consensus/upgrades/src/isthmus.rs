@@ -9,7 +9,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::{Predeploys, SystemAddresses};
+use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::Hardfork;
 
@@ -25,17 +25,6 @@ impl Isthmus {
 
     /// EIP-2935 From Address
     pub const EIP2935_FROM: Address = address!("3462413Af4609098e1E27A490f554f260213D685");
-
-    /// L1 Block Deployer Address
-    pub const L1_BLOCK_DEPLOYER: Address = address!("4210000000000000000000000000000000000003");
-
-    /// The Gas Price Oracle Deployer Address
-    pub const GAS_PRICE_ORACLE_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000004");
-
-    /// The Operator Fee Vault Deployer Address
-    pub const OPERATOR_FEE_VAULT_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000005");
 
     /// The new L1 Block Address
     /// This is computed by using go-ethereum's `crypto.CreateAddress` function,
@@ -148,7 +137,7 @@ impl Isthmus {
         ([
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
-                from: Self::L1_BLOCK_DEPLOYER,
+                from: Deployers::ISTHMUS_L1_BLOCK_DEPLOYER,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -158,7 +147,7 @@ impl Isthmus {
             },
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
-                from: Self::GAS_PRICE_ORACLE_DEPLOYER,
+                from: Deployers::ISTHMUS_GAS_PRICE_ORACLE_DEPLOYER,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -168,7 +157,7 @@ impl Isthmus {
             },
             TxDeposit {
                 source_hash: Self::deploy_operator_fee_vault_source(),
-                from: Self::OPERATOR_FEE_VAULT_DEPLOYER,
+                from: Deployers::ISTHMUS_OPERATOR_FEE_VAULT_DEPLOYER,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
