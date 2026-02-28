@@ -267,6 +267,8 @@ services:
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
       - "${L2_BUILDER_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-builder-cl
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
       - --metrics.enabled
@@ -398,6 +400,8 @@ services:
     depends_on:
       base-client:
         condition: service_healthy
+      base-builder-cl:
+        condition: service_healthy
     ports:
       - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP
@@ -433,6 +437,8 @@ services:
       - "${L2_CLIENT_CL_P2P_PORT}"
       - --p2p.listen.udp
       - "${L2_CLIENT_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-client-cl
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"
