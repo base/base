@@ -106,7 +106,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
-                from: Deployers::ECOTONE_L1_BLOCK_DEPLOYER,
+                from: Deployers::ECOTONE_L1_BLOCK,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -118,7 +118,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
-                from: Deployers::ECOTONE_GAS_PRICE_ORACLE_DEPLOYER,
+                from: Deployers::ECOTONE_GAS_PRICE_ORACLE,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,

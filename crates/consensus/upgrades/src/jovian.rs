@@ -47,14 +47,14 @@ impl Jovian {
     /// This is computed by using `Address::create` function,
     /// with the L1 Block Deployer Address and nonce 0.
     pub fn l1_block_address() -> Address {
-        Deployers::JOVIAN_L1_BLOCK_DEPLOYER.create(0)
+        Deployers::JOVIAN_L1_BLOCK.create(0)
     }
 
     /// The Jovian Gas Price Oracle Address
     /// This is computed by using `Address::create` function,
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub fn gas_price_oracle_address() -> Address {
-        Deployers::JOVIAN_GAS_PRICE_ORACLE_DEPLOYER.create(0)
+        Deployers::JOVIAN_GAS_PRICE_ORACLE.create(0)
     }
 
     /// Returns the source hash to the enable the gas price oracle for Jovian.
@@ -91,7 +91,7 @@ impl Jovian {
         ([
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
-                from: Deployers::JOVIAN_L1_BLOCK_DEPLOYER,
+                from: Deployers::JOVIAN_L1_BLOCK,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -111,7 +111,7 @@ impl Jovian {
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle(),
-                from: Deployers::JOVIAN_GAS_PRICE_ORACLE_DEPLOYER,
+                from: Deployers::JOVIAN_GAS_PRICE_ORACLE,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
