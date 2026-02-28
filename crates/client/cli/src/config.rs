@@ -29,11 +29,10 @@ pub enum ConfigError {
 ///
 /// Wraps an optional path to a custom L1 chain configuration file.
 /// If no path is provided, the configuration is loaded from the known chains registry.
-#[derive(Clone, Debug, Default, clap::Args)]
+#[derive(Clone, Debug, Default)]
 pub struct L1ConfigFile {
     /// Path to a custom L1 chain configuration file.
     /// (overrides the default configuration from the registry)
-    #[arg(long, visible_alias = "rollup-l1-cfg", env = "BASE_NODE_L1_CHAIN_CONFIG")]
     pub l1_config_file: Option<PathBuf>,
 }
 
@@ -73,11 +72,10 @@ impl L1ConfigFile {
 ///
 /// Wraps an optional path to a custom L2 rollup configuration file.
 /// If no path is provided, the configuration is loaded from the registry.
-#[derive(Clone, Debug, Default, clap::Args)]
+#[derive(Clone, Debug, Default)]
 pub struct L2ConfigFile {
     /// Path to a custom L2 rollup configuration file.
     /// (overrides the default rollup configuration from the registry)
-    #[arg(long, visible_alias = "rollup-cfg", env = "BASE_NODE_ROLLUP_CONFIG")]
     pub l2_config_file: Option<PathBuf>,
 }
 

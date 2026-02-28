@@ -16,7 +16,12 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-proposer.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
+url.workspace = true
 eyre.workspace = true
+serde.workspace = true
+humantime.workspace = true
+base-proposer.workspace = true
+base-cli-utils.workspace = true
+alloy-primitives.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["full"] }

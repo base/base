@@ -20,15 +20,16 @@ base-client-cli = { workspace = true }
 
 ```rust
 use base_client_cli::{L1ClientArgs, L2ClientArgs};
-use clap::Parser;
 
-#[derive(Parser)]
-struct Cli {
-    #[clap(flatten)]
+struct NodeConfig {
     l1_args: L1ClientArgs,
-    #[clap(flatten)]
     l2_args: L2ClientArgs,
 }
+
+let config = NodeConfig {
+    l1_args: L1ClientArgs::default(),
+    l2_args: L2ClientArgs::default(),
+};
 ```
 
 ## License

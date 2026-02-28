@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::app::{ViewId, run_app, run_app_with_view, run_flashblocks_json};
+
 /// Configuration for a chain monitored by basectl.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainConfig {
@@ -278,6 +280,57 @@ impl ChainConfig {
 
     fn config_dir() -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join(".base").join("config"))
+    }
+}
+
+/// Top-level configuration for the basectl application.
+#[derive(Debug)]
+pub struct BasectlConfig {
+    /// Chain configuration for network connectivity.
+    pub chain_config: ChainConfig,
+    /// Command to execute.
+    pub command: BasectlCommand,
+}
+
+/// Command variants for the basectl application.
+#[derive(Debug)]
+pub enum BasectlCommand {
+    /// Display chain configuration.
+    Config,
+    /// Stream flashblocks, optionally as JSON lines.
+    Flashblocks {
+        /// Output flashblocks as JSON lines instead of the TUI.
+        json: bool,
+    },
+    /// DA (Data Availability) backlog monitor.
+    Da,
+    /// Combined monitoring command center.
+    CommandCenter,
+    /// Default home view.
+    Default,
+}
+
+impl BasectlConfig {
+    /// Runs the basectl application based on the configured command.
+    pub async fn run(self) -> Result<()> {
+        match self.command {
+            BasectlCommand::Config => {
+                run_app_with_view(self.chain_config, ViewId::Config).await
+            }
+            BasectlCommand::Flashblocks { json: true } => {
+                run_flashblocks_json(self.chain_config).await
+            }
+            BasectlCommand::Flashblocks { json: false } => {
+                run_app_with_view(self.chain_config, ViewId::Flashblocks).await
+            }
+            BasectlCommand::Da => {
+                run_app_with_view(self.chain_config, ViewId::DaMonitor).await
+            }
+            BasectlCommand::CommandCenter => {
+                run_app_with_view(self.chain_config, ViewId::CommandCenter).await
+            }
+            BasectlCommand::Default => run_app(self.chain_config).await,
+        }
     }
 }
 

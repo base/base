@@ -1,5 +1,7 @@
 //! Ingress RPC binary entry point.
 
+mod cli;
+
 use alloy_provider::ProviderBuilder;
 use audit_archiver_lib::{
     AuditConnector, BundleEvent, KafkaBundleEventPublisher, load_kafka_config_from_file,
@@ -8,6 +10,7 @@ use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
 use clap::Parser;
+use cli::Cli;
 use ingress_rpc_lib::{
     BuilderConnector, Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers,
     bind_health_server,
@@ -20,35 +23,23 @@ use tracing::info;
 base_cli_utils::define_log_args!("TIPS_INGRESS");
 base_cli_utils::define_metrics_args!("TIPS_INGRESS", 9002);
 
-/// CLI entry point for the tips ingress RPC service.
-#[derive(Parser, Debug, Clone)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// Service configuration.
-    #[command(flatten)]
-    config: Config,
-    /// Logging configuration.
-    #[command(flatten)]
-    log: LogArgs,
-    /// Metrics configuration.
-    #[command(flatten)]
-    metrics: MetricsArgs,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
-    let config = cli.config.clone();
 
-    LogConfig::from(cli.log).init_tracing_subscriber().expect("Failed to initialize tracing");
+    LogConfig::from(cli.log.clone())
+        .init_tracing_subscriber()
+        .expect("Failed to initialize tracing");
 
     let metrics_addr = cli.metrics.addr;
     let metrics_port = cli.metrics.port;
-    base_cli_utils::MetricsConfig::from(cli.metrics)
+    base_cli_utils::MetricsConfig::from(cli.metrics.clone())
         .init()
         .expect("Failed to install Prometheus exporter");
+
+    let config = Config::from(cli);
 
     info!(
         message = "Starting ingress service",
@@ -65,11 +56,11 @@ async fn main() -> anyhow::Result<()> {
         mempool: ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
-            .connect_http(config.mempool_url),
+            .connect_http(config.mempool_url.clone()),
         simulation: ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
-            .connect_http(config.simulation_rpc),
+            .connect_http(config.simulation_rpc.clone()),
         raw_tx_forward: config.raw_tx_forward_rpc.clone().map(|url| {
             ProviderBuilder::new().disable_recommended_fillers().network::<Base>().connect_http(url)
         }),
@@ -107,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = format!("{}:{}", config.address, config.port);
-    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cli.config);
+    let service = IngressService::new(providers, queue, audit_tx, builder_tx, config);
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;

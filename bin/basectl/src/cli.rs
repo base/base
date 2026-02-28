@@ -1,5 +1,6 @@
 //! Contains the CLI arguments for the basectl binary.
 
+use basectl_cli::{BasectlCommand, BasectlConfig, ChainConfig};
 use clap::{Parser, Subcommand};
 
 /// Base infrastructure control CLI.
@@ -34,4 +35,27 @@ pub(crate) enum Commands {
     /// Command center (combined view)
     #[command(visible_alias = "cc")]
     CommandCenter,
+}
+
+impl Cli {
+    /// Converts CLI arguments into a [`BasectlConfig`] and runs the application.
+    pub(crate) async fn run(self) -> anyhow::Result<()> {
+        let config = self.into_config().await?;
+        config.run().await
+    }
+
+    /// Converts CLI arguments into a [`BasectlConfig`].
+    async fn into_config(self) -> anyhow::Result<BasectlConfig> {
+        let chain_config = ChainConfig::load(&self.config).await?;
+
+        let command = match self.command {
+            Some(Commands::Config) => BasectlCommand::Config,
+            Some(Commands::Flashblocks { json }) => BasectlCommand::Flashblocks { json },
+            Some(Commands::Da) => BasectlCommand::Da,
+            Some(Commands::CommandCenter) => BasectlCommand::CommandCenter,
+            None => BasectlCommand::Default,
+        };
+
+        Ok(BasectlConfig { chain_config, command })
+    }
 }

@@ -17,6 +17,8 @@ async-trait.workspace = true
 futures = { workspace = true }
 metrics-derive.workspace = true
 base-bundles.workspace = true
+base-cli-utils.workspace = true
+aws-credential-types.workspace = true
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -26,10 +28,10 @@ serde = { workspace = true, features = ["std", "derive"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
 base-bundles = { workspace = true, features = ["test-utils"] }
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }

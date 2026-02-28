@@ -5,11 +5,11 @@
 mod balance;
 pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
 
-mod cli;
-pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
-
 mod config;
-pub use config::{ConfigError, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig};
+pub use config::{
+    ConfigError, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig, build_signing_config,
+    validate_url,
+};
 
 mod constants;
 pub use constants::*;

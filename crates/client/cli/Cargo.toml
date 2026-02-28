@@ -42,7 +42,6 @@ libp2p = { workspace = true, features = ["secp256k1", "macros", "tokio", "tcp", 
 
 # cli
 url.workspace = true
-clap.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -55,5 +54,3 @@ eyre.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 
-[dev-dependencies]
-rstest.workspace = true

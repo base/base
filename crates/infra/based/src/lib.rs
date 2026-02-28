@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+mod config;
+pub use config::{BasedConfig, run};
+
 /// Healthcheck logic and client implementations.
 mod healthcheck;
 pub use healthcheck::{

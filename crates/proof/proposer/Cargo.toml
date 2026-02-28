@@ -57,7 +57,6 @@ eyre.workspace = true
 
 # CLI
 base-cli-utils.workspace = true
-clap.workspace = true
 
 # Metrics
 metrics-exporter-prometheus.workspace = true

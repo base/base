@@ -1,6 +1,6 @@
 //! CLI definition for the TEE prover server.
 
-use base_enclave_server::transport::TransportConfig;
+use base_enclave_server::{ProverConfig, transport::TransportConfig};
 use clap::{Parser, Subcommand};
 
 /// TEE prover.
@@ -52,20 +52,30 @@ struct ProxyArgs {
     http_port: u16,
 }
 
+impl TryFrom<Cli> for ProverConfig {
+    type Error = eyre::Report;
+
+    fn try_from(cli: Cli) -> Result<Self, Self::Error> {
+        match cli.command {
+            Command::Nitro(args) => {
+                let config =
+                    TransportConfig::new(args.vsock_port, args.http_port, args.http_body_limit);
+                Ok(Self::Nitro(config))
+            }
+            Command::Proxy(args) => Ok(Self::Proxy {
+                vsock_cid: args.vsock_cid,
+                vsock_port: args.vsock_port,
+                http_port: args.http_port,
+            }),
+        }
+    }
+}
+
 impl Cli {
     /// Run the selected subcommand.
     pub(crate) async fn run(self) -> eyre::Result<()> {
         tracing_subscriber::fmt::init();
-        match self.command {
-            Command::Nitro(args) => {
-                let config =
-                    TransportConfig::new(args.vsock_port, args.http_port, args.http_body_limit);
-                base_enclave_server::run_enclave(config).await
-            }
-            Command::Proxy(args) => {
-                base_enclave_server::run_proxy(args.vsock_cid, args.vsock_port, args.http_port)
-                    .await
-            }
-        }
+        let config = ProverConfig::try_from(self)?;
+        config.run().await
     }
 }

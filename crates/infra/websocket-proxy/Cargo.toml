@@ -16,10 +16,12 @@ workspace = true
 
 [dependencies]
 http.workspace = true
+anyhow.workspace = true
 brotli = { workspace = true, features = ["std"] }
 metrics.workspace = true
 futures.workspace = true
 backoff.workspace = true
+base-cli-utils.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 tokio-util.workspace = true
@@ -29,6 +31,7 @@ tokio-tungstenite.workspace = true
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
+metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }
 
 [dev-dependencies]
 reqwest.workspace = true

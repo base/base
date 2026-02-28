@@ -1651,16 +1651,11 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "audit-archiver-lib",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
  "base-cli-utils",
  "clap",
  "dotenvy",
- "rdkafka",
  "serde",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -1672,8 +1667,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-s3",
  "base-bundles",
+ "base-cli-utils",
  "bytes",
  "futures",
  "metrics",
@@ -2499,8 +2496,6 @@ dependencies = [
  "base-node-runner",
  "base-revm",
  "chrono",
- "clap",
- "clap_builder",
  "ctor",
  "dashmap",
  "derive_more",
@@ -2670,12 +2665,10 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-jwt",
- "clap",
  "discv5",
  "eyre",
  "libp2p",
  "reqwest 0.13.2",
- "rstest",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -2689,6 +2682,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
+ "alloy-rpc-types-engine",
  "base-cli-utils",
  "base-client-cli",
  "base-consensus-derive",
@@ -2697,6 +2691,7 @@ dependencies = [
  "base-consensus-genesis",
  "base-consensus-gossip",
  "base-consensus-node",
+ "base-consensus-peers",
  "base-consensus-providers",
  "base-consensus-registry",
  "clap",
@@ -2705,6 +2700,7 @@ dependencies = [
  "serde",
  "strum",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4037,7 +4033,6 @@ dependencies = [
  "base-enclave",
  "base-enclave-client",
  "bytes",
- "clap",
  "eyre",
  "futures",
  "hex",
@@ -4062,10 +4057,15 @@ dependencies = [
 name = "base-proposer-bin"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
+ "base-cli-utils",
  "base-proposer",
  "clap",
  "eyre",
+ "humantime",
+ "serde",
  "tokio",
+ "url",
 ]
 
 [[package]]
@@ -4318,6 +4318,7 @@ dependencies = [
  "alloy-transport-http",
  "anyhow",
  "async-trait",
+ "base-cli-utils",
  "cadence",
  "tokio",
  "tracing",
@@ -4327,13 +4328,12 @@ dependencies = [
 name = "based-bin"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "base-cli-utils",
  "based",
- "cadence",
  "clap",
  "serde",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -8198,6 +8198,7 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -8218,7 +8219,6 @@ dependencies = [
  "base-bundles",
  "base-execution-evm",
  "base-revm",
- "clap",
  "jsonrpsee",
  "metrics",
  "metrics-derive",
@@ -17873,13 +17873,16 @@ dependencies = [
 name = "websocket-proxy"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "axum",
  "backoff",
+ "base-cli-utils",
  "brotli",
  "futures",
  "http 1.4.0",
  "metrics",
  "metrics-derive",
+ "metrics-exporter-prometheus",
  "reqwest 0.13.2",
  "serde",
  "serde_json",
@@ -17894,17 +17897,14 @@ dependencies = [
 name = "websocket-proxy-bin"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "axum",
  "base-cli-utils",
- "brotli",
  "clap",
  "dotenvy",
- "futures",
  "hostname",
- "metrics-exporter-prometheus",
  "serde",
  "tokio",
- "tokio-util",
  "tracing",
  "websocket-proxy",
 ]

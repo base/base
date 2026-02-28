@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use alloy_rpc_types::txpool::TxpoolContent;
-use mempool_rebroadcaster::Rebroadcaster;
+use mempool_rebroadcaster::{Rebroadcaster, RebroadcasterConfig};
 
 fn load_static_mempool_content<P: AsRef<Path>>(
     filepath: P,
@@ -27,10 +27,10 @@ async fn test_e2e_static_data() {
     let gas_price = 0x36daa7_u128; // 0x36daa7
 
     // Create a rebroadcaster instance for testing (endpoints don't matter for this test)
-    let rebroadcaster = Rebroadcaster::new(
-        "http://localhost:8545".to_string(),
-        "http://localhost:8546".to_string(),
-    );
+    let rebroadcaster = Rebroadcaster::new(RebroadcasterConfig {
+        geth_mempool_endpoint: "http://localhost:8545".to_string(),
+        reth_mempool_endpoint: "http://localhost:8546".to_string(),
+    });
 
     // Apply filtering logic (same as production)
     let filtered_geth_mempool =
@@ -87,10 +87,10 @@ async fn test_e2e_filtering_logic() {
     let very_high_gas_price = u128::MAX;
 
     // Create a rebroadcaster instance for testing
-    let rebroadcaster = Rebroadcaster::new(
-        "http://localhost:8545".to_string(),
-        "http://localhost:8546".to_string(),
-    );
+    let rebroadcaster = Rebroadcaster::new(RebroadcasterConfig {
+        geth_mempool_endpoint: "http://localhost:8545".to_string(),
+        reth_mempool_endpoint: "http://localhost:8546".to_string(),
+    });
 
     // Apply filtering with very high fees
     let filtered_geth_mempool = rebroadcaster.filter_underpriced_txns(

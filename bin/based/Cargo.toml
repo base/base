@@ -13,9 +13,8 @@ workspace = true
 
 [dependencies]
 clap = { workspace = true }
+serde = { workspace = true }
 based = { workspace = true }
-tracing = { workspace = true, features = ["std"] }
-base-cli-utils = { workspace = true }
+anyhow = { workspace = true }
 tokio = { workspace = true }
-serde.workspace = true
-cadence = { workspace = true }
+base-cli-utils = { workspace = true }

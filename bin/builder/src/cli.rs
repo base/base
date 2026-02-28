@@ -107,7 +107,7 @@ pub struct Args {
     pub block_state_root_time_budget_us: Option<u128>,
 
     /// Execution metering mode: off, dry-run, or enforce
-    #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
+    #[arg(long = "builder.execution-metering-mode", default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected

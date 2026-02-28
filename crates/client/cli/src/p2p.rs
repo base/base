@@ -6,7 +6,6 @@
 
 use std::{
     net::{IpAddr, SocketAddr, ToSocketAddrs},
-    num::ParseIntError,
     path::PathBuf,
     str::FromStr,
 };
@@ -21,7 +20,6 @@ use base_consensus_gossip::GaterConfig;
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::AlloyChainProvider;
-use clap::Parser;
 use discv5::enr::k256;
 use eyre::Result;
 use libp2p::identity::Keypair;
@@ -39,7 +37,7 @@ use crate::signer::{SignerArgs, SignerArgsParseError};
 ///
 /// For DNS hostnames, this performs synchronous DNS resolution and returns the first
 /// resolved IP address.
-fn resolve_host(host: &str) -> Result<IpAddr, String> {
+pub fn resolve_host(host: &str) -> Result<IpAddr, String> {
     // First, try to parse as a direct IP address
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
@@ -58,18 +56,15 @@ fn resolve_host(host: &str) -> Result<IpAddr, String> {
 }
 
 /// P2P CLI Flags
-#[derive(Parser, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct P2PArgs {
     /// Disable Discv5 (node discovery).
-    #[arg(long = "p2p.no-discovery", default_value = "false", env = "BASE_NODE_P2P_NO_DISCOVERY")]
     pub no_discovery: bool,
     /// Read the hex-encoded 32-byte private key for the peer ID from this txt file.
     /// Created if not already exists. Important to persist to keep the same network identity after
     /// restarting, maintaining the previous advertised identity.
-    #[arg(long = "p2p.priv.path", env = "BASE_NODE_P2P_PRIV_PATH")]
     pub priv_path: Option<PathBuf>,
     /// The hex-encoded 32-byte private key for the peer ID.
-    #[arg(long = "p2p.priv.raw", env = "BASE_NODE_P2P_PRIV_RAW")]
     pub private_key: Option<B256>,
 
     /// IP address or DNS hostname to advertise to external peers from Discv5.
@@ -80,131 +75,86 @@ pub struct P2PArgs {
     /// Technical note: if this argument is set, the dynamic ENR updates from the discovery layer
     /// will be disabled. This is to allow the advertised IP to be static (to use in a network
     /// behind a NAT for instance).
-    #[arg(long = "p2p.advertise.ip", env = "BASE_NODE_P2P_ADVERTISE_IP", value_parser = resolve_host)]
     pub advertise_ip: Option<IpAddr>,
     /// TCP port to advertise to external peers from the discovery layer. Same as `p2p.listen.tcp`
     /// if set to zero.
-    #[arg(long = "p2p.advertise.tcp", env = "BASE_NODE_P2P_ADVERTISE_TCP_PORT")]
     pub advertise_tcp_port: Option<u16>,
     /// UDP port to advertise to external peers from the discovery layer.
     /// Same as `p2p.listen.udp` if set to zero.
-    #[arg(long = "p2p.advertise.udp", env = "BASE_NODE_P2P_ADVERTISE_UDP_PORT")]
     pub advertise_udp_port: Option<u16>,
 
     /// IP address or DNS hostname to bind LibP2P/Discv5 to.
     /// Accepts either an IP address (e.g., "0.0.0.0") or a DNS hostname (e.g.,
     /// "node1.example.com"). DNS hostnames are resolved to IP addresses at startup.
-    #[arg(long = "p2p.listen.ip", default_value = "0.0.0.0", env = "BASE_NODE_P2P_LISTEN_IP", value_parser = resolve_host)]
     pub listen_ip: IpAddr,
     /// TCP port to bind `LibP2P` to. Any available system port if set to 0.
-    #[arg(long = "p2p.listen.tcp", default_value = "9222", env = "BASE_NODE_P2P_LISTEN_TCP_PORT")]
     pub listen_tcp_port: u16,
     /// UDP port to bind Discv5 to. Same as TCP port if left 0.
-    #[arg(long = "p2p.listen.udp", default_value = "9223", env = "BASE_NODE_P2P_LISTEN_UDP_PORT")]
     pub listen_udp_port: u16,
     /// Low-tide peer count. The node actively searches for new peer connections if below this
     /// amount.
-    #[arg(long = "p2p.peers.lo", default_value = "20", env = "BASE_NODE_P2P_PEERS_LO")]
     pub peers_lo: u32,
     /// High-tide peer count. The node starts pruning peer connections slowly after reaching this
     /// number.
-    #[arg(long = "p2p.peers.hi", default_value = "30", env = "BASE_NODE_P2P_PEERS_HI")]
     pub peers_hi: u32,
     /// Grace period to keep a newly connected peer around, if it is not misbehaving.
-    #[arg(
-        long = "p2p.peers.grace",
-        default_value = "30",
-        env = "BASE_NODE_P2P_PEERS_GRACE",
-        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {Ok(Duration::from_secs(arg.parse()?))}
-    )]
     pub peers_grace: Duration,
     /// Configure `GossipSub` topic stable mesh target count.
     /// Aka: The desired outbound degree (numbers of peers to gossip to).
-    #[arg(long = "p2p.gossip.mesh.d", default_value = "8", env = "BASE_NODE_P2P_GOSSIP_MESH_D")]
     pub gossip_mesh_d: usize,
     /// Configure `GossipSub` topic stable mesh low watermark.
     /// Aka: The lower bound of outbound degree.
-    #[arg(long = "p2p.gossip.mesh.lo", default_value = "6", env = "BASE_NODE_P2P_GOSSIP_MESH_DLO")]
     pub gossip_mesh_dlo: usize,
     /// Configure `GossipSub` topic stable mesh high watermark.
     /// Aka: The upper bound of outbound degree (additional peers will not receive gossip).
-    #[arg(
-        long = "p2p.gossip.mesh.dhi",
-        default_value = "12",
-        env = "BASE_NODE_P2P_GOSSIP_MESH_DHI"
-    )]
     pub gossip_mesh_dhi: usize,
     /// Configure `GossipSub` gossip target.
     /// Aka: The target degree for gossip only (not messaging like p2p.gossip.mesh.d, just
     /// announcements of IHAVE).
-    #[arg(
-        long = "p2p.gossip.mesh.dlazy",
-        default_value = "6",
-        env = "BASE_NODE_P2P_GOSSIP_MESH_DLAZY"
-    )]
     pub gossip_mesh_dlazy: usize,
     /// Configure `GossipSub` to publish messages to all known peers on the topic, outside of the
     /// mesh. Also see Dlazy as less aggressive alternative.
-    #[arg(
-        long = "p2p.gossip.mesh.floodpublish",
-        default_value = "false",
-        env = "BASE_NODE_P2P_GOSSIP_FLOOD_PUBLISH"
-    )]
     pub gossip_flood_publish: bool,
     /// Sets the peer scoring strategy for the P2P stack.
     /// Can be one of: none or light.
-    #[arg(long = "p2p.scoring", default_value = "light", env = "BASE_NODE_P2P_SCORING")]
     pub scoring: PeerScoreLevel,
 
     /// Allows to ban peers based on their score.
     ///
     /// Peers are banned based on a ban threshold (see `p2p.ban.threshold`).
     /// If a peer's score is below the threshold, it gets automatically banned.
-    #[arg(long = "p2p.ban.peers", default_value = "false", env = "BASE_NODE_P2P_BAN_PEERS")]
     pub ban_enabled: bool,
 
     /// The threshold used to ban peers.
     ///
     /// For peers to be banned, the `p2p.ban.peers` flag must be set to `true`.
     /// By default, peers are banned if their score is below -100. This follows the `op-node` default `<https://github.com/ethereum-optimism/optimism/blob/09a8351a72e43647c8a96f98c16bb60e7b25dc6e/op-node/flags/p2p_flags.go#L123-L130>`.
-    #[arg(long = "p2p.ban.threshold", default_value = "-100", env = "BASE_NODE_P2P_BAN_THRESHOLD")]
     pub ban_threshold: i64,
 
     /// The duration in minutes to ban a peer for.
     ///
     /// For peers to be banned, the `p2p.ban.peers` flag must be set to `true`.
     /// By default peers are banned for 1 hour. This follows the `op-node` default `<https://github.com/ethereum-optimism/optimism/blob/09a8351a72e43647c8a96f98c16bb60e7b25dc6e/op-node/flags/p2p_flags.go#L131-L138>`.
-    #[arg(long = "p2p.ban.duration", default_value = "60", env = "BASE_NODE_P2P_BAN_DURATION")]
     pub ban_duration: u64,
 
     /// The interval in seconds to find peers using the discovery service.
     /// Defaults to 5 seconds.
-    #[arg(
-        long = "p2p.discovery.interval",
-        default_value = "5",
-        env = "BASE_NODE_P2P_DISCOVERY_INTERVAL"
-    )]
     pub discovery_interval: u64,
     /// The directory to store the bootstore.
-    #[arg(long = "p2p.bootstore", env = "BASE_NODE_P2P_BOOTSTORE")]
     pub bootstore: Option<PathBuf>,
     /// Disables the bootstore.
-    #[arg(long = "p2p.no-bootstore", env = "BASE_NODE_P2P_NO_BOOTSTORE")]
     pub disable_bootstore: bool,
     /// Peer Redialing threshold is the maximum amount of times to attempt to redial a peer that
     /// disconnects. By default, peers are *not* redialed. If set to 0, the peer will be
     /// redialed indefinitely.
-    #[arg(long = "p2p.redial", env = "BASE_NODE_P2P_REDIAL", default_value = "500")]
     pub peer_redial: Option<u64>,
 
     /// The duration in minutes of the peer dial period.
     /// When the last time a peer was dialed is longer than the dial period, the number of peer
     /// dials is reset to 0, allowing the peer to be dialed again.
-    #[arg(long = "p2p.redial.period", env = "BASE_NODE_P2P_REDIAL_PERIOD", default_value = "60")]
     pub redial_period: u64,
 
     /// An optional list of bootnode ENRs or node records to start the node with.
-    #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
     pub bootnodes: Vec<String>,
 
     /// Optionally enable topic scoring.
@@ -217,18 +167,12 @@ pub struct P2PArgs {
     /// This flag is only presented for backwards compatibility and debugging purposes.
     ///
     /// [out]: https://github.com/ethereum-optimism/optimism/pull/15719
-    #[arg(
-        long = "p2p.topic-scoring",
-        default_value = "false",
-        env = "BASE_NODE_P2P_TOPIC_SCORING"
-    )]
     pub topic_scoring: bool,
 
     /// An optional unsafe block signer address.
     ///
     /// By default, this is fetched from the chain config in the superchain-registry using the
     /// specified L2 chain ID.
-    #[arg(long = "p2p.unsafe.block.signer", env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER")]
     pub unsafe_block_signer: Option<alloy_primitives::Address>,
 
     /// An optional flag to remove random peers from discovery to rotate the peer set.
@@ -237,20 +181,48 @@ pub struct P2PArgs {
     /// service. By default, peers are not removed from the discovery service.
     ///
     /// This is useful for discovering a wider set of peers.
-    #[arg(long = "p2p.discovery.randomize", env = "BASE_NODE_P2P_DISCOVERY_RANDOMIZE")]
     pub discovery_randomize: Option<u64>,
 
     /// Specify optional remote signer configuration. Note that this argument is mutually exclusive
     /// with `p2p.sequencer.key` that specifies a local sequencer signer.
-    #[command(flatten)]
     pub signer: SignerArgs,
 }
 
 impl Default for P2PArgs {
     fn default() -> Self {
-        // Construct default values using the clap parser.
-        // This works since none of the cli flags are required.
-        Self::parse_from::<[_; 0], &str>([])
+        Self {
+            no_discovery: false,
+            priv_path: None,
+            private_key: None,
+            advertise_ip: None,
+            advertise_tcp_port: None,
+            advertise_udp_port: None,
+            listen_ip: "0.0.0.0".parse().unwrap(),
+            listen_tcp_port: 9222,
+            listen_udp_port: 9223,
+            peers_lo: 20,
+            peers_hi: 30,
+            peers_grace: Duration::from_secs(30),
+            gossip_mesh_d: 8,
+            gossip_mesh_dlo: 6,
+            gossip_mesh_dhi: 12,
+            gossip_mesh_dlazy: 6,
+            gossip_flood_publish: false,
+            scoring: "light".parse().unwrap(),
+            ban_enabled: false,
+            ban_threshold: -100,
+            ban_duration: 60,
+            discovery_interval: 5,
+            bootstore: None,
+            disable_bootstore: false,
+            peer_redial: Some(500),
+            redial_period: 60,
+            bootnodes: Vec::new(),
+            topic_scoring: false,
+            unsafe_block_signer: None,
+            discovery_randomize: None,
+            signer: SignerArgs::default(),
+        }
     }
 }
 
@@ -528,33 +500,24 @@ impl P2PArgs {
 mod tests {
     use alloy_primitives::b256;
     use base_consensus_peers::NodeRecord;
-    use clap::Parser;
 
     use super::*;
 
-    /// A mock command that uses the `P2PArgs`.
-    #[derive(Parser, Debug, Clone)]
-    #[command(about = "Mock command")]
-    struct MockCommand {
-        /// P2P CLI Flags
-        #[clap(flatten)]
-        pub p2p: P2PArgs,
-    }
-
     #[test]
     fn test_p2p_args_keypair_missing_both() {
-        let args = MockCommand::parse_from(["test"]);
-        assert!(args.p2p.keypair().is_err());
+        let args = P2PArgs::default();
+        assert!(args.keypair().is_err());
     }
 
     #[test]
     fn test_p2p_args_keypair_raw_private_key() {
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.priv.raw",
-            "1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be",
-        ]);
-        assert!(args.p2p.keypair().is_ok());
+        let args = P2PArgs {
+            private_key: Some(b256!(
+                "1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be"
+            )),
+            ..Default::default()
+        };
+        assert!(args.keypair().is_ok());
     }
 
     #[test]
@@ -571,95 +534,54 @@ mod tests {
         std::fs::write(&source_path, &hex).unwrap();
 
         // Parse the keypair from the file.
-        let args =
-            MockCommand::parse_from(["test", "--p2p.priv.path", source_path.to_str().unwrap()]);
-        assert!(args.p2p.keypair().is_ok());
+        let args = P2PArgs {
+            priv_path: Some(source_path),
+            ..Default::default()
+        };
+        assert!(args.keypair().is_ok());
     }
 
     #[test]
-    fn test_p2p_args() {
-        let args = MockCommand::parse_from(["test"]);
-        assert_eq!(args.p2p, P2PArgs::default());
+    fn test_p2p_args_default() {
+        let args = P2PArgs::default();
+        assert!(!args.no_discovery);
+        assert!(args.priv_path.is_none());
+        assert!(args.private_key.is_none());
+        assert!(args.advertise_ip.is_none());
+        assert_eq!(args.listen_ip, "0.0.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(args.listen_tcp_port, 9222);
+        assert_eq!(args.listen_udp_port, 9223);
+        assert_eq!(args.peers_lo, 20);
+        assert_eq!(args.peers_hi, 30);
+        assert_eq!(args.gossip_mesh_d, 8);
+        assert_eq!(args.gossip_mesh_dlo, 6);
+        assert_eq!(args.gossip_mesh_dhi, 12);
+        assert_eq!(args.gossip_mesh_dlazy, 6);
+        assert!(!args.gossip_flood_publish);
+        assert_eq!(args.ban_threshold, -100);
+        assert_eq!(args.ban_duration, 60);
+        assert_eq!(args.discovery_interval, 5);
+        assert!(args.bootstore.is_none());
+        assert!(!args.disable_bootstore);
+        assert_eq!(args.peer_redial, Some(500));
+        assert_eq!(args.redial_period, 60);
+        assert!(args.bootnodes.is_empty());
+        assert!(!args.topic_scoring);
+        assert!(args.unsafe_block_signer.is_none());
+        assert!(args.discovery_randomize.is_none());
     }
 
     #[test]
-    fn test_p2p_args_randomized() {
-        let args = MockCommand::parse_from(["test", "--p2p.discovery.randomize", "10"]);
-        assert_eq!(args.p2p.discovery_randomize, Some(10));
-        let args = MockCommand::parse_from(["test"]);
-        assert_eq!(args.p2p.discovery_randomize, None);
-    }
-
-    #[test]
-    fn test_p2p_args_no_discovery() {
-        let args = MockCommand::parse_from(["test", "--p2p.no-discovery"]);
-        assert!(args.p2p.no_discovery);
-    }
-
-    #[test]
-    fn test_p2p_args_priv_path() {
-        let args = MockCommand::parse_from(["test", "--p2p.priv.path", "test.txt"]);
-        assert_eq!(args.p2p.priv_path, Some(PathBuf::from("test.txt")));
-    }
-
-    #[test]
-    fn test_p2p_args_private_key() {
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.priv.raw",
-            "1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be",
-        ]);
-        let key = b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
-        assert_eq!(args.p2p.private_key, Some(key));
-    }
-
-    #[test]
-    fn test_p2p_args_sequencer_key() {
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.sequencer.key",
-            "bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a",
-        ]);
-        let key = b256!("bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a");
-        assert_eq!(args.p2p.signer.sequencer_key, Some(key));
-    }
-
-    #[test]
-    fn test_p2p_args_listen_ip() {
-        let args = MockCommand::parse_from(["test", "--p2p.listen.ip", "127.0.0.1"]);
-        let expected: IpAddr = "127.0.0.1".parse().unwrap();
-        assert_eq!(args.p2p.listen_ip, expected);
-    }
-
-    #[test]
-    fn test_p2p_args_listen_tcp_port() {
-        let args = MockCommand::parse_from(["test", "--p2p.listen.tcp", "1234"]);
-        assert_eq!(args.p2p.listen_tcp_port, 1234);
-    }
-
-    #[test]
-    fn test_p2p_args_listen_udp_port() {
-        let args = MockCommand::parse_from(["test", "--p2p.listen.udp", "1234"]);
-        assert_eq!(args.p2p.listen_udp_port, 1234);
-    }
-
-    #[test]
-    fn test_p2p_args_bootnodes() {
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.bootnodes",
-            "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305",
-        ]);
-        assert_eq!(
-            args.p2p.bootnodes,
-            vec![
-                "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305",
-            ]
-        );
+    fn test_p2p_args_bootnodes_parse() {
+        let args = P2PArgs {
+            bootnodes: vec![
+                "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305".to_string(),
+            ],
+            ..Default::default()
+        };
 
         // Parse the bootnodes.
         let bootnodes = args
-            .p2p
             .bootnodes
             .iter()
             .map(|bootnode| BootNode::parse_bootnode(bootnode))
@@ -671,60 +593,6 @@ mod tests {
         let expected_bootnode = vec![BootNode::from_unsigned(record).unwrap()];
 
         assert_eq!(bootnodes, expected_bootnode);
-    }
-
-    #[test]
-    fn test_p2p_args_bootnodes_multiple() {
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.bootnodes",
-            "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305,enode://dd751a9ef8912be1bfa7a5e34e2c3785cc5253110bd929f385e07ba7ac19929fb0e0c5d93f77827291f4da02b2232240fbc47ea7ce04c46e333e452f8656b667@34.65.107.0:30305",
-        ]);
-        assert_eq!(
-            args.p2p.bootnodes,
-            vec![
-                "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305",
-                "enode://dd751a9ef8912be1bfa7a5e34e2c3785cc5253110bd929f385e07ba7ac19929fb0e0c5d93f77827291f4da02b2232240fbc47ea7ce04c46e333e452f8656b667@34.65.107.0:30305",
-            ]
-        );
-    }
-
-    #[test]
-    fn test_p2p_args_bootnode_enr() {
-        let args = MockCommand::parse_from([
-            "test",
-            "--p2p.bootnodes",
-            "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg",
-        ]);
-        assert_eq!(
-            args.p2p.bootnodes,
-            vec![
-                "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg",
-            ]
-        );
-    }
-
-    #[test]
-    fn test_p2p_args_listen_ip_dns_resolution() {
-        // Test that DNS hostnames are resolved to IP addresses
-        // Using localhost which should resolve reliably
-        let args = MockCommand::parse_from(["test", "--p2p.listen.ip", "localhost"]);
-        // localhost typically resolves to 127.0.0.1 or ::1
-        assert!(
-            args.p2p.listen_ip == "127.0.0.1".parse::<IpAddr>().unwrap()
-                || args.p2p.listen_ip == "::1".parse::<IpAddr>().unwrap()
-        );
-    }
-
-    #[test]
-    fn test_p2p_args_advertise_ip_dns_resolution() {
-        // Test that DNS hostnames are resolved to IP addresses for advertise_ip
-        let args = MockCommand::parse_from(["test", "--p2p.advertise.ip", "localhost"]);
-        // localhost typically resolves to 127.0.0.1 or ::1
-        let ip = args.p2p.advertise_ip.unwrap();
-        assert!(
-            ip == "127.0.0.1".parse::<IpAddr>().unwrap() || ip == "::1".parse::<IpAddr>().unwrap()
-        );
     }
 
     #[test]

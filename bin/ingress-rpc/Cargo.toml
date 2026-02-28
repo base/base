@@ -15,6 +15,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+url.workspace = true
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true

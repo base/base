@@ -6,6 +6,9 @@ pub use auth::*;
 mod client;
 pub use client::*;
 
+mod config;
+pub use config::*;
+
 mod filter;
 pub use filter::*;
 
@@ -17,6 +20,9 @@ pub use rate_limit::*;
 
 mod registry;
 pub use registry::*;
+
+mod run;
+pub use run::*;
 
 mod server;
 pub use server::*;

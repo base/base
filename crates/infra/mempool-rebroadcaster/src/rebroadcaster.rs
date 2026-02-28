@@ -11,6 +11,8 @@ use alloy_rpc_types::txpool::TxpoolContent;
 use alloy_rpc_types_eth::{BlockId, Transaction as RpcTransaction};
 use tracing::{debug, error, info, warn};
 
+use crate::RebroadcasterConfig;
+
 const IGNORED_ERRORS: [&str; 3] =
     ["transaction underpriced", "replacement transaction underpriced", "already known"];
 
@@ -46,15 +48,15 @@ pub struct TxpoolDiff {
 }
 
 impl Rebroadcaster {
-    /// Creates a new [`Rebroadcaster`] connected to the given geth and reth HTTP endpoints.
-    pub fn new(geth_endpoint: String, reth_endpoint: String) -> Self {
+    /// Creates a new [`Rebroadcaster`] from the given configuration.
+    pub fn new(config: RebroadcasterConfig) -> Self {
         let geth_provider = ProviderBuilder::new()
             .disable_recommended_fillers()
-            .connect_http(geth_endpoint.parse().expect("Invalid geth endpoint"));
+            .connect_http(config.geth_mempool_endpoint.parse().expect("Invalid geth endpoint"));
 
         let reth_provider = ProviderBuilder::new()
             .disable_recommended_fillers()
-            .connect_http(reth_endpoint.parse().expect("Invalid reth endpoint"));
+            .connect_http(config.reth_mempool_endpoint.parse().expect("Invalid reth endpoint"));
 
         Self { geth_provider, reth_provider }
     }

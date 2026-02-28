@@ -6,6 +6,9 @@
 mod archiver;
 pub use archiver::KafkaAuditArchiver;
 
+mod config;
+pub use config::{AuditArchiverConfig, S3Config};
+
 mod kafka_config;
 pub use kafka_config::load_kafka_config_from_file;
 
@@ -19,6 +22,9 @@ mod reader;
 pub use reader::{
     Event, EventReader, KafkaAuditLogReader, assign_topic_partition, create_kafka_consumer,
 };
+
+mod service;
+pub use service::run;
 
 mod storage;
 pub use storage::{

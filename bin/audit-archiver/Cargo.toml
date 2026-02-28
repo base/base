@@ -15,15 +15,10 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-cli-utils.workspace = true
-audit-archiver-lib.workspace = true
 clap.workspace = true
 serde.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
-tracing = { workspace = true, features = ["std"] }
 dotenvy.workspace = true
-rdkafka.workspace = true
-aws-config.workspace = true
-aws-sdk-s3.workspace = true
-aws-credential-types.workspace = true
+base-cli-utils.workspace = true
+audit-archiver-lib.workspace = true

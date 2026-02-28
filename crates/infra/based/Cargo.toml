@@ -12,17 +12,18 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = { workspace = true }
 cadence = { workspace = true }
-tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true }
+async-trait = { workspace = true }
+base-cli-utils = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
 
 # Ethereum client deps (will be used for header fetching)
 alloy-provider = { workspace = true }
-alloy-transport-http = { workspace = true }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true }
+alloy-transport-http = { workspace = true }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
