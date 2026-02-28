@@ -3,7 +3,7 @@
 
 use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
-use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256, address};
+use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_alloy_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 
@@ -19,10 +19,6 @@ use crate::{
 
 /// The system transaction gas limit post-Regolith
 const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
-
-/// The depositor address of the L1 info transaction
-pub(crate) const L1_INFO_DEPOSITOR_ADDRESS: Address =
-    address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
 /// The [`L1BlockInfoTx`] enum contains variants for the different versions of the L1 block info
 /// transaction on OP Stack chains.
@@ -208,7 +204,7 @@ impl L1BlockInfoTx {
 
         let mut deposit_tx = TxDeposit {
             source_hash: source.source_hash(),
-            from: L1_INFO_DEPOSITOR_ADDRESS,
+            from: Predeploys::L1_ATTRIBUTES_DEPOSITOR,
             to: TxKind::Call(Predeploys::L1_BLOCK_INFO),
             mint: 0,
             value: U256::ZERO,
@@ -1049,7 +1045,7 @@ mod test {
         .unwrap();
 
         assert!(matches!(l1_info, L1BlockInfoTx::Isthmus(_)));
-        assert_eq!(deposit_tx.from, L1_INFO_DEPOSITOR_ADDRESS);
+        assert_eq!(deposit_tx.from, Predeploys::L1_ATTRIBUTES_DEPOSITOR);
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::L1_BLOCK_INFO));
         assert_eq!(deposit_tx.mint, 0);
         assert_eq!(deposit_tx.value, U256::ZERO);

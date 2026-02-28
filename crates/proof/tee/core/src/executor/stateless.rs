@@ -5,9 +5,10 @@
 
 use alloy_consensus::{Header, ReceiptEnvelope, Sealable};
 use alloy_eips::eip2718::Decodable2718;
-use alloy_primitives::{Address, B256, Bytes, address};
+use alloy_primitives::{B256, Bytes};
 use base_alloy_consensus::OpTxEnvelope;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_protocol::Predeploys;
 
 use super::{
     attributes::extract_deposits_from_receipts,
@@ -26,9 +27,6 @@ use crate::{
 /// If a block's timestamp exceeds `l1_origin.timestamp` + `MAX_SEQUENCER_DRIFT_FJORD`,
 /// the block can only contain deposit transactions.
 pub const MAX_SEQUENCER_DRIFT_FJORD: u64 = 1800;
-
-/// L2 to L1 Message Passer predeploy address.
-pub const L2_TO_L1_MESSAGE_PASSER: Address = address!("4200000000000000000000000000000000000016");
 
 /// Result of stateless execution.
 #[derive(Debug, Clone)]
@@ -252,7 +250,7 @@ pub fn execute_stateless(
     }
 
     // 9. Verify message account (stateless.go:132-137)
-    if message_account.address != L2_TO_L1_MESSAGE_PASSER {
+    if message_account.address != Predeploys::L2_TO_L1_MESSAGE_PASSER {
         return Err(ExecutorError::InvalidMessageAccountAddress);
     }
     message_account
@@ -313,6 +311,8 @@ pub const fn validate_sequencer_drift(
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::address;
+
     use super::*;
 
     #[test]
@@ -341,7 +341,10 @@ mod tests {
 
     #[test]
     fn test_l2_to_l1_message_passer_address() {
-        assert_eq!(L2_TO_L1_MESSAGE_PASSER, address!("4200000000000000000000000000000000000016"));
+        assert_eq!(
+            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            address!("4200000000000000000000000000000000000016")
+        );
     }
 
     #[test]

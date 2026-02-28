@@ -4,6 +4,7 @@
 //! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
 
 use alloy_primitives::{Address, address};
+use base_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 
 /// Container for all predeploy contract addresses
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -94,8 +95,7 @@ impl Predeploys {
 
     /// The L2 contract `L2ToL1MessagePasser`, stores commitments to withdrawal transactions.
     /// <https://specs.optimism.io/protocol/predeploys.html#l2tol1messagepasser>
-    pub const L2_TO_L1_MESSAGE_PASSER: Address =
-        address!("0x4200000000000000000000000000000000000016");
+    pub const L2_TO_L1_MESSAGE_PASSER: Address = L2_TO_L1_MESSAGE_PASSER_ADDRESS;
 
     /// The L2 ERC721 bridge proxy address.
     /// <https://specs.optimism.io/protocol/predeploys.html>
@@ -138,4 +138,9 @@ impl Predeploys {
 
     /// The `L2ToL2CrossDomainMessenger` proxy address.
     pub const L2_TO_L2_XDM: Address = address!("0x4200000000000000000000000000000000000023");
+
+    /// The depositor address of the L1 attributes transaction (`L1Block` contract depositor).
+    /// <https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction>
+    pub const L1_ATTRIBUTES_DEPOSITOR: Address =
+        address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
 }

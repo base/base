@@ -35,6 +35,7 @@ base-alloy-network.workspace = true
 
 # Enclave
 base-enclave-client.workspace = true
+base-protocol.workspace = true
 base-enclave.workspace = true
 
 # Async

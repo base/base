@@ -4036,6 +4036,7 @@ dependencies = [
  "base-cli-utils",
  "base-enclave",
  "base-enclave-client",
+ "base-protocol",
  "bytes",
  "clap",
  "eyre",
