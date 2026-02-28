@@ -17,6 +17,46 @@ alias wc := watch-check
 default:
     @just --list
 
+# One-time project setup: installs tooling and builds test contracts
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    OS="$(uname -s)"
+    ARCH="$(uname -m)"
+
+    # ── Install fast linker ──
+    if [[ "$OS" == "Darwin" ]]; then
+        if ! brew list lld &>/dev/null; then
+            echo "Installing lld linker for faster builds..."
+            brew install lld
+        fi
+        # Verify lld is reachable at the path .cargo/config.toml expects
+        if [[ "$ARCH" == "arm64" ]]; then
+            LLD="/opt/homebrew/opt/lld/bin/ld64.lld"
+        else
+            LLD="/usr/local/opt/lld/bin/ld64.lld"
+        fi
+        if [[ ! -x "$LLD" ]]; then
+            echo "ERROR: lld not found at $LLD"
+            echo "Try: brew install lld"
+            exit 1
+        fi
+        echo "Found lld at $LLD"
+    elif [[ "$OS" == "Linux" ]]; then
+        if ! command -v mold &>/dev/null; then
+            echo "mold not found. Install it for faster builds:"
+            echo "  Ubuntu/Debian: sudo apt-get install -y mold"
+            echo "  Fedora:        sudo dnf install mold"
+            echo "  Arch:          sudo pacman -S mold"
+            exit 1
+        fi
+        echo "Found mold at $(command -v mold)"
+    fi
+
+    just build-contracts
+    echo "Setup complete!"
+
 # Runs all ci checks
 ci: fix check lychee zepter check-no-std
 
