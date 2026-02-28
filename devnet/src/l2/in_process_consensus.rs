@@ -24,10 +24,11 @@ use base_consensus_sources::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::info;
 use url::Url;
 
 /// Configuration for starting an in-process consensus node.
+#[derive(Debug)]
 pub struct InProcessConsensusConfig {
     /// Parsed rollup configuration.
     pub rollup_config: RollupConfig,
@@ -171,15 +172,26 @@ impl InProcessConsensus {
         let node = builder.build();
 
         let mode = config.mode;
+        let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
             info!(mode = %mode, rpc_port, "starting in-process consensus node");
             if let Err(e) = node.start().await {
-                error!(error = %e, "in-process consensus node failed");
+                let _ = startup_tx.send(Err(eyre::eyre!("consensus node failed: {e}")));
+                return;
             }
+            let _ = startup_tx.send(Ok(()));
         });
 
-        // Wait for the RPC server to become available.
-        wait_for_rpc(rpc_addr).await?;
+        // Wait for either an early startup failure or RPC readiness.
+        tokio::select! {
+            result = startup_rx => {
+                result.wrap_err("startup channel closed")?
+                      .wrap_err("consensus node failed during startup")?;
+            }
+            result = wait_for_rpc(rpc_addr) => {
+                result?;
+            }
+        }
 
         Ok(Self { rpc_addr, p2p_tcp_port, peer_id, _handle: handle })
     }
@@ -196,10 +208,15 @@ impl InProcessConsensus {
             .wrap_err("Failed to connect peer via RPC")
     }
 
-    /// Returns the RPC URL for this consensus node.
+    /// Returns the RPC URL for this consensus node (localhost).
     pub fn rpc_url(&self) -> Url {
         Url::parse(&format!("http://{}:{}", self.rpc_addr.ip(), self.rpc_addr.port()))
             .expect("valid RPC URL")
+    }
+
+    /// Returns the RPC URL reachable from Docker containers on the host.
+    pub fn host_rpc_url(&self) -> String {
+        format!("http://{}:{}", crate::host::host_address(), self.rpc_addr.port())
     }
 
     /// Returns the P2P multiaddr including the peer ID.
@@ -245,17 +262,22 @@ async fn wait_for_rpc(addr: SocketAddr) -> Result<()> {
     let url = format!("http://{}:{}", addr.ip(), addr.port());
     let client = reqwest::Client::new();
 
+    let mut last_err = None;
     for i in 0..60 {
         match client.get(&url).send().await {
             Ok(_) => {
                 info!(attempts = i + 1, "consensus RPC is ready");
                 return Ok(());
             }
-            Err(_) => {
+            Err(e) => {
+                last_err = Some(e);
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
         }
     }
 
-    Err(eyre::eyre!("Consensus RPC at {url} did not become ready within 30s"))
+    Err(eyre::eyre!(
+        "Consensus RPC at {url} did not become ready within 30s: {}",
+        last_err.unwrap()
+    ))
 }

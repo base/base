@@ -135,7 +135,8 @@ impl L2Stack {
             l1_rpc_url: config.l1_rpc_url.clone(),
             l2_rpc_url: builder.host_rpc_url(),
             l2_rpc_port: builder.rpc_port(),
-            rollup_rpc_url: builder_consensus.rpc_url().to_string(),
+            rollup_rpc_url: builder_consensus.host_rpc_url(),
+            rollup_rpc_port: builder_consensus.rpc_port(),
             batcher_key: config.batcher_key,
         };
         let batcher = BatcherContainer::start(batcher_config, config.container_config.as_ref())
