@@ -56,11 +56,13 @@ jobs:
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Run tests
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
             just test-ci
           else
-            just test-affected-ci origin/${{ github.base_ref || 'main' }}
+            just test-affected-ci "origin/$BASE_REF"
           fi
 
   fmt:
