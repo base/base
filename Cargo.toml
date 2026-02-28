@@ -128,7 +128,6 @@ strip = "none"
 [profile.ci]
 inherits = "dev"
 debug = false
-split-debuginfo = "off"
 incremental = false
 
 [workspace.dependencies]
