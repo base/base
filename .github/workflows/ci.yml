@@ -203,7 +203,7 @@ jobs:
     name: Docker
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.docker == 'true'
+    if: github.event_name == 'push' || needs.changes.outputs.docker == 'true'
     permissions:
       contents: read
       packages: read
