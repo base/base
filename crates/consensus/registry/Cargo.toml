@@ -46,6 +46,7 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"base-consensus-genesis/std",
+	"spin/std",
 	"toml/std",
 ]
 test-utils = []

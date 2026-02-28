@@ -26,7 +26,7 @@ spin.workspace = true
 
 [features]
 default = [ "std" ]
-std = [ "alloy-primitives/std", "reth-ethereum-forks/std" ]
+std = [ "alloy-primitives/std", "reth-ethereum-forks/std", "spin/std" ]
 serde = [
 	"alloy-primitives/serde",
 	"base-alloy-hardforks/serde",
