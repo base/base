@@ -157,35 +157,32 @@ impl SystemAddresses {
 pub struct Deployers;
 
 impl Deployers {
-    /// L1 Block Deployer Address
-    pub const ECOTONE_L1_BLOCK_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000000");
+    /// Ecotone L1 Block deployer address.
+    pub const ECOTONE_L1_BLOCK: Address = address!("4210000000000000000000000000000000000000");
 
-    /// The Gas Price Oracle Deployer Address
-    pub const ECOTONE_GAS_PRICE_ORACLE_DEPLOYER: Address =
+    /// Ecotone Gas Price Oracle deployer address.
+    pub const ECOTONE_GAS_PRICE_ORACLE: Address =
         address!("4210000000000000000000000000000000000001");
 
-    /// Fjord Gas Price Oracle Deployer Address.
-    pub const FJORD_GAS_PRICE_ORACLE_DEPLOYER: Address =
+    /// Fjord Gas Price Oracle deployer address.
+    pub const FJORD_GAS_PRICE_ORACLE: Address =
         address!("4210000000000000000000000000000000000002");
 
-    /// L1 Block Deployer Address
-    pub const ISTHMUS_L1_BLOCK_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000003");
+    /// Isthmus L1 Block deployer address.
+    pub const ISTHMUS_L1_BLOCK: Address = address!("4210000000000000000000000000000000000003");
 
-    /// The Gas Price Oracle Deployer Address
-    pub const ISTHMUS_GAS_PRICE_ORACLE_DEPLOYER: Address =
+    /// Isthmus Gas Price Oracle deployer address.
+    pub const ISTHMUS_GAS_PRICE_ORACLE: Address =
         address!("4210000000000000000000000000000000000004");
 
-    /// The Operator Fee Vault Deployer Address
-    pub const ISTHMUS_OPERATOR_FEE_VAULT_DEPLOYER: Address =
+    /// Isthmus Operator Fee Vault deployer address.
+    pub const ISTHMUS_OPERATOR_FEE_VAULT: Address =
         address!("4210000000000000000000000000000000000005");
 
-    /// L1 Block Deployer Address
-    pub const JOVIAN_L1_BLOCK_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000006");
+    /// Jovian L1 Block deployer address.
+    pub const JOVIAN_L1_BLOCK: Address = address!("4210000000000000000000000000000000000006");
 
-    /// The Gas Price Oracle Deployer Address
-    pub const JOVIAN_GAS_PRICE_ORACLE_DEPLOYER: Address =
+    /// Jovian Gas Price Oracle deployer address.
+    pub const JOVIAN_GAS_PRICE_ORACLE: Address =
         address!("4210000000000000000000000000000000000007");
 }

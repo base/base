@@ -137,7 +137,7 @@ impl Isthmus {
         ([
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
-                from: Deployers::ISTHMUS_L1_BLOCK_DEPLOYER,
+                from: Deployers::ISTHMUS_L1_BLOCK,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -147,7 +147,7 @@ impl Isthmus {
             },
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
-                from: Deployers::ISTHMUS_GAS_PRICE_ORACLE_DEPLOYER,
+                from: Deployers::ISTHMUS_GAS_PRICE_ORACLE,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -157,7 +157,7 @@ impl Isthmus {
             },
             TxDeposit {
                 source_hash: Self::deploy_operator_fee_vault_source(),
-                from: Deployers::ISTHMUS_OPERATOR_FEE_VAULT_DEPLOYER,
+                from: Deployers::ISTHMUS_OPERATOR_FEE_VAULT,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
