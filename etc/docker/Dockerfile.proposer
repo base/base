@@ -31,7 +31,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 
 # Build the application
-RUN cargo build --release --bin proposer
+RUN cargo build --release --bin base-proposer
 
 # Stage 4: Runtime - minimal runtime image
 FROM ubuntu:24.04 AS runtime
@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y \
     && useradd -r -s /sbin/nologin proposer
 
 # Copy binary from builder
-COPY --from=builder /app/target/release/proposer /usr/local/bin/proposer
+COPY --from=builder /app/target/release/base-proposer /usr/local/bin/base-proposer
 
 # Set user and working directory
 USER proposer
@@ -54,4 +54,4 @@ WORKDIR /home/proposer
 EXPOSE 9090
 
 # Set entrypoint
-ENTRYPOINT ["/usr/local/bin/proposer"]
+ENTRYPOINT ["/usr/local/bin/base-proposer"]

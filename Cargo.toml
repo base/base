@@ -41,6 +41,7 @@ default-members = [
     "bin/audit-archiver",
     "bin/mempool-rebroadcaster",
     "bin/proposer",
+    "bin/prover",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]
