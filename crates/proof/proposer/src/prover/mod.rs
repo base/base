@@ -16,8 +16,8 @@ use base_enclave::{
     AggregateRequest, ChainConfig, Proposal, l2_block_to_block_info, output_root_v0,
     types::config::RollupConfig,
 };
-use base_protocol::Predeploys;
 use base_enclave_client::ExecuteStatelessRequest;
+use base_protocol::Predeploys;
 pub use types::ProverProposal;
 #[cfg(test)]
 pub(crate) use types::test_helpers;
@@ -434,7 +434,9 @@ fn convert_receipt_envelope(
 /// Withdrawals are detected by checking if the `L2ToL1MessagePasser` address
 /// appears in the logs bloom filter.
 fn check_withdrawals(header: &Header) -> bool {
-    header.logs_bloom.contains_input(BloomInput::Raw(Predeploys::L2_TO_L1_MESSAGE_PASSER.as_slice()))
+    header
+        .logs_bloom
+        .contains_input(BloomInput::Raw(Predeploys::L2_TO_L1_MESSAGE_PASSER.as_slice()))
 }
 
 /// Builds the `base_consensus_genesis::ChainConfig` envelope expected by enclave RPC.
