@@ -6041,6 +6041,7 @@ dependencies = [
  "base-builder-core",
  "base-consensus-disc",
  "base-consensus-genesis",
+ "base-consensus-gossip",
  "base-consensus-node",
  "base-consensus-peers",
  "base-consensus-rpc",

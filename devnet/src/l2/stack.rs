@@ -110,6 +110,9 @@ impl L2Stack {
             .wrap_err("Failed to start in-process builder")?;
 
         // 2. Start builder consensus (in-process CL, Sequencer mode).
+        //    The sequencer starts in stopped mode so that blocks are not produced until the
+        //    validator is connected via P2P — otherwise the first blocks would be lost via gossip
+        //    and the validator's EL would be unable to validate later blocks (missing parent).
         let builder_consensus_config = InProcessConsensusConfig {
             rollup_config: rollup_config.clone(),
             l1_chain_config: l1_chain_config.clone(),
@@ -125,6 +128,7 @@ impl L2Stack {
             p2p_udp_port: container_config.and_then(|c| c.builder_consensus_p2p_udp_port),
             unsafe_block_signer: SEQUENCER.address,
             l1_slot_duration_override: Some(4),
+            sequencer_stopped: true,
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -181,6 +185,7 @@ impl L2Stack {
             p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
             unsafe_block_signer: SEQUENCER.address,
             l1_slot_duration_override: Some(4),
+            sequencer_stopped: false,
         };
         let client_consensus = InProcessConsensus::start(client_consensus_config)
             .await
@@ -192,6 +197,12 @@ impl L2Stack {
             .connect_peer(&builder_p2p_addr)
             .await
             .wrap_err("Failed to connect client consensus to builder consensus")?;
+
+        // 7. Start the sequencer now that peers are connected, ensuring no blocks are missed.
+        builder_consensus
+            .start_sequencer()
+            .await
+            .wrap_err("Failed to start sequencer after peer connection")?;
 
         Ok(Self { builder, builder_consensus, batcher, client, client_consensus })
     }

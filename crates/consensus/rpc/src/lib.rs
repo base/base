@@ -22,12 +22,12 @@ mod health;
 pub use health::{HealthzResponse, HealthzRpc};
 
 mod jsonrpsee;
+#[cfg(feature = "client")]
+pub use jsonrpsee::{AdminApiClient, OpP2PApiClient, RollupNodeApiClient};
 pub use jsonrpsee::{
     AdminApiServer, DevEngineApiServer, HealthzApiServer, MinerApiExtServer, OpAdminApiServer,
     OpP2PApiServer, RollupNodeApiServer, WsServer,
 };
-#[cfg(feature = "client")]
-pub use jsonrpsee::{OpP2PApiClient, RollupNodeApiClient};
 
 mod l1_watcher;
 pub use l1_watcher::{L1State, L1WatcherQueries, L1WatcherQuerySender};

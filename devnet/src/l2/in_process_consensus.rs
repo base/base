@@ -19,7 +19,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
-use base_consensus_rpc::{OpP2PApiClient, RpcBuilder};
+use base_consensus_rpc::{AdminApiClient, OpP2PApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -58,6 +58,8 @@ pub struct InProcessConsensusConfig {
     pub unsafe_block_signer: alloy_primitives::Address,
     /// L1 slot duration override in seconds.
     pub l1_slot_duration_override: Option<u64>,
+    /// Whether the sequencer should start in stopped mode.
+    pub sequencer_stopped: bool,
 }
 
 /// A running in-process consensus node.
@@ -115,11 +117,17 @@ impl InProcessConsensus {
         );
         net_config.scoring = PeerScoreLevel::Off;
         net_config.keypair = keypair;
+        // Use flood_publish for devnet since the mesh may not fully form with only two peers.
+        net_config.gossip_config = base_consensus_gossip::default_config_builder()
+            .flood_publish(true)
+            .build()
+            .expect("valid gossip config");
 
         // For sequencer mode, attach a gossip signer.
-        if config.mode == NodeMode::Sequencer
-            && let Some(seq_key) = config.sequencer_key
-        {
+        if config.mode == NodeMode::Sequencer {
+            let seq_key = config
+                .sequencer_key
+                .ok_or_else(|| eyre::eyre!("sequencer_key is required for Sequencer mode"))?;
             let signer = PrivateKeySigner::from_bytes(&seq_key)
                 .wrap_err("Failed to create sequencer signer")?;
             net_config.gossip_signer = Some(BlockSigner::Local(signer));
@@ -162,7 +170,7 @@ impl InProcessConsensus {
 
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {
-                sequencer_stopped: false,
+                sequencer_stopped: config.sequencer_stopped,
                 sequencer_recovery_mode: false,
                 conductor_rpc_url: None,
                 l1_conf_delay: 0,
@@ -197,15 +205,43 @@ impl InProcessConsensus {
     }
 
     /// Connects this node to a peer at the given libp2p multiaddr via the `opp2p_connectPeer` RPC.
+    ///
+    /// Retries the connection attempt because the P2P layer may not be fully ready immediately
+    /// after the RPC endpoint becomes reachable.
     pub async fn connect_peer(&self, multiaddr: &str) -> Result<()> {
         let client = HttpClientBuilder::default()
             .build(self.rpc_url().as_str())
             .wrap_err("Failed to build RPC client")?;
 
-        client
-            .opp2p_connect_peer(multiaddr.to_string())
-            .await
-            .wrap_err("Failed to connect peer via RPC")
+        let mut last_err = None;
+        for attempt in 0..20 {
+            match client.opp2p_connect_peer(multiaddr.to_string()).await {
+                Ok(()) => {
+                    info!(attempts = attempt + 1, "peer connected");
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        Err(last_err.unwrap()).wrap_err("Failed to connect peer via RPC after retries")
+    }
+
+    /// Starts the sequencer via the `admin_startSequencer` RPC.
+    ///
+    /// Use this after connecting peers when the consensus node was started with
+    /// `sequencer_stopped: true` to ensure the validator receives all blocks from the start.
+    pub async fn start_sequencer(&self) -> Result<()> {
+        let client = HttpClientBuilder::default()
+            .build(self.rpc_url().as_str())
+            .wrap_err("Failed to build RPC client")?;
+
+        client.admin_start_sequencer().await.wrap_err("Failed to start sequencer via RPC")?;
+        info!("sequencer started via admin RPC");
+        Ok(())
     }
 
     /// Returns the RPC URL for this consensus node (localhost).
