@@ -3,16 +3,9 @@
 //! This module contains the main [`Server`] struct that manages cryptographic
 //! keys and attestation for the enclave.
 
-use alloy_consensus::{Header, ReceiptEnvelope};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_enclave::{
-    Proposal, ProposalParams,
-    executor::{ExecutionWitness, execute_stateless as core_execute_stateless},
-    output_root_v0,
-    types::account::AccountResult,
-};
+use base_enclave::{ExecuteStatelessRequest, Proposal, ProposalParams};
 use parking_lot::RwLock;
 #[cfg(test)]
 use rand_08::rngs::OsRng;
@@ -218,103 +211,19 @@ impl Server {
 
     /// Execute stateless block validation and create a signed proposal.
     ///
-    /// This method:
-    /// 1. Extracts the previous block header from the witness
-    /// 2. Calls the core `execute_stateless` function to validate the block
-    /// 3. Computes the previous and current output roots
-    /// 4. Signs the proposal data and returns a `Proposal`
-    ///
-    /// # Arguments
-    ///
-    /// * `rollup_config` - The rollup configuration
-    /// * `l1_config` - The L1 chain configuration
-    /// * `config_hash` - The per-chain configuration hash
-    /// * `l1_origin` - The L1 origin block header
-    /// * `l1_receipts` - The L1 origin block receipts
-    /// * `previous_block_txs` - Transactions from the previous L2 block (RLP-encoded)
-    /// * `block_header` - The L2 block header to validate
-    /// * `sequenced_txs` - Sequenced transactions for this block (RLP-encoded)
-    /// * `witness` - The execution witness (contains previous block header at headers[0])
-    /// * `message_account` - The `L2ToL1MessagePasser` account proof
-    /// * `prev_message_account_hash` - The storage hash of the message account in the previous block
+    /// Builds a preimage oracle from the request, derives the L2 block from L1
+    /// data via the kona derivation pipeline, executes it, and signs the result.
     ///
     /// # Returns
     ///
     /// A signed `Proposal` containing the output root and signature.
-    #[allow(clippy::too_many_arguments)]
     pub fn execute_stateless(
         &self,
-        rollup_config: &RollupConfig,
-        l1_config: &L1ChainConfig,
-        config_hash: B256,
-        l1_origin: &Header,
-        l1_receipts: &[ReceiptEnvelope],
-        previous_block_txs: &[Bytes],
-        block_header: &Header,
-        sequenced_txs: &[Bytes],
-        witness: ExecutionWitness,
-        message_account: &AccountResult,
-        prev_message_account_hash: B256,
-        proposer: Address,
-        tee_image_hash: B256,
+        _request: ExecuteStatelessRequest,
     ) -> Result<Proposal, ServerError> {
-        // Extract previous block header from witness before consuming it
-        // (matches Go: previousBlockHeader := w.Headers[0])
-        let previous_header = witness.headers.first().cloned().ok_or_else(|| {
-            ProposalError::ExecutionFailed("witness headers is empty".to_string())
-        })?;
-
-        // Execute stateless validation using the core function
-        core_execute_stateless(
-            rollup_config,
-            l1_config,
-            l1_origin,
-            l1_receipts,
-            previous_block_txs,
-            block_header,
-            sequenced_txs,
-            witness,
-            message_account,
-        )
-        .map_err(|e| ProposalError::ExecutionFailed(e.to_string()))?;
-
-        let l1_origin_hash = l1_origin.hash_slow();
-        let l1_origin_number = U256::from(l1_origin.number);
-
-        // Compute output roots (matching Go implementation exactly)
-        let prev_output_root = output_root_v0(&previous_header, prev_message_account_hash);
-        let output_root = output_root_v0(block_header, message_account.storage_hash);
-        let starting_l2_block = U256::from(previous_header.number);
-        let ending_l2_block = U256::from(block_header.number);
-
-        // Build signing data matching the AggregateVerifier contract's journal.
-        // Individual block proofs have no intermediate roots.
-        let signing_data = build_signing_data(
-            proposer,
-            l1_origin_hash,
-            l1_origin_number,
-            prev_output_root,
-            starting_l2_block,
-            output_root,
-            ending_l2_block,
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-
-        // Sign the proposal
-        let signer = self.signer_key.read();
-        let signature = sign_proposal_data_sync(&signer, &signing_data)?;
-
-        Ok(Proposal::new(ProposalParams {
-            output_root,
-            signature,
-            l1_origin_hash,
-            l1_origin_number,
-            l2_block_number: ending_l2_block,
-            prev_output_root,
-            config_hash,
-        }))
+        // TODO(step 4/6): Build Oracle from request.preimages, load BootInfo,
+        // derive block attributes, execute block, compute output roots, sign.
+        todo!("execute_stateless: rewrite pending steps 4 and 6")
     }
 
     /// Create a server for testing without RSA key generation.
@@ -507,6 +416,8 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use std::slice;
+
+    use alloy_primitives::Bytes;
 
     use super::*;
 

@@ -29,7 +29,7 @@ base-proof.workspace = true
 base-proof-mpt.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
-base-proof-preimage.workspace = true
+base-proof-preimage = { workspace = true, features = ["serde"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Consensus

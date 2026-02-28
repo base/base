@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_enclave::{ExecuteStatelessRequest, Proposal, config::l1_config_for_l2_chain_id};
+use base_enclave::{ExecuteStatelessRequest, Proposal};
 use jsonrpsee::types::ErrorObjectOwned;
 
 use super::{api::EnclaveApiServer, types::AggregateRequest};
@@ -60,33 +60,7 @@ impl EnclaveApiServer for RpcServerImpl {
         &self,
         request: ExecuteStatelessRequest,
     ) -> Result<Proposal, ErrorObjectOwned> {
-        let rollup_config = request.config.as_rollup_config();
-        let l2_chain_id = rollup_config.l2_chain_id.id();
-        let l1_config = l1_config_for_l2_chain_id(l2_chain_id).ok_or_else(|| {
-            ErrorObjectOwned::owned(
-                -32000,
-                format!("unsupported l2 chain id: {l2_chain_id}"),
-                None::<()>,
-            )
-        })?;
-
-        self.server
-            .execute_stateless(
-                &rollup_config,
-                &l1_config,
-                request.config_hash,
-                &request.l1_origin,
-                &request.l1_receipts,
-                &request.previous_block_txs,
-                &request.block_header,
-                &request.sequenced_txs,
-                request.witness,
-                &request.message_account,
-                request.prev_message_account_hash,
-                request.proposer,
-                request.tee_image_hash,
-            )
-            .map_err(to_rpc_error)
+        self.server.execute_stateless(request).map_err(to_rpc_error)
     }
 
     async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ErrorObjectOwned> {

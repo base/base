@@ -1,52 +1,36 @@
 //! RPC request types shared between client and server.
 
-use alloy_consensus::{Header, ReceiptEnvelope};
-use alloy_primitives::{Address, B256, Bytes};
-use base_consensus_genesis::ChainConfig;
+use alloy_primitives::{Address, B256};
+use base_proof_preimage::PreimageKey;
 use serde::{Deserialize, Serialize};
 
-use crate::{Proposal, executor::ExecutionWitness, types::account::AccountResult};
+use crate::Proposal;
 
 /// Request for the `executeStateless` RPC method.
+///
+/// The `preimages` list contains all data needed for derivation and execution:
+/// - Local keys (0-7): `BootInfo` fields (`l1_head`, `agreed_l2_output_root`, configs, etc.)
+/// - Keccak keys: L1 block headers, receipts, transactions, blobs
+/// - Keccak keys: L2 block headers, transactions, state trie nodes, contract code
+///
+/// Keccak-keyed preimages are self-verifying: key == keccak256(value).
+/// Local-keyed preimages (`BootInfo`) are verified by on-chain contract state.
 ///
 /// Uses camelCase to match go-ethereum's JSON-RPC conventions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteStatelessRequest {
-    /// The full chain configuration.
-    pub config: ChainConfig,
+    /// Pre-populated preimage store for the oracle.
+    ///
+    /// Encoded as a list of `(key, value)` pairs rather than a map because
+    /// [`PreimageKey`] is a struct and JSON object keys must be strings.
+    /// Convert to a `HashMap` on receipt via `preimages.into_iter().collect()`.
+    pub preimages: Vec<(PreimageKey, Vec<u8>)>,
 
-    /// The per-chain configuration hash used in proposal signing.
-    pub config_hash: B256,
-
-    /// The L1 origin block header.
-    pub l1_origin: Header,
-
-    /// The L1 origin block receipts.
-    pub l1_receipts: Vec<ReceiptEnvelope>,
-
-    /// Transactions from the previous L2 block (RLP-encoded).
-    pub previous_block_txs: Vec<Bytes>,
-
-    /// The L2 block header to validate.
-    pub block_header: Header,
-
-    /// Sequenced transactions for this block (RLP-encoded).
-    pub sequenced_txs: Vec<Bytes>,
-
-    /// The execution witness.
-    pub witness: ExecutionWitness,
-
-    /// The `L2ToL1MessagePasser` account proof.
-    pub message_account: AccountResult,
-
-    /// The storage hash of the message account in the previous block.
-    pub prev_message_account_hash: B256,
-
-    /// The proposer address included in the signed journal for on-chain verification.
+    /// Address of the proposer submitting this block.
     pub proposer: Address,
 
-    /// The keccak256 hash of the TEE image PCR0, included in the signed journal.
+    /// Hash of the TEE image for attestation verification.
     pub tee_image_hash: B256,
 }
 

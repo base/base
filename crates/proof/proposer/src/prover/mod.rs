@@ -29,8 +29,6 @@ use crate::{
 
 /// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
 const DEPOSIT_TX_TYPE: u8 = 0x7E;
-/// Maximum number of missing trie nodes to fetch via `debug_dbGet` per proposal attempt.
-const MAX_MISSING_TRIE_NODE_REPAIRS: usize = 64;
 /// Timeout for enclave RPC calls (matches Go `PROPOSAL_TIMEOUT`).
 const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -151,7 +149,7 @@ where
         );
 
         // Unwrap all results
-        let mut witness = witness_result?;
+        let witness = witness_result?;
         let msg_account = msg_account_result?;
         let prev_block = prev_block_result?;
         let prev_msg_account = prev_msg_account_result?;
@@ -167,86 +165,29 @@ where
         // Serialize current block transactions (excluding deposits)
         let sequenced_txs = serialize_block_transactions(block, false)?;
 
-        let chain_config = build_chain_config(&self.rollup_config);
-        let l1_receipt_envelopes = convert_receipts(l1_receipts);
-        let mut repairs = 0usize;
-        let proposal = loop {
-            // Clones here are acceptable: retries are rare (only on missing trie nodes)
-            // and the data is small relative to the enclave RPC cost.
-            let request = ExecuteStatelessRequest {
-                config: chain_config.clone(),
-                config_hash: self.config_hash,
-                l1_origin: l1_origin.inner.clone(),
-                l1_receipts: l1_receipt_envelopes.clone(),
-                previous_block_txs: prev_block_txs.clone(),
-                block_header: block.header.inner.clone(),
-                sequenced_txs: sequenced_txs.clone(),
-                witness: witness.clone(),
-                message_account: msg_account.clone(),
-                prev_message_account_hash: prev_msg_account.storage_hash,
-                proposer: self.proposer,
-                tee_image_hash: self.tee_image_hash,
-            };
+        // TODO(preimage): Replace with preimage oracle population. The enclave now
+        // expects a pre-populated HashMap<PreimageKey, Vec<u8>> rather than
+        // individual block/receipt/witness fields. For now, these fetched values
+        // are unused in the request but retained for post-call verification.
+        let _chain_config = build_chain_config(&self.rollup_config);
+        let _l1_receipt_envelopes = convert_receipts(l1_receipts);
+        let _prev_block_txs = prev_block_txs;
+        let _sequenced_txs = sequenced_txs;
+        let _l1_origin = l1_origin;
+        let _prev_msg_account = prev_msg_account;
+        let _witness = witness;
 
-            match tokio::time::timeout(
-                ENCLAVE_TIMEOUT,
-                self.enclave_client.execute_stateless(request),
-            )
-            .await
-            {
-                Ok(Ok(proposal)) => break proposal,
-                Err(_) => return Err(ProposerError::Enclave("enclave execution timed out".into())),
-                Ok(Err(err)) => {
-                    let err_str = err.to_string();
-
-                    // Try to repair missing trie nodes.
-                    if let Some(missing_hash) = extract_missing_trie_hash(&err_str) {
-                        if repairs >= MAX_MISSING_TRIE_NODE_REPAIRS {
-                            tracing::warn!(
-                                block_number = block.header.number,
-                                repairs,
-                                hash = %missing_hash,
-                                "Reached maximum trie node repairs from debug_dbGet"
-                            );
-                            return Err(ProposerError::Enclave(err_str));
-                        }
-
-                        let key = format!("{missing_hash:#x}");
-                        if witness.state.contains_key(&key) {
-                            return Err(ProposerError::Enclave(err_str));
-                        }
-
-                        let preimage = self.l2_client.db_get(missing_hash).await?;
-                        witness.state.insert(key, format!("0x{}", hex::encode(preimage)));
-                        repairs += 1;
-
-                        tracing::warn!(
-                            block_number = block.header.number,
-                            repairs,
-                            hash = %missing_hash,
-                            "Recovered missing trie node via debug_dbGet; retrying enclave execution"
-                        );
-                        continue;
-                    }
-
-                    // Missing header errors are not recoverable from the proposer side.
-                    // The enclave's executor needs all referenced headers in its
-                    // trie DB, and it looks them up by computing the hash from the
-                    // consensus header. If the executor version doesn't correctly hash
-                    // post-Pectra headers, this lookup will always fail regardless of
-                    // whether the header data is present.
-                    if extract_missing_header_hash(&err_str).is_some() {
-                        tracing::warn!(
-                            block_number = block.header.number,
-                            "Enclave cannot find header by hash -- this is likely an executor version issue with post-Pectra header hashing"
-                        );
-                        return Err(ProposerError::Enclave(err_str));
-                    }
-
-                    return Err(ProposerError::Enclave(err_str));
-                }
-            }
+        let request = ExecuteStatelessRequest {
+            preimages: Vec::new(), // TODO(preimage): populate with collected preimages
+            proposer: self.proposer,
+            tee_image_hash: self.tee_image_hash,
         };
+
+        let proposal =
+            tokio::time::timeout(ENCLAVE_TIMEOUT, self.enclave_client.execute_stateless(request))
+                .await
+                .map_err(|_| ProposerError::Enclave("enclave execution timed out".into()))?
+                .map_err(|e| ProposerError::Enclave(e.to_string()))?;
 
         // Verify output root matches local computation
         let expected_output_root = output_root_v0(&block.header.inner, msg_storage_hash);
@@ -473,50 +414,29 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
     config
 }
 
-/// Extracts a missing header hash from enclave error text.
-///
-/// Looks for the substring "header not found for hash: 0x...".
-fn extract_missing_header_hash(err: &str) -> Option<B256> {
-    let marker = "header not found for hash:";
-    let idx = err.find(marker)?;
-    let suffix = err.get(idx + marker.len()..)?.trim_start();
-    let mut end = suffix.len();
-    for (i, c) in suffix.char_indices() {
-        if !(c.is_ascii_hexdigit() || c == 'x') {
-            end = i;
-            break;
-        }
-    }
-    let candidate = suffix.get(..end)?.trim_end_matches('"').trim_end_matches(',');
-    if !candidate.starts_with("0x") {
-        return None;
-    }
-    candidate.parse().ok()
-}
-
-/// Extracts a missing trie node hash from enclave error text.
-///
-/// Looks for the substring "trie node not found for hash: 0x...".
-fn extract_missing_trie_hash(err: &str) -> Option<B256> {
-    let marker = "trie node not found for hash:";
-    let idx = err.find(marker)?;
-    let suffix = err.get(idx + marker.len()..)?.trim_start();
-    let mut end = suffix.len();
-    for (i, c) in suffix.char_indices() {
-        if !(c.is_ascii_hexdigit() || c == 'x') {
-            end = i;
-            break;
-        }
-    }
-    let candidate = suffix.get(..end)?.trim_end_matches('"').trim_end_matches(',');
-    if !candidate.starts_with("0x") {
-        return None;
-    }
-    candidate.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
+    /// Extracts a missing trie node hash from enclave error text.
+    ///
+    /// Looks for the substring "trie node not found for hash: 0x...".
+    fn extract_missing_trie_hash(err: &str) -> Option<B256> {
+        let marker = "trie node not found for hash:";
+        let idx = err.find(marker)?;
+        let suffix = err.get(idx + marker.len()..)?.trim_start();
+        let mut end = suffix.len();
+        for (i, c) in suffix.char_indices() {
+            if !(c.is_ascii_hexdigit() || c == 'x') {
+                end = i;
+                break;
+            }
+        }
+        let candidate = suffix.get(..end)?.trim_end_matches('"').trim_end_matches(',');
+        if !candidate.starts_with("0x") {
+            return None;
+        }
+        candidate.parse().ok()
+    }
+
     use std::time::Duration;
 
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
