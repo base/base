@@ -1,7 +1,7 @@
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.93"
 license = "MIT"
 homepage = "https://github.com/base/base"
 repository = "https://github.com/base/base"
@@ -10,38 +10,38 @@ exclude = [".github/"]
 [workspace]
 resolver = "2"
 members = [
-    "bin/*",
-    "crates/client/*",
-    "crates/consensus/*",
-    "crates/proof/mpt",
-    "crates/proof/proof",
-    "crates/proof/driver",
-    "crates/proof/executor",
-    "crates/proof/preimage",
-    "crates/proof/std-fpvm",
-    "crates/proof/std-fpvm-proc",
-    "crates/proof/tee/core",
-    "crates/proof/tee/client",
-    "crates/proof/tee/server",
-    "crates/proof/proposer",
-    "crates/utilities/*",
-    "crates/builder/*",
-    "crates/infra/*",
-    "crates/alloy/*",
-    "crates/execution/*",
-    "devnet",
+  "bin/*",
+  "crates/client/*",
+  "crates/consensus/*",
+  "crates/proof/mpt",
+  "crates/proof/proof",
+  "crates/proof/driver",
+  "crates/proof/executor",
+  "crates/proof/preimage",
+  "crates/proof/std-fpvm",
+  "crates/proof/std-fpvm-proc",
+  "crates/proof/tee/core",
+  "crates/proof/tee/client",
+  "crates/proof/tee/server",
+  "crates/proof/proposer",
+  "crates/utilities/*",
+  "crates/builder/*",
+  "crates/infra/*",
+  "crates/alloy/*",
+  "crates/execution/*",
+  "devnet",
 ]
 default-members = [
-    "bin/based",
-    "bin/node",
-    "bin/basectl",
-    "bin/builder",
-    "bin/consensus",
-    "bin/ingress-rpc",
-    "bin/audit-archiver",
-    "bin/mempool-rebroadcaster",
-    "bin/proposer",
-    "bin/prover",
+  "bin/based",
+  "bin/node",
+  "bin/basectl",
+  "bin/builder",
+  "bin/consensus",
+  "bin/ingress-rpc",
+  "bin/audit-archiver",
+  "bin/mempool-rebroadcaster",
+  "bin/proposer",
+  "bin/prover",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -100,8 +100,7 @@ string-lit-as-bytes = "warn"
 
 [profile.dev]
 debug = "line-tables-only"
-split-debuginfo = "packed"
-incremental = false
+incremental = true
 
 [profile.release]
 opt-level = 3
@@ -124,15 +123,10 @@ lto = false
 debug = "line-tables-only"
 strip = "none"
 
-# CI profile: optimized for minimal disk usage in CI environments
-# - Inherits from dev for fast compilation
-# - No debug info to minimize artifact size
-# - No split-debuginfo to avoid extra files
-# - Incremental disabled to reduce cache size
+# CI profile: optimized for fast GHA builds and minimal disk usage
 [profile.ci]
 inherits = "dev"
 debug = false
-split-debuginfo = "off"
 incremental = false
 
 [workspace.dependencies]

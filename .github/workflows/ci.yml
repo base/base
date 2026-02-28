@@ -25,93 +25,48 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          swap-storage: true
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Install native dependencies
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      - uses: ./.github/actions/setup
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.2
-
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
-          shared-key: "stable"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
-        with:
-          version: stable
-      - name: Set LIBCLANG_PATH
-        run: |
-          LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
-          echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          rust-cache-shared-key: "stable"
+          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
       - run: just build-ci
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.base_ref || 'main' }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          swap-storage: true
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Install native dependencies
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.2
-
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
+      - uses: ./.github/actions/setup
         with:
-          cache-on-failure: true
-          shared-key: "stable"
-          save-if: false
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
-        with:
-          tool: cargo-nextest
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
-        with:
-          version: stable
-      - name: Set LIBCLANG_PATH
-        run: |
-          LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
-          echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
       - name: Run tests
-        run: just test-ci
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            just test-affected-ci "origin/$BASE_REF"
+          else
+            just test-ci
+          fi
 
   fmt:
     name: Format
@@ -121,18 +76,13 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+      - uses: ./.github/actions/setup
         with:
+          toolchain: nightly
           components: rustfmt
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
-          shared-key: "nightly"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+          rust-cache-shared-key: "nightly"
+          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
       - run: just check-format
 
   clippy:
@@ -143,43 +93,15 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          swap-storage: true
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Install native dependencies
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      - uses: ./.github/actions/setup
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.2
-
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-        with:
+          free-disk: "true"
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
           components: clippy
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
-          shared-key: "stable"
-          save-if: false
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
-        with:
-          version: stable
-      - name: Set LIBCLANG_PATH
-        run: |
-          LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
-          echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
+          rust-cache-shared-key: "stable"
       - run: just check-clippy-ci
 
   changes:
@@ -244,35 +166,15 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Install native dependencies
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      - uses: ./.github/actions/setup
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.2
-
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
-          shared-key: "nightly"
-          save-if: false
-      - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
-        with:
-          tool: cargo-udeps
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
-        with:
-          version: stable
-      - name: Set LIBCLANG_PATH
-        run: |
-          LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
-          echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
+          toolchain: nightly
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          tools: cargo-udeps
+          rust-cache-shared-key: "nightly"
       - run: just check-udeps
 
   crate-deps:
@@ -283,11 +185,8 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      - uses: ./.github/actions/setup
       - run: just check-crate-deps
 
   deny:
@@ -298,26 +197,10 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          swap-storage: true
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: ./.github/actions/setup
         with:
-          cache-on-failure: true
-          shared-key: "stable"
-          save-if: false
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+          rust-cache-shared-key: "stable"
       - run: just check-deny
 
   devnet-tests:
@@ -329,51 +212,21 @@ jobs:
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Install native dependencies
-        uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
+      - uses: ./.github/actions/setup
         with:
-          packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-          version: 1.2
-
-      - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
-          shared-key: "stable"
-          save-if: false
-
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
-
-      - name: Install just
-        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
-        with:
-          tool: cargo-nextest
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
-        with:
-          version: stable
-
-      - name: Set LIBCLANG_PATH
-        run: |
-          LLVM_VERSION=$(llvm-config --version | cut -d. -f1)
-          echo "LIBCLANG_PATH=/usr/lib/llvm-${LLVM_VERSION}/lib" >> $GITHUB_ENV
-
       - name: Cache docker images
         uses: ScribeMD/docker-cache@fb28c93772363301b8d0a6072ce850224b73f74e # 0.5.0
         with:
           key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'etc/docker/Dockerfile.devnet') }}
-
       - name: Pre-pull docker images
         run: just devnet-pull-images
-
       - name: Run devnet tests
         run: just devnet-tests-ci

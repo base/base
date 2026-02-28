@@ -17,6 +17,46 @@ alias wc := watch-check
 default:
     @just --list
 
+# One-time project setup: installs tooling and builds test contracts
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    OS="$(uname -s)"
+    ARCH="$(uname -m)"
+
+    # ── Install fast linker ──
+    if [[ "$OS" == "Darwin" ]]; then
+        if ! brew list lld &>/dev/null; then
+            echo "Installing lld linker for faster builds..."
+            brew install lld
+        fi
+        # Verify lld is reachable at the path .cargo/config.toml expects
+        if [[ "$ARCH" == "arm64" ]]; then
+            LLD="/opt/homebrew/opt/lld/bin/ld64.lld"
+        else
+            LLD="/usr/local/opt/lld/bin/ld64.lld"
+        fi
+        if [[ ! -x "$LLD" ]]; then
+            echo "ERROR: lld not found at $LLD"
+            echo "Try: brew install lld"
+            exit 1
+        fi
+        echo "Found lld at $LLD"
+    elif [[ "$OS" == "Linux" ]]; then
+        if ! command -v mold &>/dev/null; then
+            echo "mold not found. Install it for faster builds:"
+            echo "  Ubuntu/Debian: sudo apt-get install -y mold"
+            echo "  Fedora:        sudo dnf install mold"
+            echo "  Arch:          sudo pacman -S mold"
+            exit 1
+        fi
+        echo "Found mold at $(command -v mold)"
+    fi
+
+    just build-contracts
+    echo "Setup complete!"
+
 # Runs all ci checks
 ci: fix check lychee zepter check-no-std
 
@@ -57,7 +97,7 @@ install-nextest:
 
 # Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
+    cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
 
 # Runs tests only for crates affected by changes vs main (excludes devnet)
 test-affected base="main": install-nextest build-contracts
@@ -73,11 +113,27 @@ test-affected base="main": install-nextest build-contracts
         pkg_args="$pkg_args -p $crate"
     done <<< "$affected"
     echo "Testing affected crates:$pkg_args"
-    RUSTFLAGS="-D warnings" cargo nextest run --all-features $pkg_args
+    cargo nextest run --all-features $pkg_args
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build-contracts
-    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
+    cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
+
+# Runs tests only for affected crates with ci profile (for PRs)
+test-affected-ci base="main": install-nextest build-contracts
+    #!/usr/bin/env bash
+    set -euo pipefail
+    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
+    if [ -z "$affected" ]; then
+        echo "No affected crates to test."
+        exit 0
+    fi
+    pkg_args=""
+    while IFS= read -r crate; do
+        pkg_args="$pkg_args -p $crate"
+    done <<< "$affected"
+    echo "Testing affected crates:$pkg_args"
+    cargo nextest run --all-features --cargo-profile ci $pkg_args
 
 # Runs devnet tests (requires Docker)
 devnet-tests: install-nextest build-contracts

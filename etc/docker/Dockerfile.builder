@@ -3,7 +3,7 @@ FROM rust:1.93-trixie AS builder
 WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      git libclang-dev pkg-config curl build-essential && \
+      git libclang-dev pkg-config curl build-essential mold && \
     rm -rf /var/lib/apt/lists/*
 
 ARG PROFILE=release
