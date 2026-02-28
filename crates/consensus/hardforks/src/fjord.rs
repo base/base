@@ -5,7 +5,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::Predeploys;
+use base_protocol::{Predeploys, SystemAddresses};
 
 use crate::Hardfork;
 
@@ -18,9 +18,6 @@ impl Fjord {
     /// This is computed by using go-ethereum's `crypto.CreateAddress` function,
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
-
-    /// The L1 Info Depositer Address.
-    pub const L1_INFO_DEPOSITER: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
     /// Fjord Gas Price Oracle Deployer Address.
     pub const GAS_PRICE_ORACLE_FJORD_DEPLOYER: Address =
@@ -95,7 +92,7 @@ impl Fjord {
             // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-enable-fjord>
             TxDeposit {
                 source_hash: Self::enable_fjord_source(),
-                from: Self::L1_INFO_DEPOSITER,
+                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,

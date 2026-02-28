@@ -5,7 +5,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::Predeploys;
+use base_protocol::{Predeploys, SystemAddresses};
 
 use crate::Hardfork;
 
@@ -18,9 +18,6 @@ impl Ecotone {
     /// This is computed by using go-ethereum's `crypto.CreateAddress` function,
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
-
-    /// The depositor account address.
-    pub const DEPOSITOR_ACCOUNT: Address = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
 
     /// The Enable Ecotone Input Method 4Byte Signature
     pub const ENABLE_ECOTONE_INPUT: [u8; 4] = hex!("22b90ab3");
@@ -164,7 +161,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
             TxDeposit {
                 source_hash: Self::enable_ecotone_source(),
-                from: Self::DEPOSITOR_ACCOUNT,
+                from: SystemAddresses::L1_ATTRIBUTES_DEPOSITOR,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,
