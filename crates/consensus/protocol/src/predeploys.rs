@@ -1,5 +1,3 @@
-//! Addresses of OP pre-deploys.
-//!
 //! This module contains the addresses of various predeploy contracts in the OP Stack.
 //! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
 
