@@ -7,7 +7,7 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, keccak256};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
@@ -18,9 +18,6 @@ use crate::{Hardfork, upgrade_to_calldata};
 pub struct Jovian;
 
 impl Jovian {
-    /// Zero address
-    pub const ZERO_ADDRESS: Address = address!("0x0000000000000000000000000000000000000000");
-
     /// Returns the source hash for the deployment of the l1 block contract.
     pub fn deploy_l1_block_source() -> B256 {
         UpgradeDepositSource { intent: String::from("Jovian: L1 Block Deployment") }.source_hash()
@@ -101,7 +98,7 @@ impl Jovian {
             },
             TxDeposit {
                 source_hash: Self::l1_block_proxy_update(),
-                from: Self::ZERO_ADDRESS,
+                from: Address::ZERO,
                 to: TxKind::Call(Predeploys::L1_BLOCK_INFO),
                 mint: 0,
                 value: U256::ZERO,
@@ -121,7 +118,7 @@ impl Jovian {
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle_proxy_update(),
-                from: Self::ZERO_ADDRESS,
+                from: Address::ZERO,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,
