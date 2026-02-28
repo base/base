@@ -196,11 +196,8 @@ jobs:
         with:
           filters: |
             docker:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'crates/**'
-              - 'bin/**'
-              - 'etc/docker/Dockerfile.client'
+              - 'etc/docker/Dockerfile.*'
+              - '.dockerignore'
 
   docker:
     name: Docker
