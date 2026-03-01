@@ -29,7 +29,7 @@ x509-cert.workspace = true
 openssl.workspace = true
 
 # Encoding
-zip.workspace = true
+zip = { workspace = true, features = ["deflate"] }
 base64.workspace = true
 ciborium.workspace = true
 serde = { workspace = true, features = ["derive"] }

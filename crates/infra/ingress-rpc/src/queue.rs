@@ -41,11 +41,11 @@ impl MessageQueue for KafkaMessageQueue {
             let record = FutureRecord::to(topic).key(key).payload(payload);
 
             match self.producer.send(record, Duration::from_secs(5)).await {
-                Ok((partition, offset)) => {
+                Ok(delivery) => {
                     info!(
                         key = %key,
-                        partition = partition,
-                        offset = offset,
+                        partition = delivery.partition,
+                        offset = delivery.offset,
                         topic = %topic,
                         "Successfully enqueued message"
                     );
