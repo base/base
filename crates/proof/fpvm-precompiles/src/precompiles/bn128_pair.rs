@@ -11,7 +11,7 @@ use revm::precompile::{
     },
 };
 
-use crate::fpvm_evm::precompiles::utils::precompile_run;
+use super::utils::precompile_run;
 
 const BN256_MAX_PAIRING_SIZE_GRANITE: usize = 112_687;
 const BN256_MAX_PAIRING_SIZE_JOVIAN: usize = 81_984;
@@ -93,7 +93,7 @@ mod test {
     use alloy_primitives::hex;
 
     use super::*;
-    use crate::fpvm_evm::precompiles::test_utils::{
+    use super::test_utils::{
         execute_native_precompile, test_accelerated_precompile,
     };
 

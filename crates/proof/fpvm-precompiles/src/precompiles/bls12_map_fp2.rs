@@ -14,7 +14,7 @@ use revm::precompile::{
     bls12_381_const::{MAP_FP2_TO_G2_BASE_GAS_FEE, PADDED_FP2_LENGTH},
 };
 
-use crate::fpvm_evm::precompiles::utils::precompile_run;
+use super::utils::precompile_run;
 
 /// Performs an FPVM-accelerated BLS12-381 map fp2 check.
 ///
@@ -61,7 +61,7 @@ mod test {
     use alloy_primitives::hex;
 
     use super::*;
-    use crate::fpvm_evm::precompiles::test_utils::{
+    use super::test_utils::{
         execute_native_precompile, test_accelerated_precompile,
     };
 

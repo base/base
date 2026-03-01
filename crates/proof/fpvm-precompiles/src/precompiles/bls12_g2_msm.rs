@@ -15,7 +15,7 @@ use revm::precompile::{
     bls12_381_utils::msm_required_gas,
 };
 
-use crate::fpvm_evm::precompiles::utils::precompile_run;
+use super::utils::precompile_run;
 
 /// The maximum input size for the BLS12-381 g2 msm operation after the Isthmus Hardfork.
 ///
@@ -98,7 +98,7 @@ mod test {
     use alloy_primitives::hex;
 
     use super::*;
-    use crate::fpvm_evm::precompiles::test_utils::{
+    use super::test_utils::{
         execute_native_precompile, test_accelerated_precompile,
     };
 

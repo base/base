@@ -13,7 +13,7 @@ use revm::{
     primitives::{hardfork::SpecId, hash_map::HashMap},
 };
 
-use crate::fpvm_evm::precompiles::{
+use super::{
     ecrecover::ECRECOVER_ADDR, kzg_point_eval::KZG_POINT_EVAL_ADDR,
 };
 

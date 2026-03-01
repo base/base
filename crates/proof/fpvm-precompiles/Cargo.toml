@@ -1,0 +1,28 @@
+[package]
+name = "base-proof-fpvm-precompiles"
+description = "FPVM-accelerated precompiles for the Base fault proof client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Alloy
+alloy-evm.workspace = true
+alloy-primitives.workspace = true
+
+# Base
+base-alloy-evm.workspace = true
+base-proof-preimage.workspace = true
+base-revm.workspace = true
+base-proof.workspace = true
+
+# REVM
+revm.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

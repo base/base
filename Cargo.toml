@@ -17,6 +17,8 @@ members = [
   "crates/proof/proof",
   "crates/proof/driver",
   "crates/proof/executor",
+  "crates/proof/client",
+  "crates/proof/fpvm-precompiles",
   "crates/proof/preimage",
   "crates/proof/std-fpvm",
   "crates/proof/std-fpvm-proc",
@@ -202,6 +204,8 @@ base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
+base-proof-client = { path = "crates/proof/client", default-features = false }
+base-proof-fpvm-precompiles = { path = "crates/proof/fpvm-precompiles" }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
 base-proof-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
 base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }

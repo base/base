@@ -14,7 +14,7 @@ use revm::precompile::{
     bls12_381_const::{G1_ADD_BASE_GAS_FEE, G1_ADD_INPUT_LENGTH},
 };
 
-use crate::fpvm_evm::precompiles::utils::precompile_run;
+use super::utils::precompile_run;
 
 /// Performs an FPVM-accelerated BLS12-381 G1 addition check.
 ///
@@ -59,7 +59,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::fpvm_evm::precompiles::test_utils::{
+    use super::test_utils::{
         execute_native_precompile, test_accelerated_precompile,
     };
 

@@ -14,7 +14,7 @@ use revm::precompile::{
     bls12_381_const::{PAIRING_INPUT_LENGTH, PAIRING_MULTIPLIER_BASE, PAIRING_OFFSET_BASE},
 };
 
-use crate::fpvm_evm::precompiles::utils::precompile_run;
+use super::utils::precompile_run;
 
 /// The max pairing size for BLS12-381 input given a 20M gas limit.
 const BLS12_MAX_PAIRING_SIZE_ISTHMUS: usize = 235_008;
@@ -95,7 +95,7 @@ mod test {
     use alloy_primitives::hex;
 
     use super::*;
-    use crate::fpvm_evm::precompiles::test_utils::{
+    use super::test_utils::{
         execute_native_precompile, test_accelerated_precompile,
     };
 

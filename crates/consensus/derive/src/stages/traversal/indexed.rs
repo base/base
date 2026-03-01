@@ -104,8 +104,8 @@ impl<F: ChainProvider> IndexedTraversal<F> {
         let active = self.rollup_config.is_ecotone_active(block_info.timestamp);
         match self.system_config.update_with_receipts(&receipts[..], addr, active) {
             Ok(true) => {
-                let next = block_info.number as f64;
-                base_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next);
+                let _next = block_info.number as f64;
+                base_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, _next);
                 info!(target: "traversal", block_number = block_info.number, "System config updated");
             }
             Ok(false) => { /* Ignore, no update applied */ }

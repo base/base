@@ -2661,37 +2661,13 @@ dependencies = [
 name = "base-client"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-evm",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-evm",
- "base-alloy-rpc-types-engine",
- "base-consensus-derive",
- "base-consensus-genesis",
- "base-consensus-registry",
  "base-proof",
- "base-proof-driver",
- "base-proof-executor",
- "base-proof-mpt",
+ "base-proof-client",
+ "base-proof-fpvm-precompiles",
  "base-proof-preimage",
  "base-proof-std-fpvm",
  "base-proof-std-fpvm-proc",
- "base-protocol",
- "base-revm",
  "cfg-if",
- "lru 0.16.3",
- "revm",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "spin 0.10.0",
- "thiserror 2.0.18",
- "tokio",
  "tracing",
 ]
 
@@ -3971,6 +3947,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-client"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-evm",
+ "alloy-primitives",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-evm",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-proof",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-preimage",
+ "base-protocol",
+ "base-revm",
+ "spin 0.10.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-proof-driver"
 version = "0.0.0"
 dependencies = [
@@ -4022,6 +4022,20 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "base-proof-fpvm-precompiles"
+version = "0.0.0"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "base-alloy-evm",
+ "base-proof",
+ "base-proof-preimage",
+ "base-revm",
+ "revm",
+ "tokio",
 ]
 
 [[package]]
@@ -5962,7 +5976,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8475,7 +8489,7 @@ dependencies = [
  "p384",
  "p521",
  "rand_core 0.6.4",
- "rsa 0.10.0-rc.15",
+ "rsa 0.10.0-rc.16",
  "sec1",
  "sha1 0.10.6",
  "sha1 0.11.0-rc.5",
@@ -11590,12 +11604,9 @@ dependencies = [
 
 [[package]]
 name = "pxfm"
-version = "0.1.27"
+version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7186d3822593aa4393561d186d1393b3923e9d6163d3fbfd6e825e3e6cf3e6a8"
-dependencies = [
- "num-traits",
-]
+checksum = "b5a041e753da8b807c9255f28de81879c78c876392ff2469cde94799b2896b9d"
 
 [[package]]
 name = "quanta"
@@ -15187,9 +15198,9 @@ dependencies = [
 
 [[package]]
 name = "rsa"
-version = "0.10.0-rc.15"
+version = "0.10.0-rc.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b342b99544549f37509ed7fd42b0cea04bfd9ce07c16ca56094cf0fbeefbbcd"
+checksum = "6fb9fd8c1edd9e6a2693623baf0fe77ff05ce022a5d7746900ffc38a15c233de"
 dependencies = [
  "const-oid 0.10.2",
  "crypto-bigint 0.7.0-rc.28",
@@ -16242,9 +16253,9 @@ checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
 
 [[package]]
 name = "sketches-ddsketch"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1e9a774a6c28142ac54bb25d25562e6bcf957493a184f15ad4eebccb23e410a"
+checksum = "0c6f73aeb92d671e0cc4dca167e59b2deb6387c375391bc99ee743f326994a2b"
 
 [[package]]
 name = "slab"
@@ -16647,7 +16658,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

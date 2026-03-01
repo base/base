@@ -6,8 +6,8 @@
 
 extern crate alloc;
 
-mod fpvm_evm;
-pub use fpvm_evm::{FpvmOpEvmFactory, OpFpvmPrecompiles};
+mod precompiles;
+pub use precompiles::OpFpvmPrecompiles;
 
-mod single;
-pub use single::{FaultProofProgramError, fetch_safe_head_hash, run};
+mod factory;
+pub use factory::FpvmOpEvmFactory;

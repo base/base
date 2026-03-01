@@ -6,6 +6,9 @@ extern crate alloc;
 
 use alloc::string::String;
 
+use base_proof::block_on;
+use base_proof_client::Prologue;
+use base_proof_fpvm_precompiles::FpvmOpEvmFactory;
 use base_proof_preimage::{HintWriter, OracleReader};
 use base_proof_std_fpvm::{FileChannel, FileDescriptor};
 use base_proof_std_fpvm_proc::client_entry;
@@ -35,5 +38,20 @@ fn main() -> Result<(), String> {
             .expect("Failed to set tracing subscriber");
     }
 
-    base_proof::block_on(base_client::run(ORACLE_READER, HINT_WRITER))
+    block_on(run())
+}
+
+async fn run() -> Result<(), String> {
+    let evm_factory = FpvmOpEvmFactory::new(HINT_WRITER, ORACLE_READER);
+    let prologue = Prologue::new(ORACLE_READER, HINT_WRITER, evm_factory);
+    let driver = prologue
+        .load()
+        .await
+        .map_err(|e| alloc::format!("{e}"))?;
+    let epilogue = driver
+        .execute()
+        .await
+        .map_err(|e| alloc::format!("{e}"))?;
+    epilogue.validate().map_err(|e| alloc::format!("{e}"))?;
+    Ok(())
 }

@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
 
-use crate::fpvm_evm::precompiles::utils::precompile_run;
+use super::utils::precompile_run;
 
 /// Address of the `ecrecover` precompile.
 pub(crate) const ECRECOVER_ADDR: Address = revm::precompile::u64_to_address(1);
@@ -46,7 +46,7 @@ mod test {
     use alloy_primitives::hex;
 
     use super::*;
-    use crate::fpvm_evm::precompiles::test_utils::{
+    use super::test_utils::{
         execute_native_precompile, test_accelerated_precompile,
     };
 
