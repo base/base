@@ -93,6 +93,13 @@ pub enum OracleProviderError {
     /// mismatches between expected and actual data structures.
     #[error("Serde error: {0}")]
     Serde(serde_json::Error),
+    /// The output root preimage is invalid or specifies an unsupported version.
+    ///
+    /// This error occurs when the preimage fetched for an agreed L2 output root
+    /// cannot be decoded—either because it has the wrong length or specifies an
+    /// output root version that is not supported.
+    #[error("Invalid output root preimage")]
+    InvalidOutputRootPreimage,
     /// Unknown or unsupported chain ID.
     ///
     /// This error occurs when encountering a chain ID that is not recognized

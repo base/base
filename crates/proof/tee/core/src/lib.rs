@@ -23,7 +23,7 @@ pub use base_consensus_genesis::{
 pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderError, Result};
 // Re-export executor types
 pub use executor::{
-    BlockDeriver, DEPOSIT_EVENT_TOPIC, EnclaveTrieDB, ExecutionResult, ExecutionWitness,
+    DEPOSIT_EVENT_TOPIC, EnclaveTrieDB, ExecutionResult, ExecutionWitness,
     MAX_SEQUENCER_DRIFT_FJORD, Oracle, TransformedWitness, execute_stateless,
     extract_deposits_from_receipts, l2_block_to_block_info, transform_witness,
     validate_not_deposit, validate_sequencer_drift,
