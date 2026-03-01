@@ -55,6 +55,25 @@ impl OutputRoot {
     pub fn hash(&self) -> B256 {
         keccak256(self.encode())
     }
+
+    /// Decodes a V0 [`OutputRoot`] from its preimage bytes.
+    ///
+    /// Returns `None` if `bytes` has the wrong length or specifies an
+    /// unsupported output root version.
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != Self::ENCODED_LENGTH {
+            return None;
+        }
+        // The version occupies bytes [0, 32). Only version 0 is supported.
+        if bytes[0..32] != [0u8; 32] {
+            return None;
+        }
+        Some(Self {
+            state_root: B256::from_slice(&bytes[32..64]),
+            bridge_storage_root: B256::from_slice(&bytes[64..96]),
+            block_hash: B256::from_slice(&bytes[96..128]),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -93,5 +112,25 @@ mod test {
         );
 
         assert_eq!(root.encode().as_ref(), EXPECTED_ENCODING.as_ref());
+    }
+
+    #[test]
+    fn test_decode_output_root() {
+        let root = test_or();
+        let encoded = root.encode();
+        let decoded = OutputRoot::decode(&encoded).expect("should decode");
+        assert_eq!(root, decoded);
+    }
+
+    #[test]
+    fn test_decode_output_root_wrong_length() {
+        assert!(OutputRoot::decode(&[0u8; 64]).is_none());
+    }
+
+    #[test]
+    fn test_decode_output_root_bad_version() {
+        let mut bytes = [0u8; 128];
+        bytes[0] = 1; // Non-zero version
+        assert!(OutputRoot::decode(&bytes).is_none());
     }
 }

@@ -8,7 +8,8 @@ use alloy_primitives::B256;
 use base_consensus_derive::ChainProvider;
 use base_consensus_genesis::RollupConfig;
 use base_proof_driver::{PipelineCursor, TipCursor};
-use base_protocol::BatchValidationProvider;
+use base_proof_preimage::{PreimageKey, PreimageOracleClient};
+use base_protocol::{BatchValidationProvider, OutputRoot};
 use spin::RwLock;
 
 use crate::errors::OracleProviderError;
@@ -45,4 +46,32 @@ where
 
     // Wrap the cursor in a shared read-write lock
     Ok(Arc::new(RwLock::new(cursor)))
+}
+
+/// Fetches the L2 safe head block hash from the agreed L2 output root preimage.
+///
+/// Retrieves the output root preimage for `agreed_l2_output_root` from the oracle,
+/// decodes it as a V0 [`OutputRoot`], and returns the embedded block hash.
+/// This is the starting point for pipeline setup: the returned hash seeds both the
+/// L2 chain provider and the derivation cursor.
+#[derive(Debug, Clone, Copy)]
+pub struct SafeHeadFetcher;
+
+impl SafeHeadFetcher {
+    /// Fetches the safe head hash from the oracle.
+    pub async fn fetch<O>(
+        oracle: &O,
+        agreed_l2_output_root: B256,
+    ) -> Result<B256, OracleProviderError>
+    where
+        O: PreimageOracleClient + Send,
+    {
+        let preimage = oracle
+            .get(PreimageKey::new_keccak256(*agreed_l2_output_root))
+            .await
+            .map_err(OracleProviderError::Preimage)?;
+        OutputRoot::decode(&preimage)
+            .map(|root| root.block_hash)
+            .ok_or(OracleProviderError::InvalidOutputRootPreimage)
+    }
 }

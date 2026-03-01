@@ -36,8 +36,6 @@
 //! ```
 
 mod attributes;
-mod derive;
-pub use derive::BlockDeriver;
 mod evm;
 mod l2_block_ref;
 mod oracle;
