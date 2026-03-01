@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 test-utils = [
+	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",

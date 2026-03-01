@@ -328,6 +328,11 @@ fn create_node_config(
         .with_rpc(rpc)
         .with_network(network);
 
+    // Use legacy state root computation to avoid a reth debug_assert panic in rayon
+    // proof workers (paradigmxyz/reth#22505). The docker-compose devnet sidesteps this by
+    // building with the release profile; remove this once reth ships the fix.
+    node_config.engine.legacy_state_root_task_enabled = true;
+
     if config.http_port.is_none()
         && config.ws_port.is_none()
         && config.auth_port.is_none()

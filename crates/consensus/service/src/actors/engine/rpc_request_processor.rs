@@ -71,15 +71,11 @@ where
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             loop {
-                tokio::select! {
-                    query = request_channel.recv(), if !request_channel.is_closed() => {
-                        let Some(query) = query else {
-                            error!(target: "engine", "Engine rpc request receiver closed unexpectedly");
-                            return Err(EngineError::ChannelClosed);
-                        };
-                        self.handle_rpc_request(query).await?;
-                    }
-                }
+                let Some(query) = request_channel.recv().await else {
+                    error!(target: "engine", "Engine rpc request receiver closed unexpectedly");
+                    return Err(EngineError::ChannelClosed);
+                };
+                self.handle_rpc_request(query).await?;
             }
         })
     }

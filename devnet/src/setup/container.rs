@@ -18,10 +18,6 @@ const DEPLOY_TIMEOUT_SECS: u64 = 300;
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
 
-/// Builder op-node libp2p peer ID
-/// This is used by the client op-node to connect to the builder op-node via P2P.
-pub const BUILDER_LIBP2P_PEER_ID: &str = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
-
 #[derive(Debug, Clone)]
 /// Output of the L1 genesis generation.
 pub struct L1GenesisOutput {

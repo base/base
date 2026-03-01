@@ -90,7 +90,7 @@ impl NetworkConfig {
             bootnodes: Default::default(),
             bootstore: Default::default(),
             gater_config: Default::default(),
-            gossip_config: Default::default(),
+            gossip_config: base_consensus_gossip::default_config(),
             scoring: Default::default(),
             topic_scoring: Default::default(),
             monitor_peers: Default::default(),

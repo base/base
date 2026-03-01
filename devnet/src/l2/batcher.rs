@@ -22,14 +22,18 @@ use crate::{
 /// Configuration for starting a batcher container.
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
-    /// L1 RPC URL for submitting batches.
+    /// L1 RPC URL for submitting batches (host-gateway-accessible).
     pub l1_rpc_url: String,
+    /// L1 RPC port on host (for testcontainers host port exposure).
+    pub l1_rpc_port: u16,
     /// L2 RPC URL for reading transactions.
     pub l2_rpc_url: String,
     /// L2 RPC port on host (for testcontainers host port exposure).
     pub l2_rpc_port: u16,
-    /// Rollup RPC URL (op-node).
+    /// Rollup RPC URL (op-node / consensus node).
     pub rollup_rpc_url: String,
+    /// Rollup RPC port on host (for testcontainers host port exposure).
+    pub rollup_rpc_port: u16,
     /// Batcher private key
     pub batcher_key: B256,
 }
@@ -72,7 +76,10 @@ impl BatcherContainer {
         let base_container =
             image.with_container_name(&name).with_network(&network).with_cmd(batcher_args(&config));
 
-        let mut container_builder = with_host_port_if_needed(base_container, config.l2_rpc_port);
+        let container_builder = with_host_port_if_needed(base_container, config.l1_rpc_port);
+        let container_builder = with_host_port_if_needed(container_builder, config.l2_rpc_port);
+        let mut container_builder =
+            with_host_port_if_needed(container_builder, config.rollup_rpc_port);
 
         if let Some(metrics_port) = container_config.and_then(|c| c.batcher_metrics_port) {
             container_builder =
