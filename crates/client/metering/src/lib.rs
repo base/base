@@ -6,8 +6,14 @@
 mod block;
 pub use block::meter_block;
 
+mod estimator;
+pub use estimator::{
+    EstimateError, MeteredTransaction, ResourceDemand, ResourceEstimate, ResourceEstimates,
+    ResourceKind, ResourceLimits,
+};
+
 mod extension;
-pub use extension::{MeteringConfig, MeteringExtension};
+pub use extension::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 
 mod meter;
 pub use meter::{MeterBundleOutput, PendingState, PendingTrieInput, meter_bundle};
@@ -24,7 +30,10 @@ mod trie_cache;
 pub use trie_cache::PendingTrieCache;
 
 mod types;
-pub use types::{MeterBlockResponse, MeterBlockTransactions};
+pub use types::{
+    MeterBlockResponse, MeterBlockTransactions, MeteredPriorityFeeResponse,
+    ResourceFeeEstimateResponse,
+};
 
 mod transaction;
 pub use transaction::{TxValidationError, validate_tx};

@@ -40,10 +40,14 @@ fn main() {
             tracing_logs_enabled: args.enable_transaction_tracing_logs,
             flashblocks_config: flashblocks_config.clone(),
         });
-        runner.install_ext::<MeteringExtension>(MeteringConfig {
-            enabled: args.enable_metering,
-            flashblocks_config: flashblocks_config.clone(),
-        });
+        let metering_config = if args.enable_metering {
+            flashblocks_config
+                .clone()
+                .map_or_else(MeteringConfig::enabled, MeteringConfig::with_flashblocks)
+        } else {
+            MeteringConfig::disabled()
+        };
+        runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
 
