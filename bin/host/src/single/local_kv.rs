@@ -9,7 +9,7 @@ use base_proof::{
 use base_proof_preimage::PreimageKey;
 
 use super::SingleChainHost;
-use crate::{KeyValueStore, Result};
+use base_proof_host::{KeyValueStore, Result};
 
 /// A simple, synchronous key-value store that returns data from a [`SingleChainHost`] config.
 #[derive(Debug)]

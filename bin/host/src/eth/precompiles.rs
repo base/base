@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes};
 use revm::precompile::{self, Precompile};
 
-use crate::{HostError, Result};
+use crate::{HostError, Result as HostResult};
 
 /// List of precompiles that are accelerated by the host program.
 pub(crate) const ACCELERATED_PRECOMPILES: &[Precompile] = &[
@@ -21,7 +21,7 @@ pub(crate) const ACCELERATED_PRECOMPILES: &[Precompile] = &[
 ];
 
 /// Executes an accelerated precompile on [revm].
-pub(crate) fn execute<T: Into<Bytes>>(address: Address, input: T, gas: u64) -> Result<Vec<u8>> {
+pub(crate) fn execute<T: Into<Bytes>>(address: Address, input: T, gas: u64) -> HostResult<Vec<u8>> {
     if let Some(precompile) =
         ACCELERATED_PRECOMPILES.iter().find(|precompile| *precompile.address() == address)
     {

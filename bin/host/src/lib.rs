@@ -1,19 +1,16 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-mod error;
-pub use error::{HostError, Result};
-
-mod server;
-pub use server::{PreimageServer, PreimageServerError};
-
-mod kv;
-pub use kv::{
-    DiskKeyValueStore, KeyValueStore, MemoryKeyValueStore, SharedKeyValueStore, SplitKeyValueStore,
+pub use base_proof_host::{
+    HintHandler, KeyValueStore, MemoryKeyValueStore, OfflineHostBackend, OnlineHostBackend,
+    OnlineHostBackendCfg, PreimageServer, PreimageServerError, Result, SharedKeyValueStore,
+    SplitKeyValueStore,
 };
 
-mod backend;
-pub use backend::{HintHandler, OfflineHostBackend, OnlineHostBackend, OnlineHostBackendCfg};
+mod kv;
+pub use kv::DiskKeyValueStore;
+
+pub use base_proof_host::HostError;
 
 pub mod eth;
 

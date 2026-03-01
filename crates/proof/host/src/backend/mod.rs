@@ -6,4 +6,5 @@ pub use offline::OfflineHostBackend;
 mod online;
 pub use online::{HintHandler, OnlineHostBackend, OnlineHostBackendCfg};
 
-pub(crate) mod util;
+mod util;
+pub use util::store_ordered_trie;

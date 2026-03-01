@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use alloy_primitives::B256;
 use rocksdb::{DB, Options};
 
-use super::{KeyValueStore, MemoryKeyValueStore};
+use base_proof_host::{KeyValueStore, MemoryKeyValueStore};
 use crate::{HostError, Result};
 
 /// A simple, synchronous key-value store that stores data on disk.

@@ -11,7 +11,7 @@ use crate::{KeyValueStore, Result};
 
 /// Constructs a merkle patricia trie from the ordered list passed and stores all encoded
 /// intermediate nodes of the trie in the [`KeyValueStore`].
-pub(crate) async fn store_ordered_trie<KV: KeyValueStore + ?Sized, T: AsRef<[u8]>>(
+pub async fn store_ordered_trie<KV: KeyValueStore + ?Sized, T: AsRef<[u8]>>(
     kv: &RwLock<KV>,
     values: &[T],
 ) -> Result<()> {

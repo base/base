@@ -18,11 +18,11 @@ use tokio::{
 };
 
 use super::{SingleChainHintHandler, SingleChainLocalInputs};
-use crate::{
-    DiskKeyValueStore, MemoryKeyValueStore, OfflineHostBackend, OnlineHostBackend,
-    OnlineHostBackendCfg, PreimageServer, SharedKeyValueStore, SplitKeyValueStore,
-    eth::rpc_provider, server::PreimageServerError,
+use base_proof_host::{
+    MemoryKeyValueStore, OfflineHostBackend, OnlineHostBackend, OnlineHostBackendCfg,
+    PreimageServer, PreimageServerError, SharedKeyValueStore, SplitKeyValueStore,
 };
+use crate::{DiskKeyValueStore, eth::rpc_provider};
 
 /// The host binary CLI application arguments.
 #[derive(Default, Parser, Serialize, Clone, Debug)]

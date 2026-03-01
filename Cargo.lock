@@ -3688,26 +3688,17 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rlp",
- "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-beacon",
- "alloy-serde",
- "alloy-transport",
- "alloy-transport-http",
  "anyhow",
  "ark-ff 0.5.0",
  "async-trait",
- "base-alloy-evm",
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
- "base-consensus-derive",
  "base-consensus-genesis",
  "base-consensus-providers",
- "base-consensus-registry",
  "base-proof",
- "base-proof-driver",
- "base-proof-executor",
- "base-proof-mpt",
+ "base-proof-host",
  "base-proof-preimage",
  "base-proof-std-fpvm",
  "base-protocol",
@@ -4036,6 +4027,26 @@ dependencies = [
  "base-revm",
  "revm",
  "tokio",
+]
+
+[[package]]
+name = "base-proof-host"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-transport",
+ "anyhow",
+ "async-trait",
+ "base-proof",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

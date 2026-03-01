@@ -1,4 +1,4 @@
-//! Error types for the host binary.
+//! Error types for host operations.
 
 use std::array::TryFromSliceError;
 
@@ -103,10 +103,6 @@ pub enum HostError {
     #[error("Serde JSON error: {0}")]
     SerdeJson(#[from] serde_json::Error),
 
-    /// `RocksDB` error.
-    #[error("RocksDB error: {0}")]
-    RocksDb(String),
-
     /// Preimage oracle error.
     #[error("Preimage oracle error: {0}")]
     PreimageOracle(#[from] PreimageOracleError),
@@ -122,10 +118,4 @@ pub enum HostError {
     /// IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-}
-
-impl From<rocksdb::Error> for HostError {
-    fn from(err: rocksdb::Error) -> Self {
-        Self::RocksDb(err.to_string())
-    }
 }

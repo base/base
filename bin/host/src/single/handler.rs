@@ -18,10 +18,8 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot, Predeploys};
 use tracing::warn;
 
-use crate::{
-    HintHandler, OnlineHostBackendCfg, backend::util::store_ordered_trie, kv::SharedKeyValueStore,
-    single::cfg::SingleChainHost,
-};
+use base_proof_host::{HintHandler, OnlineHostBackendCfg, store_ordered_trie, SharedKeyValueStore};
+use crate::single::cfg::SingleChainHost;
 
 /// Parses a blob hint, supporting both legacy (48-byte) and new (40-byte) formats.
 ///
