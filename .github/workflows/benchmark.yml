@@ -17,6 +17,7 @@ env:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   # Build base-reth-node and base-builder together, cached by source hash
@@ -88,6 +89,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      pull-requests: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
@@ -168,3 +170,52 @@ jobs:
           name: benchmark-report
           path: benchmark/report/dist/
           retention-days: 7
+
+      # Try to download baseline results from main branch
+      - name: Download baseline from main
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@20319c5641d495c8a52e688b7dc5fada6c3a9fbc # v8
+        with:
+          workflow: benchmark.yml
+          branch: main
+          name: benchmark-output
+          path: ${{ runner.temp }}/baseline/
+
+      - name: Generate comparison comment
+        if: github.event_name == 'pull_request'
+        run: |
+          # Check if baseline exists
+          if [ -d "${{ runner.temp }}/baseline" ] && [ -f "${{ runner.temp }}/baseline/metadata.json" ]; then
+            echo "Baseline found, comparing results..."
+            node node-reth/.github/scripts/compare-benchmarks.js \
+              --current "${{ runner.temp }}/output" \
+              --baseline "${{ runner.temp }}/baseline" \
+              --output "${{ runner.temp }}/comment.md"
+          else
+            echo "No baseline found, generating results only..."
+            node node-reth/.github/scripts/compare-benchmarks.js \
+              --current "${{ runner.temp }}/output" \
+              --output "${{ runner.temp }}/comment.md"
+          fi
+          
+          echo "Generated comment:"
+          cat "${{ runner.temp }}/comment.md"
+
+      - name: Find existing comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '## 📊 Benchmark Results'
+
+      - name: Post or update PR comment
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043 # v4.0.0
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: ${{ runner.temp }}/comment.md
+          edit-mode: replace
