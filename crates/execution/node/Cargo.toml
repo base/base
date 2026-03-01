@@ -146,6 +146,7 @@ test-utils = [
 	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",
 	"serde_json",
+	"base-protocol/test-utils"
 ]
 reth-codec = [ "base-execution-primitives/reth-codec" ]
 
