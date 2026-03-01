@@ -10,7 +10,7 @@ use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_consensus_hardforks::{Hardfork, Hardforks};
+use base_consensus_upgrades::{Hardfork, Hardforks};
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
