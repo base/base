@@ -81,6 +81,17 @@ skip = [
     "itertools",
     "lru",
 
+    # Crypto crates - version differences from different crypto stacks
+    "block-buffer",
+    "const-oid",
+    "crypto-common",
+    "digest",
+    "hex-literal",
+    "sha1",
+    "signature",
+    "strum",
+    "strum_macros",
+
     # System/platform crates
     "rustix",
     "linux-raw-sys",
