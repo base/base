@@ -1,0 +1,62 @@
+[package]
+name = "base-host"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+base-proof-mpt.workspace = true
+base-proof-executor.workspace = true
+base-proof-std-fpvm.workspace = true
+base-proof = { workspace = true, features = ["std"] }
+base-proof-preimage = { workspace = true, features = ["std"] }
+base-proof-driver.workspace = true
+base-consensus-derive.workspace = true
+base-consensus-registry.workspace = true
+base-protocol = { workspace = true, features = ["std", "serde"] }
+base-consensus-genesis = { workspace = true, features = ["std", "serde"] }
+base-consensus-providers.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+base-alloy-network.workspace = true
+base-alloy-evm = { workspace = true, features = ["std"] }
+alloy-rlp.workspace = true
+alloy-transport.workspace = true
+alloy-eips = { workspace = true, features = ["kzg"] }
+alloy-serde.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-consensus.workspace = true
+alloy-rpc-client.workspace = true
+alloy-transport-http.workspace = true
+alloy-rpc-types = { workspace = true, features = ["eth", "debug"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-beacon.workspace = true
+alloy-network.workspace = true
+revm = { workspace = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"] }
+anyhow.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "env"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+thiserror.workspace = true
+ark-ff.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[features]
+default = [ "single" ]
+single = []
+
+[[bin]]
+name = "base-host"
+path = "src/bin/host.rs"

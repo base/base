@@ -2658,6 +2658,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-client"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "async-trait",
+ "base-alloy-consensus",
+ "base-alloy-evm",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-consensus-registry",
+ "base-proof",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "base-proof-std-fpvm",
+ "base-proof-std-fpvm-proc",
+ "base-protocol",
+ "base-revm",
+ "cfg-if",
+ "lru 0.16.3",
+ "revm",
+ "serde",
+ "serde_json",
+ "sha2",
+ "spin 0.9.8",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-client-cli"
 version = "0.0.0"
 dependencies = [
@@ -3660,6 +3698,51 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.28.0",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
+name = "base-host"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-rpc-types",
+ "alloy-rpc-types-beacon",
+ "alloy-serde",
+ "alloy-transport",
+ "alloy-transport-http",
+ "anyhow",
+ "ark-ff 0.5.0",
+ "async-trait",
+ "base-alloy-evm",
+ "base-alloy-network",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-consensus-providers",
+ "base-consensus-registry",
+ "base-proof",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "base-proof-std-fpvm",
+ "base-protocol",
+ "clap",
+ "proptest",
+ "revm",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",
 ]

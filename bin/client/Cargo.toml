@@ -1,0 +1,67 @@
+[package]
+name = "base-client"
+version.workspace = true
+publish = false
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Proof
+base-proof-mpt.workspace = true
+base-proof-preimage.workspace = true
+base-proof-executor.workspace = true
+base-proof.workspace = true
+base-proof-std-fpvm.workspace = true
+base-proof-std-fpvm-proc.workspace = true
+
+# Protocol
+base-consensus-derive.workspace = true
+base-proof-driver.workspace = true
+base-consensus-registry.workspace = true
+base-protocol.workspace = true
+base-consensus-genesis = { workspace = true, features = ["serde"] }
+
+# Alloy
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-engine.workspace = true
+
+# Base Alloy
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+
+# Execution
+revm.workspace = true
+base-revm.workspace = true
+base-alloy-evm.workspace = true
+alloy-evm = { workspace = true, features = ["op"] }
+
+# General
+lru.workspace = true
+spin.workspace = true
+serde.workspace = true
+cfg-if.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+base-proof-preimage = { workspace = true, features = ["std"] }
+sha2.workspace = true
+
+[features]
+default = [ "client-tracing" ]
+client-tracing = [ "base-proof-std-fpvm/tracing" ]
+
+[[bin]]
+name = "base-client"
+path = "src/main.rs"
+
+[lints]
+workspace = true
