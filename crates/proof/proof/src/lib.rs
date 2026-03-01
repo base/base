@@ -34,5 +34,8 @@ pub use caching_oracle::{CachingOracle, FlushableCache};
 mod blocking_runtime;
 pub use blocking_runtime::block_on;
 
+mod validator;
+pub use validator::{ClaimValidationError, ClaimValidator};
+
 mod eip2935;
 pub use eip2935::eip_2935_history_lookup;
