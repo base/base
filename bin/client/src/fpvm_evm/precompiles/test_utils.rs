@@ -57,10 +57,8 @@ async fn precompile_host(
     hint_reader: HintReader<NativeChannel>,
 ) {
     let last_hint = Arc::new(RwLock::new(None));
-    let preimage_fetcher = PrecompilePreimageFetcher {
-        map: Default::default(),
-        last_hint: Arc::clone(&last_hint),
-    };
+    let preimage_fetcher =
+        PrecompilePreimageFetcher { map: Default::default(), last_hint: Arc::clone(&last_hint) };
     let hint_router = PrecompileHintRouter { last_hint: Arc::clone(&last_hint) };
 
     let server = tokio::task::spawn(async move {
