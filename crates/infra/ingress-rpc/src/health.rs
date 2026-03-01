@@ -8,25 +8,30 @@ async fn health() -> impl IntoResponse {
     StatusCode::OK
 }
 
-/// Bind and start the health check server on the specified address.
-/// Returns a handle that can be awaited to run the server.
-pub async fn bind_health_server(
-    addr: SocketAddr,
-) -> anyhow::Result<(SocketAddr, tokio::task::JoinHandle<anyhow::Result<()>>)> {
-    let app = Router::new().route("/health", get(health));
+/// Health check server.
+pub struct HealthServer;
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let bound_addr = listener.local_addr()?;
+impl HealthServer {
+    /// Bind and start the health check server on the specified address.
+    /// Returns a handle that can be awaited to run the server.
+    pub async fn bind(
+        addr: SocketAddr,
+    ) -> anyhow::Result<(SocketAddr, tokio::task::JoinHandle<anyhow::Result<()>>)> {
+        let app = Router::new().route("/health", get(health));
 
-    info!(
-        message = "Health check server bound successfully",
-        address = %bound_addr
-    );
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let bound_addr = listener.local_addr()?;
 
-    let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await?;
-        Ok(())
-    });
+        info!(
+            message = "Health check server bound successfully",
+            address = %bound_addr
+        );
 
-    Ok((bound_addr, handle))
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await?;
+            Ok(())
+        });
+
+        Ok((bound_addr, handle))
+    }
 }

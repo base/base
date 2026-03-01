@@ -2,7 +2,7 @@
 
 /// Health check HTTP server.
 mod health;
-pub use health::bind_health_server;
+pub use health::HealthServer;
 
 /// Prometheus metrics for the ingress RPC service.
 mod metrics;
