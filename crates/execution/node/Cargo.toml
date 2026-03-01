@@ -127,6 +127,7 @@ test-utils = [
 	"base-execution-exex/test-utils",
 	"base-execution-primitives/arbitrary",
 	"base-node-core/test-utils",
+	"base-protocol/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-codec",
 	"reth-consensus/test-utils",
