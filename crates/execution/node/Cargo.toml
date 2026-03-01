@@ -42,6 +42,7 @@ base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus = { workspace = true, features = ["std"] }
 base-execution-forks.workspace = true
+base-protocol.workspace = true
 base-execution-primitives = { workspace = true, features = [
   "serde",
   "serde-bincode-compat",

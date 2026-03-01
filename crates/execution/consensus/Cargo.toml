@@ -25,6 +25,7 @@ reth-trie-common.workspace = true
 # op-reth
 base-execution-forks.workspace = true
 base-execution-primitives.workspace = true
+base-protocol.workspace = true
 
 # ethereum
 alloy-eips.workspace = true
@@ -61,6 +62,7 @@ std = [
 	"base-execution-chainspec/std",
 	"base-execution-forks/std",
 	"base-execution-primitives/std",
+	"base-protocol/std",
 	"reth-chainspec/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",

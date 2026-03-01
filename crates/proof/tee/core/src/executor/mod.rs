@@ -46,18 +46,15 @@ mod stateless;
 mod trie_db;
 mod witness;
 
-pub use attributes::{
-    DEPOSIT_EVENT_TOPIC, L1_ATTRIBUTES_DEPOSITOR, L1_ATTRIBUTES_PREDEPLOYED,
-    extract_deposits_from_receipts,
-};
+pub use attributes::{DEPOSIT_EVENT_TOPIC, extract_deposits_from_receipts};
 pub use evm::{
     BlockExecutionResult, EnclaveEvmFactory, EnclaveTrieHinter, L1BlockInfo,
     build_l1_block_info_from_deposit, execute_block, verify_execution_result,
 };
 pub use l2_block_ref::l2_block_to_block_info;
 pub use stateless::{
-    ExecutionResult, L2_TO_L1_MESSAGE_PASSER, MAX_SEQUENCER_DRIFT_FJORD, execute_stateless,
-    validate_not_deposit, validate_sequencer_drift,
+    ExecutionResult, MAX_SEQUENCER_DRIFT_FJORD, execute_stateless, validate_not_deposit,
+    validate_sequencer_drift,
 };
 pub use trie_db::{EnclaveTrieDB, TrieProviderError};
 pub use witness::{ExecutionWitness, TransformedWitness, transform_witness};

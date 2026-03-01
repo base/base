@@ -5,7 +5,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
-use base_protocol::Predeploys;
+use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::Hardfork;
 
@@ -19,18 +19,8 @@ impl Ecotone {
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
 
-    /// The depositor account address.
-    pub const DEPOSITOR_ACCOUNT: Address = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
-
     /// The Enable Ecotone Input Method 4Byte Signature
     pub const ENABLE_ECOTONE_INPUT: [u8; 4] = hex!("22b90ab3");
-
-    /// L1 Block Deployer Address
-    pub const L1_BLOCK_DEPLOYER: Address = address!("4210000000000000000000000000000000000000");
-
-    /// The Gas Price Oracle Deployer Address
-    pub const GAS_PRICE_ORACLE_DEPLOYER: Address =
-        address!("4210000000000000000000000000000000000001");
 
     /// The new L1 Block Address
     /// This is computed by using go-ethereum's `crypto.CreateAddress` function,
@@ -116,7 +106,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
-                from: Self::L1_BLOCK_DEPLOYER,
+                from: Deployers::ECOTONE_L1_BLOCK,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -128,7 +118,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
-                from: Self::GAS_PRICE_ORACLE_DEPLOYER,
+                from: Deployers::ECOTONE_GAS_PRICE_ORACLE,
                 to: TxKind::Create,
                 mint: 0,
                 value: U256::ZERO,
@@ -164,7 +154,7 @@ impl Ecotone {
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
             TxDeposit {
                 source_hash: Self::enable_ecotone_source(),
-                from: Self::DEPOSITOR_ACCOUNT,
+                from: SystemAddresses::DEPOSITOR_ACCOUNT,
                 to: TxKind::Call(Predeploys::GAS_PRICE_ORACLE),
                 mint: 0,
                 value: U256::ZERO,

@@ -59,7 +59,7 @@ pub use info::{
 };
 
 mod predeploys;
-pub use predeploys::Predeploys;
+pub use predeploys::{Deployers, Predeploys, SystemAddresses};
 
 mod output_root;
 pub use output_root::OutputRoot;

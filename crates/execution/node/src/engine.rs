@@ -10,7 +10,8 @@ use base_alloy_rpc_types_engine::{
 use base_execution_consensus::isthmus;
 use base_execution_forks::OpHardforks;
 use base_execution_payload_builder::{OpExecutionPayloadValidator, OpPayloadTypes};
-use base_execution_primitives::{L2_TO_L1_MESSAGE_PASSER_ADDRESS, OpBlock};
+use base_execution_primitives::OpBlock;
+use base_protocol::Predeploys;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -78,7 +79,7 @@ pub struct OpEngineValidator<P, Tx, ChainSpec> {
 impl<P, Tx, ChainSpec> OpEngineValidator<P, Tx, ChainSpec> {
     /// Instantiates a new validator.
     pub fn new<KH: KeyHasher>(chain_spec: Arc<ChainSpec>, provider: P) -> Self {
-        let hashed_addr_l2tol1_msg_passer = KH::hash_key(L2_TO_L1_MESSAGE_PASSER_ADDRESS);
+        let hashed_addr_l2tol1_msg_passer = KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER);
         Self {
             inner: OpExecutionPayloadValidator::new(chain_spec),
             provider,

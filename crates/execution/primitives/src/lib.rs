@@ -8,9 +8,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-// Re-export predeploys
-pub use base_alloy_consensus::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
-
 pub mod transaction;
 pub use transaction::*;
 
