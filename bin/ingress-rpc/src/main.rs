@@ -9,8 +9,8 @@ use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
 use clap::Parser;
 use ingress_rpc_lib::{
-    BuilderConnector, Config, IngressApiServer, IngressService, KafkaMessageQueue, Providers,
-    bind_health_server,
+    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, KafkaMessageQueue,
+    Providers,
 };
 use jsonrpsee::server::Server;
 use rdkafka::{ClientConfig, producer::FutureProducer};
@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let health_check_addr = config.health_check_addr;
-    let (bound_health_addr, health_handle) = bind_health_server(health_check_addr).await?;
+    let (bound_health_addr, health_handle) = HealthServer::bind(health_check_addr).await?;
     info!(
         message = "Health check server started",
         address = %bound_health_addr
