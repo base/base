@@ -37,9 +37,10 @@ pub struct OpPooledTransaction<
     estimated_tx_compressed_size: OnceLock<u64>,
     /// The pooled transaction type.
     _pd: core::marker::PhantomData<Pooled>,
-
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
+    /// Timestamp (millis since Unix epoch) when this transaction was received.
+    received_at: i64,
 }
 
 impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
@@ -50,6 +51,7 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
             estimated_tx_compressed_size: Default::default(),
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
+            received_at: chrono::Utc::now().timestamp_millis(),
         }
     }
 
@@ -66,6 +68,11 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
+    }
+
+    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
+    pub const fn received_at(&self) -> i64 {
+        self.received_at
     }
 }
 
@@ -257,6 +264,22 @@ where
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
+    }
+}
+
+/// Trait for transactions that expose their timestamp.
+pub trait TimestampedTransaction {
+    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
+    fn timestamp(&self) -> i64;
+}
+
+impl<Cons, Pooled> TimestampedTransaction for OpPooledTransaction<Cons, Pooled>
+where
+    Cons: SignedTransaction,
+    Pooled: Send + Sync + 'static,
+{
+    fn timestamp(&self) -> i64 {
+        self.received_at()
     }
 }
 
