@@ -112,7 +112,11 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
         let active = self.rollup_config.is_ecotone_active(next_l1_origin.timestamp);
         match self.system_config.update_with_receipts(&receipts[..], addr, active) {
             Ok(true) => {
-                base_macros::set!(gauge, crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE, next_l1_origin.number as f64);
+                base_macros::set!(
+                    gauge,
+                    crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE,
+                    next_l1_origin.number as f64
+                );
                 info!(target: "l1_traversal", block_number = next_l1_origin.number, "System config updated");
             }
             Ok(false) => { /* Ignore, no update applied */ }

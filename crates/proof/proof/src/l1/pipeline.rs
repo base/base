@@ -18,9 +18,11 @@ use base_proof_preimage::CommsClient;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use spin::RwLock;
 
-use crate::{FlushableCache, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider};
-use crate::boot::BootInfo;
-use crate::sync::{SafeHeadFetcher, new_oracle_pipeline_cursor};
+use crate::{
+    FlushableCache, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
+    boot::BootInfo,
+    sync::{SafeHeadFetcher, new_oracle_pipeline_cursor},
+};
 
 /// An oracle-backed derivation pipeline.
 pub type ProviderDerivationPipeline<L1, L2, DA> = DerivationPipeline<
@@ -102,7 +104,13 @@ where
     }
 }
 
-impl<O> OraclePipeline<O, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>, EthereumDataSource<OracleL1ChainProvider<O>, OracleBlobProvider<O>>>
+impl<O>
+    OraclePipeline<
+        O,
+        OracleL1ChainProvider<O>,
+        OracleL2ChainProvider<O>,
+        EthereumDataSource<OracleL1ChainProvider<O>, OracleBlobProvider<O>>,
+    >
 where
     O: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
 {
@@ -117,19 +125,33 @@ where
         let cfg = Arc::new(boot_info.rollup_config.clone());
         let l1_cfg = Arc::new(boot_info.l1_config.clone());
 
-        let l2_head_hash = SafeHeadFetcher::fetch(oracle.as_ref(), boot_info.agreed_l2_output_root).await?;
+        let l2_head_hash =
+            SafeHeadFetcher::fetch(oracle.as_ref(), boot_info.agreed_l2_output_root).await?;
 
         let mut l1_provider = OracleL1ChainProvider::new(boot_info.l1_head, Arc::clone(&oracle));
-        let mut l2_provider = OracleL2ChainProvider::new(l2_head_hash, Arc::clone(&cfg), Arc::clone(&oracle));
+        let mut l2_provider =
+            OracleL2ChainProvider::new(l2_head_hash, Arc::clone(&cfg), Arc::clone(&oracle));
         let blob_provider = OracleBlobProvider::new(Arc::clone(&oracle));
-        let da_provider = EthereumDataSource::new_from_parts(l1_provider.clone(), blob_provider, &cfg);
+        let da_provider =
+            EthereumDataSource::new_from_parts(l1_provider.clone(), blob_provider, &cfg);
 
         let safe_header = l2_provider.header_by_hash(l2_head_hash)?.seal_slow();
 
-        let cursor = new_oracle_pipeline_cursor(&cfg, safe_header, &mut l1_provider, &mut l2_provider).await?;
+        let cursor =
+            new_oracle_pipeline_cursor(&cfg, safe_header, &mut l1_provider, &mut l2_provider)
+                .await?;
         l2_provider.set_cursor(Arc::clone(&cursor));
 
-        let pipeline = Self::new(cfg, l1_cfg, Arc::clone(&cursor), Arc::clone(&oracle), da_provider, l1_provider, l2_provider).await?;
+        let pipeline = Self::new(
+            cfg,
+            l1_cfg,
+            Arc::clone(&cursor),
+            Arc::clone(&oracle),
+            da_provider,
+            l1_provider,
+            l2_provider,
+        )
+        .await?;
 
         Ok((pipeline, cursor))
     }
