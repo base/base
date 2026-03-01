@@ -9,6 +9,7 @@ async fn health() -> impl IntoResponse {
 }
 
 /// Health check server.
+#[derive(Debug)]
 pub struct HealthServer;
 
 impl HealthServer {
