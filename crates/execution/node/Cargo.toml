@@ -105,7 +105,7 @@ base-alloy-network.workspace = true
 base-alloy-hardforks.workspace = true
 
 [features]
-default = ["reth-codec"]
+default = [ "reth-codec" ]
 asm-keccak = [
 	"alloy-primitives/asm-keccak",
 	"base-node-core/asm-keccak",
@@ -149,7 +149,7 @@ test-utils = [
 	"reth-trie-db/test-utils",
 	"serde_json",
 ]
-reth-codec = ["base-execution-primitives/reth-codec"]
+reth-codec = [ "base-execution-primitives/reth-codec" ]
 
 [[test]]
 name = "e2e_testsuite"
