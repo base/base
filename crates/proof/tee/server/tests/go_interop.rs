@@ -34,8 +34,8 @@ use base_enclave_server::{
     },
 };
 use signing_test_vectors::{
-    CONFIG_HASH, L1_ORIGIN_HASH, L2_BLOCK_NUMBER, OUTPUT_ROOT, PREV_OUTPUT_ROOT,
-    PROPOSER, STARTING_L2_BLOCK, TEE_IMAGE_HASH,
+    CONFIG_HASH, L1_ORIGIN_HASH, L2_BLOCK_NUMBER, OUTPUT_ROOT, PREV_OUTPUT_ROOT, PROPOSER,
+    STARTING_L2_BLOCK, TEE_IMAGE_HASH,
 };
 
 /// Well-known test signer private key (Hardhat account #0).
