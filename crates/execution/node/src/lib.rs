@@ -29,8 +29,6 @@ pub mod rpc;
 pub use rpc::OpEngineApiBuilder;
 
 pub mod version;
-pub use base_txpool as txpool;
-pub use base_txpool::{BaseOrdering, TimestampOrdering, TimestampedTransaction};
 pub use version::OP_NAME_CLIENT;
 
 pub mod proof_history;

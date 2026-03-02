@@ -15,9 +15,9 @@ use base_node_core::{
         OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder,
         OpNodeTypes, OpPayloadBuilder, OpPoolBuilder,
     },
-    txpool::BasePooledTransaction,
     utils::optimism_payload_attributes,
 };
+use base_txpool::BasePooledTransaction;
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{

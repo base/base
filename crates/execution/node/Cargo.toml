@@ -44,9 +44,9 @@ base-execution-consensus = { workspace = true, features = ["std"] }
 base-execution-forks.workspace = true
 base-protocol.workspace = true
 base-execution-primitives = { workspace = true, features = [
-  "serde",
-  "serde-bincode-compat",
-  "reth-codec",
+	"serde",
+	"serde-bincode-compat",
+	"reth-codec",
 ] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
@@ -54,10 +54,10 @@ base-execution-trie = { workspace = true, features = ["metrics"] }
 # revm with required optimism features
 # Note: this must be kept to ensure all features are properly enabled/forwarded
 revm = { workspace = true, features = [
-  "secp256k1",
-  "blst",
-  "c-kzg",
-  "memory_limit",
+	"secp256k1",
+	"blst",
+	"c-kzg",
+	"memory_limit",
 ] }
 base-revm.workspace = true
 
@@ -101,12 +101,11 @@ reth-trie-db.workspace = true
 futures.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
-base-test-utils.workspace = true
 base-alloy-network.workspace = true
 base-alloy-hardforks.workspace = true
 
 [features]
-default = [ "reth-codec" ]
+default = ["reth-codec"]
 asm-keccak = [
 	"alloy-primitives/asm-keccak",
 	"base-node-core/asm-keccak",
@@ -150,7 +149,7 @@ test-utils = [
 	"reth-trie-db/test-utils",
 	"serde_json",
 ]
-reth-codec = [ "base-execution-primitives/reth-codec" ]
+reth-codec = ["base-execution-primitives/reth-codec"]
 
 [[test]]
 name = "e2e_testsuite"
