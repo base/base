@@ -277,7 +277,7 @@ impl ChainConfig {
     }
 
     fn config_dir() -> Option<PathBuf> {
-        dirs::config_dir().map(|h| h.join("base").join("networks"))
+        dirs::home_dir().map(|h| h.join(".config").join("base").join("networks"))
     }
 }
 
