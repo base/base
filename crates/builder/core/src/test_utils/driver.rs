@@ -260,7 +260,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .await
     }
 
-    /// Retreives the latest built block and returns only a list of transaction
+    /// Retrieves the latest built block and returns only a list of transaction
     /// hashes from its body.
     pub async fn latest(&self) -> eyre::Result<Block<Transaction>> {
         self.provider
@@ -269,7 +269,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .ok_or_else(|| eyre::eyre!("Failed to get latest block"))
     }
 
-    /// Retreives the latest built block and returns a list of full transaction
+    /// Retrieves the latest built block and returns a list of full transaction
     /// contents in its body.
     pub async fn latest_full(&self) -> eyre::Result<Block<Transaction>> {
         self.provider
@@ -279,7 +279,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .ok_or_else(|| eyre::eyre!("Failed to get latest full block"))
     }
 
-    /// retreives a specific block by its number or tag and returns a list of transaction
+    /// retrieves a specific block by its number or tag and returns a list of transaction
     /// hashes from its body.
     pub async fn get_block(
         &self,
@@ -288,7 +288,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         Ok(self.provider.get_block_by_number(number).await?)
     }
 
-    /// retreives a specific block by its number or tag and returns a list of full transaction
+    /// retrieves a specific block by its number or tag and returns a list of full transaction
     /// contents in its body.
     pub async fn get_block_full(
         &self,
