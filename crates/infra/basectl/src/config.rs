@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
+use base_consensus_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -97,30 +98,6 @@ mod option_address_serde {
             |s| Address::from_str(&s).map(Some).map_err(serde::de::Error::custom),
         )
     }
-}
-
-/// Response from the `optimism_rollupConfig` RPC method.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct RollupConfig {
-    /// Genesis configuration block.
-    pub genesis: GenesisConfig,
-    /// L1 `SystemConfig` contract address.
-    pub l1_system_config_address: Address,
-}
-
-/// Genesis configuration from rollup config.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct GenesisConfig {
-    /// System configuration at genesis.
-    pub system_config: GenesisSystemConfig,
-}
-
-/// System config within genesis.
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct GenesisSystemConfig {
-    /// Batcher address configured at genesis.
-    #[serde(rename = "batcherAddr")]
-    pub batcher_addr: Address,
 }
 
 impl ChainConfig {
@@ -242,7 +219,7 @@ impl ChainConfig {
         )?;
 
         config.system_config = rollup_config.l1_system_config_address;
-        config.batcher_address = Some(rollup_config.genesis.system_config.batcher_addr);
+        config.batcher_address = rollup_config.genesis.system_config.map(|sc| sc.batcher_address);
 
         Ok(config)
     }

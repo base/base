@@ -125,8 +125,7 @@ fn render_system_config(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
             Paragraph::new(lines).alignment(Alignment::Center)
         },
         |sys| {
-            let gas_limit_str =
-                sys.gas_limit.map(|g| g.to_string()).unwrap_or_else(|| "-".to_string());
+            let gas_limit_str = sys.gas_limit.to_string();
             let elasticity_str =
                 sys.eip1559_elasticity.map(|e| e.to_string()).unwrap_or_else(|| "-".to_string());
             let denominator_str =

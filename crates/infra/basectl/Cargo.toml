@@ -18,6 +18,7 @@ arboard = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 crossterm = { workspace = true }
 base-alloy-flashblocks.workspace = true
+base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
