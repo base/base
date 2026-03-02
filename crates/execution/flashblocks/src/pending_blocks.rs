@@ -683,8 +683,27 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_defaults_blob_gas_to_zero_without_receipt() {
+    fn get_op_tx_result_defaults_blob_gas_to_zero_when_receipt_field_is_none() {
         let (tx_hash, pending_blocks) = build_pending_blocks(test_legacy_transaction(), None);
+
+        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+
+        assert_eq!(result.inner.blob_gas_used, 0);
+    }
+
+    #[test]
+    fn get_op_tx_result_defaults_blob_gas_to_zero_without_receipt() {
+        let tx = test_legacy_transaction();
+        let tx_hash = tx.tx_hash();
+        let mut builder = PendingBlocksBuilder::default();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(tx);
+        builder.with_transaction_sender(tx_hash, test_sender());
+        builder.with_transaction_state(tx_hash, Default::default());
+        builder.with_transaction_result(tx_hash, test_execution_result());
+        // Intentionally skip with_receipt to test the no-receipt fallback path
+        let pending_blocks = builder.build().expect("should build pending blocks");
 
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
