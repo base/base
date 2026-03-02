@@ -389,4 +389,69 @@ mod tests {
         assert_eq!(config.flashblocks.leeway_time, Duration::from_millis(50));
         assert!(config.flashblocks.fixed);
     }
+
+    #[test]
+    fn flashblock_index_both_provided() {
+        let args = FlashblockIndexArgs {
+            private_key: Some(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
+            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+        };
+        let config = args.into_config().unwrap();
+        assert!(config.is_some());
+        let config = config.unwrap();
+        assert_eq!(
+            config.contract_address,
+            "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap(),
+        );
+    }
+
+    #[test]
+    fn flashblock_index_none_provided() {
+        let args = FlashblockIndexArgs { private_key: None, contract_address: None };
+        let config = args.into_config().unwrap();
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn flashblock_index_only_key_provided() {
+        let args = FlashblockIndexArgs {
+            private_key: Some(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
+            contract_address: None,
+        };
+        assert!(args.into_config().is_err());
+    }
+
+    #[test]
+    fn flashblock_index_only_address_provided() {
+        let args = FlashblockIndexArgs {
+            private_key: None,
+            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+        };
+        assert!(args.into_config().is_err());
+    }
+
+    #[test]
+    fn flashblock_index_invalid_key_hex() {
+        let args = FlashblockIndexArgs {
+            private_key: Some("not_hex".to_string()),
+            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+        };
+        assert!(args.into_config().is_err());
+    }
+
+    #[test]
+    fn flashblock_index_key_without_0x_prefix() {
+        let args = FlashblockIndexArgs {
+            private_key: Some(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
+            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+        };
+        let config = args.into_config().unwrap();
+        assert!(config.is_some());
+    }
 }

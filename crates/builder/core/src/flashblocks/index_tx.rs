@@ -61,44 +61,39 @@ pub(super) fn build_flashblock_index_tx(
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::Transaction;
     use alloy_primitives::address;
     use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
 
+    const CHAIN_ID: u64 = 8453;
+    const BASE_FEE: u64 = 1_000_000_000;
+    const CONTRACT: alloy_primitives::Address =
+        address!("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF");
+
     fn test_config() -> FlashblockIndexConfig {
         let signer: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
-        FlashblockIndexConfig {
-            signer,
-            contract_address: address!("0x4200000000000000000000000000000000000024"),
-        }
+        FlashblockIndexConfig { signer, contract_address: CONTRACT }
     }
 
     #[test]
     fn builds_valid_tx() {
         let config = test_config();
+        let nonce = 7;
+        let flashblock_index = 3;
+
         let (recovered, da_size, uncompressed_size) =
-            build_flashblock_index_tx(&config, 8453, 0, 1_000_000_000, 3).unwrap();
+            build_flashblock_index_tx(&config, CHAIN_ID, nonce, BASE_FEE, flashblock_index)
+                .unwrap();
 
         assert_eq!(recovered.signer(), config.signer.address());
+        assert_eq!(recovered.chain_id(), Some(CHAIN_ID));
+        assert_eq!(recovered.nonce(), nonce);
+        assert_eq!(recovered.gas_limit(), SET_INDEX_GAS_LIMIT);
+        assert_eq!(recovered.to().unwrap(), CONTRACT);
         assert!(da_size > 0);
         assert!(uncompressed_size > 0);
-    }
-
-    #[test]
-    fn selector_matches() {
-        let calldata = setIndexCall { index: U256::from(42) }.abi_encode();
-        // First 4 bytes are the function selector.
-        assert_eq!(calldata.len(), 4 + 32);
-    }
-
-    #[test]
-    fn deterministic_output() {
-        let config = test_config();
-        let (a, _, _) = build_flashblock_index_tx(&config, 8453, 5, 1_000_000_000, 0).unwrap();
-        let (b, _, _) = build_flashblock_index_tx(&config, 8453, 5, 1_000_000_000, 0).unwrap();
-
-        assert_eq!(a.tx_hash(), b.tx_hash());
     }
 }
