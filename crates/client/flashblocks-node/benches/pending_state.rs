@@ -73,6 +73,7 @@ impl BenchSetup {
 
 struct BenchInput {
     provider: LocalNodeProvider,
+    runtime: reth_tasks::Runtime,
     canonical_block: RecoveredBlock<OpBlock>,
     flashblocks: Vec<Flashblock>,
     target_block: BlockNumber,
@@ -99,6 +100,7 @@ fn pending_state_benches(c: &mut Criterion) {
         group.bench_function(label, |b| {
             b.to_async(&runtime).iter_batched(
                 || BenchInput {
+                    runtime: reth_tasks::Runtime::default(),
                     provider: provider.clone(),
                     canonical_block: canonical_block.clone(),
                     flashblocks: flashblocks.clone(),
@@ -116,7 +118,7 @@ fn pending_state_benches(c: &mut Criterion) {
 
 async fn build_pending_state(input: BenchInput) {
     let state = FlashblocksState::new(5);
-    state.start(input.provider);
+    state.start(input.provider, input.runtime);
     state.on_canonical_block_received(input.canonical_block);
 
     for flashblock in input.flashblocks {

@@ -6,7 +6,7 @@ use alloy_consensus::{
     Header,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{BlockNumberOrTag, eip7928::BlockAccessList};
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
@@ -18,15 +18,18 @@ use base_execution_forks::OpHardforks;
 use base_execution_primitives::OpBlock;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_engine_tree::tree::CachedStateProvider;
 use reth_evm::ConfigureEvm;
 use reth_primitives::RecoveredBlock;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_provider::{BlockReader, BlockReaderIdExt, StateProviderFactory, StateReader};
 use reth_revm::{State, database::StateProviderDatabase};
+use reth_tasks::Runtime;
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
+use tokio_stream::StreamExt;
 
 use crate::{
-    BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
+    BlockAssembler, CachePrewarmer, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
     PendingStateBuilder, ProviderError, Result,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -50,16 +53,23 @@ pub struct StateProcessor<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     max_depth: u64,
     metrics: Metrics,
-    client: Client,
+    client: Arc<Client>,
     sender: Sender<Arc<PendingBlocks>>,
+    /// Cache prewarmer for BAL-based state prewarming.
+    cache_prewarmer: CachePrewarmer<Client>,
 }
 
 impl<Client> StateProcessor<Client>
 where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
-        + BlockReaderIdExt<Header = Header>
+        + ChainSpecProvider<
+            ChainSpec: EthChainSpec<Header = Header> + OpHardforks + Clone + Send + Sync + 'static,
+        > + BlockReaderIdExt<Header = Header>
+        + BlockReader
+        + StateReader
         + Clone
+        + Send
+        + Sync
         + 'static,
 {
     /// Creates a new state processor wired to the provided channels and state.
@@ -69,8 +79,19 @@ where
         max_depth: u64,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
+        runtime: Runtime,
     ) -> Self {
-        Self { metrics: Metrics::default(), pending_blocks, client, max_depth, rx, sender }
+        let client = Arc::new(client);
+        let cache_prewarmer = CachePrewarmer::new(runtime, Arc::clone(&client));
+        Self {
+            metrics: Metrics::default(),
+            pending_blocks,
+            client,
+            max_depth,
+            rx,
+            sender,
+            cache_prewarmer,
+        }
     }
 
     /// Processes updates from the queue until the channel closes.
@@ -80,7 +101,7 @@ where
             match update {
                 StateUpdate::Canonical(block) => {
                     debug!(message = "processing canonical block", block_number = block.number);
-                    match self.process_canonical_block(prev_pending_blocks, &block) {
+                    match self.process_canonical_block(prev_pending_blocks, &block).await {
                         Ok(new_pending_blocks) => {
                             self.pending_blocks.swap(new_pending_blocks);
                         }
@@ -96,7 +117,7 @@ where
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
-                    match self.process_flashblock(prev_pending_blocks, flashblock) {
+                    match self.process_flashblock(prev_pending_blocks, flashblock).await {
                         Ok(new_pending_blocks) => {
                             if new_pending_blocks.is_some() {
                                 _ = self.sender.send(new_pending_blocks.clone().unwrap())
@@ -115,7 +136,7 @@ where
         }
     }
 
-    fn process_canonical_block(
+    async fn process_canonical_block(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         block: &RecoveredBlock<OpBlock>,
@@ -174,7 +195,7 @@ where
 
                 // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-                self.build_pending_state(None, &flashblocks)
+                self.build_pending_state(None, &flashblocks).await
             }
             ReconciliationStrategy::DepthLimitExceeded { depth, max_depth } => {
                 debug!(
@@ -184,7 +205,7 @@ where
                 );
 
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-                self.build_pending_state(None, &flashblocks)
+                self.build_pending_state(None, &flashblocks).await
             }
             ReconciliationStrategy::Continue => {
                 debug!(
@@ -197,7 +218,7 @@ where
                 );
                 // If no reorg, we can continue building on top of the existing pending state
                 // NOTE: We do not retain specific flashblocks here to avoid losing track of our "earliest" pending block number
-                self.build_pending_state(prev_pending_blocks, &flashblocks)
+                self.build_pending_state(prev_pending_blocks, &flashblocks).await
             }
             ReconciliationStrategy::NoPendingState => {
                 // This case is already handled above, but included for completeness
@@ -207,7 +228,7 @@ where
         }
     }
 
-    fn process_flashblock(
+    async fn process_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: Flashblock,
@@ -216,7 +237,7 @@ where
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self.build_pending_state(None, &[flashblock]);
+                    return self.build_pending_state(None, &[flashblock]).await;
                 }
                 info!(message = "waiting for first Flashblock");
                 return Ok(None);
@@ -237,7 +258,7 @@ where
                 // or the first flashblock for the next block
                 let mut flashblocks = pending_blocks.get_flashblocks();
                 flashblocks.push(flashblock);
-                self.build_pending_state(prev_pending_blocks, &flashblocks)
+                self.build_pending_state(prev_pending_blocks, &flashblocks).await
             }
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block
@@ -272,7 +293,7 @@ where
         }
     }
 
-    fn build_pending_state(
+    async fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
@@ -299,7 +320,29 @@ where
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?;
-        let state_provider_db = StateProviderDatabase::new(state_provider);
+
+        // TODO: Get access list from flashblock metadata
+        let access_list: Option<BlockAccessList> = None;
+
+        // technically, this should only include transactions from flashblocks which haven't been executed,
+        // but for now we'll include all transactions from all pending flashblocks.
+        let transaction_count = flashblocks_per_block
+            .values()
+            .map(|fbs| fbs.iter().map(|fb| fb.diff.transactions.len()).sum::<usize>())
+            .sum();
+
+        // Set up cache with optional BAL prewarming (spawns background workers if BAL present)
+        let cache_setup = self.cache_prewarmer.setup_cache(
+            &last_block_header,
+            &evm_config,
+            access_list,
+            transaction_count,
+        )?;
+
+        // Wrap state provider with cache for execution
+        let cached_state_provider =
+            CachedStateProvider::new(state_provider, cache_setup.cache, cache_setup.metrics);
+        let state_provider_db = StateProviderDatabase::new(cached_state_provider);
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Track state changes across flashblocks, accumulating bundle state
@@ -367,7 +410,19 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
-            let mut pending_state_builder = PendingStateBuilder::new(
+            // Prepare the batch of recovered transactions for execution
+            let recovered_transactions: Vec<Recovered<OpTxEnvelope>> = txs_with_senders
+                .iter()
+                .map(|(tx, sender)| Recovered::new_unchecked(tx.clone(), *sender))
+                .collect();
+
+            // Register transaction senders with the pending blocks builder
+            for (tx, sender) in &txs_with_senders {
+                pending_blocks_builder.with_transaction_sender(tx.tx_hash(), *sender);
+                pending_blocks_builder.increment_nonce(*sender);
+            }
+
+            let pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
                 assembled.block,
@@ -376,16 +431,13 @@ where
                 state_overrides,
             );
 
-            for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
-                let tx_hash = transaction.tx_hash();
+            // Execute the batch and consume results from the async stream
+            let batch_result = pending_state_builder.execute_batch(recovered_transactions);
+            let (mut result_stream, execution_handle) = batch_result.into_stream();
 
-                pending_blocks_builder.with_transaction_sender(tx_hash, sender);
-                pending_blocks_builder.increment_nonce(sender);
-
-                let recovered_transaction = Recovered::new_unchecked(transaction, sender);
-
-                let executed_transaction =
-                    pending_state_builder.execute_transaction(idx, recovered_transaction)?;
+            while let Some(result) = result_stream.next().await {
+                let executed_transaction = result?;
+                let tx_hash = executed_transaction.rpc_transaction.inner.inner.tx_hash();
 
                 for (address, account) in &executed_transaction.state {
                     if account.is_touched() {
@@ -400,7 +452,7 @@ where
                     .with_transaction_result(tx_hash, executed_transaction.result);
             }
 
-            (db, state_overrides) = pending_state_builder.into_db_and_state_overrides();
+            (db, state_overrides) = execution_handle.into_db_and_state_overrides();
             last_block_header = block_header;
         }
 
@@ -408,6 +460,11 @@ where
         db.merge_transitions(BundleRetention::Reverts);
         pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
+
+        // Terminate prewarm task now that execution is complete
+        if let Some(prewarm_handle) = cache_setup.prewarm_handle {
+            prewarm_handle.terminate();
+        }
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
