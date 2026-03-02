@@ -119,7 +119,11 @@ jobs:
           for bin in base-reth-node basectl; do
             ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
             tar -czf "$ARCHIVE" -C target/maxperf "$bin"
-            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+            if command -v sha256sum &>/dev/null; then
+              sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+            else
+              shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+            fi
           done
 
       - name: Upload artifacts
