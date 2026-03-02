@@ -3887,6 +3887,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-client"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-evm",
+ "alloy-primitives",
+ "base-alloy-consensus",
+ "base-alloy-evm",
+ "base-consensus-derive",
+ "base-consensus-genesis",
+ "base-proof",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-preimage",
+ "base-protocol",
+ "base-revm",
+ "rstest",
+ "spin 0.10.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-proof-driver"
 version = "0.0.0"
 dependencies = [
@@ -3938,6 +3962,23 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "base-proof-fpvm-precompiles"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "async-trait",
+ "base-alloy-evm",
+ "base-proof",
+ "base-proof-preimage",
+ "base-revm",
+ "revm",
+ "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]
