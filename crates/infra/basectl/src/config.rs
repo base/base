@@ -193,7 +193,7 @@ impl ChainConfig {
     ///
     /// Resolution order:
     /// 1. Built-in config as base (if name matches "mainnet", "sepolia", or "devnet")
-    /// 2. User config at ~/.base/config/<name>.yaml merged on top
+    /// 2. User config at ~/.config/base/networks/<name>.yaml merged on top
     /// 3. Or treat as standalone file path
     ///
     /// For devnet, the `system_config` and `batcher_address` are fetched dynamically
@@ -227,7 +227,7 @@ impl ChainConfig {
 
         anyhow::bail!(
             "Config '{name_or_path}' not found. Expected built-in name (mainnet, sepolia, devnet), \
-             user config at ~/.base/config/{name_or_path}.yaml, or a valid file path."
+             user config at ~/.config/base/networks/{name_or_path}.yaml, or a valid file path."
         )
     }
 
@@ -277,7 +277,7 @@ impl ChainConfig {
     }
 
     fn config_dir() -> Option<PathBuf> {
-        dirs::home_dir().map(|h| h.join(".base").join("config"))
+        dirs::config_dir().map(|h| h.join("base").join("networks"))
     }
 }
 
