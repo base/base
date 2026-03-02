@@ -126,6 +126,10 @@ pub enum StateProcessorError {
     /// Pending blocks build errors.
     #[error(transparent)]
     Build(#[from] BuildError),
+
+    /// Missing first flashblock, so this one can't be processed.
+    #[error("missing first flashblock: cannot build pending blocks without first flashblock")]
+    MissingFirstFlashblock,
 }
 
 impl From<RecoveryError> for StateProcessorError {
