@@ -322,10 +322,8 @@ where
                 break;
             }
 
-            let number = next_number
-                .checked_add(1)
-                .and_then(|n| n.checked_add(i))
-                .ok_or_else(|| {
+            let number =
+                next_number.checked_add(1).and_then(|n| n.checked_add(i)).ok_or_else(|| {
                     ProposerError::Internal("overflow computing next block number".into())
                 })?;
 
