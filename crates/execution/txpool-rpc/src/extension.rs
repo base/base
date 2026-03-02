@@ -14,7 +14,7 @@ pub struct TxPoolRpcConfig {
     pub sequencer_rpc: Option<String>,
 }
 
-/// Extension that registers the `TxPool` RPC modules (`TxPoolManagementApi` and `TransactionStatusApi`).
+/// Extension that registers the `TxPool` RPC modules (`AdminTxPoolApi` and `TransactionStatusApi`).
 #[derive(Debug)]
 pub struct TxPoolRpcExtension {
     config: TxPoolRpcConfig,
