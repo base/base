@@ -2,10 +2,10 @@
 pragma solidity ^0.8.0;
 
 import {Script, console} from "forge-std/Script.sol";
-import {SP1Verifier as SP1VerifierPlonk} from "@sp1-contracts-v5/src/v5.0.0/SP1VerifierPlonk.sol";
-import {SP1Verifier as SP1VerifierGroth16} from "@sp1-contracts-v5/src/v5.0.0/SP1VerifierGroth16.sol";
+import {SP1Verifier as SP1VerifierPlonk} from "@sp1-contracts/src/v6.0.0/SP1VerifierPlonk.sol";
+import {SP1Verifier as SP1VerifierGroth16} from "@sp1-contracts/src/v6.0.0/SP1VerifierGroth16.sol";
 
-/// @notice Deploys SP1VerifierPlonk (v5.0.0) for E2E testing.
+/// @notice Deploys SP1VerifierPlonk (v6.0.0) for E2E testing.
 /// @dev For production deployments, use the canonical sp1-contracts scripts:
 ///      https://github.com/succinctlabs/sp1-contracts
 contract DeployVerifierPlonk is Script {
@@ -18,7 +18,7 @@ contract DeployVerifierPlonk is Script {
     }
 }
 
-/// @notice Deploys SP1VerifierGroth16 (v5.0.0) for E2E testing.
+/// @notice Deploys SP1VerifierGroth16 (v6.0.0) for E2E testing.
 /// @dev For production deployments, use the canonical sp1-contracts scripts:
 ///      https://github.com/succinctlabs/sp1-contracts
 contract DeployVerifierGroth16 is Script {

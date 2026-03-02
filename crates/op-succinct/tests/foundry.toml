@@ -6,5 +6,5 @@ out = "../contracts/out"
 libs = ["sp1-contracts/contracts/lib"]
 remappings = [
     "forge-std/=sp1-contracts/contracts/lib/forge-std/src/",
-    "@sp1-contracts-v5/=sp1-contracts/contracts/",
+    "@sp1-contracts/=sp1-contracts/contracts/",
 ]
