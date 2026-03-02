@@ -1066,8 +1066,6 @@ where
         access_list: None,
     };
 
-    let (_, blob_gas_used) = ctx.blob_fields(info);
-
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
         payload_id: ctx.payload_id(),
