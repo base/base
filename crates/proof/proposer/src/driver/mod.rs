@@ -240,7 +240,7 @@ where
 
         // Extract intermediate roots from the per-block pending queue. Once aggregation
         // drains the queue, we rely on the cached copy for retries.
-        let fresh_roots = self.extract_intermediate_roots(starting_block_number);
+        let fresh_roots = self.extract_intermediate_roots(starting_block_number)?;
         if !fresh_roots.is_empty() {
             self.cached_intermediate_roots = fresh_roots;
         }
@@ -265,19 +265,33 @@ where
     ///
     /// The intermediate roots are the output roots at every `intermediate_block_interval`
     /// within the current proposal range. Must be called before aggregation drains the queue.
-    fn extract_intermediate_roots(&self, starting_block_number: u64) -> Vec<B256> {
+    fn extract_intermediate_roots(
+        &self,
+        starting_block_number: u64,
+    ) -> Result<Vec<B256>, ProposerError> {
         let interval = self.config.intermediate_block_interval;
+        if interval == 0 {
+            return Err(ProposerError::Config(
+                "intermediate_block_interval must not be zero".into(),
+            ));
+        }
         let count = self.config.block_interval / interval;
         let mut roots = Vec::with_capacity(count as usize);
         for i in 1..=count {
-            let target_block = starting_block_number + i * interval;
+            let target_block = starting_block_number
+                .checked_add(i.checked_mul(interval).ok_or_else(|| {
+                    ProposerError::Internal("overflow computing intermediate root target".into())
+                })?)
+                .ok_or_else(|| {
+                    ProposerError::Internal("overflow computing intermediate root target".into())
+                })?;
             if let Some(p) = self.pending.iter().find(|p| p.to.number == target_block) {
                 roots.push(p.output.output_root);
             } else {
                 debug!(target_block, "Intermediate root block not yet in pending queue");
             }
         }
-        roots
+        Ok(roots)
     }
 
     /// Generates single-block proofs, filling the pending queue.
@@ -298,7 +312,9 @@ where
         let next_number = self.pending.back().map_or(starting_block_number, |back| back.to.number);
 
         // Generate proofs up to the target block for this interval.
-        let target_block = starting_block_number + self.config.block_interval;
+        let target_block = starting_block_number
+            .checked_add(self.config.block_interval)
+            .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
 
         for i in 0..self.config.block_interval {
             if self.cancel.is_cancelled() {
@@ -306,7 +322,12 @@ where
                 break;
             }
 
-            let number = next_number + 1 + i;
+            let number = next_number
+                .checked_add(1)
+                .and_then(|n| n.checked_add(i))
+                .ok_or_else(|| {
+                    ProposerError::Internal("overflow computing next block number".into())
+                })?;
 
             // Stop once we've reached the target block for this interval.
             if number > target_block {
@@ -360,7 +381,9 @@ where
         let latest_safe_number = latest_safe.number;
 
         // We need exactly block_interval proofs to propose.
-        let target = starting_block_number + self.config.block_interval;
+        let target = starting_block_number
+            .checked_add(self.config.block_interval)
+            .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
 
         // Count pending proposals up to the target block and safe head.
         let mut count = 0;
@@ -529,7 +552,10 @@ where
                 // The current approach self-heals via `GameAlreadyExists` recovery.
                 match self.factory_client.game_count().await {
                     Ok(count) if count > 0 => {
-                        let new_index = (count - 1) as u32;
+                        let new_index = u32::try_from(count - 1).unwrap_or_else(|_| {
+                            warn!(count, "game_count exceeds u32::MAX, clamping to u32::MAX");
+                            u32::MAX
+                        });
                         self.parent_game_state = ParentGameState {
                             initialized: true,
                             game_index: new_index,
@@ -1292,7 +1318,7 @@ mod tests {
         }
         driver.pending.push_back(p10);
 
-        let roots = driver.extract_intermediate_roots(100);
+        let roots = driver.extract_intermediate_roots(100).unwrap();
         assert_eq!(roots.len(), 2);
         assert_eq!(roots[0], root_a);
         assert_eq!(roots[1], root_b);
@@ -1326,7 +1352,7 @@ mod tests {
         driver.pending.push_back(p5);
         // Block 110 not yet generated -- only partial queue
 
-        let roots = driver.extract_intermediate_roots(100);
+        let roots = driver.extract_intermediate_roots(100).unwrap();
         assert_eq!(roots.len(), 1, "only the first checkpoint should be found");
         assert_eq!(roots[0], root_a);
     }
@@ -1353,7 +1379,7 @@ mod tests {
         p10.output.output_root = final_root;
         driver.pending.push_back(p10);
 
-        let roots = driver.extract_intermediate_roots(100);
+        let roots = driver.extract_intermediate_roots(100).unwrap();
         assert_eq!(roots.len(), 1, "should have exactly one root when intervals match");
         assert_eq!(roots[0], final_root);
     }

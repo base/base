@@ -33,7 +33,11 @@ pub(crate) mod test_helpers {
         ProverProposal {
             output: Proposal {
                 output_root: B256::repeat_byte(0x01),
-                signature: Bytes::from(vec![0xab; 65]),
+                signature: {
+                    let mut sig = vec![0xab; 65];
+                    sig[64] = 1; // valid ECDSA v-value
+                    Bytes::from(sig)
+                },
                 l1_origin_hash: B256::repeat_byte(0x02),
                 l1_origin_number: U256::from(100 + to_number),
                 l2_block_number: U256::from(to_number),

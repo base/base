@@ -1,6 +1,6 @@
 //! Enclave client types for TEE proof generation.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use base_enclave::{
     AggregateRequest,
@@ -56,10 +56,12 @@ pub fn rollup_config_to_per_chain_config(
     let deposit_contract_address = cfg.deposit_contract_address;
     let l1_system_config_address = cfg.l1_system_config_address;
 
-    let (batcher_addr, scalar, gas_limit) =
-        cfg.genesis.system_config.as_ref().map_or((Address::ZERO, B256::ZERO, 30_000_000), |sc| {
-            (sc.batcher_address, B256::from(sc.scalar.to_be_bytes::<32>()), sc.gas_limit)
-        });
+    let sc = cfg.genesis.system_config.as_ref().ok_or_else(|| {
+        ProposerError::Config("rollup config missing genesis system_config".into())
+    })?;
+    let batcher_addr = sc.batcher_address;
+    let scalar = B256::from(sc.scalar.to_be_bytes::<32>());
+    let gas_limit = sc.gas_limit;
 
     Ok(PerChainConfig {
         chain_id: U256::from(cfg.l2_chain_id.id()),
