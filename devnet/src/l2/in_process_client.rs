@@ -140,6 +140,11 @@ impl InProcessClient {
             .with_network(network_config)
             .with_rpc(rpc_args);
 
+        // Use legacy state root computation to avoid a reth debug_assert panic in rayon
+        // proof workers (paradigmxyz/reth#22505). The docker-compose devnet sidesteps this by
+        // building with the release profile; remove this once reth ships the fix.
+        node_config.engine.legacy_state_root_task_enabled = true;
+
         if config.http_port.is_none()
             && config.ws_port.is_none()
             && config.auth_port.is_none()
@@ -203,6 +208,12 @@ impl InProcessClient {
         let url = Url::parse(&format!("ws://{}", self.ws_api_addr))
             .map_err(|e| eyre!("Failed to build WebSocket URL: {}", e))?;
         Ok(url)
+    }
+
+    /// Returns the Engine API URL (localhost).
+    pub fn engine_url(&self) -> Result<Url> {
+        Url::parse(&format!("http://{}", self.engine_addr))
+            .map_err(|e| eyre!("Failed to build Engine URL: {}", e))
     }
 
     /// Returns the Engine API URL for Docker containers using testcontainers host port exposure.

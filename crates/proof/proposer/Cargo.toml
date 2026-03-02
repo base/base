@@ -33,6 +33,9 @@ base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
 base-alloy-rpc-types.workspace = true
 base-alloy-network.workspace = true
 
+# Consensus
+base-protocol.workspace = true
+
 # Enclave
 base-enclave-client.workspace = true
 base-enclave.workspace = true

@@ -1,7 +1,6 @@
 //! This file contains the legacy reth `OpTransactionSigned` type that has been replaced with
 //! op-alloy's OpTransactionSigned To test for consistency this is kept
 
-use alloc::vec::Vec;
 use core::{
     hash::{Hash, Hasher},
     mem,
@@ -20,16 +19,14 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, Uint, keccak256};
 use alloy_rlp::Header;
-use base_alloy_consensus::{OpPooledTransaction, OpTxEnvelope, OpTypedTransaction, TxDeposit};
+use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction, TxDeposit};
 #[cfg(any(test, feature = "reth-codec"))]
 use reth_primitives_traits::{
     InMemorySize, SignedTransaction,
     crypto::secp256k1::{recover_signer, recover_signer_unchecked},
     sync::OnceLock,
-    transaction::{error::TransactionConversionError, signed::RecoveryError},
+    transaction::signed::RecoveryError,
 };
-
-use crate::transaction::OpTransaction;
 
 /// Signed transaction.
 #[cfg_attr(any(test, feature = "reth-codec"), reth_codecs::add_arbitrary_tests(rlp))]
@@ -67,23 +64,6 @@ impl OpTransactionSigned {
             OpTypedTransaction::Eip7702(tx) => &mut tx.input,
             OpTypedTransaction::Deposit(tx) => &mut tx.input,
         }
-    }
-
-    /// Consumes the type and returns the transaction.
-    #[inline]
-    pub(super) fn into_transaction(self) -> OpTypedTransaction {
-        self.transaction
-    }
-
-    /// Returns the transaction.
-    #[inline]
-    pub(super) const fn transaction(&self) -> &OpTypedTransaction {
-        &self.transaction
-    }
-
-    /// Splits the `OpTransactionSigned` into its transaction and signature.
-    pub(super) fn split(self) -> (OpTypedTransaction, Signature) {
-        (self.transaction, self.signature)
     }
 
     /// Creates a new signed transaction from the given transaction and signature without the hash.
@@ -480,7 +460,7 @@ impl reth_codecs::Compact for OpTransactionSigned {
 #[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for OpTransactionSigned {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let mut transaction = OpTypedTransaction::arbitrary(u)?;
+        let transaction = OpTypedTransaction::arbitrary(u)?;
 
         let secp = secp256k1::Secp256k1::new();
         let key_pair = secp256k1::Keypair::new(&secp, &mut rand_08::thread_rng());

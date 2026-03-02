@@ -42,13 +42,13 @@ clean:
 
 # Run the proposer binary
 run *ARGS:
-    cargo run --bin proposer -- {{ARGS}}
+    cargo run --bin base-proposer -- {{ARGS}}
 
 # Run the proposer with development configuration (Base Sepolia)
 # Uses values from chart/configurations/development/values.yaml
 # Override ENCLAVE_RPC for local testing: just run-dev --enclave-rpc http://localhost:1234
 run-dev *ARGS:
-    cargo run --bin proposer -- \
+    cargo run --bin base-proposer -- \
         --l1-eth-rpc https://c3-chainproxy-eth-sepolia-full-dev.cbhq.net \
         --l2-eth-rpc https://base-sepolia-dev.cbhq.net:8545 \
         --rollup-rpc https://base-sepolia-archive-k8s-dev.cbhq.net:7545 \
@@ -67,7 +67,7 @@ run-dev *ARGS:
 # Run the proposer with local enclave server (for testing Generate() locally)
 # Start the enclave server first: cd op-enclave/rust && make run-server
 run-local *ARGS:
-    cargo run --bin proposer -- \
+    cargo run --bin base-proposer -- \
         --l1-eth-rpc https://c3-chainproxy-eth-sepolia-full-dev.cbhq.net \
         --l2-eth-rpc https://base-sepolia.cbhq.net \
         --rollup-rpc https://base-sepolia-archive-k8s-dev.cbhq.net:7545 \
@@ -82,7 +82,7 @@ run-local *ARGS:
 
 # Show help for the proposer binary
 help:
-    cargo run --bin proposer -- --help
+    cargo run --bin base-proposer -- --help
 
 # Build Docker image
 docker-build:

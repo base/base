@@ -557,6 +557,7 @@ where
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
         best_txs.mark_committed(&new_transactions);
+        self.pool.prune_transactions(new_transactions);
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
@@ -1065,8 +1066,6 @@ where
         block_number: ctx.parent().number + 1,
         access_list: None,
     };
-
-    let (_, blob_gas_used) = ctx.blob_fields(info);
 
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {

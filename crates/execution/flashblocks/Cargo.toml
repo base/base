@@ -1,0 +1,83 @@
+[package]
+name = "base-flashblocks"
+description = "Flashblocks State Management"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-alloy-flashblocks.workspace = true
+base-alloy-evm.workspace = true
+
+# reth
+reth-rpc.workspace = true
+reth-evm.workspace = true
+reth-revm.workspace = true
+reth-chainspec.workspace = true
+reth-provider.workspace = true
+reth-primitives.workspace = true
+reth-rpc-convert.workspace = true
+reth-rpc-eth-api.workspace = true
+reth-rpc-eth-types.workspace = true
+base-execution-evm.workspace = true
+base-execution-rpc.workspace = true
+base-execution-forks.workspace = true
+base-execution-primitives.workspace = true
+
+# revm
+revm.workspace = true
+base-revm.workspace = true
+revm-database.workspace = true
+
+# alloy
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+
+# base-alloy
+base-alloy-rpc-types-engine.workspace = true
+
+# base-alloy
+base-alloy-consensus.workspace = true
+base-alloy-network.workspace = true
+base-alloy-rpc-types.workspace = true
+
+# tokio
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
+
+# async
+futures.workspace = true
+
+# rpc
+serde = { workspace = true, features = ["std"] }
+jsonrpsee.workspace = true
+jsonrpsee-types.workspace = true
+
+# metrics
+metrics.workspace = true
+metrics-derive.workspace = true
+
+# misc
+url.workspace = true
+rayon.workspace = true
+tracing = { workspace = true, features = ["std"] }
+arc-swap.workspace = true
+thiserror = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["from"] }
+
+[dev-dependencies]
+rstest.workspace = true
+base-execution-chainspec.workspace = true

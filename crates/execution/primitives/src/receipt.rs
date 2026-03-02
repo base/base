@@ -1,17 +1,4 @@
-use alloc::vec::Vec;
-
-use alloy_consensus::{
-    Eip658Value, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom, RlpDecodableReceipt,
-    RlpEncodableReceipt, TxReceipt, Typed2718,
-};
-use alloy_eips::{
-    Decodable2718, Encodable2718,
-    eip2718::{Eip2718Result, IsTyped2718},
-};
-use alloy_primitives::{Bloom, Log};
-use alloy_rlp::{BufMut, Decodable, Encodable, Header};
-use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
-use reth_primitives_traits::InMemorySize;
+use base_alloy_consensus::{OpDepositReceipt, OpReceipt};
 
 /// Trait for deposit receipt.
 pub trait DepositReceipt: reth_primitives_traits::Receipt {
@@ -158,12 +145,12 @@ pub(super) mod serde_bincode_compat {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
-    use alloy_rlp::Encodable;
+    use alloy_primitives::{Bloom, Bytes, Log, address, b256, bytes, hex_literal::hex};
+    use alloy_rlp::{Decodable, Encodable};
+    use base_alloy_consensus::{OpDepositReceipt, OpReceipt};
     use reth_codecs::Compact;
-
-    use super::*;
 
     #[test]
     fn test_decode_receipt() {

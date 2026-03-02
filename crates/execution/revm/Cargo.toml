@@ -16,8 +16,9 @@ workspace = true
 revm = { workspace = true, default-features = false }
 
 # misc
-serde = { workspace = true, features = ["derive", "rc"], optional = true }
 auto_impl.workspace = true
+base-alloy-flz = { workspace = true, default-features = false }
+serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 # compat (optional)
 alloy-evm = { workspace = true, optional = true }
@@ -37,6 +38,7 @@ std = [
 	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
+	"base-alloy-flz/std",
 	"revm/std",
 	"serde?/std",
 	"serde_json/std",

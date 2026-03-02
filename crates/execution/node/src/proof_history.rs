@@ -10,7 +10,7 @@ use base_execution_rpc::{
 };
 use base_execution_trie::{OpProofsStorage, db::MdbxProofsStorage};
 use eyre::ErrReport;
-use futures_util::FutureExt;
+use futures::FutureExt;
 use reth_db::DatabaseEnv;
 use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_node_builder::{FullNodeComponents, NodeBuilder, WithLaunchContext};

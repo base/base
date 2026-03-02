@@ -17,10 +17,18 @@ base-txpool-rpc.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks.workspace = true
 base-flashblocks-node.workspace = true
-base-protocol = { workspace = true, features = ["serde", "std"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
+
+# consensus
+base-consensus-node.workspace = true
+base-consensus-disc.workspace = true
+base-consensus-gossip.workspace = true
+base-consensus-peers.workspace = true
+base-consensus-sources.workspace = true
+base-consensus-genesis.workspace = true
 
 # reth
 reth-tasks.workspace = true
@@ -51,12 +59,17 @@ tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 # rpc
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
+# p2p
+k256.workspace = true
+libp2p.workspace = true
+
 # misc
 hex.workspace = true
 url.workspace = true
 eyre.workspace = true
 rand.workspace = true
 nanoid.workspace = true
+reqwest.workspace = true
 tracing = { workspace = true, features = ["std"] }
 tempfile.workspace = true
 serde_json = { workspace = true, features = ["std"] }

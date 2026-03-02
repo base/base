@@ -14,7 +14,7 @@ mod l2;
 pub use l2::*;
 
 mod sync;
-pub use sync::*;
+pub use sync::{SafeHeadFetcher, new_oracle_pipeline_cursor};
 
 mod errors;
 pub use errors::*;

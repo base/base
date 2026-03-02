@@ -245,17 +245,14 @@ where
             return Ok(());
         }
 
-        // RLP encode the storage slot value.
-        let mut rlp_buf = Vec::with_capacity(value.present_value.length());
-        value.present_value.encode(&mut rlp_buf);
-
-        // Insert or update the storage slot in the trie.
         let hashed_slot_key = Nibbles::unpack(hashed_key.as_slice());
         if value.present_value.is_zero() {
             // If the storage slot is being set to zero, prune it from the trie.
             storage_root.delete(&hashed_slot_key, fetcher, hinter)?;
         } else {
-            // Otherwise, update the storage slot.
+            // RLP encode the storage slot value and update the trie.
+            let mut rlp_buf = Vec::with_capacity(value.present_value.length());
+            value.present_value.encode(&mut rlp_buf);
             storage_root.insert(&hashed_slot_key, rlp_buf.into(), fetcher)?;
         }
 

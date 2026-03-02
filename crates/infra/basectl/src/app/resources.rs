@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 
 use base_alloy_flashblocks::Flashblock;
+use base_consensus_genesis::SystemConfig;
 use tokio::sync::mpsc;
 
 use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
     config::ChainConfig,
-    l1_client::FullSystemConfig,
     rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo, L1ConnectionMode, TimestampedFlashblock},
     tui::ToastState,
 };
@@ -25,8 +25,8 @@ pub(crate) struct Resources {
     /// Toast notification state.
     pub toasts: ToastState,
     /// L1 system config fetched from the contract.
-    pub system_config: Option<FullSystemConfig>,
-    sys_config_rx: Option<mpsc::Receiver<FullSystemConfig>>,
+    pub system_config: Option<SystemConfig>,
+    sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
 }
 
 /// State for DA (data availability) monitoring.
@@ -90,7 +90,7 @@ impl Resources {
     }
 
     /// Sets the channel for receiving L1 system config updates.
-    pub(crate) fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<FullSystemConfig>) {
+    pub(crate) fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<SystemConfig>) {
         self.sys_config_rx = Some(rx);
     }
 

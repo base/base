@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
+use base_engine_tree::BaseEngineValidatorBuilder;
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
     FlashblocksSubscriber,
 };
+use base_node_core::OpEngineValidatorBuilder;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -39,7 +41,15 @@ impl BaseNodeExtension for FlashblocksExtension {
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
+        let state_for_engine = Arc::clone(&state);
         let state_for_start = state;
+
+        let hooks = hooks.add_add_ons_hook(move |add_ons| {
+            add_ons.with_engine_validator(
+                BaseEngineValidatorBuilder::new(OpEngineValidatorBuilder::default())
+                    .with_flashblocks_state(state_for_engine),
+            )
+        });
 
         // Start state processor, subscriber, and canonical subscription after node is started
         let hooks = hooks.add_node_started_hook(move |ctx| {

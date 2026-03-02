@@ -90,10 +90,22 @@ def main():
 
     crate_dirs = build_crate_map(meta)
 
+    # Files at the workspace root that affect all crates when changed
+    workspace_root_patterns = (
+        "Cargo.toml",
+        "Cargo.lock",
+        ".cargo/",
+        "rust-toolchain.toml",
+    )
+
     # Map changed files to their crate (longest prefix match)
     sorted_dirs = sorted(crate_dirs.keys(), key=len, reverse=True)
     changed_crates = set()
     for f in changed_files:
+        # If a workspace-root build file changed, all crates are affected
+        if any(f == p or f.startswith(p) for p in workspace_root_patterns):
+            changed_crates = set(all_names)
+            break
         for d in sorted_dirs:
             if f.startswith(d + "/") or f == d:
                 changed_crates.add(crate_dirs[d])

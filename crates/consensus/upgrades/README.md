@@ -1,0 +1,12 @@
+# `base-consensus-upgrades`
+
+<a href="https://crates.io/crates/base-consensus-upgrades"><img src="https://img.shields.io/crates/v/base-consensus-upgrades.svg" alt="base-consensus-upgrades crate"></a>
+<a href="https://rollup.yoga"><img src="https://img.shields.io/badge/Docs-854a15?style=flat&labelColor=1C2C2E&color=BEC5C9&logo=mdBook&logoColor=BEC5C9" alt="Docs" /></a>
+
+Consensus layer hardfork types for the OP Stack including network upgrade transactions.
+
+### Provenance
+
+This code was ported from [op-alloy] as part of the `base` monorepo.
+
+[op-alloy]: https://github.com/alloy-rs/op-alloy

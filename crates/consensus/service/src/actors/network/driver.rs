@@ -79,7 +79,7 @@ impl NetworkDriver {
         let (handler, enr_receiver) = self.discovery.start();
 
         // We are checking the peer scores every [`PEER_SCORE_INSPECT_FREQUENCY`] seconds.
-        let peer_score_inspector = tokio::time::interval(*PEER_SCORE_INSPECT_FREQUENCY);
+        let peer_score_inspector = tokio::time::interval(PEER_SCORE_INSPECT_FREQUENCY);
 
         // Start the block signer if it is configured.
         let signer =

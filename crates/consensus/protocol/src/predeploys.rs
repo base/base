@@ -1,6 +1,6 @@
 //! Addresses of OP pre-deploys.
 //!
-//! This module contains the addresses of various predeploy contracts in the OP Stack.
+//! This module contains predeploy contract addresses and system addresses for the OP Stack.
 //! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
 
 use alloy_primitives::{Address, address};
@@ -138,4 +138,51 @@ impl Predeploys {
 
     /// The `L2ToL2CrossDomainMessenger` proxy address.
     pub const L2_TO_L2_XDM: Address = address!("0x4200000000000000000000000000000000000023");
+}
+
+/// Container for system addresses that are not predeploy contracts.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SystemAddresses;
+
+impl SystemAddresses {
+    /// The depositor address of the L1 attributes transaction (`L1Block` contract depositor).
+    /// <https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction>
+    pub const DEPOSITOR_ACCOUNT: Address = address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
+}
+
+/// Container for system deployer addresses used during protocol upgrades.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Deployers;
+
+impl Deployers {
+    /// Ecotone L1 Block deployer address.
+    pub const ECOTONE_L1_BLOCK: Address = address!("4210000000000000000000000000000000000000");
+
+    /// Ecotone Gas Price Oracle deployer address.
+    pub const ECOTONE_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000001");
+
+    /// Fjord Gas Price Oracle deployer address.
+    pub const FJORD_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000002");
+
+    /// Isthmus L1 Block deployer address.
+    pub const ISTHMUS_L1_BLOCK: Address = address!("4210000000000000000000000000000000000003");
+
+    /// Isthmus Gas Price Oracle deployer address.
+    pub const ISTHMUS_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000004");
+
+    /// Isthmus Operator Fee Vault deployer address.
+    pub const ISTHMUS_OPERATOR_FEE_VAULT: Address =
+        address!("4210000000000000000000000000000000000005");
+
+    /// Jovian L1 Block deployer address.
+    pub const JOVIAN_L1_BLOCK: Address = address!("4210000000000000000000000000000000000006");
+
+    /// Jovian Gas Price Oracle deployer address.
+    pub const JOVIAN_GAS_PRICE_ORACLE: Address =
+        address!("4210000000000000000000000000000000000007");
 }

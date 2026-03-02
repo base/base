@@ -15,7 +15,8 @@ use crate::{
         NON_ZERO_BYTE_COST, OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER,
         OPERATOR_FEE_SCALAR_DECIMAL, OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
     },
-    transaction::{OpTxTr, estimate_tx_compressed_size},
+    estimate_tx_compressed_size,
+    transaction::OpTxTr,
 };
 
 /// L1 block info

@@ -1,0 +1,41 @@
+[package]
+name = "base-consensus-upgrades"
+version.workspace = true
+description = "Consensus hardfork types for the OP Stack"
+
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Workspace
+base-protocol.workspace = true
+
+# Alloy
+alloy-eips.workspace = true
+alloy-primitives = { workspace = true, features = ["rlp"] }
+
+# Base Alloy
+base-alloy-consensus.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
+revm.workspace = true
+base-revm.workspace = true
+
+[features]
+default = []
+std = [
+	"alloy-eips/std",
+	"alloy-primitives/std",
+	"base-alloy-consensus/std",
+	"base-protocol/std",
+]
+k256 = [ "alloy-primitives/k256", "base-alloy-consensus/k256" ]
+kzg = [ "alloy-eips/kzg", "base-alloy-consensus/kzg", "std" ]

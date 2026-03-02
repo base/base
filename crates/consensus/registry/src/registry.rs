@@ -2,22 +2,19 @@
 
 use alloy_primitives::{Address, map::HashMap};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use spin::Lazy;
 
 use crate::L1Config;
 
-lazy_static::lazy_static! {
-    /// Private initializer that loads the chain configurations.
-    static ref INIT: (
-        HashMap<u64, RollupConfig>,
-        HashMap<u64, base_consensus_genesis::ChainConfig>,
-    ) = init_configs();
+/// Private initializer that loads the chain configurations.
+static INIT: Lazy<(HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genesis::ChainConfig>)> =
+    Lazy::new(init_configs);
 
-    /// Rollup configurations loaded from embedded TOML config files.
-    static ref ROLLUP_CONFIGS: HashMap<u64, RollupConfig> = INIT.0.clone();
+/// Rollup configurations loaded from embedded TOML config files.
+static ROLLUP_CONFIGS: Lazy<HashMap<u64, RollupConfig>> = Lazy::new(|| INIT.0.clone());
 
-    /// L1 chain configurations built from known L1 genesis data.
-    static ref L1_CONFIGS: HashMap<u64, L1ChainConfig> = L1Config::build_l1_configs();
-}
+/// L1 chain configurations built from known L1 genesis data.
+static L1_CONFIGS: Lazy<HashMap<u64, L1ChainConfig>> = Lazy::new(L1Config::build_l1_configs);
 
 /// A registry of chain configurations for Base networks.
 ///

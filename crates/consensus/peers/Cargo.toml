@@ -34,7 +34,6 @@ dirs.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-lazy_static.workspace = true
 unsigned-varint = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }

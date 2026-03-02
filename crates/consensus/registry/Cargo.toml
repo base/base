@@ -29,7 +29,7 @@ base-alloy-hardforks.workspace = true
 toml = { workspace = true, features = ["parse", "serde"] }
 
 # misc
-lazy_static = { workspace = true, features = ["spin_no_std"] }
+spin.workspace = true
 
 [dev-dependencies]
 alloy-eips.workspace = true
@@ -46,6 +46,7 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"base-consensus-genesis/std",
+	"spin/std",
 	"toml/std",
 ]
 test-utils = []

@@ -22,7 +22,7 @@ use base_node_core::args::RollupArgs;
 use chainspec::OpChainSpecParser;
 use clap::Parser;
 use commands::Commands;
-use futures_util::Future;
+use futures::Future;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;

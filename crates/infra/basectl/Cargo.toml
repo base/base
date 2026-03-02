@@ -18,16 +18,18 @@ arboard = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 crossterm = { workspace = true }
 base-alloy-flashblocks.workspace = true
+base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }
 alloy-eips = { workspace = true, features = ["std"] }
-futures-util = { workspace = true }
+futures = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 base-alloy-network = { workspace = true }
-alloy-primitives = { workspace = true }
+alloy-primitives = { workspace = true, features = ["serde"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 base-alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+base-consensus-registry = { workspace = true, features = ["std"] }

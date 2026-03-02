@@ -119,7 +119,11 @@ jobs:
           for bin in base-reth-node basectl; do
             ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
             tar -czf "$ARCHIVE" -C target/maxperf "$bin"
-            sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+            if command -v sha256sum &>/dev/null; then
+              sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+            else
+              shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
+            fi
           done
 
       - name: Upload artifacts
@@ -187,8 +191,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.settings.arch }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=release-docker
-          cache-to: type=gha,mode=max,scope=release-docker
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }}
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }},mode=max
 
       - name: Export digest
         run: |

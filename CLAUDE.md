@@ -6,6 +6,8 @@ Binary crates (bin/) should contain minimal glue code. All meaningful logic belo
 
 Cargo.toml dependencies should be sorted by line length (waterfall style) and logically grouped as done in the rest of the workspace. Features sections go at the bottom of the manifest. All crate and binary Cargo.toml files must inherit lints from the workspace with `[lints] workspace = true`.
 
+Do not add features to dependencies in the workspace root Cargo.toml. Features must be enabled only by the individual crates or binaries that need them, to prevent feature leakage into no_std crates.
+
 All crates in the workspace should have a `base-` prefix in their crate name (e.g. `base-enclave`, `base-builder-core`).
 
 All `use` imports must be at the top of the file or the top of a `mod` block. Never place `use` statements inside function bodies or closures. Exception: conditional imports behind `#[cfg(...)]` may be scoped to the `cfg`-gated block (e.g., inside a `#[cfg(test)] mod tests`, `#[cfg(feature = "...")]` function, or similar) rather than hoisted to the top of the file. Another exception: `use` inside `macro_rules!` bodies is acceptable when the macro needs to import items in its expansion context.

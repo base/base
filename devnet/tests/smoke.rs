@@ -150,6 +150,7 @@ async fn send_l2_transaction_via_client(
 
 #[tokio::test]
 async fn smoke_test_builder_and_client_block_sync() -> Result<()> {
+    base_node_runner::test_utils::init_silenced_tracing();
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)

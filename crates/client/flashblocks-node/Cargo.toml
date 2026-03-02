@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 test-utils = [
+	"base-node-core/test-utils",
 	"base-node-runner/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
@@ -41,6 +42,9 @@ test-utils = [
 # workspace
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-node-core.workspace = true
+base-engine-tree.workspace = true
+
 # reth
 reth-chain-state.workspace = true
 reth-provider = { workspace = true, optional = true }
@@ -108,7 +112,7 @@ base-alloy-rpc-types.workspace = true
 tokio-tungstenite.workspace = true
 
 # async
-futures-util.workspace = true
+futures.workspace = true
 
 # tracing
 tracing-subscriber.workspace = true
@@ -116,7 +120,6 @@ tracing-subscriber.workspace = true
 # misc
 rand.workspace = true
 rayon.workspace = true
-once_cell.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 

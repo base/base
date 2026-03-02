@@ -15,14 +15,14 @@ no_std_packages=(
   # consensus protocol crates
   base-macros
   base-consensus-genesis
-  base-consensus-hardforks
+  base-consensus-upgrades
   base-consensus-registry
   base-consensus-derive
   base-protocol
 )
 
 for package in "${no_std_packages[@]}"; do
-  cmd="cargo +stable build -p $package --target riscv32imac-unknown-none-elf --no-default-features"
+  cmd="cargo build -p $package --target riscv32imac-unknown-none-elf --no-default-features"
   if [ -n "$CI" ]; then
     echo "::group::$cmd"
   else

@@ -46,7 +46,6 @@ tokio.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 serde_repr.workspace = true
-lazy_static.workspace = true
 derive_more = { workspace = true, features = ["display", "deref", "debug"] }
 
 # `metrics` feature

@@ -39,6 +39,7 @@ macro_rules! define_metrics_args {
 
             /// The port to serve Prometheus metrics on.
             #[arg(
+                id = "metrics_port",
                 long = "metrics.port",
                 global = true,
                 default_value = stringify!($default_port),

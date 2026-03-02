@@ -27,7 +27,7 @@ use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
 pub use base::BASE_MAINNET;
 use base_execution_forks::{BASE_MAINNET_HARDFORKS, OpHardfork, OpHardforks};
-use base_execution_primitives::L2_TO_L1_MESSAGE_PASSER_ADDRESS;
+use base_protocol::Predeploys;
 pub use base_sepolia::BASE_SEPOLIA;
 pub use basefee::*;
 use derive_more::{Constructor, Deref, From, Into};
@@ -459,7 +459,7 @@ pub fn make_op_genesis_header(genesis: &Genesis, hardforks: &ChainHardforks) -> 
     // If Isthmus is active, overwrite the withdrawals root with the storage root of predeploy
     // `L2ToL1MessagePasser.sol`
     if hardforks.fork(OpHardfork::Isthmus).active_at_timestamp(header.timestamp)
-        && let Some(predeploy) = genesis.alloc.get(&L2_TO_L1_MESSAGE_PASSER_ADDRESS)
+        && let Some(predeploy) = genesis.alloc.get(&Predeploys::L2_TO_L1_MESSAGE_PASSER)
         && let Some(storage) = &predeploy.storage
     {
         header.withdrawals_root = Some(storage_root_unhashed(storage.iter().filter_map(

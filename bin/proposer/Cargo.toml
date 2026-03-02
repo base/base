@@ -9,7 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "proposer"
+name = "base-proposer"
 path = "src/main.rs"
 
 [lints]
