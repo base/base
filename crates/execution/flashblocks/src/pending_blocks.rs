@@ -317,9 +317,12 @@ impl PendingBlocks {
             .zip(self.get_transaction_by_hash(*tx_hash))
             .zip(self.get_transaction_sender(tx_hash))?;
 
+        let blob_gas_used =
+            self.get_receipt(*tx_hash).and_then(|r| r.inner.blob_gas_used).unwrap_or_default();
+
         let eth_tx_result = EthTxResult {
             result: ExecResultAndState::new(result.clone(), state),
-            blob_gas_used: 0,
+            blob_gas_used,
             tx_type: tx.inner.inner.tx_type(),
         };
 
@@ -501,5 +504,190 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
 
     fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
         self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Header, Receipt, ReceiptWithBloom, Sealed, transaction::Recovered};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, Signature, U256};
+    use alloy_provider::network::TransactionResponse;
+    use alloy_rpc_types_engine::PayloadId;
+    use base_alloy_consensus::{OpReceipt, OpTxEnvelope, TxDeposit};
+    use base_alloy_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+    };
+    use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
+    use revm::context_interface::result::ExecutionResult;
+
+    use super::*;
+
+    fn test_sender() -> Address {
+        Address::repeat_byte(0x01)
+    }
+
+    fn test_flashblock() -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number: 1,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_000,
+                extra_data: Bytes::default(),
+                base_fee_per_gas: U256::from(1_000_000_000u64),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::default(),
+                gas_used: 21000,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: None,
+            },
+            metadata: Metadata { block_number: 1 },
+        }
+    }
+
+    fn test_legacy_transaction() -> Transaction {
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(
+                    OpTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+                        alloy_consensus::TxLegacy::default(),
+                        Signature::test_signature(),
+                        B256::ZERO,
+                    )),
+                    test_sender(),
+                ),
+                block_hash: None,
+                block_number: Some(1),
+                transaction_index: Some(0),
+                effective_gas_price: Some(1_000_000_000),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    fn test_deposit_transaction() -> Transaction {
+        let deposit = TxDeposit {
+            source_hash: B256::repeat_byte(0xdd),
+            from: test_sender(),
+            to: alloy_primitives::TxKind::Call(Address::repeat_byte(0x02)),
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21000,
+            is_system_transaction: false,
+            input: Bytes::new(),
+        };
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(
+                    OpTxEnvelope::Deposit(Sealed::new_unchecked(deposit, B256::ZERO)),
+                    test_sender(),
+                ),
+                block_hash: None,
+                block_number: Some(1),
+                transaction_index: Some(0),
+                effective_gas_price: Some(0),
+            },
+            deposit_nonce: Some(42),
+            deposit_receipt_version: Some(1),
+        }
+    }
+
+    fn test_receipt(tx_hash: B256, blob_gas_used: Option<u64>) -> OpTransactionReceipt {
+        OpTransactionReceipt {
+            inner: alloy_rpc_types_eth::TransactionReceipt {
+                inner: ReceiptWithBloom {
+                    receipt: OpReceipt::Legacy(Receipt {
+                        status: alloy_consensus::Eip658Value::Eip658(true),
+                        cumulative_gas_used: 21000,
+                        logs: vec![],
+                    }),
+                    logs_bloom: Bloom::default(),
+                },
+                transaction_hash: tx_hash,
+                transaction_index: Some(0),
+                block_hash: None,
+                block_number: Some(1),
+                gas_used: 21000,
+                effective_gas_price: 1_000_000_000,
+                blob_gas_used,
+                blob_gas_price: None,
+                from: test_sender(),
+                to: None,
+                contract_address: None,
+            },
+            l1_block_info: L1BlockInfo::default(),
+        }
+    }
+
+    fn test_execution_result() -> ExecutionResult<OpHaltReason> {
+        ExecutionResult::Success {
+            reason: revm::context::result::SuccessReason::Stop,
+            gas_used: 21000,
+            gas_refunded: 0,
+            logs: vec![],
+            output: revm::context::result::Output::Call(Bytes::new()),
+        }
+    }
+
+    fn build_pending_blocks(tx: Transaction, blob_gas_used: Option<u64>) -> (B256, PendingBlocks) {
+        let tx_hash = tx.tx_hash();
+        let mut builder = PendingBlocksBuilder::default();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(tx);
+        builder.with_transaction_sender(tx_hash, test_sender());
+        builder.with_transaction_state(tx_hash, Default::default());
+        builder.with_transaction_result(tx_hash, test_execution_result());
+        builder.with_receipt(tx_hash, test_receipt(tx_hash, blob_gas_used));
+        (tx_hash, builder.build().expect("should build pending blocks"))
+    }
+
+    #[test]
+    fn get_op_tx_result_reconstructs_all_fields_for_legacy_tx() {
+        let da_footprint = 42_000u64;
+        let (tx_hash, pending_blocks) =
+            build_pending_blocks(test_legacy_transaction(), Some(da_footprint));
+
+        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+
+        assert_eq!(result.inner.blob_gas_used, da_footprint);
+        assert_eq!(result.inner.tx_type, OpTxType::Legacy);
+        assert!(!result.is_deposit);
+        assert_eq!(result.sender, test_sender());
+        assert_eq!(result.inner.result.result.gas_used(), 21000);
+    }
+
+    #[test]
+    fn get_op_tx_result_reconstructs_all_fields_for_deposit_tx() {
+        let (tx_hash, pending_blocks) = build_pending_blocks(test_deposit_transaction(), Some(0));
+
+        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+
+        assert_eq!(result.inner.blob_gas_used, 0);
+        assert_eq!(result.inner.tx_type, OpTxType::Deposit);
+        assert!(result.is_deposit);
+        assert_eq!(result.sender, test_sender());
+        assert_eq!(result.inner.result.result.gas_used(), 21000);
+    }
+
+    #[test]
+    fn get_op_tx_result_defaults_blob_gas_to_zero_without_receipt() {
+        let (tx_hash, pending_blocks) = build_pending_blocks(test_legacy_transaction(), None);
+
+        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+
+        assert_eq!(result.inner.blob_gas_used, 0);
     }
 }
