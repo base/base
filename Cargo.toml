@@ -16,8 +16,10 @@ members = [
   "crates/proof/mpt",
   "crates/proof/proof",
   "crates/proof/driver",
+  "crates/proof/client",
   "crates/proof/executor",
   "crates/proof/preimage",
+  "crates/proof/fpvm-precompiles",
   "crates/proof/std-fpvm",
   "crates/proof/std-fpvm-proc",
   "crates/proof/tee/core",
@@ -200,9 +202,11 @@ mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 # Proof
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof = { path = "crates/proof/proof", default-features = false }
+base-proof-client = { path = "crates/proof/client" }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
 base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
+base-proof-fpvm-precompiles = { path = "crates/proof/fpvm-precompiles" }
 base-proof-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
 base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
 base-enclave = { path = "crates/proof/tee/core" }
