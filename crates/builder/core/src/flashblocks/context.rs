@@ -516,6 +516,16 @@ impl OpPayloadBuilderCtx {
             .transact(&tx)
             .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
 
+        if !result.is_success() {
+            warn!(
+                target: "payload_builder",
+                flashblock_index,
+                contract = %config.contract_address,
+                "flashblock index TX reverted, skipping inclusion",
+            );
+            return Ok(());
+        }
+
         let gas_used = result.gas_used();
         info.cumulative_gas_used += gas_used;
 
