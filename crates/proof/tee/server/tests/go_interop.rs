@@ -410,15 +410,14 @@ mod signing_test_vectors {
 /// Test that `build_signing_data` produces the correct layout.
 ///
 /// The format matches the `AggregateVerifier` contract's journal:
-/// `proposer(20) || l1OriginHash(32) || l1OriginNumber(32) || prevOutputRoot(32)
+/// `proposer(20) || l1OriginHash(32) || prevOutputRoot(32)
 ///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32) || configHash(32)
-///   || teeImageHash(32)` = 276 bytes
+///   || teeImageHash(32)` = 244 bytes
 #[test]
 fn test_signing_data_format() {
     let signing_data = build_signing_data(
         PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
@@ -428,15 +427,13 @@ fn test_signing_data_format() {
         TEE_IMAGE_HASH,
     );
 
-    assert_eq!(signing_data.len(), 276, "signing data should be 276 bytes");
+    assert_eq!(signing_data.len(), 244, "signing data should be 244 bytes");
 
     // Verify individual field positions
     let mut off = 0;
     assert_eq!(&signing_data[off..off + 20], PROPOSER.as_slice());
     off += 20;
     assert_eq!(&signing_data[off..off + 32], L1_ORIGIN_HASH.as_slice());
-    off += 32;
-    assert_eq!(&signing_data[off..off + 32], &U256::from(L1_ORIGIN_NUMBER).to_be_bytes::<32>());
     off += 32;
     assert_eq!(&signing_data[off..off + 32], PREV_OUTPUT_ROOT.as_slice());
     off += 32;

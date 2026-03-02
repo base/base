@@ -292,7 +292,6 @@ impl Server {
         let signing_data = build_signing_data(
             proposer,
             l1_origin_hash,
-            l1_origin_number,
             prev_output_root,
             starting_l2_block,
             output_root,
@@ -413,7 +412,6 @@ impl Server {
             let signing_data = build_signing_data(
                 proposer,
                 l1_origin_hash,
-                l1_origin_number,
                 output_root,
                 prev_l2_block,
                 proposal.output_root,
@@ -479,7 +477,6 @@ impl Server {
         let signing_data = build_signing_data(
             proposer,
             l1_origin_hash,
-            l1_origin_number,
             prev_output_root,
             starting_l2_block,
             final_output_root,
