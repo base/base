@@ -106,9 +106,9 @@ impl ConnectionGater {
         let Some(dialed) = self.dialed_peers.get(addr) else {
             return false;
         };
-        // If the peer has been dialed and the threshold is not set, the threshold is reached.
+        // If the peer has been dialed and the threshold is not set, unlimited redials are allowed.
         let Some(redialing) = self.config.peer_redialing else {
-            return true;
+            return false;
         };
         // If the threshold is set to `0`, redial indefinitely.
         if redialing == 0 {
