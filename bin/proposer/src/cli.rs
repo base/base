@@ -5,6 +5,7 @@ use clap::Parser;
 /// Base Proposer.
 #[derive(Parser)]
 #[command(author, version)]
+#[group(skip)]
 pub(crate) struct Cli {
     #[command(flatten)]
     args: base_proposer::Cli,
