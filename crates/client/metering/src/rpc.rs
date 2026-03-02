@@ -200,7 +200,7 @@ where
             if error_msg.contains("nonce") {
                 debug!(error = %e, "Bundle metering failed");
             } else {
-                error!(error = %e, "Bundle metering failed");
+                info!(error = %e, "Bundle metering failed");
             }
             jsonrpsee::types::ErrorObjectOwned::owned(
                 jsonrpsee::types::ErrorCode::InternalError.code(),
