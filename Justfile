@@ -133,7 +133,14 @@ test-affected-ci base="main": install-nextest build-contracts
         pkg_args="$pkg_args -p $crate"
     done <<< "$affected"
     echo "Testing affected crates:$pkg_args"
-    cargo nextest run --all-features --cargo-profile ci $pkg_args
+    cargo nextest run --all-features --cargo-profile ci $pkg_args || {
+        code=$?
+        if [ $code -eq 4 ]; then
+            echo "No tests to run."
+            exit 0
+        fi
+        exit $code
+    }
 
 # Runs devnet tests (requires Docker)
 devnet-tests: install-nextest build-contracts
