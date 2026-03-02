@@ -83,7 +83,7 @@ impl Default for FlashblocksArgs {
 ///
 /// When both `private_key` and `contract_address` are provided, the builder
 /// injects a signed `setIndex(uint256)` TX at the start of each flashblock.
-#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[derive(Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct FlashblockIndexArgs {
     /// Hex-encoded private key for signing flashblock index transactions.
     #[arg(long = "flashblock-index.private-key", env = "FLASHBLOCK_INDEX_PRIVATE_KEY")]
@@ -92,6 +92,15 @@ pub struct FlashblockIndexArgs {
     /// Address of the `FlashblockIndex` contract.
     #[arg(long = "flashblock-index.contract-address", env = "FLASHBLOCK_INDEX_CONTRACT_ADDRESS")]
     pub contract_address: Option<String>,
+}
+
+impl core::fmt::Debug for FlashblockIndexArgs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FlashblockIndexArgs")
+            .field("private_key", &self.private_key.as_ref().map(|_| "[redacted]"))
+            .field("contract_address", &self.contract_address)
+            .finish()
+    }
 }
 
 /// Parameters for rollup configuration
