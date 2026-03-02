@@ -9,7 +9,7 @@ mod cli;
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = cli::Cli::parse().run().await {
+    if let Err(err) = cli::ProposerBin::parse().run().await {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
