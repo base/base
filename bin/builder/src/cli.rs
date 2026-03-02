@@ -408,7 +408,7 @@ mod tests {
         let config = config.unwrap();
         assert_eq!(
             config.contract_address,
-            "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap(),
+            "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse::<Address>().unwrap(),
         );
     }
 
