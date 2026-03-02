@@ -2,6 +2,7 @@ use std::{ops::RangeBounds, path::Path};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+#[cfg(feature = "metrics")]
 use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
@@ -18,6 +19,7 @@ use reth_trie_common::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
     updates::{StorageTrieUpdates, TrieUpdates},
 };
+#[cfg(feature = "metrics")]
 use tracing::error;
 
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
