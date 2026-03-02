@@ -14,14 +14,14 @@ use crate::error::ProposalError;
 pub const SIGNATURE_LENGTH: usize = 65;
 
 /// Base length of the signing data without intermediate roots:
-/// address(20) + 8 x bytes32(32) = 276 bytes.
-pub const SIGNING_DATA_BASE_LENGTH: usize = 276;
+/// address(20) + 7 x bytes32(32) = 244 bytes.
+pub const SIGNING_DATA_BASE_LENGTH: usize = 244;
 
 /// Build the signing data for a proposal.
 ///
 /// The format matches the `AggregateVerifier` contract's journal:
 /// ```text
-/// prover(20) || l1OriginHash(32) || l1OriginNumber(32) || prevOutputRoot(32)
+/// prover(20) || l1OriginHash(32) || prevOutputRoot(32)
 ///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32)
 ///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
 /// ```
@@ -33,7 +33,6 @@ pub const SIGNING_DATA_BASE_LENGTH: usize = 276;
 pub fn build_signing_data(
     proposer: Address,
     l1_origin_hash: B256,
-    l1_origin_number: U256,
     prev_output_root: B256,
     starting_l2_block: U256,
     output_root: B256,
@@ -50,9 +49,6 @@ pub fn build_signing_data(
     offset += 20;
 
     data[offset..offset + 32].copy_from_slice(l1_origin_hash.as_slice());
-    offset += 32;
-
-    data[offset..offset + 32].copy_from_slice(&l1_origin_number.to_be_bytes::<32>());
     offset += 32;
 
     data[offset..offset + 32].copy_from_slice(prev_output_root.as_slice());
@@ -165,7 +161,6 @@ mod tests {
         build_signing_data(
             address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
             b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            U256::from(100),
             b256!("3333333333333333333333333333333333333333333333333333333333333333"),
             U256::from(999),
             b256!("4444444444444444444444444444444444444444444444444444444444444444"),
@@ -180,7 +175,7 @@ mod tests {
     fn test_build_signing_data_length() {
         let data = test_signing_data();
         assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH);
-        assert_eq!(data.len(), 276);
+        assert_eq!(data.len(), 244);
     }
 
     #[test]
@@ -188,7 +183,6 @@ mod tests {
         let proposer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let l1_origin_hash =
             b256!("2222222222222222222222222222222222222222222222222222222222222222");
-        let l1_origin_number = U256::from(100);
         let prev_output_root =
             b256!("3333333333333333333333333333333333333333333333333333333333333333");
         let starting_l2_block = U256::from(999);
@@ -201,7 +195,6 @@ mod tests {
         let data = build_signing_data(
             proposer,
             l1_origin_hash,
-            l1_origin_number,
             prev_output_root,
             starting_l2_block,
             output_root,
@@ -215,8 +208,6 @@ mod tests {
         assert_eq!(&data[off..off + 20], proposer.as_slice());
         off += 20;
         assert_eq!(&data[off..off + 32], l1_origin_hash.as_slice());
-        off += 32;
-        assert_eq!(&data[off..off + 32], &l1_origin_number.to_be_bytes::<32>());
         off += 32;
         assert_eq!(&data[off..off + 32], prev_output_root.as_slice());
         off += 32;
@@ -242,7 +233,6 @@ mod tests {
         let data = build_signing_data(
             proposer,
             B256::ZERO,
-            U256::ZERO,
             B256::ZERO,
             U256::ZERO,
             B256::ZERO,
@@ -254,7 +244,7 @@ mod tests {
 
         assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH + 64);
 
-        let ir_offset = 20 + 6 * 32;
+        let ir_offset = 20 + 5 * 32;
         assert_eq!(&data[ir_offset..ir_offset + 32], intermediate_roots[0].as_slice());
         assert_eq!(&data[ir_offset + 32..ir_offset + 64], intermediate_roots[1].as_slice());
     }
@@ -300,7 +290,6 @@ mod tests {
         let data2 = build_signing_data(
             address!("0000000000000000000000000000000000000001"),
             b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            U256::from(100),
             b256!("3333333333333333333333333333333333333333333333333333333333333333"),
             U256::from(999),
             b256!("4444444444444444444444444444444444444444444444444444444444444444"),
