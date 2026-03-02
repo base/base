@@ -42,6 +42,14 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
 
         if proofs_history_enabled {
+            // TODO: replace with real hook that forwards trie updates to proofs collector
+            hooks = hooks.add_add_ons_hook(move |add_ons| {
+                use reth_node_builder::rpc::EngineValidatorAddOn;
+                let builder = add_ons
+                    .engine_validator_builder()
+                    .with_on_validated_block(Arc::new(base_engine_tree::NoopOnValidatedBlockHook));
+                add_ons.with_engine_validator(builder)
+            });
             let path = args
                 .proofs_history_storage_path
                 .expect("Path must be provided if not using in-memory storage");

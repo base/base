@@ -4000,6 +4000,7 @@ dependencies = [
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
+ "base-engine-tree",
  "base-execution-exex",
  "base-execution-rpc",
  "base-execution-trie",
@@ -4008,6 +4009,7 @@ dependencies = [
  "eyre",
  "reth-db",
  "reth-node-api",
+ "reth-node-builder",
  "reth-tasks",
  "tokio",
  "tracing",

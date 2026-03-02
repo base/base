@@ -4,7 +4,9 @@
 use std::{
     collections::HashMap,
     fmt::Debug,
+    future::Future,
     panic::{self, AssertUnwindSafe},
+    pin::Pin,
     sync::{Arc, mpsc::RecvTimeoutError},
     time::Instant,
 };
@@ -77,6 +79,36 @@ use crate::cached_execution::{
     CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
 };
 
+/// Hook invoked after a block has been validated, providing access to the sealed block,
+/// execution output, and trie updates.
+///
+/// This allows external components (e.g., the proofs history collector) to receive trie
+/// updates as blocks are validated, avoiding expensive re-execution later.
+pub trait OnValidatedBlockHook: Send + Sync + 'static {
+    /// Called after a block is validated with its execution output and trie updates.
+    fn on_validated_block(
+        &self,
+        block: &SealedBlock<OpBlock>,
+        output: &BlockExecutionOutput<OpReceipt>,
+        trie_updates: &TrieUpdates,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+}
+
+/// No-op implementation of [`OnValidatedBlockHook`].
+#[derive(Debug, Clone)]
+pub struct NoopOnValidatedBlockHook;
+
+impl OnValidatedBlockHook for NoopOnValidatedBlockHook {
+    fn on_validated_block(
+        &self,
+        _block: &SealedBlock<OpBlock>,
+        _output: &BlockExecutionOutput<OpReceipt>,
+        _trie_updates: &TrieUpdates,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
+}
+
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
 /// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
@@ -110,6 +142,9 @@ where
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: V,
+    /// Hook to call when a block is validated.
+    #[debug(skip)]
+    on_validated_block: Option<Arc<dyn OnValidatedBlockHook>>,
     /// Cached execution provider.
     cached_execution_provider: C,
     /// Changeset cache for in-memory trie changesets
@@ -147,7 +182,7 @@ where
         > + 'static,
     C: CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>> + Clone,
 {
-    /// Creates a new `TreePayloadValidator`.
+    /// Creates a new [`BaseEngineValidator`].
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: P,
@@ -159,6 +194,7 @@ where
         cached_execution_provider: C,
         changeset_cache: ChangesetCache,
         runtime: reth_tasks::Runtime,
+        on_validated_block: Option<Arc<dyn OnValidatedBlockHook>>,
     ) -> Self {
         let precompile_cache_map = PrecompileCacheMap::default();
         let payload_processor = PayloadProcessor::new(
@@ -181,6 +217,7 @@ where
             changeset_cache,
             cached_execution_provider,
             runtime,
+            on_validated_block,
         }
     }
 
@@ -634,6 +671,10 @@ where
                 .into(),
             )
             .into());
+        }
+
+        if let Some(hook) = &self.on_validated_block {
+            self.runtime.handle().block_on(hook.on_validated_block(&block, &output, &trie_output));
         }
 
         if let Some(valid_block_tx) = valid_block_tx {
@@ -1532,24 +1573,46 @@ where
 /// Basic implementation of [`EngineValidatorBuilder`].
 ///
 /// This builder creates a [`BaseEngineValidator`] using the provided payload validator builder.
-#[derive(Debug, Clone)]
 pub struct BaseEngineValidatorBuilder<EV> {
-    /// The payload validator builder used to create the engine validator.
     payload_validator_builder: EV,
-
-    /// The flashblocks state used to create the engine validator.
     flashblocks_state: Option<Arc<FlashblocksState>>,
+    on_validated_block: Option<Arc<dyn OnValidatedBlockHook>>,
+}
+
+impl<EV: Debug> Debug for BaseEngineValidatorBuilder<EV> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseEngineValidatorBuilder")
+            .field("payload_validator_builder", &self.payload_validator_builder)
+            .field("flashblocks_state", &self.flashblocks_state)
+            .finish()
+    }
+}
+
+impl<EV: Clone> Clone for BaseEngineValidatorBuilder<EV> {
+    fn clone(&self) -> Self {
+        Self {
+            payload_validator_builder: self.payload_validator_builder.clone(),
+            flashblocks_state: self.flashblocks_state.clone(),
+            on_validated_block: self.on_validated_block.clone(),
+        }
+    }
 }
 
 impl<EV> BaseEngineValidatorBuilder<EV> {
-    /// Creates a new instance with the given payload validator builder.
-    pub const fn new(payload_validator_builder: EV) -> Self {
-        Self { payload_validator_builder, flashblocks_state: None }
+    /// Creates a new [`BaseEngineValidatorBuilder`].
+    pub fn new(payload_validator_builder: EV) -> Self {
+        Self { payload_validator_builder, flashblocks_state: None, on_validated_block: None }
     }
 
-    /// Sets the flashblocks state used to create the engine validator.
+    /// Sets the flashblocks state.
     pub fn with_flashblocks_state(mut self, flashblocks_state: Arc<FlashblocksState>) -> Self {
         self.flashblocks_state = Some(flashblocks_state);
+        self
+    }
+
+    /// Sets the [`OnValidatedBlockHook`] called after each block is validated.
+    pub fn with_on_validated_block(mut self, hook: Arc<dyn OnValidatedBlockHook>) -> Self {
+        self.on_validated_block = Some(hook);
         self
     }
 }
@@ -1616,6 +1679,7 @@ where
             ),
             changeset_cache,
             ctx.node.task_executor().clone(),
+            self.on_validated_block,
         ))
     }
 }
