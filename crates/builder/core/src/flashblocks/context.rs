@@ -510,7 +510,10 @@ impl OpPayloadBuilderCtx {
             flashblock_index,
         )?;
 
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut fbal_db = FBALBuilderDb::new(&mut *db);
+        let min_tx_index = info.executed_transactions.len() as u64;
+        fbal_db.set_index(min_tx_index);
+        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
 
         let ResultAndState { result, state } = evm
             .transact(&tx)
@@ -546,6 +549,13 @@ impl OpPayloadBuilderCtx {
 
         info.executed_senders.push(tx.signer());
         info.executed_transactions.push(tx.into_inner());
+
+        match fbal_db.finish() {
+            Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
+            Err(err) => {
+                error!(error = %err, "Failed to finalize FBALBuilder");
+            }
+        }
 
         trace!(
             target: "payload_builder",
