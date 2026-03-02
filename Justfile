@@ -161,6 +161,12 @@ devnet-pull-images:
 check-no-std:
     ./etc/scripts/ci/check-no-std.sh
 
+# Checks that proof crates compile for a bare-metal FPVM target using nightly
+# -Zbuild-std=core,alloc. Requires: rustup toolchain install nightly &&
+# rustup component add rust-src --toolchain nightly
+check-no-std-proof:
+    ./etc/scripts/ci/check-no-std-proof.sh
+
 # Runs cargo hack against the workspace
 hack:
     cargo hack check --feature-powerset --no-dev-deps

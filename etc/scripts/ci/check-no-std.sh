@@ -19,6 +19,12 @@ no_std_packages=(
   base-consensus-registry
   base-consensus-derive
   base-protocol
+
+  # proof crates: only those whose dep trees are clean enough for --no-default-features
+  # on a bare-metal target. Heavier proof crates (base-proof, base-proof-client, etc.)
+  # depend on alloy crates that activate std via feature propagation; those are checked
+  # separately via check-no-std-proof.sh using -Zbuild-std=core,alloc.
+  base-proof-preimage
 )
 
 for package in "${no_std_packages[@]}"; do

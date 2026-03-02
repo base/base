@@ -25,3 +25,14 @@ alloy-eips.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
+
+[features]
+std = [
+	"revm/std",
+	"alloy-evm/std",
+	"base-revm/std",
+	"base-proof/std",
+	"base-alloy-evm/std",
+	"alloy-primitives/std",
+	"base-proof-preimage/std",
+]
