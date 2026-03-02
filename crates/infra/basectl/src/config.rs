@@ -4,10 +4,18 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
 use base_consensus_genesis::RollupConfig;
+use base_consensus_registry::Registry;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-/// Configuration for a chain monitored by basectl.
+/// Monitoring configuration for a chain watched by basectl.
+///
+/// This is a TUI/monitoring-specific runtime config and is intentionally
+/// distinct from [`base_consensus_genesis::ChainConfig`], which is the
+/// canonical superchain-registry chain config used for block validation.
+/// This type adds monitoring endpoints (`flashblocks_ws`, `l1_rpc`,
+/// `op_node_rpc`) and TUI knobs (`l1_blob_target`) that have no place in
+/// the consensus config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainConfig {
     /// Human-readable chain name (e.g. "mainnet", "sepolia").
@@ -22,10 +30,13 @@ pub struct ChainConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub op_node_rpc: Option<Url>,
     /// L1 `SystemConfig` contract address.
-    #[serde(with = "address_serde")]
     pub system_config: Address,
     /// L1 batcher address for blob attribution.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "option_address_serde")]
+    ///
+    /// This is the current live batcher address, not necessarily the genesis
+    /// batcher. It may differ from the value in `base-consensus-registry` if
+    /// the batcher was updated via a `SystemConfig` transaction after genesis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batcher_address: Option<Address>,
     /// Expected number of blobs per L1 block target.
     #[serde(default = "default_blob_target")]
@@ -43,73 +54,25 @@ struct ChainConfigOverride {
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     op_node_rpc: Option<Url>,
-    #[serde(default, with = "option_address_serde")]
+    #[serde(default)]
     system_config: Option<Address>,
-    #[serde(default, with = "option_address_serde")]
+    #[serde(default)]
     batcher_address: Option<Address>,
     l1_blob_target: Option<u64>,
-}
-
-mod address_serde {
-    use std::str::FromStr;
-
-    use alloy_primitives::Address;
-    use serde::{self, Deserialize, Deserializer, Serializer};
-
-    pub(super) fn serialize<S>(address: &Address, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&format!("{address:#x}"))
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Address, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Address::from_str(&s).map_err(serde::de::Error::custom)
-    }
-}
-
-mod option_address_serde {
-    use std::str::FromStr;
-
-    use alloy_primitives::Address;
-    use serde::{self, Deserialize, Deserializer, Serializer};
-
-    pub(super) fn serialize<S>(address: &Option<Address>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match address {
-            Some(addr) => serializer.serialize_str(&format!("{addr:#x}")),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Address>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let opt: Option<String> = Option::deserialize(deserializer)?;
-        opt.map_or_else(
-            || Ok(None),
-            |s| Address::from_str(&s).map(Some).map_err(serde::de::Error::custom),
-        )
-    }
 }
 
 impl ChainConfig {
     /// Returns the default Base mainnet configuration.
     pub(crate) fn mainnet() -> Self {
+        let rollup =
+            Registry::rollup_config(8453).expect("Base mainnet config missing from registry");
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
             op_node_rpc: None,
-            system_config: "0x73a79Fab69143498Ed3712e519A88a918e1f4072".parse().unwrap(),
+            system_config: rollup.l1_system_config_address,
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
             l1_blob_target: 14,
         }
@@ -117,13 +80,15 @@ impl ChainConfig {
 
     /// Returns the default Base Sepolia configuration.
     pub(crate) fn sepolia() -> Self {
+        let rollup =
+            Registry::rollup_config(84532).expect("Base Sepolia config missing from registry");
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("https://sepolia.base.org").unwrap(),
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             op_node_rpc: None,
-            system_config: "0xf272670eb55e895584501d564AfEB048bEd26194".parse().unwrap(),
+            system_config: rollup.l1_system_config_address,
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
             l1_blob_target: 14,
         }

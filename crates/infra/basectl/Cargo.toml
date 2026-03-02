@@ -26,9 +26,10 @@ futures = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 base-alloy-network = { workspace = true }
-alloy-primitives = { workspace = true }
+alloy-primitives = { workspace = true, features = ["serde"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 base-alloy-consensus = { workspace = true }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+base-consensus-registry = { workspace = true, features = ["std"] }

@@ -4304,7 +4304,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-flashblocks",
  "base-alloy-network",
- "base-consensus-genesis",
+ "base-consensus-registry",
  "chrono",
  "crossterm",
  "dirs",
