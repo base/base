@@ -10,7 +10,7 @@ use jsonrpsee::{
 };
 use reth_transaction_pool::TransactionPool;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -36,20 +36,19 @@ pub trait TransactionStatusApi {
     async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
 }
 
-/// RPC API for transaction pool management operations
-#[rpc(server, namespace = "txpool")]
-pub trait TxPoolManagementApi {
-    /// Drops all transactions from the transaction pool.
-    #[method(name = "removeAll")]
-    async fn remove_all(&self) -> RpcResult<usize>;
-
+/// Admin RPC API for transaction pool management operations.
+///
+/// Complements the upstream `admin_clearTxpool` method provided by reth,
+/// which removes all transactions from the pool.
+#[rpc(server, namespace = "admin")]
+pub trait AdminTxPoolApi {
     /// Drops all transactions from a specific sender address.
-    #[method(name = "removeSender")]
-    async fn remove_sender(&self, sender: Address) -> RpcResult<Vec<TxHash>>;
+    #[method(name = "dropSenderTransactions")]
+    async fn drop_sender_transactions(&self, sender: Address) -> RpcResult<Vec<TxHash>>;
 
-    /// Removes a single transaction by its hash.
-    #[method(name = "removeTransaction")]
-    async fn remove_transaction(&self, tx_hash: TxHash) -> RpcResult<bool>;
+    /// Drops a single transaction by its hash.
+    #[method(name = "dropTransaction")]
+    async fn drop_transaction(&self, tx_hash: TxHash) -> RpcResult<bool>;
 }
 
 /// Implementation of the transaction status RPC API.
@@ -98,7 +97,7 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
         {
             Ok(result) => Ok(result),
             Err(e) => {
-                warn!(message = "failed to fetch transaction status", tx_hash = %tx_hash, error = %e);
+                warn!(tx_hash = %tx_hash, error = %e, "failed to fetch transaction status");
                 Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("failed to fetch transaction status: {e}"),
@@ -109,40 +108,32 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
     }
 }
 
-/// Implementation of the transaction pool management RPC API.
+/// Implementation of the admin transaction pool management RPC API.
 #[derive(Debug)]
-pub struct TxPoolManagementApiImpl<Pool: TransactionPool> {
+pub struct AdminTxPoolApiImpl<Pool: TransactionPool> {
     pool: Pool,
 }
 
-impl<Pool: TransactionPool + 'static> TxPoolManagementApiImpl<Pool> {
-    /// Creates a new transaction pool management API instance.
+impl<Pool: TransactionPool + 'static> AdminTxPoolApiImpl<Pool> {
+    /// Creates a new admin transaction pool management API instance.
     pub const fn new(pool: Pool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait]
-impl<Pool: TransactionPool + 'static> TxPoolManagementApiServer for TxPoolManagementApiImpl<Pool> {
-    async fn remove_all(&self) -> RpcResult<usize> {
-        let all_hashes = self.pool.all_transaction_hashes();
-        let count = all_hashes.len();
-        self.pool.remove_transactions(all_hashes);
-        debug!(message = "transaction pool reset", removed_count = count);
-        Ok(count)
-    }
-
-    async fn remove_sender(&self, sender: Address) -> RpcResult<Vec<TxHash>> {
+impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImpl<Pool> {
+    async fn drop_sender_transactions(&self, sender: Address) -> RpcResult<Vec<TxHash>> {
         let removed = self.pool.remove_transactions_by_sender(sender);
         let hashes: Vec<TxHash> = removed.iter().map(|tx| *tx.hash()).collect();
-        debug!(message = "removed transactions by sender", sender = %sender, count = hashes.len());
+        info!(sender = %sender, count = hashes.len(), "dropped transactions by sender");
         Ok(hashes)
     }
 
-    async fn remove_transaction(&self, tx_hash: TxHash) -> RpcResult<bool> {
+    async fn drop_transaction(&self, tx_hash: TxHash) -> RpcResult<bool> {
         let removed = self.pool.remove_transactions(vec![tx_hash]);
         let was_removed = !removed.is_empty();
-        debug!(message = "remove transaction", tx_hash = %tx_hash, removed = was_removed);
+        info!(tx_hash = %tx_hash, removed = was_removed, "dropped transaction");
         Ok(was_removed)
     }
 }
@@ -272,44 +263,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_all_empty_pool() {
+    async fn test_drop_sender_no_transactions() {
         let pool = testing_pool();
-        let rpc = TxPoolManagementApiImpl::new(pool);
-
-        let count = rpc.remove_all().await.expect("should succeed");
-        assert_eq!(0, count);
-    }
-
-    #[tokio::test]
-    async fn test_remove_all_with_transactions() {
-        let pool = testing_pool();
-
-        // Add some transactions
-        let tx1 = MockTransaction::eip1559();
-        let tx2 = MockTransaction::eip1559();
-        pool.add_transaction(TransactionOrigin::Local, tx1).await.expect("should add tx1");
-        pool.add_transaction(TransactionOrigin::Local, tx2).await.expect("should add tx2");
-
-        let rpc = TxPoolManagementApiImpl::new(pool.clone());
-        let count = rpc.remove_all().await.expect("should succeed");
-        assert_eq!(2, count);
-
-        // Verify pool is empty
-        assert!(pool.all_transaction_hashes().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_remove_sender_no_transactions() {
-        let pool = testing_pool();
-        let rpc = TxPoolManagementApiImpl::new(pool);
+        let rpc = AdminTxPoolApiImpl::new(pool);
 
         let sender = Address::random();
-        let removed = rpc.remove_sender(sender).await.expect("should succeed");
+        let removed = rpc.drop_sender_transactions(sender).await.expect("should succeed");
         assert!(removed.is_empty());
     }
 
     #[tokio::test]
-    async fn test_remove_sender_with_transactions() {
+    async fn test_drop_sender_with_transactions() {
         let pool = testing_pool();
 
         let sender1 = Address::random();
@@ -328,10 +292,10 @@ mod tests {
         pool.add_transaction(TransactionOrigin::Local, tx2).await.expect("should add tx2");
         pool.add_transaction(TransactionOrigin::Local, tx3).await.expect("should add tx3");
 
-        let rpc = TxPoolManagementApiImpl::new(pool.clone());
+        let rpc = AdminTxPoolApiImpl::new(pool.clone());
 
         // Remove sender1's transactions
-        let removed = rpc.remove_sender(sender1).await.expect("should succeed");
+        let removed = rpc.drop_sender_transactions(sender1).await.expect("should succeed");
         assert_eq!(2, removed.len());
         assert!(removed.contains(&hash1));
         assert!(removed.contains(&hash2));
@@ -343,16 +307,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_transaction_not_found() {
+    async fn test_drop_transaction_not_found() {
         let pool = testing_pool();
-        let rpc = TxPoolManagementApiImpl::new(pool);
+        let rpc = AdminTxPoolApiImpl::new(pool);
 
-        let result = rpc.remove_transaction(TxHash::random()).await.expect("should succeed");
+        let result = rpc.drop_transaction(TxHash::random()).await.expect("should succeed");
         assert!(!result);
     }
 
     #[tokio::test]
-    async fn test_remove_transaction_found() {
+    async fn test_drop_transaction_found() {
         let pool = testing_pool();
 
         let tx = MockTransaction::eip1559();
@@ -360,9 +324,9 @@ mod tests {
 
         pool.add_transaction(TransactionOrigin::Local, tx).await.expect("should add tx");
 
-        let rpc = TxPoolManagementApiImpl::new(pool.clone());
+        let rpc = AdminTxPoolApiImpl::new(pool.clone());
 
-        let result = rpc.remove_transaction(hash).await.expect("should succeed");
+        let result = rpc.drop_transaction(hash).await.expect("should succeed");
         assert!(result);
 
         // Verify tx is gone
@@ -370,7 +334,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_transaction_idempotent() {
+    async fn test_drop_transaction_idempotent() {
         let pool = testing_pool();
 
         let tx = MockTransaction::eip1559();
@@ -378,13 +342,13 @@ mod tests {
 
         pool.add_transaction(TransactionOrigin::Local, tx).await.expect("should add tx");
 
-        let rpc = TxPoolManagementApiImpl::new(pool);
+        let rpc = AdminTxPoolApiImpl::new(pool);
 
-        let first = rpc.remove_transaction(hash).await.expect("should succeed");
+        let first = rpc.drop_transaction(hash).await.expect("should succeed");
         assert!(first);
 
         // Second removal should return false
-        let second = rpc.remove_transaction(hash).await.expect("should succeed");
+        let second = rpc.drop_transaction(hash).await.expect("should succeed");
         assert!(!second);
     }
 }
