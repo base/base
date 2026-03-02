@@ -35,7 +35,7 @@ pub use version::OP_NAME_CLIENT;
 pub mod proof_history;
 
 mod ordering;
-pub use ordering::TimestampOrdering;
+pub use ordering::{BaseOrdering, BaseOrderingMode, TimestampOrdering};
 
 /// Helpers for running test node instances.
 #[cfg(feature = "test-utils")]

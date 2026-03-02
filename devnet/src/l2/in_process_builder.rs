@@ -13,7 +13,7 @@ use base_builder_core::{
     BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, test_utils::get_available_port,
 };
 use base_execution_chainspec::OpChainSpec;
-use base_execution_txpool::OpPooledTransaction;
+use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
 use eyre::{Result, WrapErr, eyre};
@@ -362,6 +362,6 @@ fn create_test_db(
     Ok((Arc::new(TempDatabase::new(db, db_path.clone())), db_path))
 }
 
-fn pool_component(_rollup_args: &RollupArgs) -> OpPoolBuilder<OpPooledTransaction> {
-    OpPoolBuilder::<OpPooledTransaction>::default()
+fn pool_component(_rollup_args: &RollupArgs) -> OpPoolBuilder<BasePooledTransaction> {
+    OpPoolBuilder::<BasePooledTransaction>::default()
 }

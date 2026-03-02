@@ -3545,7 +3545,6 @@ dependencies = [
  "base-execution-primitives",
  "base-revm",
  "c-kzg",
- "chrono",
  "derive_more",
  "parking_lot",
  "reth-chainspec",

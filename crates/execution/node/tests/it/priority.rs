@@ -15,7 +15,7 @@ use base_node_core::{
         OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder,
         OpNodeTypes, OpPayloadBuilder, OpPoolBuilder,
     },
-    txpool::OpPooledTransaction,
+    txpool::BasePooledTransaction,
     utils::optimism_payload_attributes,
 };
 use reth_chainspec::EthChainSpec;
@@ -43,14 +43,14 @@ struct CustomTxPriority {
     chain_id: ChainId,
 }
 
-impl OpPayloadTransactions<OpPooledTransaction> for CustomTxPriority {
+impl OpPayloadTransactions<BasePooledTransaction> for CustomTxPriority {
     fn best_transactions<Pool>(
         &self,
         pool: Pool,
         attr: reth_transaction_pool::BestTransactionsAttributes,
-    ) -> impl PayloadTransactions<Transaction = OpPooledTransaction>
+    ) -> impl PayloadTransactions<Transaction = BasePooledTransaction>
     where
-        Pool: reth_transaction_pool::TransactionPool<Transaction = OpPooledTransaction>,
+        Pool: reth_transaction_pool::TransactionPool<Transaction = BasePooledTransaction>,
     {
         // Block composition:
         // 1. Best transactions from the pool (up to 250k gas)
@@ -68,7 +68,7 @@ impl OpPayloadTransactions<OpPooledTransaction> for CustomTxPriority {
             ..Default::default()
         };
         let signature = sender.sign_transaction_sync(&mut end_of_block_tx).unwrap();
-        let end_of_block_tx = OpPooledTransaction::from_pooled(Recovered::new_unchecked(
+        let end_of_block_tx = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
             base_alloy_consensus::OpPooledTransaction::Eip1559(
                 end_of_block_tx.into_signed(signature),
             ),

@@ -14,7 +14,7 @@ use base_execution_payload_builder::{
     builder::{OpBuilder, OpPayloadBuilderCtx},
 };
 use base_execution_trie::{OpProofsStorage, OpProofsStore};
-use base_execution_txpool::OpPooledTransaction as OpPooledTx2;
+use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
@@ -228,7 +228,7 @@ where
 
                         let builder = OpBuilder::new(|_| {
                             NoopPayloadTransactions::<
-                                OpPooledTx2<
+                                BasePooledTransaction<
                                     <N as OpPayloadPrimitives>::_TX,
                                     base_alloy_consensus::OpPooledTransaction,
                                 >,

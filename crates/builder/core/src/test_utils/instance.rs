@@ -14,7 +14,7 @@ use base_alloy_flashblocks::FlashblocksPayloadV1;
 use base_alloy_network::Base;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_rpc::OpEthApiBuilder;
-use base_execution_txpool::OpPooledTransaction;
+use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
 use futures::{FutureExt, StreamExt};
@@ -94,7 +94,7 @@ impl LocalInstance {
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
-            oneshot::channel::<AllTransactionsEvents<OpPooledTransaction>>();
+            oneshot::channel::<AllTransactionsEvents<BasePooledTransaction>>();
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -286,8 +286,8 @@ fn chain_spec() -> Arc<OpChainSpec> {
     CHAIN_SPEC.clone()
 }
 
-fn pool_component() -> OpPoolBuilder<OpPooledTransaction> {
-    OpPoolBuilder::<OpPooledTransaction>::default()
+fn pool_component() -> OpPoolBuilder<BasePooledTransaction> {
+    OpPoolBuilder::<BasePooledTransaction>::default()
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.

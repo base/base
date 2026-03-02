@@ -7,7 +7,7 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use base_alloy_network::Base;
-use base_execution_txpool::OpPooledTransaction;
+use base_execution_txpool::BasePooledTransaction;
 use dashmap::DashMap;
 use futures::StreamExt;
 use reth_primitives::Recovered;
@@ -163,7 +163,7 @@ impl Drop for TransactionPoolObserver {
 }
 
 impl TransactionPoolObserver {
-    pub fn new(stream: AllTransactionsEvents<OpPooledTransaction>) -> Self {
+    pub fn new(stream: AllTransactionsEvents<BasePooledTransaction>) -> Self {
         let mut stream = stream;
         let observations = Arc::new(ObservationsMap::new());
         let observations_clone = Arc::clone(&observations);
