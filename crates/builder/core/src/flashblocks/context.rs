@@ -36,13 +36,12 @@ use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
 
+use super::{FlashblockIndexConfig, index_tx::build_flashblock_index_tx};
 use crate::{
     BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
     PayloadTxsBounds, ResourceLimits, SharedMeteringProvider, TxResources, TxnExecutionError,
     TxnOutcome,
 };
-
-use super::{FlashblockIndexConfig, index_tx::build_flashblock_index_tx};
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {

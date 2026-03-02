@@ -2459,8 +2459,6 @@ dependencies = [
  "base-txpool-rpc",
  "clap",
  "eyre",
- "hex",
- "k256",
  "reth-cli-util",
  "rstest",
 ]

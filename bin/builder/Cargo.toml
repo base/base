@@ -36,8 +36,6 @@ alloy-signer-local.workspace = true
 clap.workspace = true
 
 # misc
-hex.workspace = true
-k256.workspace = true
 eyre.workspace = true
 
 [dev-dependencies]

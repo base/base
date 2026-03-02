@@ -10,7 +10,6 @@ use base_builder_core::{
 };
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
-use k256::ecdsa::SigningKey;
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -205,12 +204,9 @@ impl FlashblockIndexArgs {
     fn into_config(self) -> eyre::Result<Option<FlashblockIndexConfig>> {
         match (self.private_key, self.contract_address) {
             (Some(key_hex), Some(addr_str)) => {
-                let key_hex = key_hex.strip_prefix("0x").unwrap_or(&key_hex);
-                let key_bytes = hex::decode(key_hex)
-                    .map_err(|e| eyre::eyre!("invalid flashblock-index private key hex: {e}"))?;
-                let signing_key = SigningKey::from_slice(&key_bytes)
-                    .map_err(|e| eyre::eyre!("invalid flashblock-index signing key: {e}"))?;
-                let signer = PrivateKeySigner::from_signing_key(signing_key);
+                let signer: PrivateKeySigner = key_hex
+                    .parse()
+                    .map_err(|e| eyre::eyre!("invalid flashblock-index private key: {e}"))?;
 
                 let contract_address: Address = addr_str
                     .parse()
