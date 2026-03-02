@@ -346,15 +346,15 @@ fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
     let content = resources.system_config.as_ref().map_or_else(
         || vec![Line::from(Span::styled("Loading...", Style::default().fg(Color::DarkGray)))],
         |sys| {
-            let gas_limit = sys.gas_limit.unwrap_or(0);
+            let gas_limit = sys.gas_limit;
             let elasticity = sys.eip1559_elasticity.unwrap_or(0) as u64;
             let gas_target = if elasticity > 0 { gas_limit / elasticity } else { 0 };
             let denominator = sys.eip1559_denominator.unwrap_or(0);
 
             let basefee_scalar =
-                sys.basefee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
+                sys.base_fee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
             let blobbasefee_scalar =
-                sys.blobbasefee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
+                sys.blob_base_fee_scalar.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string());
 
             vec![
                 Line::from(vec![
