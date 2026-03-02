@@ -16,7 +16,9 @@ mod handler;
 pub use handler::PayloadHandler;
 
 mod config;
-pub use config::FlashblocksConfig;
+pub use config::{FlashblockIndexConfig, FlashblocksConfig};
+
+mod index_tx;
 
 mod context;
 pub use context::{FlashblocksExtraCtx, OpPayloadBuilderCtx};

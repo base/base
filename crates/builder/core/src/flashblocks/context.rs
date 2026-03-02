@@ -42,6 +42,8 @@ use crate::{
     TxnOutcome,
 };
 
+use super::{FlashblockIndexConfig, index_tx::build_flashblock_index_tx};
+
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
     let r = match reason {
@@ -170,6 +172,8 @@ pub struct OpPayloadBuilderCtx {
     pub execution_metering_mode: ExecutionMeteringMode,
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
+    /// Optional flashblock index TX config (signer + contract address).
+    pub flashblock_index_config: Option<FlashblockIndexConfig>,
 }
 
 impl OpPayloadBuilderCtx {
@@ -468,6 +472,79 @@ impl OpPayloadBuilderCtx {
         }
 
         Ok(info)
+    }
+
+    /// Executes the flashblock index transaction at the start of each flashblock.
+    ///
+    /// Signs and injects an EIP-1559 transaction calling `setIndex(flashblock_index)`
+    /// on the configured `FlashblockIndex` contract.
+    pub(super) fn execute_flashblock_index_tx(
+        &self,
+        info: &mut ExecutionInfo,
+        db: &mut State<impl Database>,
+        flashblock_index: u64,
+        config: &FlashblockIndexConfig,
+    ) -> Result<(), PayloadBuilderError> {
+        debug!(
+            target: "payload_builder",
+            flashblock_index,
+            contract = %config.contract_address,
+            "executing flashblock index TX",
+        );
+
+        let signer_address = config.signer.address();
+
+        // Read the current nonce for the signer account.
+        let nonce = db
+            .load_cache_account(signer_address)
+            .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            .map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(signer_address))
+            })?;
+
+        let (tx, da_size, uncompressed_size) = build_flashblock_index_tx(
+            config,
+            self.chain_id(),
+            nonce,
+            self.base_fee(),
+            flashblock_index,
+        )?;
+
+        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+
+        let ResultAndState { result, state } = evm
+            .transact(&tx)
+            .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
+
+        let gas_used = result.gas_used();
+        info.cumulative_gas_used += gas_used;
+
+        info.cumulative_da_bytes_used += da_size;
+        info.cumulative_uncompressed_bytes += uncompressed_size;
+
+        let ctx = ReceiptBuilderCtx {
+            tx_type: tx.tx_type(),
+            evm: &evm,
+            result,
+            state: &state,
+            cumulative_gas_used: info.cumulative_gas_used,
+        };
+
+        info.receipts.push(self.build_receipt(ctx, None));
+
+        evm.db_mut().commit(state);
+
+        info.executed_senders.push(tx.signer());
+        info.executed_transactions.push(tx.into_inner());
+
+        trace!(
+            target: "payload_builder",
+            flashblock_index,
+            gas_used,
+            "flashblock index TX executed",
+        );
+
+        Ok(())
     }
 
     /// Executes the given best transactions and updates the execution info.

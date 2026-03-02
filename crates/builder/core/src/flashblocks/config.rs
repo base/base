@@ -3,6 +3,9 @@ use core::{
     time::Duration,
 };
 
+use alloy_primitives::Address;
+use alloy_signer_local::PrivateKeySigner;
+
 use crate::BuilderConfig;
 
 /// Configuration values specific to the flashblocks builder.
@@ -117,4 +120,16 @@ impl FlashBlocksConfigExt for BuilderConfig {
         }
         (self.block_time.as_millis() / self.flashblocks.interval.as_millis()) as u64
     }
+}
+
+/// Configuration for the flashblock index transaction signer.
+///
+/// When present, the builder injects a signed EIP-1559 transaction calling
+/// `setIndex(uint256)` on the target contract at the start of each flashblock.
+#[derive(Debug, Clone)]
+pub struct FlashblockIndexConfig {
+    /// The private key signer used to sign flashblock index transactions.
+    pub signer: PrivateKeySigner,
+    /// The address of the `FlashblockIndex` contract.
+    pub contract_address: Address,
 }

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
-    ExecutionMeteringMode, FlashblocksConfig, NoopMeteringProvider, SharedMeteringProvider,
+    ExecutionMeteringMode, FlashblockIndexConfig, FlashblocksConfig, NoopMeteringProvider,
+    SharedMeteringProvider,
 };
 
 /// Configuration values for the flashblocks builder.
@@ -32,6 +33,10 @@ pub struct BuilderConfig {
 
     /// Configuration values that are specific to the flashblocks block builder.
     pub flashblocks: FlashblocksConfig,
+
+    /// Optional configuration for the flashblock index transaction signer.
+    /// When set, the builder signs and injects a `setIndex` TX at the start of each flashblock.
+    pub flashblock_index: Option<FlashblockIndexConfig>,
 
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
@@ -67,6 +72,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("gas_limit_config", &self.gas_limit_config)
             .field("sampling_ratio", &self.sampling_ratio)
             .field("flashblocks", &self.flashblocks)
+            .field("flashblock_index", &self.flashblock_index)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
             .field("max_state_root_time_per_tx_us", &self.max_state_root_time_per_tx_us)
@@ -87,6 +93,7 @@ impl Default for BuilderConfig {
             da_config: OpDAConfig::default(),
             gas_limit_config: OpGasLimitConfig::default(),
             flashblocks: FlashblocksConfig::default(),
+            flashblock_index: None,
             sampling_ratio: 100,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,
@@ -131,6 +138,13 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_flashblocks(mut self, flashblocks: FlashblocksConfig) -> Self {
         self.flashblocks = flashblocks;
+        self
+    }
+
+    /// Sets the flashblock index configuration.
+    #[must_use]
+    pub fn with_flashblock_index(mut self, flashblock_index: FlashblockIndexConfig) -> Self {
+        self.flashblock_index = Some(flashblock_index);
         self
     }
 

@@ -3,9 +3,14 @@
 use core::{convert::TryFrom, net::SocketAddr, time::Duration};
 use std::sync::Arc;
 
-use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig};
+use alloy_primitives::Address;
+use alloy_signer_local::PrivateKeySigner;
+use base_builder_core::{
+    BuilderConfig, ExecutionMeteringMode, FlashblockIndexConfig, FlashblocksConfig,
+};
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
+use k256::ecdsa::SigningKey;
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -74,6 +79,21 @@ impl Default for FlashblocksArgs {
     }
 }
 
+/// Parameters for the optional flashblock index transaction signer.
+///
+/// When both `private_key` and `contract_address` are provided, the builder
+/// injects a signed `setIndex(uint256)` TX at the start of each flashblock.
+#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+pub struct FlashblockIndexArgs {
+    /// Hex-encoded private key for signing flashblock index transactions.
+    #[arg(long = "flashblock-index.private-key", env = "FLASHBLOCK_INDEX_PRIVATE_KEY")]
+    pub private_key: Option<String>,
+
+    /// Address of the `FlashblockIndex` contract.
+    #[arg(long = "flashblock-index.contract-address", env = "FLASHBLOCK_INDEX_CONTRACT_ADDRESS")]
+    pub contract_address: Option<String>,
+}
+
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -133,6 +153,10 @@ pub struct Args {
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
+
+    /// Flashblock index TX signer configuration
+    #[command(flatten)]
+    pub flashblock_index: FlashblockIndexArgs,
 }
 
 impl Args {
@@ -162,6 +186,33 @@ impl Default for Args {
             tx_data_store_buffer_size: 10000,
             sampling_ratio: 100,
             flashblocks: FlashblocksArgs::default(),
+            flashblock_index: FlashblockIndexArgs::default(),
+        }
+    }
+}
+
+impl FlashblockIndexArgs {
+    /// Parses the CLI args into a [`FlashblockIndexConfig`], if both fields are provided.
+    fn into_config(self) -> eyre::Result<Option<FlashblockIndexConfig>> {
+        match (self.private_key, self.contract_address) {
+            (Some(key_hex), Some(addr_str)) => {
+                let key_hex = key_hex.strip_prefix("0x").unwrap_or(&key_hex);
+                let key_bytes = hex::decode(key_hex)
+                    .map_err(|e| eyre::eyre!("invalid flashblock-index private key hex: {e}"))?;
+                let signing_key = SigningKey::from_slice(&key_bytes)
+                    .map_err(|e| eyre::eyre!("invalid flashblock-index signing key: {e}"))?;
+                let signer = PrivateKeySigner::from_signing_key(signing_key);
+
+                let contract_address: Address = addr_str
+                    .parse()
+                    .map_err(|e| eyre::eyre!("invalid flashblock-index contract address: {e}"))?;
+
+                Ok(Some(FlashblockIndexConfig { signer, contract_address }))
+            }
+            (None, None) => Ok(None),
+            _ => Err(eyre::eyre!(
+                "both --flashblock-index.private-key and --flashblock-index.contract-address must be provided together"
+            )),
         }
     }
 }
@@ -172,6 +223,7 @@ impl TryFrom<Args> for BuilderConfig {
     fn try_from(args: Args) -> Result<Self, Self::Error> {
         let flashblocks = FlashblocksConfig::try_from(&args)?;
         let metering_store = args.build_metering_store();
+        let flashblock_index = args.flashblock_index.into_config()?;
         Ok(Self {
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
@@ -187,6 +239,7 @@ impl TryFrom<Args> for BuilderConfig {
             max_uncompressed_block_size: args.max_uncompressed_block_size,
             metering_provider: Arc::new(metering_store),
             flashblocks,
+            flashblock_index,
         })
     }
 }
