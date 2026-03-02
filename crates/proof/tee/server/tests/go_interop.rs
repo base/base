@@ -469,7 +469,6 @@ fn test_verify_go_signature() {
     let signing_data = build_signing_data(
         PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
@@ -499,7 +498,6 @@ fn test_rust_signature_verifiable() {
     let signing_data = build_signing_data(
         PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
@@ -525,7 +523,6 @@ fn test_signature_format() {
     let signing_data = build_signing_data(
         PROPOSER,
         L1_ORIGIN_HASH,
-        U256::from(L1_ORIGIN_NUMBER),
         PREV_OUTPUT_ROOT,
         U256::from(STARTING_L2_BLOCK),
         OUTPUT_ROOT,
