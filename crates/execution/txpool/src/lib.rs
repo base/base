@@ -18,10 +18,5 @@ pub mod estimated_da_size;
 use reth_transaction_pool::{CoinbaseTipOrdering, Pool, TransactionValidationTaskExecutor};
 
 /// Type alias for default optimism transaction pool
-pub type OpTransactionPool<
-    Client,
-    S,
-    Evm,
-    T = BasePooledTransaction,
-    O = CoinbaseTipOrdering<T>,
-> = Pool<TransactionValidationTaskExecutor<OpTransactionValidator<Client, T, Evm>>, O, S>;
+pub type OpTransactionPool<Client, S, Evm, T = BasePooledTransaction, O = CoinbaseTipOrdering<T>> =
+    Pool<TransactionValidationTaskExecutor<OpTransactionValidator<Client, T, Evm>>, O, S>;

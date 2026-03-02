@@ -63,8 +63,10 @@ use crate::{
     OpEngineApiBuilder, OpEngineTypes,
     args::RollupArgs,
     engine::OpEngineValidator,
-    ordering::{BaseOrdering, BaseOrderingMode},
-    txpool::{BasePooledTransaction, OpTransactionPool, OpTransactionValidator, TimestampedTransaction},
+    ordering::BaseOrdering,
+    txpool::{
+        BasePooledTransaction, OpTransactionPool, OpTransactionValidator, TimestampedTransaction,
+    },
 };
 
 /// Marker trait for Optimism node types with standard engine, chain spec, and primitives.
@@ -830,8 +832,8 @@ where
 pub struct OpPoolBuilder<T = BasePooledTransaction> {
     /// Enforced overrides that are applied to the pool config.
     pub pool_config_overrides: PoolBuilderConfigOverrides,
-    /// The ordering mode for the transaction pool.
-    pub ordering_mode: BaseOrderingMode,
+    /// The ordering strategy for the transaction pool.
+    pub ordering: BaseOrdering<T>,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -840,7 +842,7 @@ impl<T> Default for OpPoolBuilder<T> {
     fn default() -> Self {
         Self {
             pool_config_overrides: Default::default(),
-            ordering_mode: BaseOrderingMode::default(),
+            ordering: BaseOrdering::default(),
             _pd: Default::default(),
         }
     }
@@ -850,7 +852,7 @@ impl<T> Clone for OpPoolBuilder<T> {
     fn clone(&self) -> Self {
         Self {
             pool_config_overrides: self.pool_config_overrides.clone(),
-            ordering_mode: self.ordering_mode,
+            ordering: self.ordering.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -866,9 +868,9 @@ impl<T> OpPoolBuilder<T> {
         self
     }
 
-    /// Sets the ordering mode for the transaction pool.
-    pub fn with_ordering_mode(mut self, mode: BaseOrderingMode) -> Self {
-        self.ordering_mode = mode;
+    /// Sets the ordering strategy for the transaction pool.
+    pub const fn with_ordering(mut self, ordering: BaseOrdering<T>) -> Self {
+        self.ordering = ordering;
         self
     }
 }
@@ -886,7 +888,7 @@ where
         ctx: &BuilderContext<Node>,
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
-        let Self { pool_config_overrides, ordering_mode, .. } = self;
+        let Self { pool_config_overrides, ordering, .. } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
@@ -915,7 +917,7 @@ where
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
             .build_with_ordering_and_spawn_maintenance_task(
-                BaseOrdering::new(ordering_mode),
+                ordering,
                 blob_store,
                 final_pool_config,
             )?;

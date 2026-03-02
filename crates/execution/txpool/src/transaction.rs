@@ -22,11 +22,11 @@ use reth_transaction_pool::{
 use crate::estimated_da_size::DataAvailabilitySized;
 
 /// Returns current time as milliseconds since Unix epoch.
-fn unix_time_millis() -> i64 {
-    let dur = std::time::SystemTime::now()
+fn unix_time_millis() -> u128 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::ZERO);
-    i64::try_from(dur.as_millis()).unwrap_or(i64::MAX)
+        .unwrap_or(std::time::Duration::ZERO)
+        .as_millis()
 }
 
 /// Pool transaction for OP.
@@ -48,7 +48,7 @@ pub struct BasePooledTransaction<
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
-    received_at: i64,
+    received_at: u128,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -69,7 +69,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     pub fn new_with_received_at(
         transaction: Recovered<Cons>,
         encoded_length: usize,
-        received_at: i64,
+        received_at: u128,
     ) -> Self {
         Self {
             inner: EthPooledTransaction::new(transaction, encoded_length),
@@ -96,7 +96,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     }
 
     /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    pub const fn received_at(&self) -> i64 {
+    pub const fn received_at(&self) -> u128 {
         self.received_at
     }
 }
@@ -165,7 +165,7 @@ impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> 
 
 impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size() + core::mem::size_of::<i64>()
+        self.inner.size() + core::mem::size_of::<u128>()
     }
 }
 
@@ -297,7 +297,7 @@ where
 /// Trait for transactions that expose their timestamp.
 pub trait TimestampedTransaction {
     /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    fn timestamp(&self) -> i64;
+    fn timestamp(&self) -> u128;
 }
 
 impl<Cons, Pooled> TimestampedTransaction for BasePooledTransaction<Cons, Pooled>
@@ -305,7 +305,7 @@ where
     Cons: SignedTransaction,
     Pooled: Send + Sync + 'static,
 {
-    fn timestamp(&self) -> i64 {
+    fn timestamp(&self) -> u128 {
         self.received_at()
     }
 }
@@ -353,8 +353,7 @@ mod tests {
         let signed_tx: OpTransactionSigned = deposit_tx.into();
         let signed_recovered = Recovered::new_unchecked(signed_tx, signer);
         let len = signed_recovered.encode_2718_len();
-        let pooled_tx: BasePooledTransaction =
-            BasePooledTransaction::new(signed_recovered, len);
+        let pooled_tx: BasePooledTransaction = BasePooledTransaction::new(signed_recovered, len);
         let outcome = validator.validate_one(origin, pooled_tx).await;
 
         let err = match outcome {

@@ -5,41 +5,41 @@ use std::marker::PhantomData;
 use base_execution_txpool::{BasePooledTransaction, TimestampedTransaction};
 use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, Priority, TransactionOrdering};
 
-/// Configures which transaction ordering strategy the pool uses.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum BaseOrderingMode {
-    /// Order by coinbase tip (fee-based, higher tip = higher priority).
-    #[default]
-    CoinbaseTip,
-    /// Order by receive timestamp (FIFO, earlier = higher priority).
-    Timestamp,
-}
-
-/// Runtime-configurable transaction ordering.
+/// Transaction ordering strategy for the pool.
 ///
-/// Wraps both `CoinbaseTipOrdering` and `TimestampOrdering`, selecting
-/// behavior based on the configured [`BaseOrderingMode`].
-#[derive(Debug, Clone)]
-pub struct BaseOrdering<T> {
-    mode: BaseOrderingMode,
-    coinbase: CoinbaseTipOrdering<T>,
-    timestamp: TimestampOrdering<T>,
+/// Each variant holds only the ordering implementation it needs.
+#[derive(Debug)]
+pub enum BaseOrdering<T> {
+    /// Order by coinbase tip (fee-based, higher tip = higher priority).
+    CoinbaseTip(CoinbaseTipOrdering<T>),
+    /// Order by receive timestamp (FIFO, earlier = higher priority).
+    Timestamp(TimestampOrdering<T>),
 }
 
 impl<T> BaseOrdering<T> {
-    /// Creates a new ordering with the given mode.
-    pub fn new(mode: BaseOrderingMode) -> Self {
-        Self {
-            mode,
-            coinbase: CoinbaseTipOrdering::default(),
-            timestamp: TimestampOrdering::default(),
+    /// Creates a new coinbase-tip ordering (fee-based).
+    pub fn coinbase_tip() -> Self {
+        Self::CoinbaseTip(CoinbaseTipOrdering::default())
+    }
+
+    /// Creates a new timestamp ordering (FIFO).
+    pub fn timestamp() -> Self {
+        Self::Timestamp(TimestampOrdering::default())
+    }
+}
+
+impl<T> Clone for BaseOrdering<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::CoinbaseTip(ordering) => Self::CoinbaseTip(ordering.clone()),
+            Self::Timestamp(ordering) => Self::Timestamp(ordering.clone()),
         }
     }
 }
 
 impl<T> Default for BaseOrdering<T> {
     fn default() -> Self {
-        Self::new(BaseOrderingMode::default())
+        Self::coinbase_tip()
     }
 }
 
@@ -67,9 +67,7 @@ impl<T> TransactionOrdering for TimestampOrdering<T>
 where
     T: PoolTransaction + TimestampedTransaction + 'static,
 {
-    /// Priority value is inverted timestamp.
-    /// Higher value = higher priority, so we use MAX - timestamp.
-    type PriorityValue = i64;
+    type PriorityValue = u128;
     type Transaction = T;
 
     fn priority(
@@ -77,10 +75,10 @@ where
         transaction: &Self::Transaction,
         _base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
-        // Reth sorts descending (higher value = picked first)
-        // We want older transactions (lower timestamp) first
-        // So invert: MAX - timestamp
-        Priority::Value(i64::MAX.saturating_sub(transaction.timestamp()))
+        // Reth sorts descending (higher value = picked first).
+        // We want older transactions (lower timestamp) first,
+        // so invert: MAX - timestamp.
+        Priority::Value(u128::MAX - transaction.timestamp())
     }
 }
 
@@ -88,7 +86,7 @@ impl<T> TransactionOrdering for BaseOrdering<T>
 where
     T: PoolTransaction + TimestampedTransaction + 'static,
 {
-    type PriorityValue = i64;
+    type PriorityValue = u128;
     type Transaction = T;
 
     fn priority(
@@ -96,15 +94,9 @@ where
         transaction: &Self::Transaction,
         base_fee: u64,
     ) -> Priority<Self::PriorityValue> {
-        match self.mode {
-            BaseOrderingMode::CoinbaseTip => {
-                let p = self.coinbase.priority(transaction, base_fee);
-                match p {
-                    Priority::Value(v) => Priority::Value(v.min(i64::MAX as u128) as i64),
-                    Priority::None => Priority::None,
-                }
-            }
-            BaseOrderingMode::Timestamp => self.timestamp.priority(transaction, base_fee),
+        match self {
+            Self::CoinbaseTip(ordering) => ordering.priority(transaction, base_fee),
+            Self::Timestamp(ordering) => ordering.priority(transaction, base_fee),
         }
     }
 }
@@ -143,7 +135,7 @@ mod tests {
         BasePooledTransaction::new(recovered, len)
     }
 
-    fn create_test_tx_with_timestamp(nonce: u64, received_at: i64) -> BasePooledTransaction {
+    fn create_test_tx_with_timestamp(nonce: u64, received_at: u128) -> BasePooledTransaction {
         let alice = Account::Alice;
         let bob = Account::Bob;
 
@@ -162,6 +154,33 @@ mod tests {
         );
 
         let recovered = Recovered::new_unchecked(tx, alice.address());
+        let len = recovered.encode_2718_len();
+        BasePooledTransaction::new_with_received_at(recovered, len, received_at)
+    }
+
+    fn create_test_tx_from(
+        account: Account,
+        nonce: u64,
+        received_at: u128,
+        max_priority_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let bob = Account::Bob;
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(account.signer_b256())
+            .chain_id(1)
+            .nonce(nonce)
+            .to(bob.address())
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(max_priority_fee_per_gas)
+            .into_eip1559();
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let recovered = Recovered::new_unchecked(tx, account.address());
         let len = recovered.encode_2718_len();
         BasePooledTransaction::new_with_received_at(recovered, len, received_at)
     }
@@ -189,7 +208,7 @@ mod tests {
         let priority = ordering.priority(&tx, 0);
         match priority {
             Priority::Value(val) => {
-                assert_eq!(val, i64::MAX - tx.timestamp());
+                assert_eq!(val, u128::MAX - tx.timestamp());
             }
             Priority::None => panic!("Expected Priority::Value"),
         }
@@ -197,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_base_ordering_coinbase_tip_mode() {
-        let ordering = BaseOrdering::<BasePooledTransaction>::new(BaseOrderingMode::CoinbaseTip);
+        let ordering = BaseOrdering::<BasePooledTransaction>::coinbase_tip();
 
         let higher_tip = create_test_tx(1);
         let lower_tip = {
@@ -229,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_base_ordering_timestamp_mode() {
-        let ordering = BaseOrdering::<BasePooledTransaction>::new(BaseOrderingMode::Timestamp);
+        let ordering = BaseOrdering::<BasePooledTransaction>::timestamp();
 
         let older_tx = create_test_tx_with_timestamp(1, 1000);
         let newer_tx = create_test_tx_with_timestamp(2, 2000);
@@ -246,12 +265,34 @@ mod tests {
         let priority = ordering.priority(&tx, 0);
         let coinbase = CoinbaseTipOrdering::<BasePooledTransaction>::default();
         let coinbase_priority = coinbase.priority(&tx, 0);
-        let expected = match coinbase_priority {
-            Priority::Value(v) => {
-                Priority::Value(v.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
-            }
-            Priority::None => Priority::None,
-        };
-        assert_eq!(priority, expected);
+        assert_eq!(priority, coinbase_priority);
+    }
+
+    // NOTE: Same-sender nonce ordering is enforced by the txpool layer, not the
+    // ordering trait. The `TransactionOrdering::priority` method is called per
+    // transaction in isolation — it has no visibility into sender or nonce.
+    // Reth's txpool first groups pending transactions by sender and orders them
+    // by nonce within each sender's queue, then uses the ordering's priority to
+    // rank across senders. A full integration test against the txpool is needed
+    // to verify same-sender nonce ordering interacts correctly with timestamp
+    // priority.
+    //
+    // This test verifies the ordering's behavior for transactions from the same
+    // sender: the one with the lower timestamp should receive higher priority,
+    // regardless of nonce.
+    #[test]
+    fn test_same_sender_timestamp_ordering() {
+        let ordering = BaseOrdering::<BasePooledTransaction>::timestamp();
+
+        let tx_nonce_0 = create_test_tx_from(Account::Alice, 0, 1000, 1);
+        let tx_nonce_1 = create_test_tx_from(Account::Alice, 1, 2000, 1);
+
+        let priority_0 = ordering.priority(&tx_nonce_0, 0);
+        let priority_1 = ordering.priority(&tx_nonce_1, 0);
+
+        assert!(
+            priority_0 > priority_1,
+            "earlier tx should have higher priority regardless of nonce",
+        );
     }
 }
