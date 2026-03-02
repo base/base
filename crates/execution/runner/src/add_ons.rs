@@ -10,8 +10,8 @@ use base_execution_rpc::{
     miner::{MinerApiExtServer, OpMinerExtApi},
     witness::OpDebugWitnessApi,
 };
-use base_execution_txpool::OpPooledTx;
 use base_node_core::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
+use base_txpool::OpPooledTx;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{

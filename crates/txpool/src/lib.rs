@@ -13,10 +13,13 @@ pub use validator::{OpL1BlockInfo, OpTransactionValidator};
 mod transaction;
 pub use transaction::{BasePooledTransaction, OpPooledTx, TimestampedTransaction};
 
+mod ordering;
+pub use ordering::{BaseOrdering, TimestampOrdering};
+
 pub mod estimated_da_size;
 
-use reth_transaction_pool::{CoinbaseTipOrdering, Pool, TransactionValidationTaskExecutor};
+use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};
 
 /// Type alias for default optimism transaction pool
-pub type OpTransactionPool<Client, S, Evm, T = BasePooledTransaction, O = CoinbaseTipOrdering<T>> =
+pub type OpTransactionPool<Client, S, Evm, T = BasePooledTransaction, O = BaseOrdering<T>> =
     Pool<TransactionValidationTaskExecutor<OpTransactionValidator<Client, T, Evm>>, O, S>;

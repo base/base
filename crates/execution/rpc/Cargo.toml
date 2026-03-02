@@ -36,7 +36,7 @@ reth-provider.workspace = true
 # op-reth
 base-execution-evm.workspace = true
 base-execution-payload-builder.workspace = true
-base-execution-txpool.workspace = true
+base-txpool.workspace = true
 # TODO remove node-builder import
 base-execution-primitives = { workspace = true, features = ["reth-codec", "serde-bincode-compat", "serde"] }
 base-execution-forks.workspace = true

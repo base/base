@@ -22,7 +22,7 @@ use base_execution_rpc::{
     witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
 };
 use base_execution_storage::OpStorage;
-use base_execution_txpool::OpPooledTx;
+use base_txpool::OpPooledTx;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_network::{
@@ -60,13 +60,10 @@ use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    OpEngineApiBuilder, OpEngineTypes,
+    BaseOrdering, OpEngineApiBuilder, OpEngineTypes, TimestampedTransaction,
     args::RollupArgs,
     engine::OpEngineValidator,
-    ordering::BaseOrdering,
-    txpool::{
-        BasePooledTransaction, OpTransactionPool, OpTransactionValidator, TimestampedTransaction,
-    },
+    txpool::{BasePooledTransaction, OpTransactionPool, OpTransactionValidator},
 };
 
 /// Marker trait for Optimism node types with standard engine, chain spec, and primitives.

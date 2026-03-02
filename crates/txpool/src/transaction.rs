@@ -23,10 +23,13 @@ use crate::estimated_da_size::DataAvailabilitySized;
 
 /// Returns current time as milliseconds since Unix epoch.
 fn unix_time_millis() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or(std::time::Duration::ZERO)
-        .as_millis()
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(dur) => dur.as_millis(),
+        Err(err) => {
+            tracing::warn!(error = %err, "system clock before Unix epoch, using 0 as timestamp");
+            0
+        }
+    }
 }
 
 /// Pool transaction for OP.

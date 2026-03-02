@@ -1,5 +1,5 @@
 [package]
-name = "base-execution-txpool"
+name = "base-txpool"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -36,10 +36,15 @@ base-execution-primitives.workspace = true
 
 # misc
 c-kzg.workspace = true
+tracing.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time"] }
+alloy-eips.workspace = true
+base-test-utils.workspace = true
 base-execution-chainspec.workspace = true
+reth-primitives-traits.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }

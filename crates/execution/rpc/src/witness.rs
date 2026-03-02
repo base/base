@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_execution_forks::OpHardforks;
 use base_execution_payload_builder::{OpAttributes, OpPayloadBuilder, OpPayloadPrimitives};
-use base_execution_txpool::OpPooledTx;
+use base_txpool::OpPooledTx;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;

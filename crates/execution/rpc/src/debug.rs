@@ -14,7 +14,7 @@ use base_execution_payload_builder::{
     builder::{OpBuilder, OpPayloadBuilderCtx},
 };
 use base_execution_trie::{OpProofsStorage, OpProofsStore};
-use base_execution_txpool::BasePooledTransaction;
+use base_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;

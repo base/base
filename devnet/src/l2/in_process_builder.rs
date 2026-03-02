@@ -13,9 +13,9 @@ use base_builder_core::{
     BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, test_utils::get_available_port,
 };
 use base_execution_chainspec::OpChainSpec;
-use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
+use base_txpool::BasePooledTransaction;
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{

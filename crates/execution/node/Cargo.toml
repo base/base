@@ -38,7 +38,7 @@ base-execution-payload-builder.workspace = true
 base-execution-evm = { workspace = true, features = ["std", "rpc"] }
 base-execution-rpc.workspace = true
 base-execution-storage.workspace = true
-base-execution-txpool.workspace = true
+base-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus = { workspace = true, features = ["std"] }
 base-execution-forks.workspace = true
@@ -98,12 +98,12 @@ reth-rpc-eth-types.workspace = true
 reth-stages-types.workspace = true
 reth-trie-db.workspace = true
 
-alloy-network.workspace = true
-base-alloy-hardforks.workspace = true
-base-alloy-network.workspace = true
 futures.workspace = true
 alloy-eips.workspace = true
+alloy-network.workspace = true
 base-test-utils.workspace = true
+base-alloy-network.workspace = true
+base-alloy-hardforks.workspace = true
 
 [features]
 default = [ "reth-codec" ]

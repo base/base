@@ -29,14 +29,11 @@ pub mod rpc;
 pub use rpc::OpEngineApiBuilder;
 
 pub mod version;
-pub use base_execution_txpool as txpool;
+pub use base_txpool as txpool;
+pub use base_txpool::{BaseOrdering, TimestampOrdering, TimestampedTransaction};
 pub use version::OP_NAME_CLIENT;
 
 pub mod proof_history;
-
-mod ordering;
-pub use base_execution_txpool::TimestampedTransaction;
-pub use ordering::{BaseOrdering, TimestampOrdering};
 
 /// Helpers for running test node instances.
 #[cfg(feature = "test-utils")]

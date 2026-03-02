@@ -2,8 +2,9 @@
 
 use std::marker::PhantomData;
 
-use base_execution_txpool::{BasePooledTransaction, TimestampedTransaction};
 use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, Priority, TransactionOrdering};
+
+use crate::{BasePooledTransaction, TimestampedTransaction};
 
 /// Transaction ordering strategy for the pool.
 ///
@@ -105,12 +106,12 @@ where
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use base_execution_primitives::OpTransactionSigned;
-    use base_execution_txpool::BasePooledTransaction;
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{TransactionOrdering, test_utils::TransactionBuilder};
 
     use super::*;
+    use crate::BasePooledTransaction;
 
     fn create_test_tx(nonce: u64) -> BasePooledTransaction {
         let alice = Account::Alice;
