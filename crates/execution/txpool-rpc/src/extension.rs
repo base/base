@@ -3,8 +3,7 @@
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
 use crate::{
-    TransactionStatusApiImpl, TransactionStatusApiServer, TxPoolManagementApiImpl,
-    TxPoolManagementApiServer,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
 };
 
 /// Configuration for the `TxPool` RPC extension.
@@ -31,9 +30,9 @@ impl BaseNodeExtension for TxPoolRpcExtension {
                 .expect("Failed to create transaction status API");
             ctx.modules.merge_configured(status_api.into_rpc())?;
 
-            // Register TxPoolManagementApi
-            let management_api = TxPoolManagementApiImpl::new(ctx.pool().clone());
-            ctx.modules.merge_configured(management_api.into_rpc())?;
+            // Register AdminTxPoolApi
+            let admin_txpool_api = AdminTxPoolApiImpl::new(ctx.pool().clone());
+            ctx.modules.merge_configured(admin_txpool_api.into_rpc())?;
 
             Ok(())
         })

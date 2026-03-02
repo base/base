@@ -8,8 +8,8 @@
 
 mod rpc;
 pub use rpc::{
-    Status, TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
-    TxPoolManagementApiImpl, TxPoolManagementApiServer,
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, Status, TransactionStatusApiImpl,
+    TransactionStatusApiServer, TransactionStatusResponse,
 };
 
 mod extension;
