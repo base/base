@@ -31,6 +31,7 @@ pub struct OpProofStoragePruner<P, H> {
 
 impl<P, H> OpProofStoragePruner<P, H> {
     /// Create a new pruner.
+    #[allow(clippy::missing_const_for_fn)] // not const when `metrics` feature enables Metrics::default()
     pub fn new(
         provider: OpProofsStorage<P>,
         block_hash_reader: H,
