@@ -26,8 +26,8 @@ use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
-    PendingStateBuilder, ProviderError, Result,
+    BlockAssembler, ExecutionError, FlashblockCache, Metrics, PendingBlocks, PendingBlocksBuilder,
+    PendingStateBuilder, ProviderError, Result, StateProcessorError,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -52,6 +52,7 @@ pub struct StateProcessor<Client> {
     metrics: Metrics,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
+    cache: Arc<Mutex<FlashblockCache>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -70,7 +71,19 @@ where
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
-        Self { metrics: Metrics::default(), pending_blocks, client, max_depth, rx, sender }
+        let cache = client
+            .best_block_number()
+            .map_or_else(|_| FlashblockCache::new(0), FlashblockCache::new);
+
+        Self {
+            metrics: Metrics::default(),
+            pending_blocks,
+            client,
+            max_depth,
+            rx,
+            sender,
+            cache: Arc::new(Mutex::new(cache)),
+        }
     }
 
     /// Processes updates from the queue until the channel closes.
@@ -83,6 +96,23 @@ where
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok(new_pending_blocks) => {
                             self.pending_blocks.swap(new_pending_blocks);
+
+                            let mut cache = self.cache.lock().await;
+                            cache.update_canonical(block.number);
+                            let cached = cache.drain(block.number + 1);
+                            drop(cache);
+
+                            if !cached.is_empty() {
+                                debug!(
+                                    message = "replaying cached flashblocks after canonical block",
+                                    canonical_block = block.number,
+                                    cached_count = cached.len(),
+                                );
+                                for flashblock in cached {
+                                    let fb_prev = self.pending_blocks.load_full();
+                                    self.apply_flashblock(fb_prev, flashblock).await;
+                                }
+                            }
                         }
                         Err(e) => {
                             error!(message = "could not process canonical block", error = %e);
@@ -90,27 +120,62 @@ where
                     }
                 }
                 StateUpdate::Flashblock(flashblock) => {
-                    let start_time = Instant::now();
                     debug!(
                         message = "processing flashblock",
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
-                    match self.process_flashblock(prev_pending_blocks, flashblock) {
-                        Ok(new_pending_blocks) => {
-                            if new_pending_blocks.is_some() {
-                                _ = self.sender.send(new_pending_blocks.clone().unwrap())
-                            }
+                    self.apply_flashblock(prev_pending_blocks, flashblock).await;
+                }
+            }
+        }
+    }
 
-                            self.pending_blocks.swap(new_pending_blocks);
-                            self.metrics.block_processing_duration.record(start_time.elapsed());
-                        }
-                        Err(e) => {
-                            error!(message = "could not process Flashblock", error = %e);
-                            self.metrics.block_processing_error.increment(1);
+    async fn apply_flashblock(
+        &self,
+        prev_pending_blocks: Option<Arc<PendingBlocks>>,
+        flashblock: Flashblock,
+    ) {
+        let start_time = Instant::now();
+        match self.process_flashblock(prev_pending_blocks, &flashblock) {
+            Ok(new_pending_blocks) => {
+                if let Some(ref pb) = new_pending_blocks {
+                    _ = self.sender.send(Arc::clone(pb));
+                }
+                self.pending_blocks.swap(new_pending_blocks);
+                self.metrics.block_processing_duration.record(start_time.elapsed());
+            }
+            Err(e) => {
+                match e {
+                    StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
+                        ..
+                    }) => {
+                        if self.cache.lock().await.insert(flashblock) {
+                            debug!(message = "cached flashblock pending canonical block", error = %e);
+                            return;
                         }
                     }
+                    StateProcessorError::MissingFirstFlashblock => {
+                        let mut cache = self.cache.lock().await;
+                        // this error should only occur for non-zero index flashblocks, but check here for index safety
+                        if flashblock.index > 0
+                            && cache.has_flashblock(
+                                flashblock.metadata.block_number,
+                                flashblock.index - 1,
+                            )
+                            && cache.insert(flashblock)
+                        {
+                            return;
+                        }
+                        info!("waiting for first Flashblock");
+                        // we should ignore this error since it doesn't necessarily indicate a problem
+                        return;
+                    }
+                    _ => {}
                 }
+
+                error!(message = "could not process Flashblock", error = %e);
+                self.metrics.block_processing_error.increment(1);
             }
         }
     }
@@ -210,16 +275,16 @@ where
     fn process_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblock: Flashblock,
+        flashblock: &Flashblock,
     ) -> Result<Option<Arc<PendingBlocks>>> {
         let pending_blocks = match &prev_pending_blocks {
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self.build_pending_state(None, &[flashblock]);
+                    return self.build_pending_state(None, std::slice::from_ref(flashblock));
                 }
-                info!(message = "waiting for first Flashblock");
-                return Ok(None);
+
+                return Err(StateProcessorError::MissingFirstFlashblock);
             }
         };
 
@@ -236,7 +301,7 @@ where
                 // We have received the next flashblock for the current block
                 // or the first flashblock for the next block
                 let mut flashblocks = pending_blocks.get_flashblocks();
-                flashblocks.push(flashblock);
+                flashblocks.push(flashblock.clone());
                 self.build_pending_state(prev_pending_blocks, &flashblocks)
             }
             SequenceValidationResult::Duplicate => {
