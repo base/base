@@ -1,3 +1,8 @@
+//! `AggregateVerifier` contract bindings.
+//!
+//! Used to query individual dispute game instances and read the
+//! `BLOCK_INTERVAL` from the implementation contract at startup.
+
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
