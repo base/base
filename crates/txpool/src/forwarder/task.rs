@@ -2,17 +2,14 @@ use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Bytes};
-use jsonrpsee::{
-    core::{ClientError, client::ClientT},
-    http_client::HttpClient,
-};
+use jsonrpsee::{core::ClientError, http_client::HttpClient};
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::broadcast, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
-use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
+use super::{config::ForwarderConfig, metrics::ForwarderMetrics, rpc::BuilderApiClient};
 
 /// Pre-validated transaction for the builder RPC wire format.
 ///
@@ -89,10 +86,10 @@ impl RateLimiter {
 /// transactions buffer and flush as a single batch (capped at
 /// `max_batch_size`) once the window opens.
 pub struct Forwarder<T: PoolTransaction> {
-    builder_url: String,
+    builder_url: url::Url,
     client: HttpClient,
     receiver: broadcast::Receiver<Arc<ValidPoolTransaction<T>>>,
-    config: ForwarderConfig,
+    config: Arc<ForwarderConfig>,
     metrics: ForwarderMetrics,
     cancel: CancellationToken,
     limiter: RateLimiter,
@@ -106,10 +103,10 @@ where
 {
     /// Creates a new forwarder for a single builder endpoint.
     pub fn new(
-        builder_url: String,
+        builder_url: url::Url,
         client: HttpClient,
         receiver: broadcast::Receiver<Arc<ValidPoolTransaction<T>>>,
-        config: ForwarderConfig,
+        config: Arc<ForwarderConfig>,
         metrics: ForwarderMetrics,
         cancel: CancellationToken,
     ) -> Self {
@@ -238,8 +235,7 @@ where
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            let result: Result<serde_json::Value, ClientError> =
-                self.client.request("base_insertValidatedTransactions", vec![&batch]).await;
+            let result = self.client.insert_validated_transactions(batch.clone()).await;
 
             match result {
                 Ok(_) => {

@@ -12,6 +12,9 @@ pub use config::ForwarderConfig;
 mod metrics;
 pub use metrics::ForwarderMetrics;
 
+mod rpc;
+pub use rpc::{BuilderApiClient, BuilderApiServer};
+
 mod task;
 pub use task::{Forwarder, ValidTransaction};
 
@@ -37,11 +40,12 @@ impl ForwarderHandle {
     {
         let cancel = CancellationToken::new();
         let mut tasks = Vec::with_capacity(config.builder_urls.len());
+        let config = Arc::new(config);
 
         for url in &config.builder_urls {
             let client = match HttpClientBuilder::default()
                 .request_timeout(Duration::from_secs(5))
-                .build(url)
+                .build(url.as_str())
             {
                 Ok(client) => client,
                 Err(err) => {
@@ -55,12 +59,12 @@ impl ForwarderHandle {
             };
 
             let receiver = sender.subscribe();
-            let metrics = ForwarderMetrics::new(url);
+            let metrics = ForwarderMetrics::new(url.as_str());
             let forwarder = Forwarder::new(
                 url.clone(),
                 client,
                 receiver,
-                config.clone(),
+                Arc::clone(&config),
                 metrics,
                 cancel.child_token(),
             );
@@ -84,17 +88,17 @@ impl ForwarderHandle {
 impl ForwarderHandle {
     /// Gracefully shuts down all forwarder tasks.
     ///
-    /// Signals cancellation and waits up to 5 seconds for in-flight RPC
-    /// requests to complete before abandoning them.
+    /// Signals cancellation and waits up to 30 seconds for each forwarder to
+    /// drain its buffer and complete in-flight RPC requests.
     pub async fn shutdown(mut self) {
         self.cancel.cancel();
 
         let tasks = std::mem::take(&mut self.tasks);
-        let results =
-            tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(tasks)).await;
-
-        if let Err(err) = results {
-            warn!(error = %err, "forwarder tasks did not finish within shutdown timeout");
+        if tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(tasks))
+            .await
+            .is_err()
+        {
+            warn!("forwarder tasks did not finish within shutdown timeout");
         }
     }
 }

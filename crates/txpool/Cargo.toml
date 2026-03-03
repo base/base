@@ -37,17 +37,17 @@ base-execution-forks.workspace = true
 base-execution-primitives.workspace = true
 
 # misc
+url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
 metrics.workspace = true
 futures.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
-serde_json.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
+jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }

@@ -21,7 +21,8 @@ pub use consumer::{Consumer, ConsumerConfig, ConsumerHandle, ConsumerMetrics, Re
 
 mod forwarder;
 pub use forwarder::{
-    Forwarder, ForwarderConfig, ForwarderHandle, ForwarderMetrics, ValidTransaction,
+    BuilderApiClient, BuilderApiServer, Forwarder, ForwarderConfig, ForwarderHandle,
+    ForwarderMetrics, ValidTransaction,
 };
 
 pub mod estimated_da_size;

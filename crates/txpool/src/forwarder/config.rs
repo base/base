@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use url::Url;
+
 /// Configuration for the transaction forwarder.
 ///
 /// One forwarder is spawned per builder URL. Each subscribes to the consumer's
@@ -10,7 +12,7 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub struct ForwarderConfig {
     /// Builder RPC endpoint URLs — one forwarder task per URL.
-    pub builder_urls: Vec<String>,
+    pub builder_urls: Vec<Url>,
     /// Maximum RPC requests per second per forwarder (sliding window). 0 = unlimited.
     pub max_rps: u32,
     /// Maximum transactions per RPC request. 0 = unlimited.
@@ -35,7 +37,7 @@ impl Default for ForwarderConfig {
 
 impl ForwarderConfig {
     /// Sets the builder URLs.
-    pub fn with_builder_urls(mut self, urls: Vec<String>) -> Self {
+    pub fn with_builder_urls(mut self, urls: Vec<Url>) -> Self {
         self.builder_urls = urls;
         self
     }
@@ -81,14 +83,15 @@ mod tests {
 
     #[test]
     fn builder_methods() {
+        let url: Url = "http://builder1:8545".parse().unwrap();
         let config = ForwarderConfig::default()
-            .with_builder_urls(vec!["http://builder1:8545".into()])
+            .with_builder_urls(vec![url.clone()])
             .with_max_rps(500)
             .with_max_batch_size(200)
             .with_max_retries(5)
             .with_retry_backoff(Duration::from_millis(250));
 
-        assert_eq!(config.builder_urls, vec!["http://builder1:8545"]);
+        assert_eq!(config.builder_urls, vec![url]);
         assert_eq!(config.max_rps, 500);
         assert_eq!(config.max_batch_size, 200);
         assert_eq!(config.max_retries, 5);
