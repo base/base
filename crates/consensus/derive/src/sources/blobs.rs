@@ -394,6 +394,74 @@ pub(crate) mod tests {
         }
         let result = source.load_blobs(&BlockInfo::default(), batcher_address).await;
         assert!(matches!(result, Err(PipelineErrorKind::Reset(ResetError::BlobsOverFill(5, 6)))));
+    }
 
+    /// A minimal [`ChainProvider`] whose errors map to [`PipelineErrorKind::Reset`].
+    /// Used to verify that [`BlobSource::load_blobs`] preserves the `Reset` kind when the
+    /// underlying chain provider signals a reset condition (e.g. an L1 reorg).
+    #[derive(Debug, Clone, Default)]
+    struct ResetChainProvider;
+
+    #[derive(Debug)]
+    struct ResetProviderError;
+
+    impl core::fmt::Display for ResetProviderError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "reorg detected")
+        }
+    }
+
+    impl From<ResetProviderError> for PipelineErrorKind {
+        fn from(_: ResetProviderError) -> Self {
+            ResetError::ReorgDetected(Default::default(), Default::default()).reset()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for ResetChainProvider {
+        type Error = ResetProviderError;
+
+        async fn header_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<alloy_consensus::Header, Self::Error> {
+            Err(ResetProviderError)
+        }
+
+        async fn block_info_by_number(&mut self, _: u64) -> Result<BlockInfo, Self::Error> {
+            Err(ResetProviderError)
+        }
+
+        async fn receipts_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<alloc::vec::Vec<alloy_consensus::Receipt>, Self::Error> {
+            Err(ResetProviderError)
+        }
+
+        async fn block_info_and_transactions_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<(BlockInfo, alloc::vec::Vec<TxEnvelope>), Self::Error> {
+            Err(ResetProviderError)
+        }
+    }
+
+    /// Regression test: when `block_info_and_transactions_by_hash` returns an error that maps to
+    /// `PipelineErrorKind::Reset`, `load_blobs` must propagate the `Reset` kind unchanged.
+    ///
+    /// Before the fix, `BlobSource` wrapped every chain-provider error as
+    /// `BlobProviderError::Backend(e.to_string()).into()`, which unconditionally produced
+    /// `PipelineErrorKind::Temporary`. The fix uses `map_err(Into::into)` so the `Reset` kind
+    /// is preserved, allowing the pipeline to recover via reset rather than spinning in a retry loop.
+    #[tokio::test]
+    async fn test_load_blobs_reset_error_preserved() {
+        let mut source =
+            BlobSource::new(ResetChainProvider, TestBlobProvider::default(), Address::ZERO);
+        let err = source.load_blobs(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
+        assert!(
+            matches!(err, PipelineErrorKind::Reset(_)),
+            "expected Reset kind to be preserved, got {err:?}"
+        );
     }
 }
