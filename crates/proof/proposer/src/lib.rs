@@ -61,5 +61,6 @@ pub use service::run;
 mod signal;
 pub use signal::SignalHandler;
 
+/// Shared mock implementations for tests.
 #[cfg(test)]
 pub mod test_utils;

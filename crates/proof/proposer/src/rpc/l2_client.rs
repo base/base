@@ -161,12 +161,12 @@ impl L2ClientImpl {
     }
 
     /// Returns a reference to the underlying provider.
-    pub(crate) const fn provider(&self) -> &L2HttpProvider {
+    pub const fn provider(&self) -> &L2HttpProvider {
         &self.provider
     }
 
     /// Returns a reference to the retry configuration.
-    pub(crate) const fn retry_config(&self) -> &RetryConfig {
+    pub const fn retry_config(&self) -> &RetryConfig {
         &self.retry_config
     }
 }
