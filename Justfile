@@ -58,10 +58,10 @@ setup:
     echo "Setup complete!"
 
 # Runs all ci checks
-ci: fix check lychee zepter check-no-std
+ci: fix check lychee zepter check-no-std check-no-std-proof
 
 # Runs ci checks with tests scoped to crates affected by changes
-pr: fix check-format check-udeps check-clippy test-affected check-deny lychee zepter check-no-std
+pr: fix check-format check-udeps check-clippy test-affected check-deny lychee zepter check-no-std check-no-std-proof
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
