@@ -187,8 +187,9 @@ where
                         return;
                     }
 
-                    let block_number =
-                        u64::from_le_bytes(buffer[..8].try_into().expect("slice is exactly 8 bytes"));
+                    let block_number = u64::from_le_bytes(
+                        buffer[..8].try_into().expect("slice is exactly 8 bytes"),
+                    );
 
                     debug!(target: "gossip", block_number, peer_id = %peer_id, "Parsed sync request");
 

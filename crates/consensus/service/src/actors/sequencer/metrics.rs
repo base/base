@@ -29,32 +29,43 @@ where
     UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
     /// Updates the metrics for the sequencer actor.
+    #[cfg(feature = "metrics")]
     pub(super) fn update_metrics(&self) {
-        // no-op if disabled.
-        #[cfg(feature = "metrics")]
-        {
-            let state_flags: [(&str, String); 2] = [
-                ("active", self.is_active.to_string()),
-                ("recovery", self.in_recovery_mode.to_string()),
-            ];
+        let state_flags: [(&str, String); 2] = [
+            ("active", self.is_active.to_string()),
+            ("recovery", self.in_recovery_mode.to_string()),
+        ];
 
-            let gauge = metrics::gauge!(crate::Metrics::SEQUENCER_STATE, &state_flags);
-            gauge.set(1);
-        }
+        let gauge = metrics::gauge!(crate::Metrics::SEQUENCER_STATE, &state_flags);
+        gauge.set(1);
     }
+
+    /// Updates the metrics for the sequencer actor.
+    #[cfg(not(feature = "metrics"))]
+    pub(super) const fn update_metrics(&self) {}
 }
 
+#[cfg(feature = "metrics")]
 #[inline]
 pub(super) fn update_attributes_build_duration_metrics(duration: Duration) {
-    // Log the attributes build duration, if metrics are enabled.
     base_macros::set!(gauge, crate::Metrics::SEQUENCER_ATTRIBUTES_BUILDER_DURATION, duration);
 }
 
+#[cfg(not(feature = "metrics"))]
+#[inline]
+pub(super) const fn update_attributes_build_duration_metrics(_: Duration) {}
+
+#[cfg(feature = "metrics")]
 #[inline]
 pub(super) fn update_conductor_commitment_duration_metrics(duration: Duration) {
     base_macros::set!(gauge, crate::Metrics::SEQUENCER_CONDUCTOR_COMMITMENT_DURATION, duration);
 }
 
+#[cfg(not(feature = "metrics"))]
+#[inline]
+pub(super) const fn update_conductor_commitment_duration_metrics(_: Duration) {}
+
+#[cfg(feature = "metrics")]
 #[inline]
 pub(super) fn update_block_build_duration_metrics(duration: Duration) {
     base_macros::set!(
@@ -64,15 +75,27 @@ pub(super) fn update_block_build_duration_metrics(duration: Duration) {
     );
 }
 
+#[cfg(not(feature = "metrics"))]
+#[inline]
+pub(super) const fn update_block_build_duration_metrics(_: Duration) {}
+
+#[cfg(feature = "metrics")]
 #[inline]
 pub(super) fn update_seal_duration_metrics(duration: Duration) {
-    // Log the block building seal task duration, if metrics are enabled.
     base_macros::set!(gauge, crate::Metrics::SEQUENCER_BLOCK_BUILDING_SEAL_TASK_DURATION, duration);
 }
 
+#[cfg(not(feature = "metrics"))]
+#[inline]
+pub(super) const fn update_seal_duration_metrics(_: Duration) {}
+
+#[cfg(feature = "metrics")]
 #[inline]
 pub(super) fn update_total_transactions_sequenced(transaction_count: u64) {
-    #[cfg(feature = "metrics")]
     metrics::counter!(crate::Metrics::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED)
         .increment(transaction_count);
 }
+
+#[cfg(not(feature = "metrics"))]
+#[inline]
+pub(super) const fn update_total_transactions_sequenced(_: u64) {}

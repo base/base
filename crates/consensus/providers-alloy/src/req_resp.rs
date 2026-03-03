@@ -48,13 +48,8 @@ impl AlloyBlockPayloadProvider {
 #[async_trait]
 impl BlockPayloadProvider for AlloyBlockPayloadProvider {
     async fn get_payload(&self, block_number: u64) -> Option<(u32, Vec<u8>)> {
-        let rpc_block = self
-            .provider
-            .get_block_by_number(block_number.into())
-            .full()
-            .await
-            .ok()
-            .flatten()?;
+        let rpc_block =
+            self.provider.get_block_by_number(block_number.into()).full().await.ok().flatten()?;
 
         let timestamp = rpc_block.header.timestamp();
         let block_hash = rpc_block.header.hash;
@@ -71,9 +66,8 @@ impl BlockPayloadProvider for AlloyBlockPayloadProvider {
         }
 
         // Convert RPC block to a consensus block for payload construction.
-        let consensus_block = rpc_block
-            .into_consensus()
-            .map_transactions(|t| t.inner.inner.into_inner());
+        let consensus_block =
+            rpc_block.into_consensus().map_transactions(|t| t.inner.inner.into_inner());
 
         if self.rollup_config.is_ecotone_active(timestamp) {
             // Version 1: ExecutionPayloadV2 + parent_beacon_block_root appended after SSZ.

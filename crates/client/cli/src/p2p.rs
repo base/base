@@ -493,6 +493,7 @@ impl P2PArgs {
             bootnodes,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
+            payload_provider: None,
         })
     }
 
