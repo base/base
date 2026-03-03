@@ -24,6 +24,7 @@ use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
+use tracing::{debug, warn};
 
 use crate::{
     BlockAssembler, ExecutionError, Metrics, PendingBlocks, PendingBlocksBuilder,
@@ -272,11 +273,16 @@ where
         }
     }
 
-    fn build_pending_state(
+    pub(crate) fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &[Flashblock],
     ) -> Result<Option<Arc<PendingBlocks>>> {
+        // Early return if no flashblocks to process.
+        if let Some(result) = check_empty_flashblocks(flashblocks) {
+            return result;
+        }
+
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
@@ -286,7 +292,11 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
+        let earliest_block_number = match flashblocks_per_block.keys().min() {
+            Some(min) => *min,
+            None => return Ok(None),
+        };
+
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self
             .client
@@ -410,5 +420,87 @@ where
         pending_blocks_builder.with_state_overrides(state_overrides);
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
+    }
+}
+
+
+
+/// Checks if the flashblocks slice is empty and returns early with Ok(None).
+/// Extracted to allow unit testing without requiring a full Client mock.
+pub(crate) fn check_empty_flashblocks(
+    flashblocks: &[Flashblock],
+) -> Option<Result<Option<Arc<PendingBlocks>>>> {
+    if flashblocks.is_empty() {
+        warn!(target: "flashblocks", "empty flashblocks after retain, returning None");
+        Some(Ok(None))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base_primitives::{Flashblock, Metadata};
+    use alloy_rpc_types_engine::PayloadId;
+
+    fn make_flashblock(block_number: u64, index: u64) -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index,
+            base: None,
+            diff: Default::default(),
+            metadata: Metadata { block_number },
+        }
+    }
+
+    /// Before fix: build_pending_state panicked with empty flashblocks.
+    /// After fix: returns Ok(None). This test verifies the fix directly.
+    #[test]
+    fn test_empty_flashblocks_returns_none() {
+        let result = check_empty_flashblocks(&[]);
+        assert!(result.is_some(), "should catch empty flashblocks");
+        let inner = result.unwrap();
+        assert!(inner.is_ok());
+        assert!(inner.unwrap().is_none());
+    }
+
+    /// Simulates HandleReorg path: retain() filters all flashblocks -> empty -> Ok(None)
+    #[test]
+    fn test_empty_after_reorg_retain_returns_none() {
+        let mut flashblocks = vec![
+            make_flashblock(50, 0),
+            make_flashblock(60, 0),
+        ];
+        // Exact code from process_canonical_block HandleReorg branch
+        flashblocks.retain(|fb| fb.metadata.block_number > 100);
+        assert!(flashblocks.is_empty());
+
+        let result = check_empty_flashblocks(&flashblocks);
+        assert!(result.is_some());
+        assert!(result.unwrap().unwrap().is_none());
+    }
+
+    /// Simulates DepthLimitExceeded path: same retain logic, same fix applies
+    #[test]
+    fn test_empty_after_depth_limit_retain_returns_none() {
+        let mut flashblocks = vec![
+            make_flashblock(10, 0),
+            make_flashblock(11, 0),
+        ];
+        flashblocks.retain(|fb| fb.metadata.block_number > 100);
+        assert!(flashblocks.is_empty());
+
+        let result = check_empty_flashblocks(&flashblocks);
+        assert!(result.is_some());
+        assert!(result.unwrap().unwrap().is_none());
+    }
+
+    /// Non-empty flashblocks: check_empty_flashblocks returns None (normal path continues)
+    #[test]
+    fn test_non_empty_flashblocks_returns_none_option() {
+        let flashblocks = vec![make_flashblock(100, 0)];
+        let result = check_empty_flashblocks(&flashblocks);
+        assert!(result.is_none(), "should not intercept non-empty flashblocks");
     }
 }
