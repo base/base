@@ -73,4 +73,3 @@ pub trait RollupClient: Send + Sync {
     /// Gets the sync status via `optimism_syncStatus`.
     async fn sync_status(&self) -> RpcResult<SyncStatus>;
 }
-

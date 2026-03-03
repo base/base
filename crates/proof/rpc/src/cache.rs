@@ -3,8 +3,8 @@
 use std::{
     hash::Hash,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -106,11 +106,7 @@ where
     ///
     /// When set, cache hits and misses are emitted as Prometheus counters:
     /// `{prefix}_cache_hits_total` and `{prefix}_cache_misses_total`.
-    pub fn with_metrics_prefix(
-        name: impl Into<Arc<str>>,
-        capacity: usize,
-        prefix: &str,
-    ) -> Self {
+    pub fn with_metrics_prefix(name: impl Into<Arc<str>>, capacity: usize, prefix: &str) -> Self {
         Self {
             cache: Cache::new(capacity as u64),
             metrics: CacheMetrics::new(),
