@@ -112,9 +112,6 @@ pub(super) trait FlashBlocksConfigExt {
 
 impl FlashBlocksConfigExt for BuilderConfig {
     fn flashblocks_per_block(&self) -> u64 {
-        if self.block_time.as_millis() == 0 {
-            return 0;
-        }
-        (self.block_time.as_millis() / self.flashblocks.interval.as_millis()) as u64
+        10
     }
 }
