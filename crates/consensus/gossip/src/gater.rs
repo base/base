@@ -40,8 +40,9 @@ impl Default for DialInfo {
 pub struct GaterConfig {
     /// Maximum number of connection attempts per dial period for a single peer.
     ///
-    /// If set to `None`, unlimited redials are allowed. When set, prevents
-    /// excessive connection attempts to unresponsive or problematic peers.
+    /// If set to `None`, redialing is disabled (after one dial, further dials
+    /// are blocked until the dial period expires). If set to `Some(0)`,
+    /// redialing is unlimited.
     pub peer_redialing: Option<u64>,
 
     /// Duration of the rate limiting window for peer connections.
@@ -546,5 +547,38 @@ mod tests {
         // Should now fail because localhost resolves to IP in blocked subnet
         let result = gater.can_dial(&dns_localhost);
         assert!(matches!(result, Err(DialError::SubnetBlocked { .. })));
+    }
+
+    #[test]
+    fn test_peer_redialing_none_disables_redials() {
+        let mut gater = ConnectionGater::new(GaterConfig {
+            peer_redialing: None,
+            dial_period: Duration::from_secs(60 * 60),
+        });
+        let addr = Multiaddr::from_str(
+            "/ip4/127.0.0.1/tcp/8080/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
+        )
+        .unwrap();
+
+        assert!(!gater.dial_threshold_reached(&addr));
+        gater.dialed(&addr);
+        assert!(gater.dial_threshold_reached(&addr));
+    }
+
+    #[test]
+    fn test_peer_redialing_zero_allows_unlimited_redials() {
+        let mut gater = ConnectionGater::new(GaterConfig {
+            peer_redialing: Some(0),
+            dial_period: Duration::from_secs(60 * 60),
+        });
+        let addr = Multiaddr::from_str(
+            "/ip4/127.0.0.1/tcp/8080/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp",
+        )
+        .unwrap();
+
+        gater.dialed(&addr);
+        gater.dialed(&addr);
+        gater.dialed(&addr);
+        assert!(!gater.dial_threshold_reached(&addr));
     }
 }
