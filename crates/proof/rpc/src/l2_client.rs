@@ -145,23 +145,28 @@ impl L2ClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        let (blocks_cache, headers_cache, proofs_cache) = if let Some(prefix) =
-            config.metrics_prefix
-        {
-            (
-                MeteredCache::with_metrics_prefix("l2_blocks", config.cache_size, &prefix),
-                MeteredCache::with_metrics_prefix("l2_headers", config.cache_size, &prefix),
-                MeteredCache::with_metrics_prefix("l2_proofs", config.cache_size, &prefix),
-            )
-        } else {
-            (
-                MeteredCache::with_capacity("l2_blocks", config.cache_size),
-                MeteredCache::with_capacity("l2_headers", config.cache_size),
-                MeteredCache::with_capacity("l2_proofs", config.cache_size),
-            )
-        };
+        let (blocks_cache, headers_cache, proofs_cache) =
+            if let Some(prefix) = config.metrics_prefix {
+                (
+                    MeteredCache::with_metrics_prefix("l2_blocks", config.cache_size, &prefix),
+                    MeteredCache::with_metrics_prefix("l2_headers", config.cache_size, &prefix),
+                    MeteredCache::with_metrics_prefix("l2_proofs", config.cache_size, &prefix),
+                )
+            } else {
+                (
+                    MeteredCache::with_capacity("l2_blocks", config.cache_size),
+                    MeteredCache::with_capacity("l2_headers", config.cache_size),
+                    MeteredCache::with_capacity("l2_proofs", config.cache_size),
+                )
+            };
 
-        Ok(Self { provider, blocks_cache, headers_cache, proofs_cache, retry_config: config.retry_config })
+        Ok(Self {
+            provider,
+            blocks_cache,
+            headers_cache,
+            proofs_cache,
+            retry_config: config.retry_config,
+        })
     }
 
     /// Returns the blocks cache.
