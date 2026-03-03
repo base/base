@@ -130,7 +130,7 @@ where
 
         loop {
             if self.cancel.is_cancelled() {
-                return;
+                break;
             }
 
             match self.limiter.check_rate_limit() {
@@ -139,40 +139,50 @@ where
                     continue;
                 }
                 Some(wait) => {
-                    tokio::select! {
-                        _ = self.cancel.cancelled() => return,
-                        _ = time::sleep(wait) => continue,
+                    let closed = tokio::select! {
+                        _ = self.cancel.cancelled() => break,
+                        _ = time::sleep(wait) => { continue; }
                         result = self.receiver.recv() => {
-                            self.handle_recv(result);
+                            self.handle_recv(result)
                         }
+                    };
+                    if closed {
+                        break;
                     }
                     continue;
                 }
                 _ => {}
             }
 
-            tokio::select! {
-                _ = self.cancel.cancelled() => return,
+            let closed = tokio::select! {
+                _ = self.cancel.cancelled() => break,
                 result = self.receiver.recv() => {
-                    self.handle_recv(result);
-                    if !self.buffer.is_empty() && self.limiter.check_rate_limit().is_none() {
-                        self.flush_buffer().await;
-                    }
+                    self.handle_recv(result)
                 }
+            };
+            if closed {
+                break;
+            }
+            if !self.buffer.is_empty() && self.limiter.check_rate_limit().is_none() {
+                self.flush_buffer().await;
             }
         }
+
+        self.flush_remaining().await;
     }
 
+    /// Returns `true` if the channel is closed and the forwarder should shut down.
     fn handle_recv(
         &mut self,
         result: Result<Arc<ValidPoolTransaction<T>>, broadcast::error::RecvError>,
-    ) {
+    ) -> bool {
         match result {
             Ok(tx) => {
                 let sender = *tx.sender_ref();
                 let consensus = tx.transaction.clone_into_consensus();
                 let raw = Bytes::from(consensus.inner().encoded_2718());
                 self.buffer.push(ValidTransaction { sender, raw });
+                false
             }
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 warn!(
@@ -182,14 +192,22 @@ where
                 );
                 self.metrics.batches_lagged.increment(1);
                 self.metrics.txs_lagged.increment(skipped);
+                false
             }
             Err(broadcast::error::RecvError::Closed) => {
                 info!(
                     builder_url = %self.builder_url,
-                    "broadcast channel closed, shutting down forwarder",
+                    buffered = self.buffer.len(),
+                    "broadcast channel closed",
                 );
-                self.cancel.cancel();
+                true
             }
+        }
+    }
+
+    async fn flush_remaining(&mut self) {
+        while !self.buffer.is_empty() {
+            self.flush_buffer().await;
         }
     }
 

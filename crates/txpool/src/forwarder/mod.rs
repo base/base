@@ -89,10 +89,12 @@ impl ForwarderHandle {
     pub async fn shutdown(mut self) {
         self.cancel.cancel();
 
-        for task in std::mem::take(&mut self.tasks) {
-            if let Err(err) = tokio::time::timeout(Duration::from_secs(5), task).await {
-                warn!(error = %err, "forwarder task did not finish within shutdown timeout");
-            }
+        let tasks = std::mem::take(&mut self.tasks);
+        let results =
+            tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(tasks)).await;
+
+        if let Err(err) = results {
+            warn!(error = %err, "forwarder tasks did not finish within shutdown timeout");
         }
     }
 }
