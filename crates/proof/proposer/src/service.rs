@@ -9,16 +9,19 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
+use base_proof_contracts::{
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+};
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    AggregateVerifierContractClient, AnchorStateRegistryContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient, Driver, DriverConfig, DriverHandle, L1ClientConfig,
-    L1ClientImpl, L2ClientConfig, ProposerConfig, ProposerDriverControl, Prover, RollupClient,
-    RollupClientConfig, RollupClientImpl, SigningConfig, create_enclave_client, create_l2_client,
+    Driver, DriverConfig, DriverHandle, L1ClientConfig, L1ClientImpl, L2ClientConfig,
+    ProposerConfig, ProposerDriverControl, Prover, RollupClient, RollupClientConfig,
+    RollupClientImpl, SigningConfig, create_enclave_client, create_l2_client,
     create_output_proposer, rollup_config_to_per_chain_config,
 };
 
@@ -171,7 +174,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // into the driver. We store the recovered state and set it after driver creation.
     let recovered_state: Option<(u32, B256, u64)> =
         match crate::recover_parent_game_state_standalone(
-            &factory_client,
+            factory_client.as_ref(),
             &verifier_client,
             config.game_type,
         )

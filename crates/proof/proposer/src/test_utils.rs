@@ -8,13 +8,12 @@ use base_enclave::{
     AccountResult, BlockId, ExecutionWitness, Genesis, GenesisSystemConfig, PerChainConfig,
     RollupConfig,
 };
+use base_proof_contracts::{
+    AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
+};
 
 use crate::{
-    ProposerError,
-    contracts::{
-        AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
-        OutputProposer,
-    },
+    OutputProposer, ProposerError,
     enclave::EnclaveClientTrait,
     prover::{Prover, ProverProposal},
     rpc::{
@@ -116,7 +115,7 @@ pub(crate) struct MockAnchorStateRegistry {
 
 #[async_trait]
 impl AnchorStateRegistryClient for MockAnchorStateRegistry {
-    async fn get_anchor_root(&self) -> Result<AnchorRoot, ProposerError> {
+    async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError> {
         Ok(self.anchor_root.clone())
     }
 }
@@ -128,16 +127,16 @@ pub(crate) struct MockDisputeGameFactory {
 
 #[async_trait]
 impl DisputeGameFactoryClient for MockDisputeGameFactory {
-    async fn game_count(&self) -> Result<u64, ProposerError> {
+    async fn game_count(&self) -> Result<u64, ContractError> {
         Ok(self.game_count)
     }
-    async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ProposerError> {
+    async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {
         unimplemented!()
     }
-    async fn init_bonds(&self, _: u32) -> Result<U256, ProposerError> {
+    async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
         Ok(U256::ZERO)
     }
-    async fn game_impls(&self, _: u32) -> Result<Address, ProposerError> {
+    async fn game_impls(&self, _: u32) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
 }

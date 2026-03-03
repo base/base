@@ -21,6 +21,7 @@ use std::{
 
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
+use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -28,12 +29,9 @@ use tracing::{debug, info, warn};
 
 use crate::{
     AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, NO_PARENT_INDEX,
-    PROPOSAL_TIMEOUT, ProposerError,
-    contracts::{
-        AnchorStateRegistryClient, DisputeGameFactoryClient, OutputProposer, is_game_already_exists,
-    },
+    OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
     enclave::EnclaveClientTrait,
-    metrics as proposer_metrics,
+    is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
     rpc::{L1Client, L2Client, RollupClient},
 };

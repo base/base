@@ -3887,6 +3887,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-contracts"
+version = "0.0.0"
+dependencies = [
+ "alloy-contract",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-sol-types",
+ "async-trait",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-proof-driver"
 version = "0.0.0"
 dependencies = [
@@ -4059,6 +4073,7 @@ dependencies = [
  "base-cli-utils",
  "base-enclave",
  "base-enclave-client",
+ "base-proof-contracts",
  "base-protocol",
  "bytes",
  "clap",

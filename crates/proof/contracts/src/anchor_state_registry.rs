@@ -8,7 +8,7 @@ use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
 use async_trait::async_trait;
 
-use crate::ProposerError;
+use crate::ContractError;
 
 sol! {
     /// `AnchorStateRegistry` contract interface.
@@ -53,7 +53,7 @@ pub struct AnchorRoot {
 #[async_trait]
 pub trait AnchorStateRegistryClient: Send + Sync {
     /// Returns the current anchor root.
-    async fn get_anchor_root(&self) -> Result<AnchorRoot, ProposerError>;
+    async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -64,7 +64,7 @@ pub struct AnchorStateRegistryContractClient {
 
 impl AnchorStateRegistryContractClient {
     /// Creates a new client for the given contract address and L1 RPC URL.
-    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ProposerError> {
+    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ContractError> {
         let provider = RootProvider::new_http(l1_rpc_url);
         let contract = IAnchorStateRegistry::IAnchorStateRegistryInstance::new(address, provider);
         Ok(Self { contract })
@@ -73,16 +73,13 @@ impl AnchorStateRegistryContractClient {
 
 #[async_trait]
 impl AnchorStateRegistryClient for AnchorStateRegistryContractClient {
-    async fn get_anchor_root(&self) -> Result<AnchorRoot, ProposerError> {
-        let result = self
-            .contract
-            .getAnchorRoot()
-            .call()
-            .await
-            .map_err(|e| ProposerError::Contract(format!("getAnchorRoot failed: {e}")))?;
+    async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError> {
+        let result = self.contract.getAnchorRoot().call().await.map_err(|e| {
+            ContractError::Call { context: "getAnchorRoot failed".into(), source: e }
+        })?;
 
         let l2_block_number: u64 = result.l2SequenceNumber.try_into().map_err(|_| {
-            ProposerError::Contract("anchor l2SequenceNumber overflows u64".to_string())
+            ContractError::Validation("anchor l2SequenceNumber overflows u64".into())
         })?;
 
         tracing::info!(

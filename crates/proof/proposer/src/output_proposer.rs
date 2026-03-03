@@ -16,6 +16,7 @@ use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
+use base_proof_contracts::{encode_create_calldata, encode_extra_data};
 use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use tokio::sync::OnceCell;
 use tracing::info;
@@ -28,7 +29,6 @@ use crate::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
         GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
     },
-    contracts::dispute_game_factory::{encode_create_calldata, encode_extra_data},
     prover::ProverProposal,
 };
 

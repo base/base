@@ -1,5 +1,6 @@
 //! Error types for the proposer.
 
+use base_proof_contracts::ContractError;
 use thiserror::Error;
 
 use crate::rpc::RpcError;
@@ -61,6 +62,12 @@ pub enum ProposerError {
     /// Failed to serialize transaction.
     #[error("failed to serialize transaction: {0}")]
     TxSerialization(String),
+}
+
+impl From<ContractError> for ProposerError {
+    fn from(err: ContractError) -> Self {
+        Self::Contract(err.to_string())
+    }
 }
 
 impl From<eyre::Error> for ProposerError {
