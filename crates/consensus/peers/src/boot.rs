@@ -86,6 +86,7 @@ mod tests {
         enr::{CombinedPublicKey, k256},
         handler::NodeContact,
     };
+    use rstest::rstest;
 
     use super::*;
     use crate::utils::peer_id_to_secp256k1_pubkey;
@@ -145,5 +146,31 @@ mod tests {
 
         // These two keys should be equal.
         assert_eq!(contact_pkey, expected_pkey);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum ParseErrorKind {
+        Enr,
+        NodeRecord,
+        PeerIdConversion,
+    }
+
+    #[rstest]
+    #[case("enr:invalid", ParseErrorKind::Enr)]
+    #[case("enode://invalid@127.0.0.1:30303", ParseErrorKind::NodeRecord)]
+    #[case(
+        "enode://00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000@127.0.0.1:30303",
+        ParseErrorKind::PeerIdConversion
+    )]
+    fn test_parse_bootnode_error_variants(#[case] raw: &str, #[case] expected: ParseErrorKind) {
+        let err = BootNode::parse_bootnode(raw).expect_err("input should fail to parse");
+        match (expected, err) {
+            (ParseErrorKind::Enr, BootNodeParseError::Enr(_)) => {}
+            (ParseErrorKind::NodeRecord, BootNodeParseError::NodeRecord(_)) => {}
+            (ParseErrorKind::PeerIdConversion, BootNodeParseError::PeerIdConversion(_)) => {}
+            (expected, actual) => {
+                panic!("expected {expected:?}, got {actual:?}");
+            }
+        }
     }
 }

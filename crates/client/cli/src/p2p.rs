@@ -529,7 +529,8 @@ impl P2PArgs {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
+    use alloy_primitives::{Address, b256};
+    use base_consensus_genesis::RollupConfig;
     use base_consensus_peers::NodeRecord;
     use clap::Parser;
 
@@ -706,6 +707,20 @@ mod tests {
                 "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_errors_on_invalid_bootnode() {
+        let args = MockCommand::parse_from(["test", "--p2p.bootnodes", "enr:invalid"]);
+
+        let err = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .expect_err("invalid bootnode should fail config")
+            .to_string();
+
+        assert!(err.contains("Failed to parse bootnode 'enr:invalid'"));
     }
 
     #[test]

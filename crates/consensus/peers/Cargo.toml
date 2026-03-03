@@ -46,6 +46,7 @@ arbtest.workspace = true
 tempfile.workspace = true
 multihash.workspace = true
 serde_json = { workspace = true, features = ["std"] }
+rstest.workspace = true
 
 base-consensus-genesis.workspace = true
 
