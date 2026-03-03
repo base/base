@@ -126,17 +126,12 @@ impl L1ClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        let (headers_cache, receipts_cache) = if let Some(prefix) = config.metrics_prefix {
-            (
-                MeteredCache::with_metrics_prefix("l1_headers", config.cache_size, &prefix),
-                MeteredCache::with_metrics_prefix("l1_receipts", config.cache_size, &prefix),
-            )
-        } else {
-            (
-                MeteredCache::with_capacity("l1_headers", config.cache_size),
-                MeteredCache::with_capacity("l1_receipts", config.cache_size),
-            )
-        };
+        let mut headers_cache = MeteredCache::with_capacity("l1_headers", config.cache_size);
+        let mut receipts_cache = MeteredCache::with_capacity("l1_receipts", config.cache_size);
+        if let Some(prefix) = &config.metrics_prefix {
+            headers_cache = headers_cache.with_metrics_prefix(prefix);
+            receipts_cache = receipts_cache.with_metrics_prefix(prefix);
+        }
 
         Ok(Self { provider, headers_cache, receipts_cache, retry_config: config.retry_config })
     }

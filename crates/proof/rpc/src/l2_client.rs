@@ -145,20 +145,14 @@ impl L2ClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        let (blocks_cache, headers_cache, proofs_cache) =
-            if let Some(prefix) = config.metrics_prefix {
-                (
-                    MeteredCache::with_metrics_prefix("l2_blocks", config.cache_size, &prefix),
-                    MeteredCache::with_metrics_prefix("l2_headers", config.cache_size, &prefix),
-                    MeteredCache::with_metrics_prefix("l2_proofs", config.cache_size, &prefix),
-                )
-            } else {
-                (
-                    MeteredCache::with_capacity("l2_blocks", config.cache_size),
-                    MeteredCache::with_capacity("l2_headers", config.cache_size),
-                    MeteredCache::with_capacity("l2_proofs", config.cache_size),
-                )
-            };
+        let mut blocks_cache = MeteredCache::with_capacity("l2_blocks", config.cache_size);
+        let mut headers_cache = MeteredCache::with_capacity("l2_headers", config.cache_size);
+        let mut proofs_cache = MeteredCache::with_capacity("l2_proofs", config.cache_size);
+        if let Some(prefix) = &config.metrics_prefix {
+            blocks_cache = blocks_cache.with_metrics_prefix(prefix);
+            headers_cache = headers_cache.with_metrics_prefix(prefix);
+            proofs_cache = proofs_cache.with_metrics_prefix(prefix);
+        }
 
         Ok(Self {
             provider,

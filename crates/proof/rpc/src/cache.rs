@@ -102,18 +102,14 @@ where
         }
     }
 
-    /// Creates a new metered cache with the given name, capacity, and Prometheus metrics prefix.
+    /// Sets a Prometheus metrics prefix on this cache.
     ///
     /// When set, cache hits and misses are emitted as Prometheus counters:
     /// `{prefix}_cache_hits_total` and `{prefix}_cache_misses_total`.
-    pub fn with_metrics_prefix(name: impl Into<Arc<str>>, capacity: usize, prefix: &str) -> Self {
-        Self {
-            cache: Cache::new(capacity as u64),
-            metrics: CacheMetrics::new(),
-            name: name.into(),
-            hits_metric_name: Some(format!("{prefix}_cache_hits_total").into()),
-            misses_metric_name: Some(format!("{prefix}_cache_misses_total").into()),
-        }
+    pub fn with_metrics_prefix(mut self, prefix: &str) -> Self {
+        self.hits_metric_name = Some(format!("{prefix}_cache_hits_total").into());
+        self.misses_metric_name = Some(format!("{prefix}_cache_misses_total").into());
+        self
     }
 
     /// Gets a value from the cache, returning `None` if not present.
