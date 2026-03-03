@@ -62,7 +62,7 @@ mod service;
 pub use service::run;
 
 mod signal;
-pub use signal::setup_signal_handler;
+pub use signal::SignalHandler;
 
 #[cfg(test)]
 pub mod test_utils;
