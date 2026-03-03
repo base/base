@@ -46,7 +46,6 @@ std = [
 	"base-alloy-rpc-types-engine/std",
 	"serde?/std",
 	"thiserror/std",
-	"serde?/std"
 ]
 serde = [
 	"alloy-primitives/serde",
