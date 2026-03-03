@@ -74,15 +74,12 @@ impl AnchorStateRegistryContractClient {
 #[async_trait]
 impl AnchorStateRegistryClient for AnchorStateRegistryContractClient {
     async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError> {
-        let result = self
-            .contract
-            .getAnchorRoot()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("getAnchorRoot failed: {e}")))?;
+        let result = self.contract.getAnchorRoot().call().await.map_err(|e| {
+            ContractError::Call { context: "getAnchorRoot failed".into(), source: e }
+        })?;
 
         let l2_block_number: u64 = result.l2SequenceNumber.try_into().map_err(|_| {
-            ContractError::Call("anchor l2SequenceNumber overflows u64".to_string())
+            ContractError::Validation("anchor l2SequenceNumber overflows u64".into())
         })?;
 
         tracing::info!(

@@ -64,6 +64,15 @@ pub struct GameInfo {
 pub trait AggregateVerifierClient: Send + Sync {
     /// Queries game details from a game proxy address.
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError>;
+
+    /// Reads `BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
+    async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError>;
+
+    /// Reads `INTERMEDIATE_BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
+    async fn read_intermediate_block_interval(
+        &self,
+        impl_address: Address,
+    ) -> Result<u64, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -78,54 +87,6 @@ impl AggregateVerifierContractClient {
         let provider = RootProvider::new_http(l1_rpc_url);
         Ok(Self { provider })
     }
-
-    /// Reads `BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
-    pub async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError> {
-        let contract =
-            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
-        let interval_u256: U256 = contract
-            .BLOCK_INTERVAL()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("BLOCK_INTERVAL failed: {e}")))?;
-
-        let interval: u64 = interval_u256
-            .try_into()
-            .map_err(|_| ContractError::Call("BLOCK_INTERVAL overflows u64".to_string()))?;
-
-        // Also validated at startup in main.rs; duplicated here for defense-in-depth.
-        if interval < 2 {
-            return Err(ContractError::Call(
-                "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)"
-                    .to_string(),
-            ));
-        }
-
-        Ok(interval)
-    }
-
-    /// Reads `INTERMEDIATE_BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
-    pub async fn read_intermediate_block_interval(
-        &self,
-        impl_address: Address,
-    ) -> Result<u64, ContractError> {
-        let contract =
-            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
-        let interval_u256: U256 =
-            contract.INTERMEDIATE_BLOCK_INTERVAL().call().await.map_err(|e| {
-                ContractError::Call(format!("INTERMEDIATE_BLOCK_INTERVAL failed: {e}"))
-            })?;
-
-        let interval: u64 = interval_u256.try_into().map_err(|_| {
-            ContractError::Call("INTERMEDIATE_BLOCK_INTERVAL overflows u64".to_string())
-        })?;
-
-        if interval == 0 {
-            return Err(ContractError::Call("INTERMEDIATE_BLOCK_INTERVAL cannot be 0".to_string()));
-        }
-
-        Ok(interval)
-    }
 }
 
 #[async_trait]
@@ -138,24 +99,71 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .rootClaim()
             .call()
             .await
-            .map_err(|e| ContractError::Call(format!("rootClaim failed: {e}")))?;
+            .map_err(|e| ContractError::Call { context: "rootClaim failed".into(), source: e })?;
 
-        let l2_seq: U256 = contract
-            .l2SequenceNumber()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("l2SequenceNumber failed: {e}")))?;
+        let l2_seq: U256 = contract.l2SequenceNumber().call().await.map_err(|e| {
+            ContractError::Call { context: "l2SequenceNumber failed".into(), source: e }
+        })?;
 
         let l2_block_number: u64 = l2_seq
             .try_into()
-            .map_err(|_| ContractError::Call("l2SequenceNumber overflows u64".to_string()))?;
+            .map_err(|_| ContractError::Validation("l2SequenceNumber overflows u64".into()))?;
 
         let parent_index: u32 = contract
             .parentIndex()
             .call()
             .await
-            .map_err(|e| ContractError::Call(format!("parentIndex failed: {e}")))?;
+            .map_err(|e| ContractError::Call { context: "parentIndex failed".into(), source: e })?;
 
         Ok(GameInfo { root_claim, l2_block_number, parent_index })
+    }
+
+    async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+        let interval_u256: U256 = contract.BLOCK_INTERVAL().call().await.map_err(|e| {
+            ContractError::Call { context: "BLOCK_INTERVAL failed".into(), source: e }
+        })?;
+
+        let interval: u64 = interval_u256
+            .try_into()
+            .map_err(|_| ContractError::Validation("BLOCK_INTERVAL overflows u64".into()))?;
+
+        // Also validated at startup in main.rs; duplicated here for defense-in-depth.
+        if interval < 2 {
+            return Err(ContractError::Validation(
+                "BLOCK_INTERVAL must be at least 2 (single-block proposals are not supported)"
+                    .into(),
+            ));
+        }
+
+        Ok(interval)
+    }
+
+    async fn read_intermediate_block_interval(
+        &self,
+        impl_address: Address,
+    ) -> Result<u64, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+        let interval_u256: U256 =
+            contract.INTERMEDIATE_BLOCK_INTERVAL().call().await.map_err(|e| {
+                ContractError::Call {
+                    context: "INTERMEDIATE_BLOCK_INTERVAL failed".into(),
+                    source: e,
+                }
+            })?;
+
+        let interval: u64 = interval_u256.try_into().map_err(|_| {
+            ContractError::Validation("INTERMEDIATE_BLOCK_INTERVAL overflows u64".into())
+        })?;
+
+        if interval == 0 {
+            return Err(ContractError::Validation(
+                "INTERMEDIATE_BLOCK_INTERVAL cannot be 0".into(),
+            ));
+        }
+
+        Ok(interval)
     }
 }

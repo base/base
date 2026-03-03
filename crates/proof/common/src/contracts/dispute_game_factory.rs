@@ -92,23 +92,19 @@ impl DisputeGameFactoryContractClient {
 #[async_trait]
 impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     async fn game_count(&self) -> Result<u64, ContractError> {
-        let result = self
-            .contract
-            .gameCount()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("gameCount failed: {e}")))?;
+        let result =
+            self.contract.gameCount().call().await.map_err(|e| ContractError::Call {
+                context: "gameCount failed".into(),
+                source: e,
+            })?;
 
-        result.try_into().map_err(|_| ContractError::Call("gameCount overflows u64".to_string()))
+        result.try_into().map_err(|_| ContractError::Validation("gameCount overflows u64".into()))
     }
 
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
-        let result = self
-            .contract
-            .gameAtIndex(U256::from(index))
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("gameAtIndex({index}) failed: {e}")))?;
+        let result = self.contract.gameAtIndex(U256::from(index)).call().await.map_err(|e| {
+            ContractError::Call { context: format!("gameAtIndex({index}) failed"), source: e }
+        })?;
 
         Ok(GameAtIndex {
             game_type: result.gameType,
@@ -118,23 +114,21 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     }
 
     async fn init_bonds(&self, game_type: u32) -> Result<U256, ContractError> {
-        let result = self
-            .contract
-            .initBonds(game_type)
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("initBonds failed: {e}")))?;
+        let result =
+            self.contract.initBonds(game_type).call().await.map_err(|e| ContractError::Call {
+                context: "initBonds failed".into(),
+                source: e,
+            })?;
 
         Ok(result)
     }
 
     async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
-        let result = self
-            .contract
-            .gameImpls(game_type)
-            .call()
-            .await
-            .map_err(|e| ContractError::Call(format!("gameImpls failed: {e}")))?;
+        let result =
+            self.contract.gameImpls(game_type).call().await.map_err(|e| ContractError::Call {
+                context: "gameImpls failed".into(),
+                source: e,
+            })?;
 
         Ok(result)
     }
