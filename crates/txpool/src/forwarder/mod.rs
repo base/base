@@ -4,7 +4,7 @@ use jsonrpsee::http_client::HttpClientBuilder;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod config;
 pub use config::ForwarderConfig;
@@ -67,6 +67,10 @@ impl ForwarderHandle {
 
             info!(builder_url = %url, "spawned transaction forwarder");
             tasks.push(handle);
+        }
+
+        if tasks.is_empty() {
+            warn!("no forwarder tasks spawned — check builder_urls config");
         }
 
         Self { cancel, _tasks: tasks }

@@ -38,6 +38,7 @@ struct RateLimiter {
 
 impl RateLimiter {
     fn new(max_rps: u32) -> Self {
+        assert!(max_rps > 0, "max_rps must be at least 1");
         Self { timestamps: VecDeque::with_capacity(max_rps as usize), max_rps }
     }
 
@@ -52,23 +53,20 @@ impl RateLimiter {
         }
     }
 
-    fn can_send(&mut self) -> bool {
-        self.prune(Instant::now());
-        (self.timestamps.len() as u32) < self.max_rps
-    }
-
-    fn time_until_available(&mut self) -> std::time::Duration {
+    /// Returns `None` if a send is allowed now, or `Some(wait)` with the
+    /// precise duration until the next slot opens.
+    fn check_rate_limit(&mut self) -> Option<std::time::Duration> {
         let now = Instant::now();
         self.prune(now);
 
         if (self.timestamps.len() as u32) < self.max_rps {
-            return std::time::Duration::ZERO;
+            return None;
         }
 
         let oldest = self.timestamps.front().expect("non-empty after prune");
         let window = std::time::Duration::from_secs(1);
         let elapsed = now.duration_since(*oldest);
-        window.saturating_sub(elapsed)
+        Some(window.saturating_sub(elapsed))
     }
 
     fn record_send(&mut self) {
@@ -127,28 +125,29 @@ where
                 return;
             }
 
-            if self.limiter.can_send() && !self.buffer.is_empty() {
-                self.flush_buffer().await;
-                continue;
-            }
-
-            if !self.limiter.can_send() {
-                let wait = self.limiter.time_until_available();
-                tokio::select! {
-                    _ = self.cancel.cancelled() => return,
-                    _ = time::sleep(wait) => continue,
-                    result = self.receiver.recv() => {
-                        self.handle_recv(result);
-                    }
+            match self.limiter.check_rate_limit() {
+                None if !self.buffer.is_empty() => {
+                    self.flush_buffer().await;
+                    continue;
                 }
-                continue;
+                Some(wait) => {
+                    tokio::select! {
+                        _ = self.cancel.cancelled() => return,
+                        _ = time::sleep(wait) => continue,
+                        result = self.receiver.recv() => {
+                            self.handle_recv(result);
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
             }
 
             tokio::select! {
                 _ = self.cancel.cancelled() => return,
                 result = self.receiver.recv() => {
                     self.handle_recv(result);
-                    if !self.buffer.is_empty() && self.limiter.can_send() {
+                    if !self.buffer.is_empty() && self.limiter.check_rate_limit().is_none() {
                         self.flush_buffer().await;
                     }
                 }
@@ -221,33 +220,41 @@ where
                     self.metrics.txs_forwarded.increment(tx_count);
                     return;
                 }
-                Err(err) => {
-                    if attempt < self.config.max_retries {
-                        let backoff = self.config.retry_backoff * 2u32.pow(attempt);
-                        debug!(
-                            builder_url = %self.builder_url,
-                            attempt = attempt + 1,
-                            max_retries = self.config.max_retries,
-                            backoff_ms = backoff.as_millis() as u64,
-                            error = %err,
-                            "RPC send failed, retrying",
-                        );
-                        tokio::select! {
-                            _ = self.cancel.cancelled() => return,
-                            _ = time::sleep(backoff) => {}
-                        }
-                    } else {
-                        error!(
-                            builder_url = %self.builder_url,
-                            error = %err,
-                            txs = tx_count,
-                            "RPC send failed after all retries, dropping batch",
-                        );
-                        self.metrics.rpc_errors.increment(1);
+                Err(err) if Self::is_retryable(&err) && attempt < self.config.max_retries => {
+                    let backoff = self.config.retry_backoff * 2u32.pow(attempt);
+                    debug!(
+                        builder_url = %self.builder_url,
+                        attempt = attempt + 1,
+                        max_retries = self.config.max_retries,
+                        backoff_ms = backoff.as_millis() as u64,
+                        error = %err,
+                        "RPC send failed, retrying",
+                    );
+                    tokio::select! {
+                        _ = self.cancel.cancelled() => return,
+                        _ = time::sleep(backoff) => {}
                     }
+                }
+                Err(err) => {
+                    error!(
+                        builder_url = %self.builder_url,
+                        error = %err,
+                        txs = tx_count,
+                        retryable = Self::is_retryable(&err),
+                        "RPC send failed, dropping batch",
+                    );
+                    self.metrics.rpc_errors.increment(1);
+                    return;
                 }
             }
         }
+    }
+
+    fn is_retryable(err: &ClientError) -> bool {
+        matches!(
+            err,
+            ClientError::Transport(_) | ClientError::RequestTimeout | ClientError::RestartNeeded(_)
+        )
     }
 }
 

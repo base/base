@@ -39,12 +39,12 @@ base-execution-primitives.workspace = true
 # misc
 serde.workspace = true
 c-kzg.workspace = true
-serde_json.workspace = true
 metrics.workspace = true
 tracing.workspace = true
+tokio-util.workspace = true
+serde_json.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
-tokio-util.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
