@@ -293,7 +293,7 @@ jobs:
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "GitHub Release $TAG already exists, skipping creation"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes
+            gh release create "$TAG" --title "$TAG" --generate-notes --draft
           fi
 
       - name: Download binary artifacts
