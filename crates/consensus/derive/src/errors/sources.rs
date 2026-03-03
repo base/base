@@ -38,6 +38,11 @@ pub enum BlobProviderError {
     /// Error pertaining to the backend transport.
     #[error("{0}")]
     Backend(String),
+    /// Not enough blobs provided.
+    /// The first argument is the expected number of blobs, and the second argument is the actual
+    /// number of blobs.
+    #[error("Not enough blobs: expected {0}, got {1}")]
+    NotEnoughBlobs(usize, usize),
     /// Reset error from blob loading.
     #[error("{0}")]
     Reset(#[from] ResetError),
@@ -50,6 +55,9 @@ impl From<BlobProviderError> for PipelineErrorKind {
             | BlobProviderError::SlotDerivation
             | BlobProviderError::BlobDecoding(_) => PipelineError::Provider(val.to_string()).crit(),
             BlobProviderError::Backend(_) => PipelineError::Provider(val.to_string()).temp(),
+            BlobProviderError::NotEnoughBlobs(expected, got) => {
+                Self::Reset(ResetError::BlobsUnderFill(expected, got))
+            }
             BlobProviderError::Reset(err) => Self::Reset(err),
         }
     }
@@ -78,5 +86,8 @@ mod tests {
         let err: PipelineErrorKind =
             BlobProviderError::BlobDecoding(BlobDecodingError::InvalidFieldElement).into();
         assert!(matches!(err, PipelineErrorKind::Critical(_)));
+
+        let err: PipelineErrorKind = BlobProviderError::NotEnoughBlobs(2, 1).into();
+        assert!(matches!(err, PipelineErrorKind::Reset(_)));
     }
 }

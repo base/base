@@ -5,7 +5,7 @@ use alloc::{boxed::Box, vec};
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
 
-use crate::BlobDecodingError;
+use crate::{BlobDecodingError, BlobProviderError};
 
 /// The blob encoding version
 pub(crate) const BLOB_ENCODING_VERSION: u8 = 0;
@@ -148,18 +148,18 @@ impl BlobData {
         &mut self,
         blobs: &[Box<Blob>],
         index: usize,
-    ) -> Result<bool, BlobDecodingError> {
+    ) -> Result<bool, BlobProviderError> {
         // Do not fill if there is calldata here
         if self.calldata.is_some() {
             return Ok(false);
         }
 
         if index >= blobs.len() {
-            return Err(BlobDecodingError::InvalidLength);
+            return Err(BlobProviderError::NotEnoughBlobs(index, blobs.len()));
         }
 
         if blobs[index].is_empty() {
-            return Err(BlobDecodingError::MissingData);
+            return Err(BlobProviderError::BlobDecoding(BlobDecodingError::MissingData));
         }
 
         self.data = Some(Bytes::from(*blobs[index]));
@@ -192,7 +192,7 @@ mod tests {
     fn test_fill_oob_index() {
         let mut blob_data = BlobData::default();
         let blobs = vec![Box::new(Blob::with_last_byte(1u8))];
-        assert_eq!(blob_data.fill(&blobs, 1), Err(BlobDecodingError::InvalidLength));
+        assert_eq!(blob_data.fill(&blobs, 1), Err(BlobProviderError::NotEnoughBlobs(1, 1)));
     }
 
     #[test]
