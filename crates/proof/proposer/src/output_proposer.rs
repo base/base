@@ -16,10 +16,10 @@ use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
-use base_proof_rpc::RetryConfig;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
+use base_proof_rpc::RetryConfig;
 use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use tokio::sync::OnceCell;
 use tracing::info;
