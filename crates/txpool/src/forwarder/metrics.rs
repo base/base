@@ -9,9 +9,11 @@ pub struct ForwarderMetrics {
     pub txs_forwarded: Counter,
     /// Total RPC send errors (after all retries exhausted).
     pub rpc_errors: Counter,
-    /// Total batches dropped due to lagged broadcast receiver.
+    /// Total lag events from the broadcast receiver.
     pub batches_lagged: Counter,
-    /// RPC round-trip latency in seconds.
+    /// Total individual transactions skipped due to lag.
+    pub txs_lagged: Counter,
+    /// RPC round-trip latency in seconds (including retries).
     pub rpc_latency: Histogram,
 }
 
@@ -24,6 +26,7 @@ impl ForwarderMetrics {
             txs_forwarded: counter!("txpool.forwarder.txs_forwarded", labels.clone()),
             rpc_errors: counter!("txpool.forwarder.rpc_errors", labels.clone()),
             batches_lagged: counter!("txpool.forwarder.batches_lagged", labels.clone()),
+            txs_lagged: counter!("txpool.forwarder.txs_lagged", labels.clone()),
             rpc_latency: histogram!("txpool.forwarder.rpc_latency", labels),
         }
     }

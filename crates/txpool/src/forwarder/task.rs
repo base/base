@@ -172,7 +172,8 @@ where
                     skipped = skipped,
                     "forwarder lagged, dropped transactions",
                 );
-                self.metrics.batches_lagged.increment(1);
+                        self.metrics.batches_lagged.increment(1);
+                        self.metrics.txs_lagged.increment(skipped);
             }
             Err(broadcast::error::RecvError::Closed) => {
                 info!(
@@ -205,17 +206,15 @@ where
 
     async fn send_with_retries(&self, batch: Vec<ValidTransaction>) {
         let tx_count = batch.len() as u64;
+        let overall_start = Instant::now();
 
         for attempt in 0..=self.config.max_retries {
-            let start = Instant::now();
             let result: Result<serde_json::Value, ClientError> =
                 self.client.request("base_insertValidatedTransactions", vec![&batch]).await;
-            let elapsed = start.elapsed();
-
-            self.metrics.rpc_latency.record(elapsed.as_secs_f64());
 
             match result {
                 Ok(_) => {
+                    self.metrics.rpc_latency.record(overall_start.elapsed().as_secs_f64());
                     self.metrics.batches_sent.increment(1);
                     self.metrics.txs_forwarded.increment(tx_count);
                     return;
@@ -236,6 +235,7 @@ where
                     }
                 }
                 Err(err) => {
+                    self.metrics.rpc_latency.record(overall_start.elapsed().as_secs_f64());
                     error!(
                         builder_url = %self.builder_url,
                         error = %err,
