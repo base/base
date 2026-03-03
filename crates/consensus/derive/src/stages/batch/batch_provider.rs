@@ -76,6 +76,7 @@ where
             let batch_queue = self.batch_queue.take().expect("Must have batch queue");
             let mut bv = BatchValidator::new(Arc::clone(&self.cfg), batch_queue.prev);
             bv.l1_blocks = batch_queue.l1_blocks;
+            bv.origin = batch_queue.origin;
             self.batch_validator = Some(bv);
         } else if self.batch_validator.is_some() && !self.cfg.is_holocene_active(origin.timestamp) {
             // If the batch validator is active, and Holocene is not active, it indicates an L1
@@ -240,6 +241,39 @@ mod test {
         assert!(batch_provider.batch_validator.is_some());
 
         assert_eq!(batch_provider.origin().unwrap().number, 1);
+    }
+
+    #[test]
+    fn test_spec_batch_provider_holocene_transition_origin_not_transferred() {
+        let provider = TestNextBatchProvider::new(vec![]);
+        let l2_provider = TestL2ChainProvider::default();
+        let cfg = Arc::new(RollupConfig {
+            hardforks: HardForkConfig { holocene_time: Some(10), ..Default::default() },
+            ..Default::default()
+        });
+        let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
+
+        batch_provider.attempt_update().unwrap();
+
+        // Set origin and l1_blocks on the BatchQueue before the transition.
+        let Some(ref mut stage) = batch_provider.batch_queue else {
+            panic!("Expected BatchQueue");
+        };
+        stage.origin = Some(BlockInfo { number: 5, timestamp: 3, ..Default::default() });
+        stage.l1_blocks = vec![BlockInfo { number: 5, timestamp: 3, ..Default::default() }];
+
+        // Update the L1 origin to Holocene activation.
+        stage.prev.origin = Some(BlockInfo { number: 1, timestamp: 10, ..Default::default() });
+
+        // Transition to the BatchValidator stage.
+        batch_provider.attempt_update().unwrap();
+        assert!(batch_provider.batch_queue.is_none());
+        assert!(batch_provider.batch_validator.is_some());
+
+        // Assert that origin was transferred.
+        let bv = batch_provider.batch_validator.as_ref().unwrap();
+        assert_eq!(bv.origin, Some(BlockInfo { number: 5, timestamp: 3, ..Default::default() }));
+        assert_eq!(bv.l1_blocks, vec![BlockInfo { number: 5, timestamp: 3, ..Default::default() }]);
     }
 
     #[test]

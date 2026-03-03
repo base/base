@@ -174,7 +174,7 @@ where
     ///
     /// Used by [`DriverHandle`] to create fresh sessions when the driver is
     /// restarted via the admin RPC.
-    pub(crate) fn set_cancel(&mut self, cancel: CancellationToken) {
+    pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.cancel = cancel;
     }
 

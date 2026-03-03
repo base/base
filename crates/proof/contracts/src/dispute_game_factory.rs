@@ -143,11 +143,7 @@ pub fn encode_extra_data(
     intermediate_roots: &[B256],
 ) -> Bytes {
     let mut data = vec![0u8; 36 + 32 * intermediate_roots.len()];
-    U256::from(l2_block_number)
-        .to_be_bytes::<32>()
-        .iter()
-        .enumerate()
-        .for_each(|(i, b)| data[i] = *b);
+    data[..32].copy_from_slice(&U256::from(l2_block_number).to_be_bytes::<32>());
     data[32..36].copy_from_slice(&parent_index.to_be_bytes());
     for (i, root) in intermediate_roots.iter().enumerate() {
         data[36 + i * 32..36 + (i + 1) * 32].copy_from_slice(root.as_slice());

@@ -345,6 +345,15 @@ pub enum ResetError {
     /// The next l1 block provided to the managed traversal stage is not the expected one.
     #[error("Next L1 block hash mismatch: expected {0}, got {1}")]
     NextL1BlockHashMismatch(B256, B256),
+    /// Blobs under-fill: expected more blobs than were provided.
+    /// The first argument is the expected number of blobs, and the second argument is the actual
+    /// number of blobs.
+    #[error("Blobs under-fill: expected {0}, got {1}")]
+    BlobsUnderFill(usize, usize),
+    /// Blobs over-fill: expected fewer blobs than were fetched.
+    /// The first argument is the expected blob index, and the second argument is the actual blob count.
+    #[error("Blobs over-fill: expected {0} blobs, got {1}")]
+    BlobsOverFill(usize, usize),
 }
 
 impl ResetError {

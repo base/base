@@ -121,13 +121,13 @@ where
 
     /// Runs the subscriber loop, reconnecting on failure until the token is cancelled.
     pub async fn run(&mut self, token: CancellationToken) {
-        info!(message = "starting upstream subscription", uri = self.uri.to_string());
+        info!(message = "starting upstream subscription", uri = %self.uri);
         loop {
             select! {
                 _ = token.cancelled() => {
                     info!(
                         message = "cancelled upstream subscription",
-                        uri = self.uri.to_string()
+                        uri = %self.uri
                     );
                     return;
                 }
@@ -136,13 +136,13 @@ where
                         Ok(()) => {
                             info!(
                                 message = "upstream connection closed",
-                                uri = self.uri.to_string()
+                                uri = %self.uri
                             );
                         }
                         Err(e) => {
                             error!(
                                 message = "upstream websocket error",
-                                uri = self.uri.to_string(),
+                                uri = %self.uri,
                                 error = e.to_string()
                             );
                             self.metrics.upstream_errors.increment(1);
@@ -150,14 +150,14 @@ where
                             if let Some(duration) = self.backoff.next_backoff() {
                                 warn!(
                                     message = "reconnecting",
-                                    uri = self.uri.to_string(),
+                                    uri = %self.uri,
                                     seconds = duration.as_secs()
                                 );
                                 select! {
                                     _ = token.cancelled() => {
                                         info!(
                                             message = "cancelled subscriber during backoff",
-                                            uri = self.uri.to_string()
+                                            uri = %self.uri
                                         );
                                         return
                                     }
@@ -172,7 +172,7 @@ where
     }
 
     async fn connect_and_listen(&mut self) -> Result<(), Error> {
-        info!(message = "connecting to websocket", uri = self.uri.to_string());
+        info!(message = "connecting to websocket", uri = %self.uri);
 
         self.metrics.upstream_connection_attempts.increment(1);
 
@@ -187,7 +187,7 @@ where
             }
         };
 
-        info!(message = "websocket connection established", uri = self.uri.to_string());
+        info!(message = "websocket connection established", uri = %self.uri);
 
         self.metrics.upstream_connections.increment(1);
         self.backoff.reset();
@@ -222,7 +222,7 @@ where
                     if Instant::now() >= pong_deadline {
                         error!(
                             message = "pong timeout from upstream",
-                            uri = self.uri.to_string()
+                            uri = %self.uri
                         );
                         break Err(ConnectionClosed);
                     }
@@ -257,7 +257,7 @@ where
             Err(e) => {
                 error!(
                     message = "error receiving message",
-                    uri = self.uri.to_string(),
+                    uri = %self.uri,
                     error = e.to_string()
                 );
                 return Err(e);
@@ -268,7 +268,7 @@ where
             Message::Text(text) => {
                 trace!(
                     message = "received text message",
-                    uri = self.uri.to_string(),
+                    uri = %self.uri,
                     payload = text.as_str()
                 );
                 self.metrics.message_received_from_upstream(self.uri.to_string().as_str());
@@ -277,16 +277,16 @@ where
             Message::Binary(data) => {
                 warn!(
                     message = "received binary message, unsupported",
-                    uri = self.uri.to_string(),
+                    uri = %self.uri,
                     size = data.len()
                 );
             }
             Message::Pong(_) => {
-                trace!(message = "received pong from upstream", uri = self.uri.to_string());
+                trace!(message = "received pong from upstream", uri = %self.uri);
                 *pong_deadline = Instant::now() + pong_timeout;
             }
             Message::Close(_) => {
-                info!(message = "received close frame from upstream", uri = self.uri.to_string());
+                info!(message = "received close frame from upstream", uri = %self.uri);
                 return Err(ConnectionClosed);
             }
             _ => {}

@@ -19,6 +19,14 @@ pub enum ProposerError {
     #[error("Contract error: {0}")]
     Contract(String),
 
+    /// Transaction was included but reverted on-chain.
+    #[error("transaction reverted: {0}")]
+    TxReverted(String),
+
+    /// The dispute game already exists for the given parameters.
+    #[error("game already exists")]
+    GameAlreadyExists,
+
     /// Configuration error.
     #[error("Configuration error: {0}")]
     Config(String),

@@ -1,6 +1,6 @@
 //! Blob Data Source
 
-use alloc::{boxed::Box, string::ToString, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use alloy_consensus::{
     Transaction, TxEip4844Variant, TxEnvelope, TxType, transaction::SignerRecoverable,
@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use base_protocol::BlockInfo;
 
 use crate::{
-    BlobData, BlobProvider, BlobProviderError, ChainProvider, DataAvailabilityProvider,
-    PipelineError, PipelineResult,
+    BlobData, BlobProvider, ChainProvider, DataAvailabilityProvider, PipelineError, PipelineResult,
+    ResetError,
 };
 
 /// A data iterator that reads from a blob.
@@ -119,7 +119,7 @@ where
         &mut self,
         block_ref: &BlockInfo,
         batcher_address: Address,
-    ) -> Result<(), BlobProviderError> {
+    ) -> PipelineResult<()> {
         if self.open {
             return Ok(());
         }
@@ -128,7 +128,7 @@ where
             .chain_provider
             .block_info_and_transactions_by_hash(block_ref.hash)
             .await
-            .map_err(|e| BlobProviderError::Backend(e.to_string()))?;
+            .map_err(Into::into)?;
 
         let (mut data, blob_hashes) = self.extract_blob_data(info.1, batcher_address);
 
@@ -143,7 +143,7 @@ where
             self.blob_fetcher.get_and_validate_blobs(block_ref, &blob_hashes).await.map_err(
                 |e| {
                     warn!(target: "blob_source", error = %e, "Failed to fetch blobs");
-                    BlobProviderError::Backend(e.to_string())
+                    e.into()
                 },
             )?;
 
@@ -160,6 +160,11 @@ where
                     return Err(e.into());
                 }
             }
+        }
+
+        // Check for over-fill: ensure all blobs were consumed.
+        if blob_index < blobs.len() {
+            return Err(ResetError::BlobsOverFill(blob_index, blobs.len()).into());
         }
 
         self.open = true;
@@ -253,7 +258,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         assert!(matches!(
             source.load_blobs(&BlockInfo::default(), Address::ZERO).await,
-            Err(BlobProviderError::Backend(_))
+            Err(PipelineErrorKind::Temporary(_))
         ));
     }
 
@@ -281,7 +286,7 @@ pub(crate) mod tests {
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
         assert!(matches!(
             source.load_blobs(&BlockInfo::default(), batcher_address).await,
-            Err(BlobProviderError::Backend(_))
+            Err(PipelineErrorKind::Critical(_))
         ));
     }
 
@@ -354,5 +359,109 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let err = source.next(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
         assert!(matches!(err, PipelineErrorKind::Temporary(PipelineError::Provider(_))));
+    }
+
+    #[tokio::test]
+    async fn test_load_blobs_overfill_triggers_reset() {
+        let mut source = default_test_blob_source();
+        let block_info = BlockInfo::default();
+        let batcher_address =
+            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
+        source.batcher_address =
+            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let txs = valid_blob_txs();
+        source.blob_fetcher.should_return_extra_blob = true;
+        source.chain_provider.insert_block_with_transactions(1, block_info, txs);
+        let hashes = [
+            alloy_primitives::b256!(
+                "012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"
+            ),
+            alloy_primitives::b256!(
+                "0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"
+            ),
+            alloy_primitives::b256!(
+                "013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"
+            ),
+            alloy_primitives::b256!(
+                "01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"
+            ),
+            alloy_primitives::b256!(
+                "011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549"
+            ),
+        ];
+        for hash in hashes {
+            source.blob_fetcher.insert_blob(hash, Blob::with_last_byte(1u8));
+        }
+        let result = source.load_blobs(&BlockInfo::default(), batcher_address).await;
+        assert!(matches!(result, Err(PipelineErrorKind::Reset(ResetError::BlobsOverFill(5, 6)))));
+    }
+
+    /// A minimal [`ChainProvider`] whose errors map to [`PipelineErrorKind::Reset`].
+    /// Used to verify that [`BlobSource::load_blobs`] preserves the `Reset` kind when the
+    /// underlying chain provider signals a reset condition (e.g. an L1 reorg).
+    #[derive(Debug, Clone, Default)]
+    struct ResetChainProvider;
+
+    #[derive(Debug)]
+    struct ResetProviderError;
+
+    impl core::fmt::Display for ResetProviderError {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "reorg detected")
+        }
+    }
+
+    impl From<ResetProviderError> for PipelineErrorKind {
+        fn from(_: ResetProviderError) -> Self {
+            ResetError::ReorgDetected(Default::default(), Default::default()).reset()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for ResetChainProvider {
+        type Error = ResetProviderError;
+
+        async fn header_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<alloy_consensus::Header, Self::Error> {
+            Err(ResetProviderError)
+        }
+
+        async fn block_info_by_number(&mut self, _: u64) -> Result<BlockInfo, Self::Error> {
+            Err(ResetProviderError)
+        }
+
+        async fn receipts_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<alloc::vec::Vec<alloy_consensus::Receipt>, Self::Error> {
+            Err(ResetProviderError)
+        }
+
+        async fn block_info_and_transactions_by_hash(
+            &mut self,
+            _: alloy_primitives::B256,
+        ) -> Result<(BlockInfo, alloc::vec::Vec<TxEnvelope>), Self::Error> {
+            Err(ResetProviderError)
+        }
+    }
+
+    /// Regression test: when `block_info_and_transactions_by_hash` returns an error that maps to
+    /// `PipelineErrorKind::Reset`, `load_blobs` must propagate the `Reset` kind unchanged.
+    ///
+    /// Before the fix, `BlobSource` wrapped every chain-provider error as
+    /// `BlobProviderError::Backend(e.to_string()).into()`, which unconditionally produced
+    /// `PipelineErrorKind::Temporary`. The fix uses `map_err(Into::into)` so the `Reset` kind
+    /// is preserved, allowing the pipeline to recover via reset rather than spinning in a retry loop.
+    #[tokio::test]
+    async fn test_load_blobs_reset_error_preserved() {
+        let mut source =
+            BlobSource::new(ResetChainProvider, TestBlobProvider::default(), Address::ZERO);
+        let err = source.load_blobs(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
+        assert!(
+            matches!(err, PipelineErrorKind::Reset(_)),
+            "expected Reset kind to be preserved, got {err:?}"
+        );
     }
 }
