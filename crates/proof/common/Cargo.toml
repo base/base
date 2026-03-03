@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-common"
-description = "Shared on-chain contract bindings for OP Stack dispute game management"
+description = "Shared onchain contract bindings for OP Stack dispute game management"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

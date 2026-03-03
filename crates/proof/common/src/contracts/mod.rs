@@ -1,4 +1,4 @@
-//! Contract client modules for on-chain dispute game interactions.
+//! Contract client modules for onchain dispute game interactions.
 //!
 //! Each sub-module defines a Solidity interface via [`alloy_sol_types::sol!`], an async client
 //! trait, and a concrete Alloy-backed implementation.
