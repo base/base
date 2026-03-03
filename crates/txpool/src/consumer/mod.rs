@@ -1,3 +1,10 @@
+use std::sync::Arc;
+
+use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
+use tokio::{sync::broadcast, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
+use tracing::info;
+
 mod config;
 pub use config::ConsumerConfig;
 
@@ -8,32 +15,24 @@ mod validator;
 pub use validator::RecentlySent;
 
 mod task;
-use std::sync::Arc;
-
-use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 pub use task::Consumer;
-use tokio::sync::broadcast;
 
 /// Handle returned by [`ConsumerHandle::spawn`].
 ///
 /// Holds the broadcast sender so that downstream forwarders (one per builder)
 /// can each call [`.subscribe()`](broadcast::Sender::subscribe) to receive
-/// every deduplicated transaction independently. Slow receivers that fall
-/// behind will receive [`broadcast::error::RecvError::Lagged`], naturally
-/// shedding stale transactions.
-#[derive(Debug)]
+/// every deduplicated transaction independently. Cancels the background
+/// consumer on drop.
 pub struct ConsumerHandle<T: PoolTransaction> {
     /// Broadcast sender — call `.subscribe()` to create a new receiver.
     pub sender: broadcast::Sender<Arc<ValidPoolTransaction<T>>>,
+    cancel: CancellationToken,
+    _handle: JoinHandle<()>,
 }
 
 impl<T: PoolTransaction> ConsumerHandle<T> {
     /// Spawns the consumer on a dedicated blocking thread and returns a
     /// handle for subscribing forwarders.
-    ///
-    /// The consumer continuously refreshes the pool's `best_transactions()`
-    /// iterator, deduplicates by hash, and broadcasts transactions. It shuts
-    /// down when all receivers are dropped.
     pub fn spawn<P>(pool: P, config: ConsumerConfig) -> Self
     where
         P: TransactionPool<Transaction = T> + Send + 'static,
@@ -41,12 +40,28 @@ impl<T: PoolTransaction> ConsumerHandle<T> {
         let (sender, _) = broadcast::channel(config.channel_capacity);
         let broadcast_sender = sender.clone();
         let metrics = ConsumerMetrics::default();
-        let consumer = Consumer::new(pool, config, broadcast_sender, metrics);
+        let cancel = CancellationToken::new();
+        let consumer = Consumer::new(pool, config, broadcast_sender, metrics, cancel.child_token());
 
-        tokio::task::spawn_blocking(move || {
+        let handle = tokio::task::spawn_blocking(move || {
             consumer.run();
         });
 
-        Self { sender }
+        Self { sender, cancel, _handle: handle }
+    }
+}
+
+impl<T: PoolTransaction> Drop for ConsumerHandle<T> {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        info!("consumer handle dropped, cancelling background task");
+    }
+}
+
+impl<T: PoolTransaction> std::fmt::Debug for ConsumerHandle<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsumerHandle")
+            .field("cancelled", &self.cancel.is_cancelled())
+            .finish_non_exhaustive()
     }
 }

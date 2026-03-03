@@ -1,10 +1,9 @@
 use std::{
-    sync::atomic::{AtomicU64, Ordering},
+    collections::HashMap,
     time::{Duration, Instant},
 };
 
 use alloy_primitives::B256;
-use dashmap::DashMap;
 
 /// Number of [`RecentlySent::was_recently_sent`] calls between pruning sweeps.
 const PRUNE_INTERVAL: u64 = 1000;
@@ -12,35 +11,39 @@ const PRUNE_INTERVAL: u64 = 1000;
 /// Hash-based deduplication tracker with a configurable time-to-live.
 ///
 /// Tracks transaction hashes that have already been forwarded through the
-/// consumer channel. A transaction whose hash appears in the map and whose
-/// entry is younger than `resend_after` will be skipped. Expired entries are
-/// pruned periodically (every [`PRUNE_INTERVAL`] lookups) to bound memory.
+/// consumer broadcast channel. A transaction whose hash appears in the map
+/// and whose entry is younger than `resend_after` will be skipped. Expired
+/// entries are pruned periodically (every [`PRUNE_INTERVAL`] lookups) to
+/// bound memory.
+///
+/// This type is **not** thread-safe — it is designed to be used exclusively
+/// from the single consumer blocking thread.
 pub struct RecentlySent {
-    seen: DashMap<B256, Instant>,
+    seen: HashMap<B256, Instant>,
     resend_after: Duration,
-    check_count: AtomicU64,
+    check_count: u64,
 }
 
 impl RecentlySent {
     /// Creates a new tracker.
     pub fn new(resend_after: Duration) -> Self {
-        Self { seen: DashMap::new(), resend_after, check_count: AtomicU64::new(0) }
+        Self { seen: HashMap::new(), resend_after, check_count: 0 }
     }
 
     /// Returns `true` if the hash was sent within the `resend_after` window.
     ///
     /// Triggers a pruning sweep every [`PRUNE_INTERVAL`] calls.
-    pub fn was_recently_sent(&self, hash: &B256) -> bool {
-        let count = self.check_count.fetch_add(1, Ordering::Relaxed);
-        if count.is_multiple_of(PRUNE_INTERVAL) {
+    pub fn was_recently_sent(&mut self, hash: &B256) -> bool {
+        self.check_count += 1;
+        if self.check_count.is_multiple_of(PRUNE_INTERVAL) {
             self.prune_expired();
         }
 
-        self.seen.get(hash).is_some_and(|entry| entry.elapsed() < self.resend_after)
+        self.seen.get(hash).is_some_and(|instant| instant.elapsed() < self.resend_after)
     }
 
     /// Records a hash as sent at the current instant.
-    pub fn mark_sent(&self, hash: B256) {
+    pub fn mark_sent(&mut self, hash: B256) {
         self.seen.insert(hash, Instant::now());
     }
 
@@ -54,7 +57,7 @@ impl RecentlySent {
         self.seen.is_empty()
     }
 
-    fn prune_expired(&self) {
+    fn prune_expired(&mut self) {
         let now = Instant::now();
         self.seen.retain(|_, instant| now.duration_since(*instant) < self.resend_after);
     }
@@ -75,13 +78,13 @@ mod tests {
 
     #[test]
     fn unseen_hash_is_not_recent() {
-        let tracker = RecentlySent::new(Duration::from_secs(5));
+        let mut tracker = RecentlySent::new(Duration::from_secs(5));
         assert!(!tracker.was_recently_sent(&B256::random()));
     }
 
     #[test]
     fn sent_hash_is_recent() {
-        let tracker = RecentlySent::new(Duration::from_secs(5));
+        let mut tracker = RecentlySent::new(Duration::from_secs(5));
         let hash = B256::random();
 
         tracker.mark_sent(hash);
@@ -90,7 +93,7 @@ mod tests {
 
     #[test]
     fn expired_hash_is_not_recent() {
-        let tracker = RecentlySent::new(Duration::from_millis(10));
+        let mut tracker = RecentlySent::new(Duration::from_millis(10));
         let hash = B256::random();
 
         tracker.mark_sent(hash);
@@ -100,7 +103,7 @@ mod tests {
 
     #[test]
     fn len_tracks_entries() {
-        let tracker = RecentlySent::new(Duration::from_secs(5));
+        let mut tracker = RecentlySent::new(Duration::from_secs(5));
         assert!(tracker.is_empty());
 
         tracker.mark_sent(B256::random());
@@ -112,7 +115,7 @@ mod tests {
 
     #[test]
     fn prune_removes_expired() {
-        let tracker = RecentlySent::new(Duration::from_millis(10));
+        let mut tracker = RecentlySent::new(Duration::from_millis(10));
 
         for _ in 0..5 {
             tracker.mark_sent(B256::random());

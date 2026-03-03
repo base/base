@@ -2,6 +2,7 @@ use std::{fmt, sync::Arc};
 
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
 
 use super::{config::ConsumerConfig, metrics::ConsumerMetrics, validator::RecentlySent};
@@ -18,6 +19,7 @@ pub struct Consumer<P: TransactionPool> {
     recently_sent: RecentlySent,
     sender: broadcast::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
     metrics: ConsumerMetrics,
+    cancel: CancellationToken,
 }
 
 impl<P> Consumer<P>
@@ -31,15 +33,16 @@ where
         config: ConsumerConfig,
         sender: broadcast::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
         metrics: ConsumerMetrics,
+        cancel: CancellationToken,
     ) -> Self {
         let recently_sent = RecentlySent::new(config.resend_after);
-        Self { pool, config, recently_sent, sender, metrics }
+        Self { pool, config, recently_sent, sender, metrics, cancel }
     }
 
     /// Blocking loop — intended to be called from [`tokio::task::spawn_blocking`].
     ///
-    /// Returns when all receivers have been dropped.
-    pub fn run(self) {
+    /// Returns when cancelled or all receivers have been dropped.
+    pub fn run(mut self) {
         info!(
             resend_after_ms = self.config.resend_after.as_millis() as u64,
             channel_capacity = self.config.channel_capacity,
@@ -47,7 +50,7 @@ where
             "starting transaction consumer",
         );
 
-        loop {
+        while !self.cancel.is_cancelled() {
             let mut txs_read: u64 = 0;
             let mut txs_sent: u64 = 0;
             let mut txs_ignored: u64 = 0;
@@ -55,6 +58,11 @@ where
             let best_txs = self.pool.best_transactions();
 
             for tx in best_txs {
+                if self.cancel.is_cancelled() {
+                    info!("consumer cancelled during iteration");
+                    return;
+                }
+
                 txs_read += 1;
                 let hash = *tx.hash();
 
@@ -94,6 +102,8 @@ where
                 std::thread::sleep(self.config.poll_interval);
             }
         }
+
+        info!("consumer cancelled, shutting down");
     }
 }
 

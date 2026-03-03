@@ -38,10 +38,10 @@ base-execution-primitives.workspace = true
 # misc
 c-kzg.workspace = true
 metrics.workspace = true
-dashmap.workspace = true
 tracing.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
+tokio-util.workspace = true
 tokio = { workspace = true, features = ["sync", "rt"] }
 
 [dev-dependencies]
