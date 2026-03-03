@@ -157,7 +157,7 @@ where
                     }
                 }
                 Err(e) => {
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         }
