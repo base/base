@@ -10,6 +10,9 @@ version.workspace = true
 [lints]
 workspace = true
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["getrandom"]
+
 [dependencies]
 # Workspace
 base-proof-mpt.workspace = true
@@ -39,6 +42,10 @@ alloy-evm.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 
+# getrandom 0.2 is pulled in by k256 (via alloy-consensus/k256); enabling the
+# `custom` feature silences the bare-metal compile_error via Cargo unification.
+getrandom = { version = "0.2", features = ["custom"] }
+
 # `test-utils` feature dependencies
 rand = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -54,7 +61,23 @@ alloy-rpc-types-engine = { workspace = true, optional = true }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 
 [features]
+std = [
+	"alloy-eips/std",
+	"alloy-rlp/std",
+	"alloy-trie/std",
+	"revm/std",
+	"tracing/std",
+	"base-revm/std",
+	"thiserror/std",
+	"alloy-consensus/std",
+	"alloy-primitives/std",
+	"base-alloy-evm/std",
+	"base-proof-mpt/std",
+	"base-alloy-consensus/std",
+	"base-alloy-rpc-types-engine/std",
+]
 test-utils = [
+	"std",
 	"base-consensus-registry?/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",

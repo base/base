@@ -32,3 +32,17 @@ spin.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+
+[features]
+std = [
+	"alloy-rlp/std",
+	"alloy-evm/std",
+	"spin/std",
+	"tracing/std",
+	"thiserror/std",
+	"alloy-consensus/std",
+	"alloy-primitives/std",
+	"base-alloy-consensus/std",
+	"base-proof-executor/std",
+	"base-alloy-rpc-types-engine/std",
+]

@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # workspace
 base-alloy-flashblocks.workspace = true
-base-alloy-evm.workspace = true
+base-alloy-evm = { workspace = true, features = ["std"] }
 
 # reth
 reth-rpc.workspace = true

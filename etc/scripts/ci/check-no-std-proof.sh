@@ -12,21 +12,21 @@ set -eo pipefail
 #   rustup target add riscv32imac-unknown-none-elf
 #
 # getrandom_backend=custom silences the "target not supported" error from
-# getrandom 0.3+. getrandom 0.2 (pulled in transitively by k256/revm) is not
-# affected by this flag — fixing it requires upgrading those deps to 0.3+.
-#
-# Crates that are currently blocked (alloy-* std feature propagation through
-# the dep tree prevents them from passing): base-proof, base-proof-mpt,
-# base-proof-driver, base-proof-executor, base-proof-client,
-# base-proof-fpvm-precompiles. Fixing these requires either upgrading to
-# no_std-compatible alloy releases or cross-compiling the full client binary.
+# getrandom 0.3+. getrandom 0.2 (pulled in by k256 via alloy-consensus/k256)
+# is handled by enabling features = ["custom"] in base-proof-executor's
+# Cargo.toml, which propagates via Cargo feature unification.
 
 RUSTFLAGS="${RUSTFLAGS} --cfg getrandom_backend=\"custom\""
 export RUSTFLAGS
 
 proof_packages=(
-  # Passes cleanly — simple dep tree, no alloy std propagation.
   base-proof-preimage
+  base-proof-mpt
+  base-proof-executor
+  base-proof-driver
+  base-proof
+  base-proof-client
+  base-proof-fpvm-precompiles
 )
 
 for package in "${proof_packages[@]}"; do
