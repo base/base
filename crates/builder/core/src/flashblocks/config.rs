@@ -40,6 +40,13 @@ pub struct FlashblocksConfig {
     /// When enabled, flashblocks are built without state root, but the final payload
     /// returned by `get_payload` will have the state root computed.
     pub compute_state_root_on_finalize: bool,
+
+    /// How long to buffer built flashblocks before publishing them via WebSocket.
+    ///
+    /// This gives downstream nodes time to canonicalize the parent block before
+    /// receiving flashblocks for the next block. Flashblocks are still built on
+    /// the normal schedule; only publication is deferred.
+    pub publish_delay: Duration,
 }
 
 impl Default for FlashblocksConfig {
@@ -51,6 +58,7 @@ impl Default for FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
+            publish_delay: Duration::ZERO,
         }
     }
 }
@@ -66,6 +74,7 @@ impl FlashblocksConfig {
             fixed: false,
             disable_state_root: false,
             compute_state_root_on_finalize: false,
+            publish_delay: Duration::ZERO,
         }
     }
 
@@ -96,6 +105,12 @@ impl FlashblocksConfig {
     #[must_use]
     pub const fn with_compute_state_root_on_finalize(mut self, compute: bool) -> Self {
         self.compute_state_root_on_finalize = compute;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_publish_delay_ms(mut self, ms: u64) -> Self {
+        self.publish_delay = Duration::from_millis(ms);
         self
     }
 

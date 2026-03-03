@@ -290,11 +290,18 @@ where
             payload_id = fb_payload.payload_id.to_string(),
         );
 
+        let publish_after = tokio::time::Instant::now() + self.config.flashblocks.publish_delay;
+        let mut publish_buffer: Vec<FlashblocksPayloadV1> = Vec::new();
+
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
         if !ctx.attributes().no_tx_pool {
-            let flashblock_byte_size =
-                self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
-            ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
+            if tokio::time::Instant::now() < publish_after {
+                publish_buffer.push(fb_payload);
+            } else {
+                let flashblock_byte_size =
+                    self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
+                ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
+            }
         }
 
         if ctx.attributes().no_tx_pool {
@@ -440,6 +447,8 @@ where
                     &best_payload,
                     &publish_guard,
                     &fb_span,
+                    &mut publish_buffer,
+                    publish_after,
                 )
                 .await
             {
@@ -469,22 +478,36 @@ where
                 }
             };
 
-            tokio::select! {
-                Some(fb_cancel) = rx.recv() => {
-                    ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
-                },
-                _ = block_cancel.cancelled() => {
-                    self.record_flashblocks_metrics(
-                        &ctx,
-                        &info,
-                        flashblocks_per_block,
-                        &span,
-                        "Payload building complete, channel closed or job cancelled",
-                    );
-                    if compute_state_root_on_finalize {
-                        self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+            loop {
+                tokio::select! {
+                    Some(fb_cancel) = rx.recv() => {
+                        ctx = ctx.with_cancel(fb_cancel).with_extra_ctx(next_flashblocks_ctx);
+                        break;
+                    },
+                    _ = block_cancel.cancelled() => {
+                        self.record_flashblocks_metrics(
+                            &ctx,
+                            &info,
+                            flashblocks_per_block,
+                            &span,
+                            "Payload building complete, channel closed or job cancelled",
+                        );
+                        if compute_state_root_on_finalize {
+                            self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
+                    _ = tokio::time::sleep_until(publish_after), if !publish_buffer.is_empty() => {
+                        let _guard = publish_guard.lock();
+                        if !block_cancel.is_cancelled() {
+                            for buffered in publish_buffer.drain(..) {
+                                let size = self.ws_pub
+                                    .publish(&buffered)
+                                    .map_err(PayloadBuilderError::other)?;
+                                ctx.metrics.flashblock_byte_size_histogram.record(size as f64);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -504,6 +527,8 @@ where
         best_payload: &BlockCell<OpBuiltPayload>,
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
+        publish_buffer: &mut Vec<FlashblocksPayloadV1>,
+        publish_after: tokio::time::Instant,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
@@ -598,7 +623,7 @@ where
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
-                // Synchronized check + publish.
+                // Synchronized check + publish (or buffer).
                 // The publish_guard mutex ensures that if get_payload (resolve_kind) is called,
                 // it will either:
                 // 1. Cancel before we acquire the lock → we see cancelled and return early
@@ -607,7 +632,16 @@ where
                     let _guard = publish_guard.lock();
                     if block_cancel.is_cancelled() {
                         (true, 0)
+                    } else if tokio::time::Instant::now() < publish_after {
+                        publish_buffer.push(fb_payload);
+                        (false, 0)
                     } else {
+                        for buffered in publish_buffer.drain(..) {
+                            let size = self.ws_pub
+                                .publish(&buffered)
+                                .wrap_err("failed to publish buffered flashblock via websocket")?;
+                            ctx.metrics.flashblock_byte_size_histogram.record(size as f64);
+                        }
                         let size = self
                             .ws_pub
                             .publish(&fb_payload)

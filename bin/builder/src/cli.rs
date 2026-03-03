@@ -58,6 +58,18 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCKS_COMPUTE_STATE_ROOT_ON_FINALIZE"
     )]
     pub flashblocks_compute_state_root_on_finalize: bool,
+
+    /// How long to buffer built flashblocks before publishing them in milliseconds.
+    ///
+    /// Gives downstream nodes time to canonicalize the parent block before
+    /// receiving flashblocks for the next block. Flashblocks are still built on
+    /// the normal schedule; only publication is deferred.
+    #[arg(
+        long = "flashblocks.publish-delay",
+        default_value = "0",
+        env = "FLASHBLOCKS_PUBLISH_DELAY"
+    )]
+    pub flashblocks_publish_delay: u64,
 }
 
 impl Default for FlashblocksArgs {
@@ -70,6 +82,7 @@ impl Default for FlashblocksArgs {
             flashblocks_leeway_time: 75,
             flashblocks_disable_state_root: false,
             flashblocks_compute_state_root_on_finalize: false,
+            flashblocks_publish_delay: 0,
         }
     }
 }
@@ -204,6 +217,8 @@ impl TryFrom<&Args> for FlashblocksConfig {
 
         let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
 
+        let publish_delay = Duration::from_millis(args.flashblocks.flashblocks_publish_delay);
+
         Ok(Self {
             ws_addr,
             interval,
@@ -213,6 +228,7 @@ impl TryFrom<&Args> for FlashblocksConfig {
             compute_state_root_on_finalize: args
                 .flashblocks
                 .flashblocks_compute_state_root_on_finalize,
+            publish_delay,
         })
     }
 }
