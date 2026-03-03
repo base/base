@@ -72,8 +72,10 @@ where
     metrics: CacheMetrics,
     /// Name of this cache for identification.
     name: String,
-    /// Optional prefix for Prometheus counter metrics.
-    metrics_prefix: Option<String>,
+    /// Precomputed Prometheus counter name for cache hits.
+    hits_metric_name: Option<String>,
+    /// Precomputed Prometheus counter name for cache misses.
+    misses_metric_name: Option<String>,
 }
 
 impl<K, V> MeteredCache<K, V>
@@ -92,7 +94,8 @@ where
             cache: Cache::new(capacity as u64),
             metrics: CacheMetrics::new(),
             name: name.into(),
-            metrics_prefix: None,
+            hits_metric_name: None,
+            misses_metric_name: None,
         }
     }
 
@@ -105,11 +108,13 @@ where
         capacity: usize,
         prefix: impl Into<String>,
     ) -> Self {
+        let prefix = prefix.into();
         Self {
             cache: Cache::new(capacity as u64),
             metrics: CacheMetrics::new(),
             name: name.into(),
-            metrics_prefix: Some(prefix.into()),
+            hits_metric_name: Some(format!("{prefix}_cache_hits_total")),
+            misses_metric_name: Some(format!("{prefix}_cache_misses_total")),
         }
     }
 
@@ -118,18 +123,18 @@ where
         let value = self.cache.get(key).await;
         if value.is_some() {
             self.metrics.record_hit();
-            if let Some(prefix) = &self.metrics_prefix {
+            if let Some(name) = &self.hits_metric_name {
                 metrics::counter!(
-                    format!("{prefix}_cache_hits_total"),
+                    name.clone(),
                     "cache_name" => self.name.clone(),
                 )
                 .increment(1);
             }
         } else {
             self.metrics.record_miss();
-            if let Some(prefix) = &self.metrics_prefix {
+            if let Some(name) = &self.misses_metric_name {
                 metrics::counter!(
-                    format!("{prefix}_cache_misses_total"),
+                    name.clone(),
                     "cache_name" => self.name.clone(),
                 )
                 .increment(1);

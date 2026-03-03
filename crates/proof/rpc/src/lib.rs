@@ -3,7 +3,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod config;
-pub use config::RetryConfig;
+pub use config::{
+    DEFAULT_CACHE_SIZE, DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY,
+    DEFAULT_RPC_MAX_RETRIES, RetryConfig,
+};
 
 mod cache;
 pub use cache::{CacheMetrics, MeteredCache};

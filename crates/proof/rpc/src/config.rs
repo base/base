@@ -3,16 +3,16 @@ use std::time::Duration;
 use backon::ExponentialBuilder;
 
 /// Default LRU cache size for RPC responses.
-pub(crate) const DEFAULT_CACHE_SIZE: usize = 1000;
+pub const DEFAULT_CACHE_SIZE: usize = 1000;
 
 /// Default maximum number of retry attempts for RPC operations.
-const DEFAULT_RPC_MAX_RETRIES: u32 = 5;
+pub const DEFAULT_RPC_MAX_RETRIES: u32 = 5;
 
 /// Default initial delay for exponential backoff.
-const DEFAULT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+pub const DEFAULT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 
 /// Default maximum delay between retry attempts.
-const DEFAULT_RETRY_MAX_DELAY: Duration = Duration::from_secs(10);
+pub const DEFAULT_RETRY_MAX_DELAY: Duration = Duration::from_secs(10);
 
 /// Validated RPC retry configuration.
 #[derive(Debug, Clone)]
