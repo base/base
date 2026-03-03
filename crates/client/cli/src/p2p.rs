@@ -468,8 +468,11 @@ impl P2PArgs {
         let bootnodes = self
             .bootnodes
             .iter()
-            .map(|bootnode| BootNode::parse_bootnode(bootnode))
-            .collect::<Vec<BootNode>>()
+            .map(|bootnode| {
+                BootNode::parse_bootnode(bootnode)
+                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
+            })
+            .collect::<Result<Vec<BootNode>>>()?
             .into();
 
         Ok(NetworkConfig {
@@ -663,7 +666,8 @@ mod tests {
             .bootnodes
             .iter()
             .map(|bootnode| BootNode::parse_bootnode(bootnode))
-            .collect::<Vec<BootNode>>();
+            .collect::<std::result::Result<Vec<BootNode>, _>>()
+            .expect("test bootnode should parse");
 
         // Otherwise, attempt to use the Node Record format.
         let record = NodeRecord::from_str(

@@ -68,7 +68,7 @@ impl BootNode {
     pub fn parse_bootnode(raw: &str) -> Result<Self, BootNodeParseError> {
         // If the string starts with "enr:" it is an ENR record.
         if raw.starts_with("enr:") {
-            let enr = Enr::from_str(raw).map_err(|e| BootNodeParseError::Enr(e.to_string()))?;
+            let enr = Enr::from_str(raw).map_err(BootNodeParseError::Enr)?;
             return Ok(Self::from(enr));
         }
         // Otherwise, attempt to use the Node Record format.
