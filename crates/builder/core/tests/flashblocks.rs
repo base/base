@@ -344,17 +344,61 @@ async fn smoke_dynamic_incremental_trie_cache() -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
 
+    let mut block_state_roots = Vec::new();
+
     for _ in 0..10 {
         for _ in 0..5 {
             let _ = driver.create_transaction().random_valid_transfer().send().await?;
         }
         let block = driver.build_new_block_with_current_timestamp(None).await?;
         assert_eq!(block.transactions.len(), 6, "Got: {:?}", block.transactions); // 5 normal txn + deposit
+
+        assert_ne!(
+            block.header.state_root,
+            B256::ZERO,
+            "Finalized block state root must not be zero (block {})",
+            block.header.number,
+        );
+        block_state_roots.push((block.header.number, block.header.state_root));
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
     let flashblocks = flashblocks_listener.get_flashblocks();
     assert_eq!(110, flashblocks.len());
+
+    // Every intermediate flashblock must have a non-zero state root when incremental
+    // trie caching is enabled (disable_state_root defaults to false).
+    for fb in &flashblocks {
+        assert_ne!(
+            fb.diff.state_root,
+            B256::ZERO,
+            "Flashblock {} state root must not be zero",
+            fb.index,
+        );
+    }
+
+    // The last flashblock for each block must agree with the finalized block's state root.
+    // The builder sets best_payload from the last build_block call, so the finalized block
+    // and the last flashblock share the same state root computation.
+    for &(block_number, expected_root) in &block_state_roots {
+        let block_fbs: Vec<_> = flashblocks
+            .iter()
+            .filter(|fb| {
+                fb.metadata
+                    .get("block_number")
+                    .and_then(|v| v.as_u64())
+                    .is_some_and(|n| n == block_number)
+            })
+            .collect();
+
+        if let Some(last_fb) = block_fbs.last() {
+            assert_eq!(
+                last_fb.diff.state_root, expected_root,
+                "Last flashblock state root must match finalized block (block {block_number})",
+            );
+        }
+    }
 
     flashblocks_listener.stop().await
 }

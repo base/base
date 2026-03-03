@@ -951,6 +951,14 @@ where
 
             (state_root, trie_output) = state_provider
                 .state_root_from_nodes_with_updates(trie_input)
+                .inspect_err(|err| {
+                    warn!(
+                        target: "payload_builder",
+                        parent_header=%ctx.parent().hash(),
+                        %err,
+                        "failed to calculate incremental state root for payload"
+                    );
+                })
                 .map_err(PayloadBuilderError::other)?;
         } else {
             debug!(
@@ -971,9 +979,6 @@ where
                 })?;
         };
 
-        // Save trie updates for next flashblock's incremental calculation
-        info.extra.prev_trie_updates = Some(Arc::new(trie_output.clone()));
-
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics.state_root_calculation_duration.record(state_root_calculation_time);
         ctx.metrics.state_root_calculation_gauge.set(state_root_calculation_time);
@@ -985,6 +990,12 @@ where
             duration_ms = state_root_calculation_time.as_millis(),
             "State root calculation completed"
         );
+    }
+
+    // Wrap once in Arc; the same Arc is shared with the trie cache and BuiltPayloadExecutedBlock.
+    let trie_output = Arc::new(trie_output);
+    if calculate_state_root {
+        info.extra.prev_trie_updates = Some(Arc::clone(&trie_output));
     }
 
     let mut requests_hash = None;
@@ -1069,7 +1080,7 @@ where
             state: state.take_bundle(),
         }),
         hashed_state: Either::Left(Arc::new(hashed_state)),
-        trie_updates: Either::Left(Arc::new(trie_output)),
+        trie_updates: Either::Left(trie_output),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
