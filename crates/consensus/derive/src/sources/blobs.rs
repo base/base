@@ -393,6 +393,7 @@ pub(crate) mod tests {
             source.blob_fetcher.insert_blob(hash, Blob::with_last_byte(1u8));
         }
         let result = source.load_blobs(&BlockInfo::default(), batcher_address).await;
-        assert!(matches!(result, Err(BlobProviderError::Reset(ResetError::BlobsOverFill(5, 6)))));
+        assert!(matches!(result, Err(PipelineErrorKind::Reset(ResetError::BlobsOverFill(5, 6)))));
+
     }
 }
