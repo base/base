@@ -7,7 +7,7 @@ use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
 
-use crate::ProposerError;
+use crate::ContractError;
 
 sol! {
     /// `DisputeGameFactory` contract interface.
@@ -57,16 +57,16 @@ pub struct GameAtIndex {
 #[async_trait]
 pub trait DisputeGameFactoryClient: Send + Sync {
     /// Returns the total number of games created.
-    async fn game_count(&self) -> Result<u64, ProposerError>;
+    async fn game_count(&self) -> Result<u64, ContractError>;
 
     /// Returns the game at the given factory index.
-    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ProposerError>;
+    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError>;
 
     /// Returns the bond required to create a game of the given type.
-    async fn init_bonds(&self, game_type: u32) -> Result<U256, ProposerError>;
+    async fn init_bonds(&self, game_type: u32) -> Result<U256, ContractError>;
 
     /// Returns the implementation address for the given game type.
-    async fn game_impls(&self, game_type: u32) -> Result<Address, ProposerError>;
+    async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError>;
 }
 
 /// The 4-byte selector for `GameAlreadyExists(bytes32)`.
@@ -82,7 +82,7 @@ pub struct DisputeGameFactoryContractClient {
 
 impl DisputeGameFactoryContractClient {
     /// Creates a new client for the given contract address and L1 RPC URL.
-    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ProposerError> {
+    pub fn new(address: Address, l1_rpc_url: url::Url) -> Result<Self, ContractError> {
         let provider = RootProvider::new_http(l1_rpc_url);
         let contract = IDisputeGameFactory::IDisputeGameFactoryInstance::new(address, provider);
         Ok(Self { contract })
@@ -91,23 +91,23 @@ impl DisputeGameFactoryContractClient {
 
 #[async_trait]
 impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
-    async fn game_count(&self) -> Result<u64, ProposerError> {
+    async fn game_count(&self) -> Result<u64, ContractError> {
         let result = self
             .contract
             .gameCount()
             .call()
             .await
-            .map_err(|e| ProposerError::Contract(format!("gameCount failed: {e}")))?;
+            .map_err(|e| ContractError::Call(format!("gameCount failed: {e}")))?;
 
         result
             .try_into()
-            .map_err(|_| ProposerError::Contract("gameCount overflows u64".to_string()))
+            .map_err(|_| ContractError::Call("gameCount overflows u64".to_string()))
     }
 
-    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ProposerError> {
+    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
         let result =
             self.contract.gameAtIndex(U256::from(index)).call().await.map_err(|e| {
-                ProposerError::Contract(format!("gameAtIndex({index}) failed: {e}"))
+                ContractError::Call(format!("gameAtIndex({index}) failed: {e}"))
             })?;
 
         Ok(GameAtIndex {
@@ -117,24 +117,24 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
         })
     }
 
-    async fn init_bonds(&self, game_type: u32) -> Result<U256, ProposerError> {
+    async fn init_bonds(&self, game_type: u32) -> Result<U256, ContractError> {
         let result = self
             .contract
             .initBonds(game_type)
             .call()
             .await
-            .map_err(|e| ProposerError::Contract(format!("initBonds failed: {e}")))?;
+            .map_err(|e| ContractError::Call(format!("initBonds failed: {e}")))?;
 
         Ok(result)
     }
 
-    async fn game_impls(&self, game_type: u32) -> Result<Address, ProposerError> {
+    async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
         let result = self
             .contract
             .gameImpls(game_type)
             .call()
             .await
-            .map_err(|e| ProposerError::Contract(format!("gameImpls failed: {e}")))?;
+            .map_err(|e| ContractError::Call(format!("gameImpls failed: {e}")))?;
 
         Ok(result)
     }

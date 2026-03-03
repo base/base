@@ -17,10 +17,11 @@ pub use constants::*;
 mod contracts;
 pub use contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorRoot,
-    AnchorStateRegistryClient, AnchorStateRegistryContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient, GameAtIndex, GameInfo, LocalOutputProposer, OutputProposer,
-    RemoteOutputProposer, build_proof_data, create_output_proposer, encode_create_calldata,
-    encode_extra_data, game_already_exists_selector, is_game_already_exists,
+    AnchorStateRegistryClient, AnchorStateRegistryContractClient, ContractError,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameInfo,
+    LocalOutputProposer, OutputProposer, RemoteOutputProposer, build_proof_data,
+    create_output_proposer, encode_create_calldata, encode_extra_data,
+    game_already_exists_selector, is_game_already_exists,
 };
 
 mod driver;

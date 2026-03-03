@@ -28,7 +28,7 @@ use crate::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
         GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
     },
-    contracts::dispute_game_factory::{encode_create_calldata, encode_extra_data},
+    contracts::{encode_create_calldata, encode_extra_data},
     prover::ProverProposal,
 };
 
