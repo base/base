@@ -74,26 +74,3 @@ pub trait RollupClient: Send + Sync {
     async fn sync_status(&self) -> RpcResult<SyncStatus>;
 }
 
-// Blanket implementation for Box<dyn L2Client> to support dynamic dispatch.
-#[async_trait]
-impl L2Client for Box<dyn L2Client> {
-    async fn chain_config(&self) -> RpcResult<serde_json::Value> {
-        (**self).chain_config().await
-    }
-
-    async fn get_proof(&self, address: Address, block_hash: B256) -> RpcResult<AccountResult> {
-        (**self).get_proof(address, block_hash).await
-    }
-
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        (**self).header_by_number(number).await
-    }
-
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
-        (**self).block_by_number(number).await
-    }
-
-    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
-        (**self).block_by_hash(hash).await
-    }
-}

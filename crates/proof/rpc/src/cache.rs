@@ -2,7 +2,10 @@
 
 use std::{
     hash::Hash,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use moka::future::Cache;
@@ -71,11 +74,11 @@ where
     /// Metrics for this cache.
     metrics: CacheMetrics,
     /// Name of this cache for identification.
-    name: String,
+    name: Arc<str>,
     /// Precomputed Prometheus counter name for cache hits.
-    hits_metric_name: Option<String>,
+    hits_metric_name: Option<Arc<str>>,
     /// Precomputed Prometheus counter name for cache misses.
-    misses_metric_name: Option<String>,
+    misses_metric_name: Option<Arc<str>>,
 }
 
 impl<K, V> MeteredCache<K, V>
@@ -84,12 +87,12 @@ where
     V: Clone + Send + Sync + 'static,
 {
     /// Creates a new metered cache with the given name and default size.
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
         Self::with_capacity(name, DEFAULT_CACHE_SIZE)
     }
 
     /// Creates a new metered cache with the given name and capacity.
-    pub fn with_capacity(name: impl Into<String>, capacity: usize) -> Self {
+    pub fn with_capacity(name: impl Into<Arc<str>>, capacity: usize) -> Self {
         Self {
             cache: Cache::new(capacity as u64),
             metrics: CacheMetrics::new(),
@@ -104,17 +107,16 @@ where
     /// When set, cache hits and misses are emitted as Prometheus counters:
     /// `{prefix}_cache_hits_total` and `{prefix}_cache_misses_total`.
     pub fn with_metrics_prefix(
-        name: impl Into<String>,
+        name: impl Into<Arc<str>>,
         capacity: usize,
-        prefix: impl Into<String>,
+        prefix: &str,
     ) -> Self {
-        let prefix = prefix.into();
         Self {
             cache: Cache::new(capacity as u64),
             metrics: CacheMetrics::new(),
             name: name.into(),
-            hits_metric_name: Some(format!("{prefix}_cache_hits_total")),
-            misses_metric_name: Some(format!("{prefix}_cache_misses_total")),
+            hits_metric_name: Some(format!("{prefix}_cache_hits_total").into()),
+            misses_metric_name: Some(format!("{prefix}_cache_misses_total").into()),
         }
     }
 
@@ -125,8 +127,8 @@ where
             self.metrics.record_hit();
             if let Some(name) = &self.hits_metric_name {
                 metrics::counter!(
-                    name.clone(),
-                    "cache_name" => self.name.clone(),
+                    Arc::clone(name),
+                    "cache_name" => Arc::clone(&self.name),
                 )
                 .increment(1);
             }
@@ -134,8 +136,8 @@ where
             self.metrics.record_miss();
             if let Some(name) = &self.misses_metric_name {
                 metrics::counter!(
-                    name.clone(),
-                    "cache_name" => self.name.clone(),
+                    Arc::clone(name),
+                    "cache_name" => Arc::clone(&self.name),
                 )
                 .increment(1);
             }
