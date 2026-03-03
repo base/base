@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, collections::VecDeque};
 
-use alloy_consensus::{Transaction, TxEnvelope, transaction::SignerRecoverable};
+use alloy_consensus::{Transaction, TxEip4844Variant, TxEnvelope, transaction::SignerRecoverable};
 use alloy_primitives::{Address, Bytes};
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
@@ -51,6 +51,18 @@ impl<CP: ChainProvider + Send> CalldataSource<CP> {
                     TxEnvelope::Legacy(tx) => (tx.tx().to(), tx.tx().input()),
                     TxEnvelope::Eip2930(tx) => (tx.tx().to(), tx.tx().input()),
                     TxEnvelope::Eip1559(tx) => (tx.tx().to(), tx.tx().input()),
+                    // EIP-4844 (type 3) transactions are valid batcher transaction types per the
+                    // derivation spec. In the pre-Ecotone window an honest batcher may submit an
+                    // EIP-4844 tx carrying calldata to the batch inbox; blobs within the same
+                    // transaction are ignored here and handled by BlobSource. Include calldata
+                    // from type-3 transactions.
+                    TxEnvelope::Eip4844(tx) => match tx.tx() {
+                        TxEip4844Variant::TxEip4844(inner) => (Some(inner.to), &inner.input),
+                        TxEip4844Variant::TxEip4844WithSidecar(inner) => {
+                            let inner = inner.tx();
+                            (Some(inner.to), &inner.input)
+                        }
+                    },
                     _ => return None,
                 };
                 let to = tx_kind?;
@@ -240,8 +252,11 @@ mod tests {
         assert!(source.open);
     }
 
+    /// Regression test: EIP-4844 (type 3) batcher transactions must NOT be silently
+    /// dropped. Per the derivation spec (derivation.md:504) type 3 is a valid batcher tx type
+    /// with no pre-Ecotone exclusion.
     #[tokio::test]
-    async fn test_load_calldata_blob_tx_ignored() {
+    async fn test_load_calldata_blob_tx_calldata_included() {
         let batch_inbox_address = address!("0123456789012345678901234567890123456789");
         let mut source = default_test_calldata_source();
         source.batch_inbox_address = batch_inbox_address;
@@ -252,7 +267,7 @@ mod tests {
         assert!(
             source.load_calldata(&BlockInfo::default(), tx.recover_signer().unwrap()).await.is_ok()
         );
-        assert!(source.calldata.is_empty());
+        assert!(!source.calldata.is_empty());
         assert!(source.open);
     }
 
