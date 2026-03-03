@@ -22,8 +22,10 @@ use tokio::sync::OnceCell;
 use tracing::info;
 use url::Url;
 
+use base_proof_rpc::RetryConfig;
+
 use crate::{
-    ProposerError, RetryConfig,
+    ProposerError,
     config::SigningConfig,
     constants::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,

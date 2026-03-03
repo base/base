@@ -3,7 +3,7 @@
 use base_proof_contracts::ContractError;
 use thiserror::Error;
 
-use crate::rpc::RpcError;
+use base_proof_rpc::RpcError;
 
 /// Main error type for the proposer.
 #[derive(Debug, Error)]

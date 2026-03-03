@@ -18,10 +18,14 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use base_proof_rpc::{
+    L1ClientConfig, L1ClientImpl, L2ClientConfig, RollupClient, RollupClientConfig,
+    RollupClientImpl,
+};
+
 use crate::{
-    Driver, DriverConfig, DriverHandle, L1ClientConfig, L1ClientImpl, L2ClientConfig, L2ClientKind,
-    ProposerConfig, ProposerDriverControl, Prover, RollupClient, RollupClientConfig,
-    RollupClientImpl, SigningConfig, create_enclave_client, create_output_proposer,
+    Driver, DriverConfig, DriverHandle, L2ClientKind, ProposerConfig, ProposerDriverControl,
+    Prover, SigningConfig, create_enclave_client, create_output_proposer,
     rollup_config_to_per_chain_config,
 };
 

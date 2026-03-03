@@ -2,13 +2,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use base_enclave::{AccountResult, ExecutionWitness};
-// Re-exports from base-proof-rpc
-pub use base_proof_rpc::{
-    CacheMetrics, GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L1Client, L1ClientConfig,
-    L1ClientImpl, L2BlockRef, L2Client, L2ClientConfig, L2ClientImpl, L2HttpProvider, MeteredCache,
-    OpBlock, ProofCacheKey, RetryConfig, RollupClient, RollupClientConfig, RollupClientImpl,
-    RpcError, RpcResult, SyncStatus,
-};
+use base_proof_rpc::{L2Client, L2ClientConfig, L2ClientImpl, OpBlock, RpcResult};
 
 mod prover_l2_client;
 pub use prover_l2_client::ProverL2Client;

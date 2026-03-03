@@ -48,13 +48,7 @@ mod recovery;
 pub use recovery::recover_parent_game_state_standalone;
 
 mod rpc;
-pub use rpc::{
-    CacheMetrics, GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L1Client, L1ClientConfig,
-    L1ClientImpl, L2BlockRef, L2Client, L2ClientConfig, L2ClientImpl, L2ClientKind, L2HttpProvider,
-    MeteredCache, OpBlock, ProofCacheKey, ProverL2Client, RethExecutionWitness, RethL2Client,
-    RetryConfig, RollupClient, RollupClientConfig, RollupClientImpl, RpcError, RpcResult,
-    SyncStatus,
-};
+pub use rpc::{L2ClientKind, ProverL2Client, RethExecutionWitness, RethL2Client};
 
 mod service;
 pub use service::run;

@@ -22,6 +22,7 @@ use std::{
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+use base_proof_rpc::{L1Client, L2BlockRef, RollupClient, RpcError};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -33,7 +34,7 @@ use crate::{
     enclave::EnclaveClientTrait,
     is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
-    rpc::{L1Client, ProverL2Client, RollupClient},
+    rpc::ProverL2Client,
 };
 
 /// Driver configuration.
@@ -332,7 +333,7 @@ where
 
             let block = match self.l2_client.block_by_number(Some(number)).await {
                 Ok(block) => block,
-                Err(crate::rpc::RpcError::BlockNotFound(_)) => {
+                Err(RpcError::BlockNotFound(_)) => {
                     break;
                 }
                 Err(e) => {
@@ -497,7 +498,7 @@ where
     }
 
     /// Returns the latest safe L2 block reference.
-    async fn latest_safe_block(&self) -> Result<crate::rpc::L2BlockRef, ProposerError> {
+    async fn latest_safe_block(&self) -> Result<L2BlockRef, ProposerError> {
         let sync_status = self.rollup_client.sync_status().await?;
         if self.config.allow_non_finalized {
             Ok(sync_status.safe_l2)
@@ -772,13 +773,13 @@ mod tests {
     use async_trait::async_trait;
     use base_enclave::{Proposal, RollupConfig};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_proof_rpc::SyncStatus;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
         enclave::EnclaveClientTrait,
         prover::{Prover, test_helpers::test_proposal},
-        rpc::SyncStatus,
         test_utils::{
             MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
             MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,
