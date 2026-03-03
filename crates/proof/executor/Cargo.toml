@@ -62,22 +62,21 @@ rocksdb = { workspace = true, features = ["snappy"], optional = true }
 
 [features]
 std = [
+	"alloy-consensus/std",
 	"alloy-eips/std",
+	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-trie/std",
-	"revm/std",
-	"tracing/std",
-	"base-revm/std",
-	"thiserror/std",
-	"alloy-consensus/std",
-	"alloy-primitives/std",
-	"base-alloy-evm/std",
-	"base-proof-mpt/std",
 	"base-alloy-consensus/std",
+	"base-alloy-evm/std",
 	"base-alloy-rpc-types-engine/std",
+	"base-proof-mpt/std",
+	"base-revm/std",
+	"revm/std",
+	"thiserror/std",
+	"tracing/std",
 ]
 test-utils = [
-	"std",
 	"base-consensus-registry?/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",
@@ -92,4 +91,5 @@ test-utils = [
 	"dep:serde_json",
 	"dep:tempfile",
 	"dep:tokio",
+	"std",
 ]
