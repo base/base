@@ -3973,6 +3973,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-host"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "alloy-rpc-types-beacon",
+ "alloy-transport",
+ "anyhow",
+ "ark-ff 0.5.0",
+ "async-trait",
+ "base-alloy-network",
+ "base-alloy-rpc-types-engine",
+ "base-consensus-genesis",
+ "base-consensus-providers",
+ "base-proof",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "base-proof-std-fpvm",
+ "base-protocol",
+ "clap",
+ "proptest",
+ "revm",
+ "rocksdb",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-proof-mpt"
 version = "0.0.0"
 dependencies = [
