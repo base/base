@@ -296,12 +296,24 @@ pub struct SingleChainProviders {
 #[cfg(test)]
 mod test {
     use alloy_primitives::B256;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
     use crate::single::SingleChainHost;
 
+    /// Clear all env vars that clap would read via `#[arg(env)]` so tests are
+    /// isolated from the host environment.
+    fn clear_clap_env_vars() {
+        for arg in SingleChainHost::command().get_arguments() {
+            if let Some(env_var) = arg.get_env() {
+                unsafe { std::env::remove_var(env_var) };
+            }
+        }
+    }
+
     #[test]
     fn test_flags() {
+        clear_clap_env_vars();
+
         let zero_hash_str = &B256::ZERO.to_string();
         let default_flags = [
             "single",
