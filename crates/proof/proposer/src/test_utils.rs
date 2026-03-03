@@ -9,7 +9,6 @@ use base_enclave::{
     executor::ExecutionWitness,
     types::config::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig},
 };
-
 use base_proof_contracts::{
     AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
 };

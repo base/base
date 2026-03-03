@@ -9,15 +9,14 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use eyre::Result;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
-
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
+use eyre::Result;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::{
     Driver, DriverConfig, DriverHandle, L1ClientConfig, L1ClientImpl, L2ClientConfig,
