@@ -35,6 +35,7 @@ rand.workspace = true
 reqwest.workspace = true
 proptest.workspace = true
 tokio = { workspace = true, features = ["full"] }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [features]
 default = [ "serde" ]
@@ -51,3 +52,7 @@ serde = [
 	"base-alloy-rpc-types-engine/serde",
 	"dep:serde",
 ]
+
+[[bench]]
+name = "trie_node"
+harness = false

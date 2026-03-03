@@ -3969,6 +3969,7 @@ dependencies = [
  "alloy-transport-http",
  "alloy-trie",
  "base-alloy-rpc-types-engine",
+ "criterion",
  "proptest",
  "rand 0.9.2",
  "reqwest 0.13.2",
