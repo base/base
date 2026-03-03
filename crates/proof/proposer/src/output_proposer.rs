@@ -17,12 +17,11 @@ use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
+use base_proof_rpc::RetryConfig;
 use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use tokio::sync::OnceCell;
 use tracing::info;
 use url::Url;
-
-use base_proof_rpc::RetryConfig;
 
 use crate::{
     ProposerError,

@@ -3,10 +3,9 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
+use base_proof_rpc::L1Client;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-
-use base_proof_rpc::L1Client;
 
 /// Balance polling interval.
 pub const BALANCE_POLL_INTERVAL: Duration = Duration::from_secs(30);

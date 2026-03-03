@@ -11,7 +11,6 @@ use base_enclave::{
 use base_proof_contracts::{
     AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
 };
-
 use base_proof_rpc::{
     L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, RollupClient, RpcError,
     RpcResult, SyncStatus,

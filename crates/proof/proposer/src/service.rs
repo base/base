@@ -13,15 +13,14 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use eyre::Result;
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
-
 use base_proof_rpc::{
     L1ClientConfig, L1ClientImpl, L2ClientConfig, RollupClient, RollupClientConfig,
     RollupClientImpl,
 };
+use eyre::Result;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::{
     Driver, DriverConfig, DriverHandle, L2ClientKind, ProposerConfig, ProposerDriverControl,
