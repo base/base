@@ -69,6 +69,12 @@ You can build the project using the `justfile` for a release build:
 just build
 ```
 
+*For first-time setup (to ensure all dependencies are installed), you can optionally **setup** run as a precursor:*
+
+  ```bash
+  just setup
+  ```
+
 Alternatively, if performance is critical, you can build with all optimizations enabled + jemalloc:
 
 ```bash
