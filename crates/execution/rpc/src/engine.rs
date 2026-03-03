@@ -353,7 +353,7 @@ where
         &self,
         payload_id: PayloadId,
     ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV2> {
-        debug!(target: "rpc::engine", id = %payload_id, "Serving engine_getPayloadV2");
+        debug!(target: "rpc::engine", "Serving engine_getPayloadV2");
         Ok(self.inner.get_payload_v2_metered(payload_id).await?)
     }
 

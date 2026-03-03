@@ -281,7 +281,7 @@ where
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[instrument(level = "debug", skip_all, fields(num_flashblocks = flashblocks.len()))]
     fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,

@@ -18,7 +18,7 @@ use reth_provider::BlockNumReader;
 use reth_revm::State;
 use revm::{Database, context::TxEnv};
 use revm_primitives::B256;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{instrument, trace, warn};
 
 /// Provider that fetches cached execution results for transactions.
 #[derive(Debug, Clone)]
@@ -40,7 +40,7 @@ impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
 where
     P: BlockNumReader,
 {
-    #[instrument(level = "trace", skip_all, fields(tx_hash = ?tx_hash))]
+    #[instrument(level = "debug", skip_all, fields(tx_hash = ?tx_hash))]
     fn get_cached_execution_for_tx(
         &self,
         parent_block_hash: &B256,
@@ -157,7 +157,7 @@ where
         self.executor.receipts()
     }
 
-    #[instrument(level = "trace", skip_all)]
+    #[instrument(level = "debug", skip_all)]
     fn execute_transaction_without_commit(
         &mut self,
         executing_tx: impl ExecutableTx<Self>,
