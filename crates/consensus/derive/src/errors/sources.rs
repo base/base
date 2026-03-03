@@ -4,7 +4,7 @@ use alloc::string::{String, ToString};
 
 use thiserror::Error;
 
-use crate::{PipelineError, PipelineErrorKind};
+use crate::{PipelineError, PipelineErrorKind, ResetError};
 
 /// Blob Decoding Error
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -38,6 +38,9 @@ pub enum BlobProviderError {
     /// Error pertaining to the backend transport.
     #[error("{0}")]
     Backend(String),
+    /// Reset error from blob loading.
+    #[error("{0}")]
+    Reset(#[from] ResetError),
 }
 
 impl From<BlobProviderError> for PipelineErrorKind {
@@ -47,6 +50,7 @@ impl From<BlobProviderError> for PipelineErrorKind {
             | BlobProviderError::SlotDerivation
             | BlobProviderError::BlobDecoding(_) => PipelineError::Provider(val.to_string()).crit(),
             BlobProviderError::Backend(_) => PipelineError::Provider(val.to_string()).temp(),
+            BlobProviderError::Reset(err) => Self::Reset(err),
         }
     }
 }

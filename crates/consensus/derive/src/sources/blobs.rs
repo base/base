@@ -12,7 +12,7 @@ use base_protocol::BlockInfo;
 
 use crate::{
     BlobData, BlobProvider, BlobProviderError, ChainProvider, DataAvailabilityProvider,
-    PipelineError, PipelineResult,
+    PipelineError, PipelineResult, ResetError,
 };
 
 /// A data iterator that reads from a blob.
@@ -160,6 +160,11 @@ where
                     return Err(e.into());
                 }
             }
+        }
+
+        // Check for over-fill: ensure all blobs were consumed.
+        if blob_index < blobs.len() {
+            return Err(ResetError::BlobsOverFill(blob_index, blobs.len()).into());
         }
 
         self.open = true;
@@ -354,5 +359,40 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         let err = source.next(&BlockInfo::default(), Address::ZERO).await.unwrap_err();
         assert!(matches!(err, PipelineErrorKind::Temporary(PipelineError::Provider(_))));
+    }
+
+    #[tokio::test]
+    async fn test_load_blobs_overfill_triggers_reset() {
+        let mut source = default_test_blob_source();
+        let block_info = BlockInfo::default();
+        let batcher_address =
+            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
+        source.batcher_address =
+            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let txs = valid_blob_txs();
+        source.blob_fetcher.should_return_extra_blob = true;
+        source.chain_provider.insert_block_with_transactions(1, block_info, txs);
+        let hashes = [
+            alloy_primitives::b256!(
+                "012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"
+            ),
+            alloy_primitives::b256!(
+                "0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"
+            ),
+            alloy_primitives::b256!(
+                "013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"
+            ),
+            alloy_primitives::b256!(
+                "01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"
+            ),
+            alloy_primitives::b256!(
+                "011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549"
+            ),
+        ];
+        for hash in hashes {
+            source.blob_fetcher.insert_blob(hash, Blob::with_last_byte(1u8));
+        }
+        let result = source.load_blobs(&BlockInfo::default(), batcher_address).await;
+        assert!(matches!(result, Err(BlobProviderError::Reset(ResetError::BlobsOverFill(5, 6)))));
     }
 }

@@ -16,6 +16,8 @@ pub struct TestBlobProvider {
     pub blobs: HashMap<B256, Blob>,
     /// whether the blob provider should return an error.
     pub should_error: bool,
+    /// whether the blob provider should return an extra blob beyond what was requested.
+    pub should_return_extra_blob: bool,
 }
 
 impl TestBlobProvider {
@@ -47,6 +49,9 @@ impl BlobProvider for TestBlobProvider {
             if let Some(data) = self.blobs.get(&blob_hash.hash) {
                 blobs.push(Box::new(*data));
             }
+        }
+        if self.should_return_extra_blob {
+            blobs.push(Box::new(Blob::default()));
         }
         Ok(blobs)
     }
