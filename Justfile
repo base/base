@@ -234,10 +234,15 @@ watch-check:
 # Runs all benchmarks
 benches:
     @just bench-flashblocks
+    @just bench-proof-mpt
 
 # Runs flashblocks pending state benchmarks
 bench-flashblocks:
     cargo bench -p base-flashblocks --bench pending_state
+
+# Runs MPT trie node benchmarks
+bench-proof-mpt:
+    cargo bench -p base-proof-mpt --bench trie_node
 
 # Stops devnet, deletes data, and starts fresh
 devnet: devnet-down
