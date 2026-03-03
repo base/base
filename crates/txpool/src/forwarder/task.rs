@@ -172,8 +172,8 @@ where
                     skipped = skipped,
                     "forwarder lagged, dropped transactions",
                 );
-                        self.metrics.batches_lagged.increment(1);
-                        self.metrics.txs_lagged.increment(skipped);
+                self.metrics.batches_lagged.increment(1);
+                self.metrics.txs_lagged.increment(skipped);
             }
             Err(broadcast::error::RecvError::Closed) => {
                 info!(
@@ -220,7 +220,7 @@ where
                     return;
                 }
                 Err(err) if Self::is_retryable(&err) && attempt < self.config.max_retries => {
-                    let backoff = self.config.retry_backoff * 2u32.pow(attempt);
+                    let backoff = self.config.retry_backoff * 2u32.saturating_pow(attempt);
                     debug!(
                         builder_url = %self.builder_url,
                         attempt = attempt + 1,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use jsonrpsee::http_client::HttpClientBuilder;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
@@ -17,10 +17,11 @@ pub use task::{Forwarder, ValidTransaction};
 
 /// Handle for the set of forwarder tasks (one per builder URL).
 ///
-/// Cancels all forwarder tasks on drop.
+/// Cancels all forwarder tasks on drop. For a clean shutdown that waits for
+/// in-flight RPC requests to complete, use [`ForwarderHandle::shutdown`].
 pub struct ForwarderHandle {
     cancel: CancellationToken,
-    _tasks: Vec<tokio::task::JoinHandle<()>>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl ForwarderHandle {
@@ -73,7 +74,23 @@ impl ForwarderHandle {
             warn!("no forwarder tasks spawned — check builder_urls config");
         }
 
-        Self { cancel, _tasks: tasks }
+        Self { cancel, tasks }
+    }
+}
+
+impl ForwarderHandle {
+    /// Gracefully shuts down all forwarder tasks.
+    ///
+    /// Signals cancellation and waits up to 5 seconds for in-flight RPC
+    /// requests to complete before abandoning them.
+    pub async fn shutdown(mut self) {
+        self.cancel.cancel();
+
+        for task in std::mem::take(&mut self.tasks) {
+            if let Err(err) = tokio::time::timeout(Duration::from_secs(5), task).await {
+                warn!(error = %err, "forwarder task did not finish within shutdown timeout");
+            }
+        }
     }
 }
 
@@ -86,7 +103,7 @@ impl Drop for ForwarderHandle {
 impl std::fmt::Debug for ForwarderHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ForwarderHandle")
-            .field("tasks", &self._tasks.len())
+            .field("tasks", &self.tasks.len())
             .field("cancelled", &self.cancel.is_cancelled())
             .finish()
     }
