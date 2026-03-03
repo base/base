@@ -8,10 +8,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_enclave::{
-    Proposal, ProposalParams,
-    executor::{ExecutionWitness, execute_stateless as core_execute_stateless},
-    output_root_v0,
-    types::account::AccountResult,
+    AccountResult, ExecutionWitness, Proposal, ProposalParams,
+    execute_stateless as core_execute_stateless, output_root_v0,
 };
 use parking_lot::RwLock;
 #[cfg(test)]

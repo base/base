@@ -18,9 +18,9 @@ use super::{
     witness::{ExecutionWitness, transform_witness},
 };
 use crate::{
+    AccountResult,
     error::ExecutorError,
     providers::{L2SystemConfigFetcher, compute_l1_receipt_root, compute_tx_root},
-    types::account::AccountResult,
 };
 
 /// Maximum sequencer drift in seconds (Fjord hardfork).
@@ -253,9 +253,11 @@ pub fn execute_stateless(
     if message_account.address != Predeploys::L2_TO_L1_MESSAGE_PASSER {
         return Err(ExecutorError::InvalidMessageAccountAddress);
     }
-    message_account
-        .verify(execution_result.state_root)
-        .map_err(|e| ExecutorError::MessageAccountVerificationFailed(e.to_string()))?;
+    message_account.verify(execution_result.state_root).map_err(
+        |e: crate::error::ProviderError| {
+            ExecutorError::MessageAccountVerificationFailed(e.to_string())
+        },
+    )?;
 
     Ok(ExecutionResult {
         state_root: execution_result.state_root,

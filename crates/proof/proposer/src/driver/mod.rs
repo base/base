@@ -772,7 +772,7 @@ mod tests {
 
     use alloy_primitives::{B256, Bytes};
     use async_trait::async_trait;
-    use base_enclave::{Proposal, types::config::RollupConfig};
+    use base_enclave::{Proposal, RollupConfig};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use tokio_util::sync::CancellationToken;
 

@@ -13,8 +13,7 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
-    AggregateRequest, ChainConfig, Proposal, l2_block_to_block_info, output_root_v0,
-    types::config::RollupConfig,
+    AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info, output_root_v0,
 };
 use base_enclave_client::ExecuteStatelessRequest;
 use base_protocol::Predeploys;
