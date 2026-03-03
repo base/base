@@ -4226,14 +4226,18 @@ dependencies = [
  "base-test-utils",
  "c-kzg",
  "derive_more",
+ "metrics",
  "parking_lot",
  "reth-chainspec",
  "reth-evm",
+ "reth-metrics",
  "reth-primitives-traits",
  "reth-provider",
  "reth-storage-api",
+ "reth-tasks",
  "reth-transaction-pool",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
