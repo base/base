@@ -51,7 +51,7 @@ impl ForwarderHandle {
             };
 
             let receiver = sender.subscribe();
-            let metrics = ForwarderMetrics::default();
+            let metrics = ForwarderMetrics::new(url);
             let forwarder = Forwarder::new(
                 url.clone(),
                 client,

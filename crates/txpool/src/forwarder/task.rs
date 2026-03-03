@@ -232,7 +232,10 @@ where
                             error = %err,
                             "RPC send failed, retrying",
                         );
-                        time::sleep(backoff).await;
+                        tokio::select! {
+                            _ = self.cancel.cancelled() => return,
+                            _ = time::sleep(backoff) => {}
+                        }
                     } else {
                         error!(
                             builder_url = %self.builder_url,
