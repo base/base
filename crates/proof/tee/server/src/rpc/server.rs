@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_enclave::{ExecuteStatelessRequest, Proposal, config::l1_config_for_l2_chain_id};
+use base_enclave::{ExecuteStatelessRequest, Proposal, l1_config_for_l2_chain_id};
 use jsonrpsee::types::ErrorObjectOwned;
 
 use super::{api::EnclaveApiServer, types::AggregateRequest};

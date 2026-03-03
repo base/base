@@ -12,7 +12,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use backon::Retryable;
-use base_enclave::{AccountResult, executor::ExecutionWitness};
+use base_enclave::{AccountResult, ExecutionWitness};
 use futures::stream::{self, StreamExt};
 
 use super::{

@@ -5,12 +5,12 @@
 /// Serialization for `hexutil.Bytes` compatibility.
 ///
 /// Serializes bytes as `0x`-prefixed lowercase hex string.
-pub mod bytes_hex {
+pub(crate) mod bytes_hex {
     use alloy_primitives::Bytes;
     use serde::{Deserialize, Deserializer, Serializer};
 
     /// Serializes bytes as 0x-prefixed hex string.
-    pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -19,7 +19,7 @@ pub mod bytes_hex {
     }
 
     /// Deserializes 0x-prefixed hex string to bytes.
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -34,12 +34,12 @@ pub mod bytes_hex {
 ///
 /// Serializes U256 as minimal `0x`-prefixed hex string (no leading zeros).
 /// For example, 12345 serializes as `"0x3039"`, not `"0x0000...3039"`.
-pub mod u256_hex {
+pub(crate) mod u256_hex {
     use alloy_primitives::U256;
     use serde::{Deserialize, Deserializer, Serializer};
 
     /// Serializes U256 as minimal 0x-prefixed hex string.
-    pub fn serialize<S>(value: &U256, serializer: S) -> Result<S::Ok, S::Error>
+    pub(crate) fn serialize<S>(value: &U256, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -53,7 +53,7 @@ pub mod u256_hex {
     }
 
     /// Deserializes hex string to U256.
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<U256, D::Error>
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<U256, D::Error>
     where
         D: Deserializer<'de>,
     {

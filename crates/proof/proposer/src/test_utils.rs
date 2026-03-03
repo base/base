@@ -5,9 +5,8 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
 use base_enclave::{
-    AccountResult,
-    executor::ExecutionWitness,
-    types::config::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig},
+    AccountResult, BlockId, ExecutionWitness, Genesis, GenesisSystemConfig, PerChainConfig,
+    RollupConfig,
 };
 
 use crate::{

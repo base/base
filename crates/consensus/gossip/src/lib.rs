@@ -1,18 +1,4 @@
-//! Gossip protocol implementation for the OP Stack.
-//!
-//! This crate provides a comprehensive gossip networking implementation for the OP Stack,
-//! including GossipSub-based consensus layer networking, RPC interfaces for network
-//! administration, and metrics collection.
-//!
-//! ## Key Components
-//!
-//! - [`GossipDriver`]: Main driver managing the libp2p swarm and event handling
-//! - [`Behaviour`]: Custom libp2p behavior combining `GossipSub`, Ping, and Identify
-//! - [`BlockHandler`]: Validates and processes incoming block payloads
-//! - [`ConnectionGater`]: Sophisticated connection management and rate limiting
-//! - [`P2pRpcRequest`]: RPC interface for network administration
-//! - [`Metrics`]: Metrics collection for monitoring and observability
-
+#![doc = include_str!("../README.md")]
 #![doc(html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4")]
 #![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg))]

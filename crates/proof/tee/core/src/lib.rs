@@ -1,14 +1,4 @@
-//! Core types for the enclave.
-//!
-//! This crate provides Rust equivalents of the Go types used in the enclave,
-//! with serialization that matches the Go `encoding/json` output exactly.
-
-pub mod config;
-pub mod error;
-pub mod executor;
-pub mod providers;
-pub mod serde_utils;
-pub mod types;
+#![doc = include_str!("../README.md")]
 
 // Re-export commonly used types from alloy
 pub use alloy_consensus::Header;
@@ -19,26 +9,35 @@ pub use base_alloy_consensus::OpReceiptEnvelope;
 pub use base_consensus_genesis::{
     ChainConfig, ChainGenesis, HardForkConfig, L1ChainConfig, SystemConfig,
 };
-// Re-export error types
+
+mod config;
+pub use config::{
+    default_l1_config, default_rollup_config, l1_config_for_l2_chain_id, sepolia_l1_config,
+};
+
+mod error;
 pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderError, Result};
-// Re-export executor types
+
+mod executor;
 pub use executor::{
-    DEPOSIT_EVENT_TOPIC, EnclaveTrieDB, ExecutionResult, ExecutionWitness,
-    MAX_SEQUENCER_DRIFT_FJORD, Oracle, TransformedWitness, execute_stateless,
-    extract_deposits_from_receipts, l2_block_to_block_info, transform_witness,
-    validate_not_deposit, validate_sequencer_drift,
+    BlockExecutionResult, DEPOSIT_EVENT_TOPIC, EnclaveEvmFactory, EnclaveTrieDB, EnclaveTrieHinter,
+    ExecutionResult, ExecutionWitness, L1BlockInfo, MAX_SEQUENCER_DRIFT_FJORD, Oracle,
+    TransformedWitness, TrieProviderError, build_l1_block_info_from_deposit, execute_block,
+    execute_stateless, extract_deposits_from_receipts, l2_block_to_block_info, transform_witness,
+    validate_not_deposit, validate_sequencer_drift, verify_execution_result,
 };
-// Re-export provider types
+
+mod providers;
 pub use providers::{
-    BlockInfoWrapper, L1ReceiptsFetcher, L2SystemConfigFetcher, compute_receipt_root,
-    compute_tx_root,
+    BlockInfoWrapper, L1ReceiptsFetcher, L2SystemConfigFetcher, compute_l1_receipt_root,
+    compute_receipt_root, compute_tx_root,
 };
+
+mod serde_utils;
+
+mod types;
 pub use types::{
-    account::AccountResult,
-    config::{
-        BlockId, Genesis, GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, RollupConfig,
-    },
-    output::output_root_v0,
-    proposal::{Proposal, ProposalParams},
-    rpc::{AggregateRequest, ExecuteStatelessRequest},
+    AccountResult, AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis,
+    GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, Proposal, ProposalParams,
+    RollupConfig, SIGNATURE_LENGTH, StorageProof, output_root_v0,
 };

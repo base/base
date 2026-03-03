@@ -2,11 +2,8 @@
 
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
-use base_enclave::{
-    AggregateRequest,
-    types::config::{BlockId, Genesis, GenesisSystemConfig, RollupConfig},
-};
-pub use base_enclave::{Proposal, types::config::PerChainConfig};
+use base_enclave::{AggregateRequest, BlockId, Genesis, GenesisSystemConfig, RollupConfig};
+pub use base_enclave::{PerChainConfig, Proposal};
 pub use base_enclave_client::EnclaveClient;
 use base_enclave_client::{ClientError, ExecuteStatelessRequest};
 
