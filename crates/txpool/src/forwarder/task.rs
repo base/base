@@ -237,7 +237,6 @@ where
     async fn send_with_retries(&self, batch: Vec<ValidTransaction>) {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
-
         for attempt in 0..=self.config.max_retries {
             let result: Result<serde_json::Value, ClientError> =
                 self.client.request("base_insertValidatedTransactions", vec![&batch]).await;
@@ -294,5 +293,34 @@ impl<T: PoolTransaction> std::fmt::Debug for Forwarder<T> {
             .field("builder_url", &self.builder_url)
             .field("config", &self.config)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limiter_unlimited_when_zero() {
+        let mut limiter = RateLimiter::new(0);
+
+        for _ in 0..10_000 {
+            assert!(limiter.check_rate_limit().is_none());
+            limiter.record_send();
+        }
+
+        assert!(limiter.timestamps.is_empty());
+    }
+
+    #[test]
+    fn rate_limiter_enforces_limit() {
+        let mut limiter = RateLimiter::new(3);
+
+        for _ in 0..3 {
+            assert!(limiter.check_rate_limit().is_none());
+            limiter.record_send();
+        }
+
+        assert!(limiter.check_rate_limit().is_some());
     }
 }
