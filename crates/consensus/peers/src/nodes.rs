@@ -48,12 +48,19 @@ impl BootNodes {
 }
 
 /// Default op bootnodes to use.
-static OP_BOOTNODES: LazyLock<Vec<BootNode>> =
-    LazyLock::new(|| OP_RAW_BOOTNODES.iter().map(|raw| BootNode::parse_bootnode(raw)).collect());
+static OP_BOOTNODES: LazyLock<Vec<BootNode>> = LazyLock::new(|| {
+    OP_RAW_BOOTNODES
+        .iter()
+        .map(|raw| BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse"))
+        .collect()
+});
 
 /// Default op testnet bootnodes to use.
 static OP_TESTNET_BOOTNODES: LazyLock<Vec<BootNode>> = LazyLock::new(|| {
-    OP_RAW_TESTNET_BOOTNODES.iter().map(|raw| BootNode::parse_bootnode(raw)).collect()
+    OP_RAW_TESTNET_BOOTNODES
+        .iter()
+        .map(|raw| BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse"))
+        .collect()
 });
 
 /// OP stack mainnet boot nodes.
@@ -124,11 +131,11 @@ mod tests {
     #[test]
     fn test_parse_raw_bootnodes() {
         for raw in OP_RAW_BOOTNODES {
-            BootNode::parse_bootnode(raw);
+            BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
         }
 
         for raw in OP_RAW_TESTNET_BOOTNODES {
-            BootNode::parse_bootnode(raw);
+            BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
         }
     }
 

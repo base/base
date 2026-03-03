@@ -12,6 +12,20 @@ use serde::{Deserialize, Serialize};
 use super::utils::{PeerIdConversionError, local_id_to_p2p_id};
 use crate::{NodeRecord, enr_to_multiaddr};
 
+/// Errors that can occur when parsing a bootnode.
+#[derive(Debug, thiserror::Error)]
+pub enum BootNodeParseError {
+    /// Failed to parse ENR.
+    #[error("Failed to parse ENR: {0}")]
+    Enr(String),
+    /// Failed to parse node record.
+    #[error("Failed to parse node record: {0}")]
+    NodeRecord(String),
+    /// Failed to convert peer ID.
+    #[error(transparent)]
+    PeerIdConversion(#[from] PeerIdConversionError),
+}
+
 /// A boot node can be added either as a string in either 'enode' URL scheme or serialized from
 /// [`Enr`] type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, From, Display, Serialize, Deserialize)]
@@ -51,15 +65,16 @@ impl BootNode {
     }
 
     /// Helper method to parse a bootnode from a string.
-    pub fn parse_bootnode(raw: &str) -> Self {
+    pub fn parse_bootnode(raw: &str) -> Result<Self, BootNodeParseError> {
         // If the string starts with "enr:" it is an ENR record.
         if raw.starts_with("enr:") {
-            let enr = Enr::from_str(raw).unwrap();
-            return Self::from(enr);
+            let enr = Enr::from_str(raw).map_err(BootNodeParseError::Enr)?;
+            return Ok(Self::from(enr));
         }
         // Otherwise, attempt to use the Node Record format.
-        let record = NodeRecord::from_str(raw).unwrap();
-        Self::from_unsigned(record).unwrap()
+        let record =
+            NodeRecord::from_str(raw).map_err(|e| BootNodeParseError::NodeRecord(e.to_string()))?;
+        Ok(Self::from_unsigned(record)?)
     }
 }
 
@@ -71,6 +86,7 @@ mod tests {
         enr::{CombinedPublicKey, k256},
         handler::NodeContact,
     };
+    use rstest::rstest;
 
     use super::*;
     use crate::utils::peer_id_to_secp256k1_pubkey;
@@ -130,5 +146,31 @@ mod tests {
 
         // These two keys should be equal.
         assert_eq!(contact_pkey, expected_pkey);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum ParseErrorKind {
+        Enr,
+        NodeRecord,
+        PeerIdConversion,
+    }
+
+    #[rstest]
+    #[case("enr:invalid", ParseErrorKind::Enr)]
+    #[case("enode://invalid@127.0.0.1:30303", ParseErrorKind::NodeRecord)]
+    #[case(
+        "enode://00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000@127.0.0.1:30303",
+        ParseErrorKind::PeerIdConversion
+    )]
+    fn test_parse_bootnode_error_variants(#[case] raw: &str, #[case] expected: ParseErrorKind) {
+        let err = BootNode::parse_bootnode(raw).expect_err("input should fail to parse");
+        match (expected, err) {
+            (ParseErrorKind::Enr, BootNodeParseError::Enr(_)) => {}
+            (ParseErrorKind::NodeRecord, BootNodeParseError::NodeRecord(_)) => {}
+            (ParseErrorKind::PeerIdConversion, BootNodeParseError::PeerIdConversion(_)) => {}
+            (expected, actual) => {
+                panic!("expected {expected:?}, got {actual:?}");
+            }
+        }
     }
 }
