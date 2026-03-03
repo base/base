@@ -9,6 +9,9 @@ extern crate tracing;
 mod block_assembler;
 pub use block_assembler::{AssembledBlock, BlockAssembler};
 
+mod cache;
+pub use cache::FlashblockCache;
+
 mod error;
 pub use error::{
     BuildError, ExecutionError, ProtocolError, ProviderError, Result, StateProcessorError,
