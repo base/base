@@ -53,7 +53,7 @@ pub use rpc::{
     L1ClientImpl, L2BlockRef, L2Client, L2ClientConfig, L2ClientImpl, L2ClientKind, L2HttpProvider,
     MeteredCache, OpBlock, ProofCacheKey, ProverL2Client, RethExecutionWitness, RethL2Client,
     RetryConfig, RollupClient, RollupClientConfig, RollupClientImpl, RpcError, RpcResult,
-    SyncStatus, create_l2_client,
+    SyncStatus,
 };
 
 mod service;

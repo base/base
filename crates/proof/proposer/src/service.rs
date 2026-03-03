@@ -20,8 +20,8 @@ use tracing::{info, warn};
 
 use crate::{
     Driver, DriverConfig, DriverHandle, L1ClientConfig, L1ClientImpl, L2ClientConfig,
-    ProposerConfig, ProposerDriverControl, Prover, RollupClient, RollupClientConfig,
-    RollupClientImpl, SigningConfig, create_enclave_client, create_l2_client,
+    L2ClientKind, ProposerConfig, ProposerDriverControl, Prover, RollupClient,
+    RollupClientConfig, RollupClientImpl, SigningConfig, create_enclave_client,
     create_output_proposer, rollup_config_to_per_chain_config,
 };
 
@@ -72,7 +72,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .with_retry_config(config.retry.clone())
         .with_skip_tls_verify(config.skip_tls_verify)
         .with_metrics_prefix("base_proposer");
-    let l2_client = Arc::new(create_l2_client(l2_config, config.l2_reth)?);
+    let l2_client = Arc::new(L2ClientKind::new(l2_config, config.l2_reth)?);
     info!(endpoint = %config.l2_eth_rpc, reth = config.l2_reth, "L2 client initialized");
 
     // Create Rollup client

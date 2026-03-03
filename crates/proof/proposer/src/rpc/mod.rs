@@ -35,6 +35,18 @@ pub enum L2ClientKind {
 }
 
 impl L2ClientKind {
+    /// Creates an L2 client based on the configuration.
+    ///
+    /// If `is_reth` is true, returns a [`RethL2Client`] that handles reth-specific
+    /// witness format conversion. Otherwise, returns a standard [`L2ClientImpl`].
+    pub fn new(config: L2ClientConfig, is_reth: bool) -> RpcResult<Self> {
+        if is_reth {
+            Ok(Self::Reth(RethL2Client::new(config)?))
+        } else {
+            Ok(Self::Standard(L2ClientImpl::new(config)?))
+        }
+    }
+
     /// Returns a reference to the underlying [`L2ClientImpl`].
     ///
     /// Both variants delegate all [`L2Client`] methods to an [`L2ClientImpl`],
@@ -87,18 +99,6 @@ impl ProverL2Client for L2ClientKind {
     }
 }
 
-/// Creates an L2 client based on the configuration.
-///
-/// If `is_reth` is true, returns a [`RethL2Client`] that handles reth-specific
-/// witness format conversion. Otherwise, returns a standard [`L2ClientImpl`].
-pub fn create_l2_client(config: L2ClientConfig, is_reth: bool) -> RpcResult<L2ClientKind> {
-    if is_reth {
-        Ok(L2ClientKind::Reth(RethL2Client::new(config)?))
-    } else {
-        Ok(L2ClientKind::Standard(L2ClientImpl::new(config)?))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use url::Url;
@@ -108,14 +108,14 @@ mod tests {
     #[test]
     fn test_create_l2_client_standard() {
         let config = L2ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        let client = create_l2_client(config, false);
+        let client = L2ClientKind::new(config, false);
         assert!(client.is_ok());
     }
 
     #[test]
     fn test_create_l2_client_reth() {
         let config = L2ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        let client = create_l2_client(config, true);
+        let client = L2ClientKind::new(config, true);
         assert!(client.is_ok());
     }
 }
