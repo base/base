@@ -46,7 +46,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // ── 1. Global cancellation token and signal handler ──────────────────
     let cancel = CancellationToken::new();
-    crate::setup_signal_handler(cancel.clone());
+    crate::SignalHandler::install(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
     config.metrics.init().expect("failed to install Prometheus recorder");
