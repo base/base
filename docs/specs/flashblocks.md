@@ -218,7 +218,7 @@ Both must be provided together. If neither is set, no flashblock index transacti
 ### Transaction Details
 
 - **Type**: EIP-1559 (type 2)
-- **Gas limit**: 50,000 (a simple `SSTORE` costs ~25k gas)
+- **Gas limit**: 50,000 (initial cold `SSTORE` costs ~22k gas, subsequent warm writes ~5k)
 - **Max fee per gas**: set to current block base fee
 - **Max priority fee per gas**: 0 (the builder is the sequencer)
 - **Value**: 0 (no ETH transfer)

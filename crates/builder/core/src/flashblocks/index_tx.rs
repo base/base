@@ -18,7 +18,7 @@ sol! {
     function setIndex(uint256 index);
 }
 
-/// Gas limit for the `setIndex` call (a single SSTORE costs ~25k gas).
+/// Gas limit for the `setIndex` call (initial cold SSTORE costs ~22k gas, subsequent warm writes ~5k).
 const SET_INDEX_GAS_LIMIT: u64 = 50_000;
 
 /// Builds a signed EIP-1559 transaction calling `setIndex(flashblock_index)`.
