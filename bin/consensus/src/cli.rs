@@ -14,7 +14,7 @@ use clap::Parser;
 use strum::IntoEnumIterator;
 use tracing::{error, info};
 
-use crate::metrics::init_rollup_config_metrics;
+use crate::metrics::{init_p2p_metrics, init_rollup_config_metrics};
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
@@ -137,7 +137,10 @@ impl Cli {
         };
 
         // If metrics are enabled, initialize the global cli metrics.
-        self.metrics.enabled.then(|| init_rollup_config_metrics(&cfg));
+        if self.metrics.enabled {
+            init_rollup_config_metrics(&cfg);
+            init_p2p_metrics(&self.p2p_flags);
+        }
 
         let jwt_secret = self.l2_client_args.validate_jwt().await?;
 

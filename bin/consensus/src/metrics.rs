@@ -1,5 +1,6 @@
 //! CLI Options Metrics
 
+use base_client_cli::P2PArgs;
 use base_consensus_genesis::RollupConfig;
 
 /// Metrics to record various CLI options.
@@ -63,6 +64,42 @@ impl CliMetrics {
 
     /// Top-level rollup config settings.
     pub const ROLLUP_CONFIG: &'static str = "base_node_rollup_config";
+}
+
+/// Initializes metrics for the P2P configuration.
+pub fn init_p2p_metrics(p2p: &P2PArgs) {
+    metrics::describe_gauge!(
+        CliMetrics::IDENTIFIER,
+        "P2P configuration settings for the Base consensus node"
+    );
+    metrics::gauge!(
+        CliMetrics::IDENTIFIER,
+        &[
+            (CliMetrics::P2P_PEER_SCORING_LEVEL, p2p.scoring.to_string()),
+            (CliMetrics::P2P_TOPIC_SCORING_ENABLED, p2p.topic_scoring.to_string()),
+            (CliMetrics::P2P_BANNING_ENABLED, p2p.ban_enabled.to_string()),
+            (CliMetrics::P2P_PEER_REDIALING, p2p.peer_redial.unwrap_or(0).to_string()),
+            (CliMetrics::P2P_FLOOD_PUBLISH, p2p.gossip_flood_publish.to_string()),
+            (CliMetrics::P2P_DISCOVERY_INTERVAL, p2p.discovery_interval.to_string()),
+            (CliMetrics::P2P_ADVERTISE_IP, p2p.advertise_ip.unwrap_or(p2p.listen_ip).to_string()),
+            (
+                CliMetrics::P2P_ADVERTISE_TCP_PORT,
+                p2p.advertise_tcp_port.map_or_else(|| "auto".to_string(), |p| p.to_string())
+            ),
+            (
+                CliMetrics::P2P_ADVERTISE_UDP_PORT,
+                p2p.advertise_udp_port.map_or_else(|| "auto".to_string(), |p| p.to_string())
+            ),
+            (CliMetrics::P2P_PEERS_LO, p2p.peers_lo.to_string()),
+            (CliMetrics::P2P_PEERS_HI, p2p.peers_hi.to_string()),
+            (CliMetrics::P2P_GOSSIP_MESH_D, p2p.gossip_mesh_d.to_string()),
+            (CliMetrics::P2P_GOSSIP_MESH_D_LO, p2p.gossip_mesh_dlo.to_string()),
+            (CliMetrics::P2P_GOSSIP_MESH_D_HI, p2p.gossip_mesh_dhi.to_string()),
+            (CliMetrics::P2P_GOSSIP_MESH_D_LAZY, p2p.gossip_mesh_dlazy.to_string()),
+            (CliMetrics::P2P_BAN_DURATION, p2p.ban_duration.to_string()),
+        ]
+    )
+    .set(1.0);
 }
 
 /// Initializes metrics for the rollup config.
