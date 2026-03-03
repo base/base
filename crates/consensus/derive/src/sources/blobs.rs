@@ -1,6 +1,6 @@
 //! Blob Data Source
 
-use alloc::{boxed::Box, string::ToString, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 
 use alloy_consensus::{
     Transaction, TxEip4844Variant, TxEnvelope, TxType, transaction::SignerRecoverable,
@@ -119,7 +119,7 @@ where
         &mut self,
         block_ref: &BlockInfo,
         batcher_address: Address,
-    ) -> Result<(), BlobProviderError> {
+    ) -> PipelineResult<()> {
         if self.open {
             return Ok(());
         }
@@ -128,7 +128,7 @@ where
             .chain_provider
             .block_info_and_transactions_by_hash(block_ref.hash)
             .await
-            .map_err(|e| BlobProviderError::Backend(e.to_string()))?;
+            .map_err(Into::into)?;
 
         let (mut data, blob_hashes) = self.extract_blob_data(info.1, batcher_address);
 
@@ -143,7 +143,7 @@ where
             self.blob_fetcher.get_and_validate_blobs(block_ref, &blob_hashes).await.map_err(
                 |e| {
                     warn!(target: "blob_source", error = %e, "Failed to fetch blobs");
-                    BlobProviderError::Backend(e.to_string())
+                    e.into()
                 },
             )?;
 
@@ -157,7 +157,7 @@ where
                     }
                 }
                 Err(e) => {
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
         }
@@ -258,7 +258,7 @@ pub(crate) mod tests {
         let mut source = default_test_blob_source();
         assert!(matches!(
             source.load_blobs(&BlockInfo::default(), Address::ZERO).await,
-            Err(BlobProviderError::Backend(_))
+            Err(PipelineErrorKind::Temporary(_))
         ));
     }
 
@@ -286,7 +286,7 @@ pub(crate) mod tests {
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
         assert!(matches!(
             source.load_blobs(&BlockInfo::default(), batcher_address).await,
-            Err(BlobProviderError::Backend(_))
+            Err(PipelineErrorKind::Critical(_))
         ));
     }
 
