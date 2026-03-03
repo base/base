@@ -48,7 +48,7 @@ mod recovery;
 pub use recovery::recover_parent_game_state_standalone;
 
 mod rpc;
-pub use rpc::{L2ClientKind, ProverL2Client, RethExecutionWitness, RethL2Client};
+pub use rpc::{L2ClientKind, ProverL2Provider, RethExecutionWitness, RethL2Client};
 
 mod service;
 pub use service::run;

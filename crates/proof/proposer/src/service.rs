@@ -14,8 +14,7 @@ use base_proof_contracts::{
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{
-    L1ClientConfig, L1ClientImpl, L2ClientConfig, RollupClient, RollupClientConfig,
-    RollupClientImpl,
+    L1Client, L1ClientConfig, L2ClientConfig, RollupClient, RollupClientConfig, RollupProvider,
 };
 use eyre::Result;
 use tokio::task::JoinHandle;
@@ -66,7 +65,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .with_retry_config(config.retry.clone())
         .with_skip_tls_verify(config.skip_tls_verify)
         .with_metrics_prefix("base_proposer");
-    let l1_client = Arc::new(L1ClientImpl::new(l1_config)?);
+    let l1_client = Arc::new(L1Client::new(l1_config)?);
     info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
     // Create L2 client
@@ -84,7 +83,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
         .with_skip_tls_verify(config.skip_tls_verify);
-    let rollup_client = Arc::new(RollupClientImpl::new(rollup_config)?);
+    let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
     info!(endpoint = %rollup_rpc, "Rollup client initialized");
 
     // Fetch chain configuration from op-node

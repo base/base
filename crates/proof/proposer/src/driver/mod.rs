@@ -22,7 +22,7 @@ use std::{
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
-use base_proof_rpc::{L1Client, L2BlockRef, RollupClient, RpcError};
+use base_proof_rpc::{L1Provider, L2BlockRef, RollupProvider, RpcError};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -34,7 +34,7 @@ use crate::{
     enclave::EnclaveClientTrait,
     is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
-    rpc::ProverL2Client,
+    rpc::ProverL2Provider,
 };
 
 /// Driver configuration.
@@ -87,10 +87,10 @@ struct ParentGameState {
 /// The main driver that coordinates proposal generation.
 pub struct Driver<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client,
-    L2: ProverL2Client,
+    L1: L1Provider,
+    L2: ProverL2Provider,
     E: EnclaveClientTrait,
-    R: RollupClient,
+    R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
 {
@@ -115,10 +115,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for Driver<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client,
-    L2: ProverL2Client,
+    L1: L1Provider,
+    L2: ProverL2Provider,
     E: EnclaveClientTrait,
-    R: RollupClient,
+    R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
 {
@@ -133,10 +133,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> Driver<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: ProverL2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -633,10 +633,10 @@ pub trait ProposerDriverControl: Send + Sync {
 /// into a spawned task for the duration of a session.
 pub struct DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: ProverL2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -654,10 +654,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: ProverL2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -670,10 +670,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: ProverL2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -697,10 +697,10 @@ where
 #[async_trait]
 impl<L1, L2, E, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: ProverL2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {

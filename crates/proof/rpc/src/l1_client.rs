@@ -19,7 +19,7 @@ use super::{
     cache::MeteredCache,
     config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
-    traits::L1Client,
+    traits::L1Provider,
 };
 
 /// Configuration for the L1 client.
@@ -84,7 +84,7 @@ impl L1ClientConfig {
 }
 
 /// L1 RPC client implementation using Alloy.
-pub struct L1ClientImpl {
+pub struct L1Client {
     /// The underlying HTTP provider.
     provider: HttpProvider,
     /// Cache for headers by hash.
@@ -95,16 +95,16 @@ pub struct L1ClientImpl {
     retry_config: RetryConfig,
 }
 
-impl std::fmt::Debug for L1ClientImpl {
+impl std::fmt::Debug for L1Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L1ClientImpl")
+        f.debug_struct("L1Client")
             .field("headers_cache_entries", &self.headers_cache.entry_count())
             .field("receipts_cache_entries", &self.receipts_cache.entry_count())
             .finish_non_exhaustive()
     }
 }
 
-impl L1ClientImpl {
+impl L1Client {
     /// Creates a new L1 client from the given configuration.
     pub fn new(config: L1ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
@@ -148,7 +148,7 @@ impl L1ClientImpl {
 }
 
 #[async_trait]
-impl L1Client for L1ClientImpl {
+impl L1Provider for L1Client {
     async fn block_number(&self) -> RpcResult<u64> {
         let backoff = self.retry_config.to_backoff_builder();
 

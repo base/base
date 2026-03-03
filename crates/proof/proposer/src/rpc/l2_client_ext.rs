@@ -4,12 +4,12 @@ use alloy_provider::Provider;
 use async_trait::async_trait;
 use backon::Retryable;
 use base_enclave::ExecutionWitness;
-use base_proof_rpc::{L2ClientImpl, RpcError, RpcResult};
+use base_proof_rpc::{L2Client, RpcError, RpcResult};
 
-use super::prover_l2_client::ProverL2Client;
+use super::prover_l2_client::ProverL2Provider;
 
 #[async_trait]
-impl ProverL2Client for L2ClientImpl {
+impl ProverL2Provider for L2Client {
     async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
         let backoff = self.retry_config().to_backoff_builder();
 

@@ -2,12 +2,12 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use base_enclave::{AccountResult, ExecutionWitness};
-use base_proof_rpc::{L2Client, L2ClientConfig, L2ClientImpl, OpBlock, RpcResult};
+use base_proof_rpc::{L2Client, L2ClientConfig, L2Provider, OpBlock, RpcResult};
 
 mod prover_l2_client;
-pub use prover_l2_client::ProverL2Client;
+pub use prover_l2_client::ProverL2Provider;
 
-// Impl-only: provides ProverL2Client impl for L2ClientImpl.
+// Impl-only: provides ProverL2Provider impl for L2Client.
 mod l2_client_ext;
 
 mod reth_client;
@@ -16,14 +16,14 @@ pub use reth_client::RethL2Client;
 mod types;
 pub use types::RethExecutionWitness;
 
-/// Enum dispatch for [`ProverL2Client`], replacing `Box<dyn ProverL2Client>`.
+/// Enum dispatch for [`ProverL2Provider`], replacing `Box<dyn ProverL2Provider>`.
 ///
 /// Since there are only two concrete implementations, enum dispatch avoids
 /// trait-object boilerplate and the fragile supertrait delegation it requires.
 #[derive(Debug)]
 pub enum L2ClientKind {
     /// Standard geth-compatible L2 client.
-    Standard(L2ClientImpl),
+    Standard(L2Client),
     /// Reth-specific L2 client with witness format conversion.
     Reth(RethL2Client),
 }
@@ -32,20 +32,20 @@ impl L2ClientKind {
     /// Creates an L2 client based on the configuration.
     ///
     /// If `is_reth` is true, returns a [`RethL2Client`] that handles reth-specific
-    /// witness format conversion. Otherwise, returns a standard [`L2ClientImpl`].
+    /// witness format conversion. Otherwise, returns a standard [`L2Client`].
     pub fn new(config: L2ClientConfig, is_reth: bool) -> RpcResult<Self> {
         if is_reth {
             Ok(Self::Reth(RethL2Client::new(config)?))
         } else {
-            Ok(Self::Standard(L2ClientImpl::new(config)?))
+            Ok(Self::Standard(L2Client::new(config)?))
         }
     }
 
-    /// Returns a reference to the underlying [`L2ClientImpl`].
+    /// Returns a reference to the underlying [`L2Client`].
     ///
-    /// Both variants delegate all [`L2Client`] methods to an [`L2ClientImpl`],
+    /// Both variants delegate all [`L2Provider`] methods to an [`L2Client`],
     /// so this helper eliminates per-method match arms for supertrait dispatch.
-    const fn as_l2_client(&self) -> &L2ClientImpl {
+    const fn as_l2_client(&self) -> &L2Client {
         match self {
             Self::Standard(c) => c,
             Self::Reth(c) => c.as_l2_client(),
@@ -54,7 +54,7 @@ impl L2ClientKind {
 }
 
 #[async_trait]
-impl L2Client for L2ClientKind {
+impl L2Provider for L2ClientKind {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         self.as_l2_client().chain_config().await
     }
@@ -77,7 +77,7 @@ impl L2Client for L2ClientKind {
 }
 
 #[async_trait]
-impl ProverL2Client for L2ClientKind {
+impl ProverL2Provider for L2ClientKind {
     async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
         match self {
             Self::Standard(c) => c.execution_witness(block_number).await,

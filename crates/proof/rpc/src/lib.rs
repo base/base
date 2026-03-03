@@ -14,17 +14,17 @@ pub use cache::{CacheMetrics, MeteredCache};
 mod error;
 pub use error::{RpcError, RpcResult};
 
+mod traits;
+pub use traits::{L1Provider, L2Provider, RollupProvider};
+
 mod l1_client;
-pub use l1_client::{L1ClientConfig, L1ClientImpl};
+pub use l1_client::{L1Client, L1ClientConfig};
 
 mod l2_client;
-pub use l2_client::{L2ClientConfig, L2ClientImpl, ProofCacheKey};
+pub use l2_client::{L2Client, L2ClientConfig, ProofCacheKey};
 
 mod rollup_client;
-pub use rollup_client::{RollupClientConfig, RollupClientImpl};
-
-mod traits;
-pub use traits::{L1Client, L2Client, RollupClient};
+pub use rollup_client::{RollupClient, RollupClientConfig};
 
 mod types;
 pub use types::{

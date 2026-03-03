@@ -18,7 +18,7 @@ use super::{
     cache::MeteredCache,
     config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
-    traits::L2Client,
+    traits::L2Provider,
     types::OpBlock,
 };
 
@@ -100,7 +100,7 @@ impl L2ClientConfig {
 }
 
 /// L2 RPC client implementation using Alloy.
-pub struct L2ClientImpl {
+pub struct L2Client {
     /// The underlying HTTP provider (Optimism network for deposit tx support).
     provider: L2HttpProvider,
     /// Cache for blocks by hash.
@@ -113,9 +113,9 @@ pub struct L2ClientImpl {
     retry_config: RetryConfig,
 }
 
-impl std::fmt::Debug for L2ClientImpl {
+impl std::fmt::Debug for L2Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L2ClientImpl")
+        f.debug_struct("L2Client")
             .field("blocks_cache_entries", &self.blocks_cache.entry_count())
             .field("headers_cache_entries", &self.headers_cache.entry_count())
             .field("proofs_cache_entries", &self.proofs_cache.entry_count())
@@ -123,7 +123,7 @@ impl std::fmt::Debug for L2ClientImpl {
     }
 }
 
-impl L2ClientImpl {
+impl L2Client {
     /// Creates a new L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
@@ -190,7 +190,7 @@ impl L2ClientImpl {
 }
 
 #[async_trait]
-impl L2Client for L2ClientImpl {
+impl L2Provider for L2Client {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         let backoff = self.retry_config.to_backoff_builder();
 

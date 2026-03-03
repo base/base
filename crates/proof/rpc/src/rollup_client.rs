@@ -15,7 +15,7 @@ use super::{
     HttpProvider,
     config::RetryConfig,
     error::{RpcError, RpcResult},
-    traits::RollupClient,
+    traits::RollupProvider,
     types::SyncStatus,
 };
 
@@ -63,20 +63,20 @@ impl RollupClientConfig {
 }
 
 /// Rollup RPC client implementation using Alloy.
-pub struct RollupClientImpl {
+pub struct RollupClient {
     /// The underlying HTTP provider.
     provider: HttpProvider,
     /// Retry configuration.
     retry_config: RetryConfig,
 }
 
-impl std::fmt::Debug for RollupClientImpl {
+impl std::fmt::Debug for RollupClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RollupClientImpl").finish_non_exhaustive()
+        f.debug_struct("RollupClient").finish_non_exhaustive()
     }
 }
 
-impl RollupClientImpl {
+impl RollupClient {
     /// Creates a new rollup client from the given configuration.
     pub fn new(config: RollupClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
@@ -103,7 +103,7 @@ impl RollupClientImpl {
 }
 
 #[async_trait]
-impl RollupClient for RollupClientImpl {
+impl RollupProvider for RollupClient {
     async fn rollup_config(&self) -> RpcResult<RollupConfig> {
         let backoff = self.retry_config.to_backoff_builder();
 

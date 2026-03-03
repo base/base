@@ -10,9 +10,9 @@ use super::{
     types::{OpBlock, SyncStatus},
 };
 
-/// L1 RPC client trait for interacting with Ethereum.
+/// L1 RPC provider trait for interacting with Ethereum.
 #[async_trait]
-pub trait L1Client: Send + Sync {
+pub trait L1Provider: Send + Sync {
     /// Gets the latest block number.
     async fn block_number(&self) -> RpcResult<u64>;
 
@@ -43,9 +43,9 @@ pub trait L1Client: Send + Sync {
     async fn get_balance(&self, address: Address) -> RpcResult<U256>;
 }
 
-/// L2 RPC client trait for interacting with OP Stack chains.
+/// L2 RPC provider trait for interacting with OP Stack chains.
 #[async_trait]
-pub trait L2Client: Send + Sync {
+pub trait L2Provider: Send + Sync {
     /// Gets the chain configuration via `debug_chainConfig`.
     async fn chain_config(&self) -> RpcResult<serde_json::Value>;
 
@@ -64,9 +64,9 @@ pub trait L2Client: Send + Sync {
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock>;
 }
 
-/// Rollup RPC client trait for interacting with OP Stack rollup nodes.
+/// Rollup RPC provider trait for interacting with OP Stack rollup nodes.
 #[async_trait]
-pub trait RollupClient: Send + Sync {
+pub trait RollupProvider: Send + Sync {
     /// Gets the rollup configuration via `optimism_rollupConfig`.
     async fn rollup_config(&self) -> RpcResult<RollupConfig>;
 

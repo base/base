@@ -13,10 +13,10 @@ use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use backon::Retryable;
 use base_enclave::{AccountResult, ExecutionWitness};
-use base_proof_rpc::{L2Client, L2ClientConfig, L2ClientImpl, OpBlock, RpcError, RpcResult};
+use base_proof_rpc::{L2Client, L2ClientConfig, L2Provider, OpBlock, RpcError, RpcResult};
 use futures::stream::{self, StreamExt};
 
-use super::{prover_l2_client::ProverL2Client, types::RethExecutionWitness};
+use super::{prover_l2_client::ProverL2Provider, types::RethExecutionWitness};
 
 /// Reth-specific L2 client that wraps the standard L2 client.
 ///
@@ -25,7 +25,7 @@ use super::{prover_l2_client::ProverL2Client, types::RethExecutionWitness};
 /// opcode support.
 pub struct RethL2Client {
     /// The inner L2 client.
-    inner: L2ClientImpl,
+    inner: L2Client,
 }
 
 impl std::fmt::Debug for RethL2Client {
@@ -37,11 +37,11 @@ impl std::fmt::Debug for RethL2Client {
 impl RethL2Client {
     /// Creates a new Reth L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
-        Ok(Self { inner: L2ClientImpl::new(config)? })
+        Ok(Self { inner: L2Client::new(config)? })
     }
 
     /// Returns a reference to the inner L2 client.
-    pub const fn as_l2_client(&self) -> &L2ClientImpl {
+    pub const fn as_l2_client(&self) -> &L2Client {
         &self.inner
     }
 
@@ -164,7 +164,7 @@ impl RethL2Client {
 }
 
 #[async_trait]
-impl L2Client for RethL2Client {
+impl L2Provider for RethL2Client {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         self.as_l2_client().chain_config().await
     }
@@ -187,7 +187,7 @@ impl L2Client for RethL2Client {
 }
 
 #[async_trait]
-impl ProverL2Client for RethL2Client {
+impl ProverL2Provider for RethL2Client {
     async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
         // Fetch the reth-format witness with retry
         let backoff = self.as_l2_client().retry_config().to_backoff_builder();
