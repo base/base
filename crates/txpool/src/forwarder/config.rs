@@ -11,9 +11,9 @@ use std::time::Duration;
 pub struct ForwarderConfig {
     /// Builder RPC endpoint URLs — one forwarder task per URL.
     pub builder_urls: Vec<String>,
-    /// Maximum RPC requests per second per forwarder (sliding window).
+    /// Maximum RPC requests per second per forwarder (sliding window). 0 = unlimited.
     pub max_rps: u32,
-    /// Maximum transactions per RPC request (safety cap).
+    /// Maximum transactions per RPC request. 0 = unlimited.
     pub max_batch_size: usize,
     /// Maximum RPC send retries before dropping a batch.
     pub max_retries: u32,
@@ -93,5 +93,12 @@ mod tests {
         assert_eq!(config.max_batch_size, 200);
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.retry_backoff, Duration::from_millis(250));
+    }
+
+    #[test]
+    fn zero_means_unlimited() {
+        let config = ForwarderConfig::default().with_max_rps(0).with_max_batch_size(0);
+        assert_eq!(config.max_rps, 0);
+        assert_eq!(config.max_batch_size, 0);
     }
 }

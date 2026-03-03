@@ -39,7 +39,10 @@ impl ForwarderHandle {
         let mut tasks = Vec::with_capacity(config.builder_urls.len());
 
         for url in &config.builder_urls {
-            let client = match HttpClientBuilder::default().build(url) {
+            let client = match HttpClientBuilder::default()
+                .request_timeout(Duration::from_secs(5))
+                .build(url)
+            {
                 Ok(client) => client,
                 Err(err) => {
                     error!(

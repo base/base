@@ -38,8 +38,8 @@ struct RateLimiter {
 
 impl RateLimiter {
     fn new(max_rps: u32) -> Self {
-        assert!(max_rps > 0, "max_rps must be at least 1");
-        Self { timestamps: VecDeque::with_capacity(max_rps as usize), max_rps }
+        let capacity = if max_rps == 0 { 0 } else { max_rps as usize };
+        Self { timestamps: VecDeque::with_capacity(capacity), max_rps }
     }
 
     fn prune(&mut self, now: Instant) {
@@ -54,8 +54,13 @@ impl RateLimiter {
     }
 
     /// Returns `None` if a send is allowed now, or `Some(wait)` with the
-    /// precise duration until the next slot opens.
+    /// precise duration until the next slot opens. A `max_rps` of 0 disables
+    /// rate limiting entirely.
     fn check_rate_limit(&mut self) -> Option<std::time::Duration> {
+        if self.max_rps == 0 {
+            return None;
+        }
+
         let now = Instant::now();
         self.prune(now);
 
@@ -70,7 +75,9 @@ impl RateLimiter {
     }
 
     fn record_send(&mut self) {
-        self.timestamps.push_back(Instant::now());
+        if self.max_rps > 0 {
+            self.timestamps.push_back(Instant::now());
+        }
     }
 }
 
@@ -107,7 +114,8 @@ where
         cancel: CancellationToken,
     ) -> Self {
         let limiter = RateLimiter::new(config.max_rps);
-        let buffer = Vec::with_capacity(config.max_batch_size);
+        let initial_capacity = if config.max_batch_size == 0 { 256 } else { config.max_batch_size };
+        let buffer = Vec::with_capacity(initial_capacity);
         Self { builder_url, client, receiver, config, metrics, cancel, limiter, buffer }
     }
 
@@ -186,7 +194,11 @@ where
     }
 
     async fn flush_buffer(&mut self) {
-        let batch_size = self.buffer.len().min(self.config.max_batch_size);
+        let batch_size = if self.config.max_batch_size == 0 {
+            self.buffer.len()
+        } else {
+            self.buffer.len().min(self.config.max_batch_size)
+        };
         let batch: Vec<ValidTransaction> = self.buffer.drain(..batch_size).collect();
 
         if batch.is_empty() {
@@ -250,7 +262,7 @@ where
         }
     }
 
-    fn is_retryable(err: &ClientError) -> bool {
+    const fn is_retryable(err: &ClientError) -> bool {
         matches!(
             err,
             ClientError::Transport(_) | ClientError::RequestTimeout | ClientError::RestartNeeded(_)
