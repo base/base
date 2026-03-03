@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{Address, hex};
+use alloy_primitives::Address;
 use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_peers::{EnrValidation, PeerMonitoring, enr_to_multiaddr};
@@ -23,8 +23,8 @@ use libp2p_stream::IncomingStreams;
 use tokio::sync::Mutex;
 
 use crate::{
-    Behaviour, BlockHandler, ConnectionGate, ConnectionGater, Event, GossipDriverBuilder, Handler,
-    PublishError,
+    Behaviour, BlockHandler, BlockPayloadProvider, ConnectionGate, ConnectionGater, Event,
+    GossipDriverBuilder, Handler, PublishError,
 };
 
 /// A driver for a [`Swarm`] instance.
@@ -62,6 +62,9 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub connection_gate: G,
     /// Tracks ping times for peers.
     pub ping: Arc<Mutex<HashMap<PeerId, Duration>>>,
+    /// Optional provider for block payloads, used by the sync request/response protocol.
+    #[debug(skip)]
+    pub payload_provider: Option<Arc<dyn BlockPayloadProvider>>,
 }
 
 impl<G> GossipDriver<G>
@@ -69,7 +72,7 @@ where
     G: ConnectionGate,
 {
     /// Returns the [`GossipDriverBuilder`] that can be used to construct the [`GossipDriver`].
-    pub const fn builder(
+    pub fn builder(
         rollup_config: RollupConfig,
         signer: Address,
         gossip_addr: Multiaddr,
@@ -86,6 +89,7 @@ where
         sync_handler: libp2p_stream::Control,
         sync_protocol: IncomingStreams,
         gate: G,
+        payload_provider: Option<Arc<dyn BlockPayloadProvider>>,
     ) -> Self {
         Self {
             swarm,
@@ -98,6 +102,7 @@ where
             sync_protocol: Some(sync_protocol),
             connection_gate: gate,
             ping: Arc::new(Mutex::new(Default::default())),
+            payload_provider,
         }
     }
 
@@ -131,20 +136,31 @@ where
 
     /// Handles the sync request/response protocol.
     ///
-    /// This is a mock handler that supports the `payload_by_number` protocol.
-    /// It always returns: not found (1), version (0). `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
+    /// Serves execution payloads to peers that request them by block number via the
+    /// `/opstack/req/payload_by_number/{chain_id}/0/` protocol.
+    ///
+    /// Response format: `<res><version><payload>`
+    /// - `res`: `0x00` success, `0x01` not found
+    /// - `version`: 4-byte little-endian `u32`
+    /// - `payload`: snappy-compressed SSZ bytes (omitted on not-found)
+    ///
+    /// When no [`BlockPayloadProvider`] is configured, always responds with not-found so that
+    /// peers do not penalize this node for failing to speak the protocol.
+    ///
+    /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>
     ///
     /// ## Note
     ///
-    /// This is used to ensure op-nodes are not penalizing base-nodes for not supporting it.
-    /// This feature is being deprecated by the op-node team. Once it is fully removed from the
-    /// op-node's implementation we will remove this handler.
+    /// This protocol is being deprecated by the op-node team. Once fully removed from the
+    /// op-node's implementation this handler will be removed.
     pub(super) fn sync_protocol_handler(&mut self) {
         let Some(mut sync_protocol) = self.sync_protocol.take() else {
             return;
         };
 
-        // Spawn a new task to handle the sync request/response protocol.
+        let payload_provider = self.payload_provider.clone();
+
+        // Spawn a long-running task to accept inbound streams.
         tokio::spawn(async move {
             loop {
                 let Some((peer_id, mut inbound_stream)) = sync_protocol.next().await else {
@@ -152,8 +168,9 @@ where
                     return;
                 };
 
-                info!(target: "gossip", peer_id = %peer_id, "Received a sync request, spawning a new task to handle it");
+                info!(target: "gossip", peer_id = %peer_id, "Received sync request");
 
+                let provider = payload_provider.clone();
                 tokio::spawn(async move {
                     let mut buffer = Vec::new();
                     let Ok(bytes_received) = inbound_stream.read_to_end(&mut buffer).await else {
@@ -161,20 +178,56 @@ where
                         return;
                     };
 
-                    debug!(target: "gossip", bytes_received, peer_id = %peer_id, payload = ?buffer, "Received inbound sync request");
+                    debug!(target: "gossip", bytes_received, peer_id = %peer_id, "Received inbound sync request");
 
-                    // We return: not found (1), version (0). `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
-                    // Response format: <response> = <res><version><payload>
-                    // No payload is returned.
-                    const OUTPUT: [u8; 2] = hex!("0100");
-
-                    // We only write that we're not supporting the sync request.
-                    if let Err(e) = inbound_stream.write_all(&OUTPUT).await {
-                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write the sync response");
+                    // Request is an 8-byte little-endian u64 block number.
+                    if buffer.len() < 8 {
+                        debug!(target: "gossip", bytes_received, peer_id = %peer_id, "Sync request too short, returning not-found");
+                        let _ = inbound_stream.write_all(&[0x01, 0x00]).await;
                         return;
+                    }
+
+                    let block_number =
+                        u64::from_le_bytes(buffer[..8].try_into().expect("slice is exactly 8 bytes"));
+
+                    debug!(target: "gossip", block_number, peer_id = %peer_id, "Parsed sync request");
+
+                    // Attempt to serve the payload via the configured provider.
+                    let response = match provider {
+                        Some(p) => p.get_payload(block_number).await,
+                        None => None,
                     };
 
-                    debug!(target: "gossip", bytes_sent = OUTPUT.len(), peer_id = %peer_id, "Sent outbound sync response");
+                    // Build the response bytes.
+                    // Success: [0x00][version_u32_le][snappy_ssz...]
+                    // Not found: [0x01][0x00]
+                    const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+                    let output: Vec<u8> = match response {
+                        Some((version, bytes)) if bytes.len() <= MAX_RESPONSE_SIZE => {
+                            debug!(target: "gossip", block_number, version, bytes_len = bytes.len(), peer_id = %peer_id, "Serving payload");
+                            let mut out = Vec::with_capacity(1 + 4 + bytes.len());
+                            out.push(0x00);
+                            out.extend_from_slice(&version.to_le_bytes());
+                            out.extend_from_slice(&bytes);
+                            out
+                        }
+                        Some((_, bytes)) => {
+                            warn!(target: "gossip", block_number, bytes_len = bytes.len(), peer_id = %peer_id, "Payload exceeds size limit, returning not-found");
+                            vec![0x01, 0x00]
+                        }
+                        None => {
+                            debug!(target: "gossip", block_number, peer_id = %peer_id, "Payload not available, returning not-found");
+                            vec![0x01, 0x00]
+                        }
+                    };
+
+                    let bytes_sent = output.len();
+                    if let Err(e) = inbound_stream.write_all(&output).await {
+                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write sync response");
+                        return;
+                    }
+
+                    debug!(target: "gossip", bytes_sent, peer_id = %peer_id, "Sent outbound sync response");
                 });
             }
         });

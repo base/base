@@ -43,6 +43,7 @@ ipnet = { workspace = true, features = ["serde"] }
 # Misc
 serde = { workspace = true, features = ["std"] }
 tokio.workspace = true
+async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 serde_repr.workspace = true

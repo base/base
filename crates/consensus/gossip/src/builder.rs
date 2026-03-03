@@ -1,6 +1,6 @@
 //! A builder for the [`GossipDriver`].
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use base_consensus_genesis::RollupConfig;
@@ -12,11 +12,12 @@ use libp2p::{
 use tokio::sync::watch::{self};
 
 use crate::{
-    Behaviour, BlockHandler, GaterConfig, GossipDriver, GossipDriverBuilderError, Handler,
+    Behaviour, BlockHandler, BlockPayloadProvider, GaterConfig, GossipDriver,
+    GossipDriverBuilderError, Handler,
 };
 
 /// A builder for the [`GossipDriver`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct GossipDriverBuilder {
     /// The [`RollupConfig`] for the network.
     rollup_config: RollupConfig,
@@ -39,11 +40,14 @@ pub struct GossipDriverBuilder {
     gater_config: Option<GaterConfig>,
     /// Topic scoring. Disabled by default.
     topic_scoring: bool,
+    /// Optional provider for block payloads used by the sync request/response protocol.
+    #[debug(skip)]
+    payload_provider: Option<Arc<dyn BlockPayloadProvider>>,
 }
 
 impl GossipDriverBuilder {
     /// Creates a new [`GossipDriverBuilder`].
-    pub const fn new(
+    pub fn new(
         rollup_config: RollupConfig,
         signer: Address,
         gossip_addr: Multiaddr,
@@ -60,6 +64,7 @@ impl GossipDriverBuilder {
             gater_config: None,
             rollup_config,
             topic_scoring: false,
+            payload_provider: None,
         }
     }
 
@@ -122,6 +127,12 @@ impl GossipDriverBuilder {
     /// Sets the [`Config`] for the [`Behaviour`].
     pub fn with_config(mut self, config: Config) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Sets the [`BlockPayloadProvider`] used to serve payloads via the sync req/resp protocol.
+    pub fn with_payload_provider(mut self, provider: Arc<dyn BlockPayloadProvider>) -> Self {
+        self.payload_provider = Some(provider);
         self
     }
 
@@ -218,6 +229,17 @@ impl GossipDriverBuilder {
         let gater_config = self.gater_config.take().unwrap_or_default();
         let gate = crate::ConnectionGater::new(gater_config);
 
-        Ok((GossipDriver::new(swarm, addr, handler, sync_handler, sync_protocol, gate), signer_tx))
+        Ok((
+            GossipDriver::new(
+                swarm,
+                addr,
+                handler,
+                sync_handler,
+                sync_protocol,
+                gate,
+                self.payload_provider,
+            ),
+            signer_tx,
+        ))
     }
 }

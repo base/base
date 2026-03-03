@@ -1,9 +1,11 @@
 //! Configuration for the `Network`.
 
+use std::sync::Arc;
+
 use alloy_primitives::Address;
 use base_consensus_disc::LocalNode;
 use base_consensus_genesis::RollupConfig;
-use base_consensus_gossip::GaterConfig;
+use base_consensus_gossip::{BlockPayloadProvider, GaterConfig};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
@@ -47,6 +49,8 @@ pub struct NetworkConfig {
     pub rollup_config: RollupConfig,
     /// A signer for gossip payloads.
     pub gossip_signer: Option<BlockSigner>,
+    /// Optional provider for block payloads served via the req/resp sync protocol.
+    pub payload_provider: Option<Arc<dyn BlockPayloadProvider>>,
 }
 
 impl NetworkConfig {
@@ -95,6 +99,7 @@ impl NetworkConfig {
             topic_scoring: Default::default(),
             monitor_peers: Default::default(),
             gossip_signer: Default::default(),
+            payload_provider: None,
         }
     }
 }

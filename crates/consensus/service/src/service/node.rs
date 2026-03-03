@@ -7,9 +7,10 @@ use base_alloy_network::Base;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_engine::{Engine, EngineState, OpEngineClient};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_gossip::BlockPayloadProvider;
 use base_consensus_providers::{
-    AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
-    OnlinePipeline,
+    AlloyBlockPayloadProvider, AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient,
+    OnlineBlobProvider, OnlinePipeline,
 };
 use base_consensus_rpc::RpcBuilder;
 use base_protocol::L2BlockInfo;
@@ -107,7 +108,13 @@ impl RollupNode {
 
     /// Creates a network builder for the node.
     fn network_builder(&self) -> NetworkBuilder {
-        NetworkBuilder::from(self.p2p_config.clone())
+        let payload_provider = Arc::new(AlloyBlockPayloadProvider::new(
+            self.l2_provider.clone(),
+            Arc::clone(&self.config),
+        )) as Arc<dyn BlockPayloadProvider>;
+        let mut config = self.p2p_config.clone();
+        config.payload_provider = Some(payload_provider);
+        NetworkBuilder::from(config)
     }
 
     /// Returns an engine builder for the node.

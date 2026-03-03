@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 # consensus
 base-macros.workspace = true
+base-consensus-gossip.workspace = true
 base-consensus-genesis.workspace = true
 base-protocol.workspace = true
 base-consensus-derive.workspace = true
@@ -37,9 +38,11 @@ base-alloy-network.workspace = true
 
 # Misc
 lru.workspace = true
+snap.workspace = true
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 async-trait.workspace = true
+ethereum_ssz.workspace = true
 tower.workspace = true
 url.workspace = true
 http-body-util.workspace = true

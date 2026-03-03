@@ -66,6 +66,9 @@ pub use event::Event;
 mod handler;
 pub use handler::{BlockHandler, Handler};
 
+mod sync_server;
+pub use sync_server::BlockPayloadProvider;
+
 mod driver;
 pub use driver::GossipDriver;
 

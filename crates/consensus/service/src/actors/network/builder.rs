@@ -1,11 +1,11 @@
 //! Network Builder Module.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_genesis::RollupConfig;
-use base_consensus_gossip::{GaterConfig, GossipDriverBuilder};
+use base_consensus_gossip::{BlockPayloadProvider, GaterConfig, GossipDriverBuilder};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
 use discv5::Config as Discv5Config;
@@ -34,7 +34,7 @@ pub struct NetworkBuilder {
 
 impl From<NetworkConfig> for NetworkBuilder {
     fn from(config: NetworkConfig) -> Self {
-        Self::new(
+        let builder = Self::new(
             config.rollup_config,
             config.unsafe_block_signer,
             config.gossip_address,
@@ -52,7 +52,13 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_peer_scoring(config.scoring)
         .with_peer_monitoring(config.monitor_peers)
         .with_topic_scoring(config.topic_scoring)
-        .with_gater_config(config.gater_config)
+        .with_gater_config(config.gater_config);
+
+        if let Some(provider) = config.payload_provider {
+            builder.with_payload_provider(provider)
+        } else {
+            builder
+        }
     }
 }
 
@@ -142,6 +148,11 @@ impl NetworkBuilder {
     /// Sets the gossipsub config for the [`GossipDriverBuilder`].
     pub fn with_gossip_config(self, config: libp2p::gossipsub::Config) -> Self {
         Self { gossip: self.gossip.with_config(config), ..self }
+    }
+
+    /// Sets the [`BlockPayloadProvider`] for the gossip driver's req/resp sync protocol.
+    pub fn with_payload_provider(self, provider: Arc<dyn BlockPayloadProvider>) -> Self {
+        Self { gossip: self.gossip.with_payload_provider(provider), ..self }
     }
 
     /// Sets the [`Discv5Config`] for the [`Discv5Builder`].
