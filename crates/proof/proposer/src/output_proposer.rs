@@ -21,6 +21,8 @@ use tokio::sync::OnceCell;
 use tracing::info;
 use url::Url;
 
+use base_proof_contracts::{encode_create_calldata, encode_extra_data};
+
 use crate::{
     ProposerError,
     config::{RetryConfig, SigningConfig},
@@ -28,7 +30,6 @@ use crate::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
         GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
     },
-    encode_create_calldata, encode_extra_data,
     prover::ProverProposal,
 };
 

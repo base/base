@@ -26,9 +26,11 @@ use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+
 use crate::{
-    AGGREGATE_BATCH_SIZE, AnchorStateRegistryClient, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW,
-    DisputeGameFactoryClient, NO_PARENT_INDEX, OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
+    AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, NO_PARENT_INDEX,
+    OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
     enclave::EnclaveClientTrait,
     is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},

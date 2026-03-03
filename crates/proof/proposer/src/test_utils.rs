@@ -10,8 +10,11 @@ use base_enclave::{
     types::config::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig},
 };
 
-use crate::{
+use base_proof_contracts::{
     AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
+};
+
+use crate::{
     OutputProposer, ProposerError,
     enclave::EnclaveClientTrait,
     prover::{Prover, ProverProposal},

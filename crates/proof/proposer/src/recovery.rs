@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use eyre::Result;
 use tracing::info;
 
-use crate::{
+use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
     DisputeGameFactoryContractClient,
 };

@@ -2,13 +2,6 @@
 #![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-pub use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorRoot,
-    AnchorStateRegistryClient, AnchorStateRegistryContractClient, ContractError,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameInfo,
-    encode_create_calldata, encode_extra_data, game_already_exists_selector,
-};
-
 mod balance;
 pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
 
