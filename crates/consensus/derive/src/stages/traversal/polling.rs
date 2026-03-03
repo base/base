@@ -121,13 +121,12 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
             }
             Ok(false) => { /* Ignore, no update applied */ }
             Err(err) => {
-                error!(target: "l1_traversal", error = ?err, block_number = next_l1_origin.number, "Failed to update system config");
+                warn!(target: "l1_traversal", error = ?err, block_number = next_l1_origin.number, "Failed to update system config, continuing");
                 base_macros::set!(
                     gauge,
                     crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,
                     next_l1_origin.number as f64
                 );
-                return Err(PipelineError::SystemConfigUpdate(err).crit());
             }
         }
 
@@ -300,18 +299,12 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_l1_traversal_system_config_update_fails() {
-        let first = b256!("3333333333333333333333333333333333333333333333333333333333333333");
-        let second = b256!("4444444444444444444444444444444444444444444444444444444444444444");
-        let block1 = BlockInfo { hash: first, ..BlockInfo::default() };
-        let block2 = BlockInfo { hash: second, ..BlockInfo::default() };
-        let blocks = vec![block1, block2];
+        let blocks = vec![BlockInfo::default(), BlockInfo::default()];
         let receipts = TraversalTestHelper::new_receipts();
         let mut traversal = TraversalTestHelper::new_from_blocks(blocks, receipts);
         assert!(traversal.advance_origin().await.is_ok());
-        // Only the second block should fail since the second receipt
-        // contains invalid logs that will error for a system config update.
-        let err = traversal.advance_origin().await.unwrap_err();
-        matches!(err, PipelineErrorKind::Critical(PipelineError::SystemConfigUpdate(_)));
+        // System config update failure is non-fatal — pipeline continues.
+        assert!(traversal.advance_origin().await.is_ok());
     }
 
     #[tokio::test]
