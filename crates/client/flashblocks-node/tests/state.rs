@@ -641,6 +641,100 @@ async fn test_sequential_nonces_across_flashblocks() {
 }
 
 #[tokio::test]
+async fn test_flashblock_cached_and_applied_after_canonical_block() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+
+    // Send a flashblock targeting block 2 (canonical_block_number=1) before
+    // canonical block 1 exists. This triggers MissingCanonicalHeader and should
+    // be cached by the processor.
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
+        .await;
+
+    assert!(
+        test.flashblocks.get_pending_blocks().is_none(),
+        "pending state should be empty because canonical block 1 does not exist yet"
+    );
+
+    // Build canonical block 1 so the processor can replay the cached flashblock.
+    test.new_canonical_block(vec![]).await;
+    assert_eq!(test.node.latest_block().number, 1);
+
+    let pending =
+        test.flashblocks.get_pending_blocks().get_block(true).expect("cached flashblock replayed");
+    assert_eq!(pending.header.number, 2, "replayed flashblock should produce pending block 2");
+}
+
+#[tokio::test]
+async fn test_cached_flashblock_with_transactions_applied_after_canonical() {
+    let mut test = FlashblocksBuilderTestHarness::new().await;
+
+    let transfer_amount = 100_000u128;
+
+    // Cache a base flashblock for block 2 (needs canonical block 1).
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
+        .await;
+    assert!(test.flashblocks.get_pending_blocks().is_none());
+
+    // Also cache a second flashblock (index 1) with a transaction.
+    test.send_flashblock(
+        FlashblockBuilder::new(&test, 1)
+            .with_canonical_block_number(1)
+            .with_transactions(vec![test.build_transaction_to_send_eth(
+                Account::Alice,
+                Account::Bob,
+                transfer_amount,
+            )])
+            .build(),
+    )
+    .await;
+    assert!(test.flashblocks.get_pending_blocks().is_none());
+
+    // Provide canonical block 1 to unlock the cache.
+    test.new_canonical_block(vec![]).await;
+
+    let pending =
+        test.flashblocks.get_pending_blocks().get_block(true).expect("cached flashblocks replayed");
+    assert_eq!(pending.header.number, 2);
+    assert_eq!(pending.transactions.len(), 2, "deposit tx from base + Alice->Bob transfer");
+
+    let overrides = test
+        .flashblocks
+        .get_pending_blocks()
+        .get_state_overrides()
+        .expect("state overrides should exist after replayed flashblock execution");
+    assert!(
+        overrides.contains_key(&Account::Alice.address()),
+        "Alice should appear in overrides after sending ETH"
+    );
+    assert_eq!(
+        overrides
+            .get(&Account::Bob.address())
+            .expect("Bob should have state override")
+            .balance
+            .expect("balance should be overridden"),
+        test.expected_pending_balance(Account::Bob, transfer_amount)
+    );
+}
+
+#[tokio::test]
+async fn test_flashblock_far_ahead_of_canonical_not_cached() {
+    let test = FlashblocksBuilderTestHarness::new().await;
+
+    // Send a flashblock targeting a block far in the future (canonical_block_number=100).
+    // This is more than MAX_CACHE_AHEAD_BLOCKS (5) ahead of genesis, so it should NOT
+    // be cached and pending state should remain empty.
+    test.send_flashblock(
+        FlashblockBuilder::new_base(&test).with_canonical_block_number(100).build(),
+    )
+    .await;
+
+    assert!(
+        test.flashblocks.get_pending_blocks().is_none(),
+        "flashblock too far ahead should not be cached or produce pending state"
+    );
+}
+
+#[tokio::test]
 async fn test_progress_canonical_blocks_without_flashblocks() {
     let mut test = FlashblocksBuilderTestHarness::new().await;
 
