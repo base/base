@@ -13,6 +13,9 @@ pub use mem::MemoryKeyValueStore;
 mod split;
 pub use split::SplitKeyValueStore;
 
+mod disk;
+pub use disk::DiskKeyValueStore;
+
 /// A type alias for a shared key-value store.
 pub type SharedKeyValueStore = Arc<RwLock<dyn KeyValueStore + Send + Sync>>;
 

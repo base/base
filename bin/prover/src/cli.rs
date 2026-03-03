@@ -1,6 +1,7 @@
 //! CLI definition for the TEE prover server.
 
 use base_enclave_server::transport::TransportConfig;
+use base_proof_host::{Host, HostArgs};
 use clap::{Parser, Subcommand};
 
 /// TEE prover.
@@ -19,7 +20,7 @@ enum Command {
     /// Run the HTTP-to-vsock proxy.
     Proxy(ProxyArgs),
     /// Run the preimage oracle host server.
-    Host(HostArgs),
+    Host(Box<HostArgs>),
 }
 
 /// Arguments for the nitro subcommand.
@@ -54,12 +55,7 @@ struct ProxyArgs {
     http_port: u16,
 }
 
-/// Arguments for the host subcommand.
-#[derive(Parser)]
-struct HostArgs {}
-
 impl Cli {
-    /// Run the selected subcommand.
     pub(crate) async fn run(self) -> eyre::Result<()> {
         tracing_subscriber::fmt::init();
         match self.command {
@@ -72,9 +68,38 @@ impl Cli {
                 base_enclave_server::run_proxy(args.vsock_cid, args.vsock_port, args.http_port)
                     .await
             }
-            Command::Host(_args) => {
-                eyre::bail!("host subcommand not yet implemented")
-            }
+            Command::Host(args) => Ok(Host::new(*args).start().await?),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+    use base_proof_host::HostArgs;
+    use clap::Parser;
+
+    #[test]
+    fn test_host_cli_flags() {
+        let zero_hash = B256::ZERO;
+        let args = HostArgs::try_parse_from([
+            "host",
+            "--l1-head",
+            zero_hash.to_string().as_str(),
+            "--agreed-l2-head-hash",
+            zero_hash.to_string().as_str(),
+            "--agreed-l2-output-root",
+            zero_hash.to_string().as_str(),
+            "--claimed-l2-output-root",
+            zero_hash.to_string().as_str(),
+            "--claimed-l2-block-number",
+            "0",
+        ])
+        .unwrap();
+        assert_eq!(args.l1_head, zero_hash);
+        assert_eq!(args.agreed_l2_head_hash, zero_hash);
+        assert_eq!(args.agreed_l2_output_root, zero_hash);
+        assert_eq!(args.claimed_l2_output_root, zero_hash);
+        assert_eq!(args.claimed_l2_block_number, 0);
     }
 }
