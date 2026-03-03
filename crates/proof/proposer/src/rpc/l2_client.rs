@@ -310,7 +310,8 @@ impl L2Client for L2ClientImpl {
                     // Truncate the error to avoid logging multi-MB witness JSON in error messages.
                     let msg = e.to_string();
                     let truncated = if msg.len() > 500 {
-                        format!("{}... (truncated)", &msg[..500])
+                        let end = msg.floor_char_boundary(500);
+                        format!("{}... (truncated)", &msg[..end])
                     } else {
                         msg
                     };

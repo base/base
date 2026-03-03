@@ -65,9 +65,15 @@ pub fn build_proof_data(proposal: &ProverProposal) -> Result<Bytes, ProposerErro
 
     // Bytes 65-129: ECDSA signature with v-value adjusted from 0/1 to 27/28
     proof_data[65..130].copy_from_slice(&sig[..ECDSA_SIGNATURE_LENGTH]);
-    if proof_data[129] < ECDSA_V_OFFSET {
-        proof_data[129] += ECDSA_V_OFFSET;
-    }
+    proof_data[129] = match proof_data[129] {
+        0 | 1 => proof_data[129] + ECDSA_V_OFFSET,
+        27 | 28 => proof_data[129],
+        v => {
+            return Err(ProposerError::Internal(format!(
+                "unexpected ECDSA v-value: {v}, expected 0, 1, 27, or 28"
+            )));
+        }
+    };
 
     Ok(Bytes::from(proof_data))
 }
@@ -500,6 +506,18 @@ mod tests {
         let proof = build_proof_data(&proposal).unwrap();
         // v should remain 28
         assert_eq!(proof[129], 28);
+    }
+
+    #[test]
+    fn test_build_proof_data_v_value_rejects_invalid() {
+        let mut proposal = test_proposal(101, 200, false);
+        let mut sig = proposal.output.signature.to_vec();
+        sig[64] = 5;
+        proposal.output.signature = Bytes::from(sig);
+
+        let result = build_proof_data(&proposal);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unexpected ECDSA v-value"));
     }
 
     // ========================================================================
