@@ -5,13 +5,18 @@
 
 Shared on-chain contract bindings for OP Stack dispute game management.
 
+## Overview
+
 Provides async client traits and concrete Alloy-backed implementations for:
 
-- **`DisputeGameFactory`**: Creating new dispute games and querying existing ones.
-- **`AnchorStateRegistry`**: Reading the anchor state (latest finalized output root).
-- **`AggregateVerifier`**: Querying individual dispute game instances.
+- **`DisputeGameFactoryClient`**: Creating new dispute games and querying existing ones.
+- **`AnchorStateRegistryClient`**: Reading the anchor state (latest finalized output root).
+- **`AggregateVerifierClient`**: Querying individual dispute game instances and reading on-chain configuration (`BLOCK_INTERVAL`, `INTERMEDIATE_BLOCK_INTERVAL`).
 
-These bindings are used by both the proposer and challenger.
+Also provides shared data types (`GameAtIndex`, `AnchorRoot`, `GameInfo`), pure encoding helpers
+(`encode_extra_data`, `encode_create_calldata`), and a `ContractError` type for error handling.
+
+These bindings are used by both [`base-proposer`](../proposer/) and the challenger.
 
 ## License
 
