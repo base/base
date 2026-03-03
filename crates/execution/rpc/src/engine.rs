@@ -16,7 +16,7 @@ use reth_rpc_api::IntoEngineApiRpcModule;
 use reth_rpc_engine_api::EngineApi;
 use reth_storage_api::{BlockReader, HeaderProvider, StateProviderFactory};
 use reth_transaction_pool::TransactionPool;
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace};
 
 /// The list of all supported Engine capabilities available over the engine endpoint.
 ///
@@ -288,14 +288,37 @@ where
         Ok(self.inner.new_payload_v4_metered(payload).await?)
     }
 
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            head = ?fork_choice_state.head_block_hash,
+            safe = ?fork_choice_state.safe_block_hash,
+            finalized = ?fork_choice_state.finalized_block_hash,
+            has_attributes = payload_attributes.is_some()
+        )
+    )]
     async fn fork_choice_updated_v1(
         &self,
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<EngineT::PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
+        trace!(target: "rpc::engine", "Serving engine_forkchoiceUpdatedV1");
         Ok(self.inner.fork_choice_updated_v1_metered(fork_choice_state, payload_attributes).await?)
     }
 
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            head = ?fork_choice_state.head_block_hash,
+            safe = ?fork_choice_state.safe_block_hash,
+            finalized = ?fork_choice_state.finalized_block_hash,
+            has_attributes = payload_attributes.is_some()
+        )
+    )]
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -305,6 +328,17 @@ where
         Ok(self.inner.fork_choice_updated_v2_metered(fork_choice_state, payload_attributes).await?)
     }
 
+    #[instrument(
+        level = "debug",
+        target = "rpc::engine",
+        skip_all,
+        fields(
+            head = ?fork_choice_state.head_block_hash,
+            safe = ?fork_choice_state.safe_block_hash,
+            finalized = ?fork_choice_state.finalized_block_hash,
+            has_attributes = payload_attributes.is_some()
+        )
+    )]
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -314,6 +348,7 @@ where
         Ok(self.inner.fork_choice_updated_v3_metered(fork_choice_state, payload_attributes).await?)
     }
 
+    #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
     async fn get_payload_v2(
         &self,
         payload_id: PayloadId,
@@ -322,6 +357,7 @@ where
         Ok(self.inner.get_payload_v2_metered(payload_id).await?)
     }
 
+    #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
@@ -330,6 +366,7 @@ where
         Ok(self.inner.get_payload_v3_metered(payload_id).await?)
     }
 
+    #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,

@@ -115,6 +115,7 @@ where
         }
     }
 
+    #[instrument(level = "debug", skip_all, fields(block_number = block.number))]
     fn process_canonical_block(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
@@ -207,6 +208,14 @@ where
         }
     }
 
+    #[instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            block_number = flashblock.metadata.block_number,
+            flashblock_index = flashblock.index
+        )
+    )]
     fn process_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
@@ -272,6 +281,7 @@ where
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
