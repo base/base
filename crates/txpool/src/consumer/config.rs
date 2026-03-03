@@ -26,7 +26,7 @@ impl Default for ConsumerConfig {
         Self {
             resend_after: Duration::from_secs(4),
             channel_capacity: 10_000,
-            poll_interval: Duration::from_millis(1),
+            poll_interval: Duration::from_millis(10),
         }
     }
 }
@@ -60,7 +60,7 @@ mod tests {
         let config = ConsumerConfig::default();
         assert_eq!(config.resend_after, Duration::from_secs(4));
         assert_eq!(config.channel_capacity, 10_000);
-        assert_eq!(config.poll_interval, Duration::from_millis(1));
+        assert_eq!(config.poll_interval, Duration::from_millis(10));
     }
 
     #[test]

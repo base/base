@@ -27,7 +27,7 @@ pub struct ConsumerHandle<T: PoolTransaction> {
     /// Broadcast sender — call `.subscribe()` to create a new receiver.
     pub sender: broadcast::Sender<Arc<ValidPoolTransaction<T>>>,
     cancel: CancellationToken,
-    _handle: thread::JoinHandle<()>,
+    handle: Option<thread::JoinHandle<()>>,
 }
 
 impl<T: PoolTransaction> ConsumerHandle<T> {
@@ -50,14 +50,16 @@ impl<T: PoolTransaction> ConsumerHandle<T> {
             })
             .expect("failed to spawn txpool-consumer thread");
 
-        Self { sender, cancel, _handle: handle }
+        Self { sender, cancel, handle: Some(handle) }
     }
 }
 
 impl<T: PoolTransaction> Drop for ConsumerHandle<T> {
     fn drop(&mut self) {
         self.cancel.cancel();
-        info!("consumer handle dropped, cancelling background task");
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 

@@ -90,7 +90,7 @@ where
                 );
             }
 
-            if txs_read == 0 {
+            if txs_sent == 0 {
                 std::thread::sleep(self.config.poll_interval);
             }
         }
