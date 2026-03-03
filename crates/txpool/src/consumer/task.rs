@@ -9,7 +9,7 @@ use super::{config::ConsumerConfig, metrics::ConsumerMetrics, validator::Recentl
 
 /// Background consumer that drains the pool and broadcasts transactions.
 ///
-/// Runs on a dedicated blocking thread via [`tokio::task::spawn_blocking`].
+/// Runs on a dedicated OS thread via [`std::thread::Builder`].
 /// Each iteration creates a fresh `best_transactions()` snapshot, skips
 /// recently-sent hashes, and broadcasts new transactions. Downstream
 /// forwarders (one per builder) each subscribe to receive every transaction.
@@ -39,9 +39,7 @@ where
         Self { pool, config, recently_sent, sender, metrics, cancel }
     }
 
-    /// Blocking loop — intended to be called from [`tokio::task::spawn_blocking`].
-    ///
-    /// Returns when cancelled or all receivers have been dropped.
+    /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
     pub fn run(mut self) {
         info!(
             resend_after_ms = self.config.resend_after.as_millis() as u64,
@@ -71,15 +69,9 @@ where
                     continue;
                 }
 
-                match self.sender.send(tx) {
-                    Ok(_receivers) => {
-                        self.recently_sent.mark_sent(hash);
-                        txs_sent += 1;
-                    }
-                    Err(_) => {
-                        info!("all broadcast receivers dropped, shutting down");
-                        return;
-                    }
+                if self.sender.send(tx).is_ok() {
+                    self.recently_sent.mark_sent(hash);
+                    txs_sent += 1;
                 }
             }
 

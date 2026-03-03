@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{sync::Arc, thread};
 
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
-use tokio::{sync::broadcast, task::JoinHandle};
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -27,12 +27,12 @@ pub struct ConsumerHandle<T: PoolTransaction> {
     /// Broadcast sender — call `.subscribe()` to create a new receiver.
     pub sender: broadcast::Sender<Arc<ValidPoolTransaction<T>>>,
     cancel: CancellationToken,
-    _handle: JoinHandle<()>,
+    _handle: thread::JoinHandle<()>,
 }
 
 impl<T: PoolTransaction> ConsumerHandle<T> {
-    /// Spawns the consumer on a dedicated blocking thread and returns a
-    /// handle for subscribing forwarders.
+    /// Spawns the consumer on a dedicated OS thread and returns a handle for
+    /// subscribing forwarders.
     pub fn spawn<P>(pool: P, config: ConsumerConfig) -> Self
     where
         P: TransactionPool<Transaction = T> + Send + 'static,
@@ -43,9 +43,12 @@ impl<T: PoolTransaction> ConsumerHandle<T> {
         let cancel = CancellationToken::new();
         let consumer = Consumer::new(pool, config, broadcast_sender, metrics, cancel.child_token());
 
-        let handle = tokio::task::spawn_blocking(move || {
-            consumer.run();
-        });
+        let handle = thread::Builder::new()
+            .name("txpool-consumer".into())
+            .spawn(move || {
+                consumer.run();
+            })
+            .expect("failed to spawn txpool-consumer thread");
 
         Self { sender, cancel, _handle: handle }
     }
