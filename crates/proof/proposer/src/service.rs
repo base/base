@@ -174,7 +174,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // into the driver. We store the recovered state and set it after driver creation.
     let recovered_state: Option<(u32, B256, u64)> =
         match crate::recover_parent_game_state_standalone(
-            &factory_client,
+            factory_client.as_ref(),
             &verifier_client,
             config.game_type,
         )

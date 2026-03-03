@@ -1,10 +1,7 @@
 //! Parent game state recovery from onchain data.
 
 use alloy_primitives::B256;
-use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient,
-};
+use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient};
 use eyre::Result;
 use tracing::info;
 
@@ -14,8 +11,8 @@ use tracing::info;
 /// game of the correct `game_type`. Returns `(game_index, output_root, l2_block_number)`
 /// if found, or `None` if no matching game exists.
 pub async fn recover_parent_game_state_standalone(
-    factory: &DisputeGameFactoryContractClient,
-    verifier: &AggregateVerifierContractClient,
+    factory: &dyn DisputeGameFactoryClient,
+    verifier: &dyn AggregateVerifierClient,
     game_type: u32,
 ) -> Result<Option<(u32, B256, u64)>> {
     let count = factory.game_count().await?;
