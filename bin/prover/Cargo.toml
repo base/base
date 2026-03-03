@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-proof-host.workspace = true
 base-enclave-server.workspace = true
 
 # cli

@@ -17,6 +17,7 @@ members = [
   "crates/proof/proof",
   "crates/proof/driver",
   "crates/proof/client",
+  "crates/proof/host",
   "crates/proof/executor",
   "crates/proof/preimage",
   "crates/proof/fpvm-precompiles",
@@ -204,6 +205,7 @@ mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 # Proof
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof = { path = "crates/proof/proof", default-features = false }
+base-proof-host = { path = "crates/proof/host", default-features = false }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }

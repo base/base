@@ -3,6 +3,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+use base_proof_host as _;
 use clap::Parser as _;
 
 mod cli;

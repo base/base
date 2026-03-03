@@ -18,6 +18,8 @@ enum Command {
     Nitro(NitroArgs),
     /// Run the HTTP-to-vsock proxy.
     Proxy(ProxyArgs),
+    /// Run the preimage oracle host server.
+    Host(HostArgs),
 }
 
 /// Arguments for the nitro subcommand.
@@ -52,6 +54,10 @@ struct ProxyArgs {
     http_port: u16,
 }
 
+/// Arguments for the host subcommand.
+#[derive(Parser)]
+struct HostArgs {}
+
 impl Cli {
     /// Run the selected subcommand.
     pub(crate) async fn run(self) -> eyre::Result<()> {
@@ -65,6 +71,9 @@ impl Cli {
             Command::Proxy(args) => {
                 base_enclave_server::run_proxy(args.vsock_cid, args.vsock_port, args.http_port)
                     .await
+            }
+            Command::Host(_args) => {
+                eyre::bail!("host subcommand not yet implemented")
             }
         }
     }

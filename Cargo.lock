@@ -3973,6 +3973,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-host"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-transport",
+ "anyhow",
+ "async-trait",
+ "base-proof",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-proof-mpt"
 version = "0.0.0"
 dependencies = [
@@ -4148,6 +4168,7 @@ name = "base-prover"
 version = "0.0.0"
 dependencies = [
  "base-enclave-server",
+ "base-proof-host",
  "clap",
  "eyre",
  "tokio",
@@ -4226,14 +4247,18 @@ dependencies = [
  "base-test-utils",
  "c-kzg",
  "derive_more",
+ "metrics",
  "parking_lot",
  "reth-chainspec",
  "reth-evm",
+ "reth-metrics",
  "reth-primitives-traits",
  "reth-provider",
  "reth-storage-api",
+ "reth-tasks",
  "reth-transaction-pool",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
