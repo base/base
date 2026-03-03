@@ -7,15 +7,10 @@ use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use backon::Retryable;
 use base_enclave::{AccountResult, ExecutionWitness};
-use base_proof_rpc::{
-    L2Client, L2ClientConfig, L2ClientImpl, OpBlock, RpcError, RpcResult,
-};
+use base_proof_rpc::{L2Client, L2ClientConfig, L2ClientImpl, OpBlock, RpcError, RpcResult};
 use futures::stream::{self, StreamExt};
 
-use super::{
-    prover_l2_client::ProverL2Client,
-    types::RethExecutionWitness,
-};
+use super::{prover_l2_client::ProverL2Client, types::RethExecutionWitness};
 
 /// Reth-specific L2 client that wraps the standard L2 client.
 ///
@@ -284,8 +279,8 @@ mod tests {
 
         let headers = vec![
             make_header(99, hash_99, wrong_parent), // index 0: block 99, wrong parent
-            make_header(98, hash_98, hash_97),       // index 1: block 98
-            make_header(97, hash_97, B256::ZERO),    // index 2: block 97
+            make_header(98, hash_98, hash_97),      // index 1: block 98
+            make_header(97, hash_97, B256::ZERO),   // index 2: block 97
         ];
 
         let result = RethL2Client::validate_header_chain(&headers);

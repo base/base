@@ -1,12 +1,30 @@
 // Re-exports from base-proof-rpc
 pub use base_proof_rpc::{
-    CacheMetrics, HttpProvider, L1Client, L1ClientConfig, L1ClientImpl, L2Client, L2ClientConfig,
-    L2ClientImpl, L2HttpProvider, MeteredCache, OpBlock, ProofCacheKey, RollupClient,
-    RollupClientConfig, RollupClientImpl, RpcError, RpcResult,
+    CacheMetrics,
     // types
-    GenesisL2BlockRef, L1BlockId, L1BlockRef, L2BlockRef, SyncStatus,
+    GenesisL2BlockRef,
+    HttpProvider,
+    L1BlockId,
+    L1BlockRef,
+    L1Client,
+    L1ClientConfig,
+    L1ClientImpl,
+    L2BlockRef,
+    L2Client,
+    L2ClientConfig,
+    L2ClientImpl,
+    L2HttpProvider,
+    MeteredCache,
+    OpBlock,
+    ProofCacheKey,
     // config
     RetryConfig,
+    RollupClient,
+    RollupClientConfig,
+    RollupClientImpl,
+    RpcError,
+    RpcResult,
+    SyncStatus,
 };
 
 mod prover_l2_client;

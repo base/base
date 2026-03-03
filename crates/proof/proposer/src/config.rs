@@ -517,5 +517,4 @@ mod tests {
         assert_eq!(config.retry.initial_delay, Duration::from_millis(100));
         assert_eq!(config.retry.max_delay, Duration::from_secs(10));
     }
-
 }

@@ -50,10 +50,7 @@ impl L2Client for Box<dyn ProverL2Client> {
         (**self).header_by_number(number).await
     }
 
-    async fn block_by_number(
-        &self,
-        number: Option<u64>,
-    ) -> RpcResult<base_proof_rpc::OpBlock> {
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<base_proof_rpc::OpBlock> {
         (**self).block_by_number(number).await
     }
 
