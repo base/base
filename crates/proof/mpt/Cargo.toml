@@ -44,6 +44,7 @@ std = [
 	"alloy-rlp/std",
 	"alloy-trie/std",
 	"base-alloy-rpc-types-engine/std",
+	"serde?/std",
 	"thiserror/std",
 ]
 serde = [
