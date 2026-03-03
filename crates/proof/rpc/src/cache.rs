@@ -1,5 +1,3 @@
-//! LRU cache wrapper with metrics.
-
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
@@ -7,7 +5,7 @@ use std::{
 
 use moka::future::Cache;
 
-use crate::{constants::DEFAULT_CACHE_SIZE, metrics as proposer_metrics};
+use super::config::DEFAULT_CACHE_SIZE;
 
 /// Cache metrics for tracking hit/miss rates.
 #[derive(Debug, Default)]
@@ -94,10 +92,8 @@ where
         let value = self.cache.get(key).await;
         if value.is_some() {
             self.metrics.record_hit();
-            metrics::counter!(proposer_metrics::CACHE_HITS_TOTAL, proposer_metrics::LABEL_CACHE_NAME => self.name.clone()).increment(1);
         } else {
             self.metrics.record_miss();
-            metrics::counter!(proposer_metrics::CACHE_MISSES_TOTAL, proposer_metrics::LABEL_CACHE_NAME => self.name.clone()).increment(1);
         }
         value
     }

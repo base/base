@@ -1,5 +1,3 @@
-//! RPC-specific error types.
-
 use alloy_transport::TransportError;
 use thiserror::Error;
 

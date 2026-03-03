@@ -1,9 +1,3 @@
-//! Reth-specific L2 client implementation.
-//!
-//! Reth returns execution witnesses in a different format (arrays instead of maps).
-//! This client handles the conversion and also populates block headers for BLOCKHASH
-//! opcode support.
-
 use std::collections::HashMap;
 
 use alloy_eips::BlockNumberOrTag;
@@ -13,13 +7,14 @@ use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
 use backon::Retryable;
 use base_enclave::{AccountResult, ExecutionWitness};
+use base_proof_rpc::{
+    L2Client, L2ClientConfig, L2ClientImpl, OpBlock, RpcError, RpcResult,
+};
 use futures::stream::{self, StreamExt};
 
 use super::{
-    error::{RpcError, RpcResult},
-    l2_client::{L2ClientConfig, L2ClientImpl},
-    traits::L2Client,
-    types::{OpBlock, RethExecutionWitness},
+    prover_l2_client::ProverL2Client,
+    types::RethExecutionWitness,
 };
 
 /// Reth-specific L2 client that wraps the standard L2 client.
@@ -188,7 +183,10 @@ impl L2Client for RethL2Client {
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
         self.inner.block_by_hash(hash).await
     }
+}
 
+#[async_trait]
+impl ProverL2Client for RethL2Client {
     async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
         // Fetch the reth-format witness with retry
         let backoff = self.inner.retry_config().to_backoff_builder();
@@ -286,8 +284,8 @@ mod tests {
 
         let headers = vec![
             make_header(99, hash_99, wrong_parent), // index 0: block 99, wrong parent
-            make_header(98, hash_98, hash_97),      // index 1: block 98
-            make_header(97, hash_97, B256::ZERO),   // index 2: block 97
+            make_header(98, hash_98, hash_97),       // index 1: block 98
+            make_header(97, hash_97, B256::ZERO),    // index 2: block 97
         ];
 
         let result = RethL2Client::validate_header_chain(&headers);

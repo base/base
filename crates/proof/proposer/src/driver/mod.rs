@@ -33,7 +33,7 @@ use crate::{
     enclave::EnclaveClientTrait,
     is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
-    rpc::{L1Client, L2Client, RollupClient},
+    rpc::{L1Client, ProverL2Client, RollupClient},
 };
 
 /// Driver configuration.
@@ -87,7 +87,7 @@ struct ParentGameState {
 pub struct Driver<L1, L2, E, R, ASR, F>
 where
     L1: L1Client,
-    L2: L2Client,
+    L2: ProverL2Client,
     E: EnclaveClientTrait,
     R: RollupClient,
     ASR: AnchorStateRegistryClient,
@@ -115,7 +115,7 @@ where
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for Driver<L1, L2, E, R, ASR, F>
 where
     L1: L1Client,
-    L2: L2Client,
+    L2: ProverL2Client,
     E: EnclaveClientTrait,
     R: RollupClient,
     ASR: AnchorStateRegistryClient,
@@ -133,7 +133,7 @@ where
 impl<L1, L2, E, R, ASR, F> Driver<L1, L2, E, R, ASR, F>
 where
     L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L2: ProverL2Client + 'static,
     E: EnclaveClientTrait + 'static,
     R: RollupClient + 'static,
     ASR: AnchorStateRegistryClient + 'static,
@@ -633,7 +633,7 @@ pub trait ProposerDriverControl: Send + Sync {
 pub struct DriverHandle<L1, L2, E, R, ASR, F>
 where
     L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L2: ProverL2Client + 'static,
     E: EnclaveClientTrait + 'static,
     R: RollupClient + 'static,
     ASR: AnchorStateRegistryClient + 'static,
@@ -654,7 +654,7 @@ where
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, E, R, ASR, F>
 where
     L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L2: ProverL2Client + 'static,
     E: EnclaveClientTrait + 'static,
     R: RollupClient + 'static,
     ASR: AnchorStateRegistryClient + 'static,
@@ -670,7 +670,7 @@ where
 impl<L1, L2, E, R, ASR, F> DriverHandle<L1, L2, E, R, ASR, F>
 where
     L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L2: ProverL2Client + 'static,
     E: EnclaveClientTrait + 'static,
     R: RollupClient + 'static,
     ASR: AnchorStateRegistryClient + 'static,
@@ -697,7 +697,7 @@ where
 impl<L1, L2, E, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, E, R, ASR, F>
 where
     L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L2: ProverL2Client + 'static,
     E: EnclaveClientTrait + 'static,
     R: RollupClient + 'static,
     ASR: AnchorStateRegistryClient + 'static,

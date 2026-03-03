@@ -35,6 +35,7 @@ base-alloy-network.workspace = true
 
 # Proof
 base-proof-contracts.workspace = true
+base-proof-rpc.workspace = true
 
 # Consensus
 base-protocol.workspace = true

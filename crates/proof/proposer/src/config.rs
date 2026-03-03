@@ -5,15 +5,12 @@ use std::{net::IpAddr, time::Duration};
 use alloy_primitives::{Address, B256};
 use alloy_signer::k256::ecdsa::SigningKey;
 use alloy_signer_local::PrivateKeySigner;
-use backon::ExponentialBuilder;
 use base_cli_utils::{LogConfig, MetricsConfig};
+use base_proof_rpc::RetryConfig;
 use thiserror::Error;
 use url::Url;
 
-use crate::{
-    cli::{Cli, ProposerArgs, RpcServerArgs},
-    constants::{DEFAULT_RETRY_INITIAL_DELAY, DEFAULT_RETRY_MAX_DELAY, DEFAULT_RPC_MAX_RETRIES},
-};
+use crate::cli::{Cli, ProposerArgs, RpcServerArgs};
 
 /// Errors that can occur during configuration validation.
 #[derive(Debug, Error)]
@@ -264,17 +261,6 @@ impl Default for RpcServerConfig {
     }
 }
 
-/// Validated RPC retry configuration.
-#[derive(Debug, Clone)]
-pub struct RetryConfig {
-    /// Maximum number of retry attempts.
-    pub max_attempts: u32,
-    /// Initial delay for exponential backoff.
-    pub initial_delay: Duration,
-    /// Maximum delay between retries.
-    pub max_delay: Duration,
-}
-
 impl From<&ProposerArgs> for RetryConfig {
     fn from(args: &ProposerArgs) -> Self {
         Self {
@@ -282,27 +268,6 @@ impl From<&ProposerArgs> for RetryConfig {
             initial_delay: args.rpc_retry_initial_delay,
             max_delay: args.rpc_retry_max_delay,
         }
-    }
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_attempts: DEFAULT_RPC_MAX_RETRIES,
-            initial_delay: DEFAULT_RETRY_INITIAL_DELAY,
-            max_delay: DEFAULT_RETRY_MAX_DELAY,
-        }
-    }
-}
-
-impl RetryConfig {
-    /// Creates a `backon` [`ExponentialBuilder`] from this configuration.
-    pub fn to_backoff_builder(&self) -> ExponentialBuilder {
-        ExponentialBuilder::default()
-            .with_min_delay(self.initial_delay)
-            .with_max_delay(self.max_delay)
-            .with_max_times(self.max_attempts as usize)
-            .with_jitter()
     }
 }
 
@@ -553,22 +518,4 @@ mod tests {
         assert_eq!(config.retry.max_delay, Duration::from_secs(10));
     }
 
-    #[test]
-    fn test_retry_config_default() {
-        let config = RetryConfig::default();
-        assert_eq!(config.max_attempts, 5);
-        assert_eq!(config.initial_delay, Duration::from_millis(100));
-        assert_eq!(config.max_delay, Duration::from_secs(10));
-    }
-
-    #[test]
-    fn test_retry_config_to_backoff_builder() {
-        let config = RetryConfig {
-            max_attempts: 10,
-            initial_delay: Duration::from_millis(50),
-            max_delay: Duration::from_secs(5),
-        };
-        // Just verify it can be built without panicking
-        let _ = config.to_backoff_builder();
-    }
 }

@@ -24,7 +24,7 @@ pub(crate) use types::test_helpers;
 use crate::{
     ProposerError,
     enclave::{EnclaveClientTrait, PerChainConfig},
-    rpc::{L1BlockId, L1Client, L2BlockRef, L2Client, OpBlock},
+    rpc::{L1BlockId, L1Client, L2BlockRef, OpBlock, ProverL2Client},
 };
 
 /// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
@@ -51,7 +51,7 @@ pub struct Prover<L1, L2, E> {
 impl<L1, L2, E> Prover<L1, L2, E>
 where
     L1: L1Client,
-    L2: L2Client,
+    L2: ProverL2Client,
     E: EnclaveClientTrait,
 {
     /// Creates a new prover instance.

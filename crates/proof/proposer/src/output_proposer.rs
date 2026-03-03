@@ -23,8 +23,8 @@ use tracing::info;
 use url::Url;
 
 use crate::{
-    ProposerError,
-    config::{RetryConfig, SigningConfig},
+    ProposerError, RetryConfig,
+    config::SigningConfig,
     constants::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
         GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,

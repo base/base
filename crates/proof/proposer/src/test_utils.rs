@@ -17,8 +17,8 @@ use crate::{
     enclave::EnclaveClientTrait,
     prover::{Prover, ProverProposal},
     rpc::{
-        L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, RollupClient, RpcError,
-        RpcResult, SyncStatus,
+        L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, ProverL2Client,
+        RollupClient, RpcError, RpcResult, SyncStatus,
     },
 };
 
@@ -85,6 +85,10 @@ impl L2Client for MockL2 {
     async fn block_by_hash(&self, _: B256) -> RpcResult<OpBlock> {
         unimplemented!()
     }
+}
+
+#[async_trait]
+impl ProverL2Client for MockL2 {
     async fn execution_witness(&self, _: u64) -> RpcResult<ExecutionWitness> {
         unimplemented!()
     }

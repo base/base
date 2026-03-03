@@ -1,9 +1,7 @@
-//! Async trait definitions for RPC clients.
-
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{Header, TransactionReceipt};
 use async_trait::async_trait;
-use base_enclave::{AccountResult, ExecutionWitness, RollupConfig};
+use base_enclave::{AccountResult, RollupConfig};
 
 use super::{
     error::RpcResult,
@@ -62,12 +60,6 @@ pub trait L2Client: Send + Sync {
 
     /// Gets a block by hash with full transactions.
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock>;
-
-    /// Gets the execution witness for a block via `debug_executionWitness`.
-    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness>;
-
-    /// Gets a raw DB value by key via `debug_dbGet`.
-    async fn db_get(&self, key: B256) -> RpcResult<Bytes>;
 }
 
 /// Rollup RPC client trait for interacting with OP Stack rollup nodes.
@@ -101,13 +93,5 @@ impl L2Client for Box<dyn L2Client> {
 
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
         (**self).block_by_hash(hash).await
-    }
-
-    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
-        (**self).execution_witness(block_number).await
-    }
-
-    async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
-        (**self).db_get(key).await
     }
 }

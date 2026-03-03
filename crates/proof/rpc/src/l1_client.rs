@@ -1,5 +1,3 @@
-//! L1 RPC client implementation.
-
 use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;
@@ -17,10 +15,10 @@ use url::Url;
 use super::{
     HttpProvider,
     cache::MeteredCache,
+    config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
     traits::L1Client,
 };
-use crate::{config::RetryConfig, constants::DEFAULT_CACHE_SIZE};
 
 /// Configuration for the L1 client.
 #[derive(Debug, Clone)]

@@ -1,5 +1,3 @@
-//! L2 RPC client implementation.
-
 use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;
@@ -10,17 +8,17 @@ use alloy_rpc_types_eth::{BlockId, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use base_enclave::{AccountResult, ExecutionWitness};
+use base_enclave::AccountResult;
 use url::Url;
 
 use super::{
     L2HttpProvider,
     cache::MeteredCache,
+    config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
     traits::L2Client,
     types::OpBlock,
 };
-use crate::{config::RetryConfig, constants::DEFAULT_CACHE_SIZE};
 
 /// Cache key for account proofs (address + block hash).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -161,12 +159,12 @@ impl L2ClientImpl {
     }
 
     /// Returns a reference to the underlying provider.
-    pub(crate) const fn provider(&self) -> &L2HttpProvider {
+    pub const fn provider(&self) -> &L2HttpProvider {
         &self.provider
     }
 
     /// Returns a reference to the retry configuration.
-    pub(crate) const fn retry_config(&self) -> &RetryConfig {
+    pub const fn retry_config(&self) -> &RetryConfig {
         &self.retry_config
     }
 }
@@ -294,53 +292,6 @@ impl L2Client for L2ClientImpl {
         self.headers_cache.insert(hash, block.header.clone()).await;
 
         Ok(block)
-    }
-
-    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
-        let backoff = self.retry_config.to_backoff_builder();
-
-        (|| async {
-            self.provider
-                .raw_request::<_, ExecutionWitness>(
-                    "debug_executionWitness".into(),
-                    (BlockNumberOrTag::Number(block_number),),
-                )
-                .await
-                .map_err(|e| {
-                    // Truncate the error to avoid logging multi-MB witness JSON in error messages.
-                    let msg = e.to_string();
-                    let truncated = if msg.len() > 500 {
-                        let end = msg.floor_char_boundary(500);
-                        format!("{}... (truncated)", &msg[..end])
-                    } else {
-                        msg
-                    };
-                    RpcError::WitnessNotFound(format!("Block {block_number}: {truncated}"))
-                })
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::execution_witness");
-        })
-        .await
-    }
-
-    async fn db_get(&self, key: B256) -> RpcResult<alloy_primitives::Bytes> {
-        let backoff = self.retry_config.to_backoff_builder();
-
-        (|| async {
-            self.provider
-                .raw_request::<_, alloy_primitives::Bytes>("debug_dbGet".into(), (key,))
-                .await
-                .map_err(|e| RpcError::InvalidResponse(format!("Failed to db_get key {key}: {e}")))
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::db_get");
-        })
-        .await
     }
 }
 

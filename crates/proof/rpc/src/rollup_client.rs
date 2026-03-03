@@ -1,5 +1,3 @@
-//! Rollup RPC client implementation for OP Stack rollup nodes.
-
 use std::time::Duration;
 
 use alloy_provider::{Provider, RootProvider};
@@ -13,11 +11,11 @@ use url::Url;
 
 use super::{
     HttpProvider,
+    config::RetryConfig,
     error::{RpcError, RpcResult},
     traits::RollupClient,
     types::SyncStatus,
 };
-use crate::config::RetryConfig;
 
 /// Configuration for the rollup client.
 #[derive(Debug, Clone)]
