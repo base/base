@@ -16,6 +16,9 @@ pub use transaction::{BasePooledTransaction, OpPooledTx, TimestampedTransaction}
 mod ordering;
 pub use ordering::{BaseOrdering, TimestampOrdering};
 
+mod consumer;
+pub use consumer::{Consumer, ConsumerConfig, ConsumerHandle, ConsumerMetrics, RecentlySent};
+
 pub mod estimated_da_size;
 
 use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};

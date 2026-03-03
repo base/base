@@ -18,10 +18,12 @@ alloy-eips.workspace = true
 alloy-primitives.workspace = true
 
 # reth
-reth-chainspec.workspace = true
 reth-evm.workspace = true
-reth-primitives-traits.workspace = true
+reth-tasks.workspace = true
+reth-metrics.workspace = true
+reth-chainspec.workspace = true
 reth-storage-api.workspace = true
+reth-primitives-traits.workspace = true
 reth-transaction-pool.workspace = true
 
 # revm
@@ -36,12 +38,15 @@ base-execution-primitives.workspace = true
 
 # misc
 c-kzg.workspace = true
+metrics.workspace = true
 tracing.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 alloy-eips.workspace = true
 base-test-utils.workspace = true
 base-execution-chainspec.workspace = true

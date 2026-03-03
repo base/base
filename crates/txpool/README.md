@@ -1,3 +1,3 @@
-# `base-execution-txpool`
+# `base-txpool`
 
-Transaction pool for Base/OP Stack.
+Transaction pool for Base
