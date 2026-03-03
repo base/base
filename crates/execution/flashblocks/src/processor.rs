@@ -163,8 +163,9 @@ where
                                 flashblock.metadata.block_number,
                                 flashblock.index - 1,
                             )
+                            && cache.insert(flashblock)
                         {
-                            cache.insert(flashblock);
+                            return;
                         }
                         info!("waiting for first Flashblock");
                         // we should ignore this error since it doesn't necessarily indicate a problem

@@ -55,6 +55,8 @@ impl FlashblockCache {
         if !self.is_cacheable(block_number) {
             return false;
         }
+        let min_block_number_to_retain = block_number.saturating_sub(MAX_CACHE_AHEAD_BLOCKS);
+        self.entries.retain(|&bn, _| bn > min_block_number_to_retain);
         self.entries.entry(block_number).or_default().insert(flashblock.index, flashblock);
         true
     }
