@@ -99,16 +99,16 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
             .await
             .map_err(|e| ContractError::Call(format!("gameCount failed: {e}")))?;
 
-        result
-            .try_into()
-            .map_err(|_| ContractError::Call("gameCount overflows u64".to_string()))
+        result.try_into().map_err(|_| ContractError::Call("gameCount overflows u64".to_string()))
     }
 
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
-        let result =
-            self.contract.gameAtIndex(U256::from(index)).call().await.map_err(|e| {
-                ContractError::Call(format!("gameAtIndex({index}) failed: {e}"))
-            })?;
+        let result = self
+            .contract
+            .gameAtIndex(U256::from(index))
+            .call()
+            .await
+            .map_err(|e| ContractError::Call(format!("gameAtIndex({index}) failed: {e}")))?;
 
         Ok(GameAtIndex {
             game_type: result.gameType,

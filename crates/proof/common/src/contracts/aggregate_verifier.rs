@@ -121,9 +121,7 @@ impl AggregateVerifierContractClient {
         })?;
 
         if interval == 0 {
-            return Err(ContractError::Call(
-                "INTERMEDIATE_BLOCK_INTERVAL cannot be 0".to_string(),
-            ));
+            return Err(ContractError::Call("INTERMEDIATE_BLOCK_INTERVAL cannot be 0".to_string()));
         }
 
         Ok(interval)
