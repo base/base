@@ -42,7 +42,7 @@ impl L2ClientKind {
     const fn as_l2_client(&self) -> &L2ClientImpl {
         match self {
             Self::Standard(c) => c,
-            Self::Reth(c) => c.inner(),
+            Self::Reth(c) => c.as_l2_client(),
         }
     }
 }

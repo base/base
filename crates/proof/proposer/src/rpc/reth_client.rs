@@ -41,7 +41,7 @@ impl RethL2Client {
     }
 
     /// Returns a reference to the inner L2 client.
-    pub const fn inner(&self) -> &L2ClientImpl {
+    pub const fn as_l2_client(&self) -> &L2ClientImpl {
         &self.inner
     }
 
@@ -139,7 +139,7 @@ impl RethL2Client {
         const CONCURRENCY: usize = 32;
 
         let results: Vec<RpcResult<Header>> = stream::iter(block_numbers)
-            .map(|num| self.inner.header_by_number(Some(num)))
+            .map(|num| self.as_l2_client().header_by_number(Some(num)))
             .buffered(CONCURRENCY)
             .collect()
             .await;
@@ -166,23 +166,23 @@ impl RethL2Client {
 #[async_trait]
 impl L2Client for RethL2Client {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
-        self.inner.chain_config().await
+        self.as_l2_client().chain_config().await
     }
 
     async fn get_proof(&self, address: Address, block_hash: B256) -> RpcResult<AccountResult> {
-        self.inner.get_proof(address, block_hash).await
+        self.as_l2_client().get_proof(address, block_hash).await
     }
 
     async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
-        self.inner.header_by_number(number).await
+        self.as_l2_client().header_by_number(number).await
     }
 
     async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
-        self.inner.block_by_number(number).await
+        self.as_l2_client().block_by_number(number).await
     }
 
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
-        self.inner.block_by_hash(hash).await
+        self.as_l2_client().block_by_hash(hash).await
     }
 }
 
@@ -190,10 +190,10 @@ impl L2Client for RethL2Client {
 impl ProverL2Client for RethL2Client {
     async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
         // Fetch the reth-format witness with retry
-        let backoff = self.inner.retry_config().to_backoff_builder();
+        let backoff = self.as_l2_client().retry_config().to_backoff_builder();
 
         let reth_witness: RethExecutionWitness = (|| async {
-            self.inner
+            self.as_l2_client()
                 .provider()
                 .raw_request(
                     "debug_executionWitness".into(),
@@ -225,7 +225,7 @@ impl ProverL2Client for RethL2Client {
     }
 
     async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
-        self.inner.db_get(key).await
+        self.as_l2_client().db_get(key).await
     }
 }
 
