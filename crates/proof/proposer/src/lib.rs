@@ -11,13 +11,14 @@ pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
 mod config;
 pub use config::{ConfigError, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig};
 
-mod constants;
 pub use base_proof_common::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorRoot,
     AnchorStateRegistryClient, AnchorStateRegistryContractClient, ContractError,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameInfo,
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
+
+mod constants;
 pub use constants::*;
 
 mod output_proposer;
