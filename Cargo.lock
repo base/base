@@ -2503,10 +2503,10 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-primitives",
  "base-execution-rpc",
- "base-execution-txpool",
  "base-node-core",
  "base-node-runner",
  "base-revm",
+ "base-txpool",
  "chrono",
  "clap",
  "clap_builder",
@@ -3354,9 +3354,9 @@ dependencies = [
  "base-execution-evm",
  "base-execution-forks",
  "base-execution-primitives",
- "base-execution-txpool",
  "base-protocol",
  "base-revm",
+ "base-txpool",
  "derive_more",
  "either",
  "reth-basic-payload-builder",
@@ -3435,8 +3435,8 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-primitives",
  "base-execution-trie",
- "base-execution-txpool",
  "base-revm",
+ "base-txpool",
  "derive_more",
  "eyre",
  "futures",
@@ -3528,32 +3528,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-execution-txpool"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "base-alloy-consensus",
- "base-alloy-flz",
- "base-execution-chainspec",
- "base-execution-evm",
- "base-execution-forks",
- "base-execution-primitives",
- "base-revm",
- "c-kzg",
- "derive_more",
- "parking_lot",
- "reth-chainspec",
- "reth-evm",
- "reth-primitives-traits",
- "reth-provider",
- "reth-storage-api",
- "reth-transaction-pool",
- "tokio",
 ]
 
 [[package]]
@@ -3735,6 +3709,7 @@ name = "base-node-core"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
@@ -3754,10 +3729,10 @@ dependencies = [
  "base-execution-rpc",
  "base-execution-storage",
  "base-execution-trie",
- "base-execution-txpool",
  "base-node-core",
  "base-protocol",
  "base-revm",
+ "base-txpool",
  "clap",
  "eyre",
  "futures",
@@ -3817,9 +3792,9 @@ dependencies = [
  "base-execution-primitives",
  "base-execution-rpc",
  "base-execution-storage",
- "base-execution-txpool",
  "base-node-core",
  "base-test-utils",
+ "base-txpool",
  "chrono",
  "eyre",
  "futures",
@@ -4215,6 +4190,34 @@ dependencies = [
  "base-alloy-rpc-types",
  "eyre",
  "serde_json",
+]
+
+[[package]]
+name = "base-txpool"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "base-alloy-consensus",
+ "base-alloy-flz",
+ "base-execution-chainspec",
+ "base-execution-evm",
+ "base-execution-forks",
+ "base-execution-primitives",
+ "base-revm",
+ "base-test-utils",
+ "c-kzg",
+ "derive_more",
+ "parking_lot",
+ "reth-chainspec",
+ "reth-evm",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-storage-api",
+ "reth-transaction-pool",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -6149,12 +6152,12 @@ dependencies = [
  "base-consensus-sources",
  "base-execution-chainspec",
  "base-execution-rpc",
- "base-execution-txpool",
  "base-flashblocks",
  "base-flashblocks-node",
  "base-node-core",
  "base-node-runner",
  "base-protocol",
+ "base-txpool",
  "base-txpool-rpc",
  "base-txpool-tracing",
  "eyre",

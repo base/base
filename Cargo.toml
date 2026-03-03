@@ -31,6 +31,7 @@ members = [
   "crates/infra/*",
   "crates/alloy/*",
   "crates/execution/*",
+  "crates/txpool",
   "devnet",
 ]
 default-members = [
@@ -186,7 +187,7 @@ base-execution-primitives = { path = "crates/execution/primitives" }
 base-execution-rpc = { path = "crates/execution/rpc" }
 base-execution-storage = { path = "crates/execution/storage" }
 base-execution-trie = { path = "crates/execution/trie" }
-base-execution-txpool = { path = "crates/execution/txpool" }
+base-txpool = { path = "crates/txpool" }
 base-node-core = { path = "crates/execution/node" }
 base-node-runner = { path = "crates/execution/runner" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }

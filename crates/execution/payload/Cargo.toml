@@ -31,7 +31,7 @@ reth-payload-validator.workspace = true
 base-execution-evm.workspace = true
 base-execution-forks.workspace = true
 base-execution-primitives.workspace = true
-base-execution-txpool.workspace = true
+base-txpool.workspace = true
 base-protocol.workspace = true
 base-revm.workspace = true
 

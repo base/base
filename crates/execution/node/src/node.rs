@@ -22,7 +22,10 @@ use base_execution_rpc::{
     witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
 };
 use base_execution_storage::OpStorage;
-use base_execution_txpool::OpPooledTx;
+use base_txpool::{
+    BaseOrdering, BasePooledTransaction, OpPooledTx, OpTransactionPool, OpTransactionValidator,
+    TimestampedTransaction,
+};
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_network::{
@@ -59,12 +62,7 @@ use reth_transaction_pool::{
 use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
 
-use crate::{
-    OpEngineApiBuilder, OpEngineTypes,
-    args::RollupArgs,
-    engine::OpEngineValidator,
-    txpool::{OpTransactionPool, OpTransactionValidator},
-};
+use crate::{OpEngineApiBuilder, OpEngineTypes, args::RollupArgs, engine::OpEngineValidator};
 
 /// Marker trait for Optimism node types with standard engine, chain spec, and primitives.
 pub trait OpNodeTypes:
@@ -826,16 +824,22 @@ where
 /// This contains various settings that can be configured and take precedence over the node's
 /// config.
 #[derive(Debug)]
-pub struct OpPoolBuilder<T = crate::txpool::OpPooledTransaction> {
+pub struct OpPoolBuilder<T = BasePooledTransaction> {
     /// Enforced overrides that are applied to the pool config.
     pub pool_config_overrides: PoolBuilderConfigOverrides,
+    /// The ordering strategy for the transaction pool.
+    pub ordering: BaseOrdering<T>,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
 
 impl<T> Default for OpPoolBuilder<T> {
     fn default() -> Self {
-        Self { pool_config_overrides: Default::default(), _pd: Default::default() }
+        Self {
+            pool_config_overrides: Default::default(),
+            ordering: BaseOrdering::default(),
+            _pd: Default::default(),
+        }
     }
 }
 
@@ -843,6 +847,7 @@ impl<T> Clone for OpPoolBuilder<T> {
     fn clone(&self) -> Self {
         Self {
             pool_config_overrides: self.pool_config_overrides.clone(),
+            ordering: self.ordering.clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -857,22 +862,28 @@ impl<T> OpPoolBuilder<T> {
         self.pool_config_overrides = pool_config_overrides;
         self
     }
+
+    /// Sets the ordering strategy for the transaction pool.
+    pub const fn with_ordering(mut self, ordering: BaseOrdering<T>) -> Self {
+        self.ordering = ordering;
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for OpPoolBuilder<T>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks>>,
-    T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx,
+    T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx + TimestampedTransaction,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T>;
+    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
 
     async fn build_pool(
         self,
         ctx: &BuilderContext<Node>,
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
-        let Self { pool_config_overrides, .. } = self;
+        let Self { pool_config_overrides, ordering, .. } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
@@ -900,7 +911,11 @@ where
 
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
-            .build_and_spawn_maintenance_task(blob_store, final_pool_config)?;
+            .build_with_ordering_and_spawn_maintenance_task(
+                ordering,
+                blob_store,
+                final_pool_config,
+            )?;
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");

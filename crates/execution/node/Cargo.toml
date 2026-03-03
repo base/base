@@ -38,15 +38,15 @@ base-execution-payload-builder.workspace = true
 base-execution-evm = { workspace = true, features = ["std", "rpc"] }
 base-execution-rpc.workspace = true
 base-execution-storage.workspace = true
-base-execution-txpool.workspace = true
+base-txpool.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus = { workspace = true, features = ["std"] }
 base-execution-forks.workspace = true
 base-protocol.workspace = true
 base-execution-primitives = { workspace = true, features = [
-  "serde",
-  "serde-bincode-compat",
-  "reth-codec",
+	"serde",
+	"serde-bincode-compat",
+	"reth-codec",
 ] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
@@ -54,10 +54,10 @@ base-execution-trie = { workspace = true, features = ["metrics"] }
 # revm with required optimism features
 # Note: this must be kept to ensure all features are properly enabled/forwarded
 revm = { workspace = true, features = [
-  "secp256k1",
-  "blst",
-  "c-kzg",
-  "memory_limit",
+	"secp256k1",
+	"blst",
+	"c-kzg",
+	"memory_limit",
 ] }
 base-revm.workspace = true
 
@@ -98,10 +98,11 @@ reth-rpc-eth-types.workspace = true
 reth-stages-types.workspace = true
 reth-trie-db.workspace = true
 
-alloy-network.workspace = true
-base-alloy-hardforks.workspace = true
-base-alloy-network.workspace = true
 futures.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+base-alloy-network.workspace = true
+base-alloy-hardforks.workspace = true
 
 [features]
 default = [ "reth-codec" ]

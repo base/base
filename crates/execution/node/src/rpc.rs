@@ -19,7 +19,7 @@
 //! use base_execution_evm::OpEvmConfig;
 //! use base_node_core::{OpExecutorBuilder, OpNetworkPrimitives, OpNode};
 //! use base_execution_rpc::OpEthApiBuilder;
-//! use base_execution_txpool::OpPooledTransaction;
+//! use base_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
 //! use reth_rpc::TraceApi;
 //! use reth_rpc_eth_types::{EthConfig, EthStateCache};
@@ -51,7 +51,7 @@
 //!         .with_components(
 //!             ComponentsBuilder::default()
 //!                 .node_types::<RethFullAdapter<_, OpNode>>()
-//!                 .noop_pool::<OpPooledTransaction>()
+//!                 .noop_pool::<BasePooledTransaction>()
 //!                 .executor(OpExecutorBuilder::default())
 //!                 .noop_consensus()
 //!                 .noop_network::<OpNetworkPrimitives>()

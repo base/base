@@ -21,13 +21,24 @@ use reth_transaction_pool::{
 
 use crate::estimated_da_size::DataAvailabilitySized;
 
+/// Returns current time as milliseconds since Unix epoch.
+fn unix_time_millis() -> u128 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(dur) => dur.as_millis(),
+        Err(err) => {
+            tracing::warn!(error = %err, "system clock before Unix epoch, using 0 as timestamp");
+            0
+        }
+    }
+}
+
 /// Pool transaction for OP.
 ///
 /// This type wraps the actual transaction and caches values that are frequently used by the pool.
 /// For payload building this lazily tracks values that are required during payload building:
 ///  - Estimated compressed size of this transaction
 #[derive(Debug, Clone, derive_more::Deref)]
-pub struct OpPooledTransaction<
+pub struct BasePooledTransaction<
     Cons = OpTransactionSigned,
     Pooled = base_alloy_consensus::OpPooledTransaction,
 > {
@@ -37,12 +48,13 @@ pub struct OpPooledTransaction<
     estimated_tx_compressed_size: OnceLock<u64>,
     /// The pooled transaction type.
     _pd: core::marker::PhantomData<Pooled>,
-
     /// Cached EIP-2718 encoded bytes of the transaction, lazily computed.
     encoded_2718: OnceLock<Bytes>,
+    /// Timestamp (millis since Unix epoch) when this transaction was received.
+    received_at: u128,
 }
 
-impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
+impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     /// Create new instance of [Self].
     pub fn new(transaction: Recovered<Cons>, encoded_length: usize) -> Self {
         Self {
@@ -50,6 +62,24 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
             estimated_tx_compressed_size: Default::default(),
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
+            received_at: unix_time_millis(),
+        }
+    }
+
+    /// Create new instance with an explicit `received_at` timestamp (millis since Unix epoch).
+    ///
+    /// Primarily for testing.
+    pub fn new_with_received_at(
+        transaction: Recovered<Cons>,
+        encoded_length: usize,
+        received_at: u128,
+    ) -> Self {
+        Self {
+            inner: EthPooledTransaction::new(transaction, encoded_length),
+            estimated_tx_compressed_size: Default::default(),
+            _pd: core::marker::PhantomData,
+            encoded_2718: Default::default(),
+            received_at,
         }
     }
 
@@ -67,15 +97,22 @@ impl<Cons: SignedTransaction, Pooled> OpPooledTransaction<Cons, Pooled> {
     pub fn encoded_2718(&self) -> &Bytes {
         self.encoded_2718.get_or_init(|| self.inner.transaction().encoded_2718().into())
     }
+
+    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
+    pub const fn received_at(&self) -> u128 {
+        self.received_at
+    }
 }
 
-impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized for OpPooledTransaction<Cons, Pooled> {
+impl<Cons: SignedTransaction, Pooled> DataAvailabilitySized
+    for BasePooledTransaction<Cons, Pooled>
+{
     fn estimated_da_size(&self) -> u64 {
         self.estimated_compressed_size()
     }
 }
 
-impl<Cons, Pooled> PoolTransaction for OpPooledTransaction<Cons, Pooled>
+impl<Cons, Pooled> PoolTransaction for BasePooledTransaction<Cons, Pooled>
 where
     Cons: SignedTransaction + From<Pooled>,
     Pooled: SignedTransaction + TryFrom<Cons, Error: core::error::Error>,
@@ -123,19 +160,19 @@ where
     }
 }
 
-impl<Cons: Typed2718, Pooled> Typed2718 for OpPooledTransaction<Cons, Pooled> {
+impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> {
     fn ty(&self) -> u8 {
         self.inner.ty()
     }
 }
 
-impl<Cons: InMemorySize, Pooled> InMemorySize for OpPooledTransaction<Cons, Pooled> {
+impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size()
+        self.inner.size() + core::mem::size_of::<u128>()
     }
 }
 
-impl<Cons, Pooled> alloy_consensus::Transaction for OpPooledTransaction<Cons, Pooled>
+impl<Cons, Pooled> alloy_consensus::Transaction for BasePooledTransaction<Cons, Pooled>
 where
     Cons: alloy_consensus::Transaction,
     Pooled: Debug + Send + Sync + 'static,
@@ -209,7 +246,7 @@ where
     }
 }
 
-impl<Cons, Pooled> EthPoolTransaction for OpPooledTransaction<Cons, Pooled>
+impl<Cons, Pooled> EthPoolTransaction for BasePooledTransaction<Cons, Pooled>
 where
     Cons: SignedTransaction + From<Pooled>,
     Pooled: SignedTransaction + TryFrom<Cons>,
@@ -249,7 +286,7 @@ pub trait OpPooledTx: PoolTransaction + DataAvailabilitySized {
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 }
 
-impl<Cons, Pooled> OpPooledTx for OpPooledTransaction<Cons, Pooled>
+impl<Cons, Pooled> OpPooledTx for BasePooledTransaction<Cons, Pooled>
 where
     Cons: SignedTransaction + From<Pooled>,
     Pooled: SignedTransaction + TryFrom<Cons>,
@@ -257,6 +294,22 @@ where
 {
     fn encoded_2718(&self) -> Cow<'_, Bytes> {
         Cow::Borrowed(self.encoded_2718())
+    }
+}
+
+/// Trait for transactions that expose their timestamp.
+pub trait TimestampedTransaction {
+    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
+    fn timestamp(&self) -> u128;
+}
+
+impl<Cons, Pooled> TimestampedTransaction for BasePooledTransaction<Cons, Pooled>
+where
+    Cons: SignedTransaction,
+    Pooled: Send + Sync + 'static,
+{
+    fn timestamp(&self) -> u128 {
+        self.received_at()
     }
 }
 
@@ -275,7 +328,7 @@ mod tests {
         validate::EthTransactionValidatorBuilder,
     };
 
-    use crate::{OpPooledTransaction, OpTransactionValidator};
+    use crate::{BasePooledTransaction, OpTransactionValidator};
     #[tokio::test]
     async fn validate_optimism_transaction() {
         let client = MockEthProvider::<OpPrimitives>::new()
@@ -303,7 +356,7 @@ mod tests {
         let signed_tx: OpTransactionSigned = deposit_tx.into();
         let signed_recovered = Recovered::new_unchecked(signed_tx, signer);
         let len = signed_recovered.encode_2718_len();
-        let pooled_tx: OpPooledTransaction = OpPooledTransaction::new(signed_recovered, len);
+        let pooled_tx: BasePooledTransaction = BasePooledTransaction::new(signed_recovered, len);
         let outcome = validator.validate_one(origin, pooled_tx).await;
 
         let err = match outcome {
