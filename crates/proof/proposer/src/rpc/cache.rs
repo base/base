@@ -1,5 +1,3 @@
-//! LRU cache wrapper with metrics.
-
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},

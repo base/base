@@ -1,11 +1,3 @@
-//! `OutputProposer` trait and implementations for L1 transaction submission.
-//!
-//! Submits output proposals by creating new dispute games via `DisputeGameFactory.create()`.
-//!
-//! Supports two signing modes:
-//! - **Local**: Signs with an in-process private key via [`EthereumWallet`].
-//! - **Remote**: Calls a signer sidecar's `eth_signTransaction` JSON-RPC method.
-
 use std::{future::Future, sync::Arc};
 
 use alloy_eips::Encodable2718;
@@ -29,12 +21,29 @@ use crate::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
         GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
     },
+    contracts::dispute_game_factory::{
+        encode_create_calldata, encode_extra_data, game_already_exists_selector,
+    },
     prover::ProverProposal,
 };
 
 /// Applies a 120% safety margin to a gas estimate using integer arithmetic.
 const fn apply_gas_margin(estimated: u64) -> u64 {
     estimated.saturating_mul(GAS_LIMIT_MULTIPLIER_NUMERATOR) / GAS_LIMIT_MULTIPLIER_DENOMINATOR
+}
+
+/// Classifies a contract-interaction error into a structured [`ProposerError`] variant.
+///
+/// Checks whether the error string contains the `GameAlreadyExists` selector,
+/// returning [`ProposerError::GameAlreadyExists`] if so, otherwise
+/// [`ProposerError::Contract`] with the provided context.
+fn classify_contract_error(context: &str, err: impl std::fmt::Display) -> ProposerError {
+    let msg = err.to_string();
+    let selector_hex = alloy_primitives::hex::encode(game_already_exists_selector());
+    if msg.contains(&selector_hex) || msg.contains("GameAlreadyExists") {
+        return ProposerError::GameAlreadyExists;
+    }
+    ProposerError::Contract(format!("{context}: {msg}"))
 }
 
 /// Builds the proof data for `AggregateVerifier.initialize()`.
@@ -129,7 +138,7 @@ where
     let gas_estimate = provider
         .estimate_gas(tx.clone())
         .await
-        .map_err(|e| ProposerError::Contract(format!("estimate_gas failed: {e}")))?;
+        .map_err(|e| classify_contract_error("estimate_gas failed", e))?;
 
     tx.set_gas_limit(apply_gas_margin(gas_estimate));
 
@@ -137,7 +146,7 @@ where
     let pending = provider
         .send_raw_transaction(&signed_bytes)
         .await
-        .map_err(|e| ProposerError::Contract(format!("send_raw_transaction failed: {e}")))?;
+        .map_err(|e| classify_contract_error("send_raw_transaction failed", e))?;
 
     let tx_hash = *pending.tx_hash();
     info!(%tx_hash, l2_block_number, "Transaction sent, waiting for receipt");
@@ -148,7 +157,7 @@ where
         .map_err(|e| ProposerError::Contract(format!("get_receipt failed: {e}")))?;
 
     if !receipt.status() {
-        return Err(ProposerError::Contract(format!("transaction {tx_hash} reverted")));
+        return Err(ProposerError::TxReverted(format!("transaction {tx_hash} reverted")));
     }
 
     info!(
@@ -160,19 +169,13 @@ where
     Ok(())
 }
 
-/// Returns true if the error is retryable (not a revert, not `GameAlreadyExists`).
-fn is_retryable(e: &ProposerError) -> bool {
-    if let ProposerError::Contract(msg) = e
-        && (msg.contains("reverted") || msg.contains("GameAlreadyExists"))
-    {
-        return false;
-    }
-    true
+const fn is_retryable(e: &ProposerError) -> bool {
+    !matches!(e, ProposerError::TxReverted(_) | ProposerError::GameAlreadyExists)
 }
 
 /// Returns true if the error indicates the game already exists.
-pub fn is_game_already_exists(e: &ProposerError) -> bool {
-    matches!(e, ProposerError::Contract(msg) if msg.contains("GameAlreadyExists"))
+pub const fn is_game_already_exists(e: &ProposerError) -> bool {
+    matches!(e, ProposerError::GameAlreadyExists)
 }
 
 /// Trait for submitting output proposals to L1 via dispute game creation.
@@ -287,6 +290,9 @@ impl OutputProposer for LocalOutputProposer {
             )
             .await
         })
+        // Retries use replace-by-fee: submit_proposal re-reads the nonce and
+        // re-estimates fees on each attempt, effectively replacing any pending
+        // transaction with the same nonce.
         .retry(self.retry_config.to_backoff_builder())
         .when(is_retryable)
         .await
@@ -396,6 +402,9 @@ impl OutputProposer for RemoteOutputProposer {
             )
             .await
         })
+        // Retries use replace-by-fee: submit_proposal re-reads the nonce and
+        // re-estimates fees on each attempt, effectively replacing any pending
+        // transaction with the same nonce.
         .retry(self.retry_config.to_backoff_builder())
         .when(is_retryable)
         .await
@@ -532,19 +541,19 @@ mod tests {
 
     #[test]
     fn test_retry_predicate_skips_reverts() {
-        let e = ProposerError::Contract("transaction 0x123 reverted".into());
+        let e = ProposerError::TxReverted("transaction 0x123 reverted".into());
         assert!(!is_retryable(&e));
     }
 
     #[test]
     fn test_retry_predicate_skips_game_already_exists() {
-        let e = ProposerError::Contract("GameAlreadyExists: 0x123".into());
+        let e = ProposerError::GameAlreadyExists;
         assert!(!is_retryable(&e));
     }
 
     #[test]
     fn test_is_game_already_exists() {
-        let e = ProposerError::Contract("GameAlreadyExists: 0xabc".into());
+        let e = ProposerError::GameAlreadyExists;
         assert!(is_game_already_exists(&e));
 
         let e = ProposerError::Contract("some other error".into());

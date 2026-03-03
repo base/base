@@ -83,6 +83,14 @@ std = [
 	"serde_json?/std",
 	"thiserror/std",
 	"tracing/std",
+	"alloy-evm/std",
+	"alloy-rpc-types-engine?/std",
+	"base-consensus-genesis/std",
+	"base-consensus-registry?/std",
+	"base-protocol/std",
+	"getrandom/std",
+	"serde?/std",
+	"serde_json?/std"
 ]
 test-utils = [
 	"base-consensus-registry?/test-utils",

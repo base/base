@@ -1,5 +1,3 @@
-//! Configuration types and validation for the proposer.
-
 use std::{net::IpAddr, time::Duration};
 
 use alloy_primitives::{Address, B256};

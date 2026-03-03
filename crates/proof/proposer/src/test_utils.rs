@@ -1,5 +1,3 @@
-//! Shared test utilities: reusable mock stubs for L1/L2 clients and a `test_prover` helper.
-
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, Bytes, U256};

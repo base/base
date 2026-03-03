@@ -1,5 +1,3 @@
-//! Constants used throughout the proposer.
-
 use std::time::Duration;
 
 /// Number of proofs to aggregate in a single batch.

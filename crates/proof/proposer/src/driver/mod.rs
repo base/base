@@ -1,15 +1,3 @@
-//! Driver loop for the proposer.
-//!
-//! The driver coordinates between RPC clients, the enclave, and contract
-//! interactions to generate and submit output proposals as dispute games.
-//!
-//! # Lifecycle control
-//!
-//! The [`Driver`] itself runs a single polling loop via [`Driver::run`].
-//! [`DriverHandle`] wraps a `Driver` and exposes start/stop/is-running
-//! semantics through the [`ProposerDriverControl`] trait, which is consumed
-//! by the admin JSON-RPC server.
-
 use std::{
     collections::VecDeque,
     sync::{
@@ -173,7 +161,7 @@ where
     ///
     /// Used by [`DriverHandle`] to create fresh sessions when the driver is
     /// restarted via the admin RPC.
-    pub(crate) fn set_cancel(&mut self, cancel: CancellationToken) {
+    pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.cancel = cancel;
     }
 

@@ -1,6 +1,4 @@
-//! RPC-specific error types.
-
-use alloy_transport::TransportError;
+use alloy_transport::{RpcError as AlloyRpcError, TransportError};
 use thiserror::Error;
 
 /// RPC-specific error type.
@@ -60,7 +58,15 @@ impl RpcError {
 
 impl From<TransportError> for RpcError {
     fn from(err: TransportError) -> Self {
-        Self::Transport(err.to_string())
+        match err {
+            AlloyRpcError::SerError(e) => Self::Serialization(e.to_string()),
+            AlloyRpcError::DeserError { err, .. } => Self::InvalidResponse(err.to_string()),
+            AlloyRpcError::NullResp => Self::InvalidResponse("null response".into()),
+            AlloyRpcError::ErrorResp(payload) => Self::InvalidResponse(payload.to_string()),
+            err @ (AlloyRpcError::Transport(_)
+            | AlloyRpcError::UnsupportedFeature(_)
+            | AlloyRpcError::LocalUsageError(_)) => Self::Transport(err.to_string()),
+        }
     }
 }
 

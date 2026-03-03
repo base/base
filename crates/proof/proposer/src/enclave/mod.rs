@@ -1,5 +1,3 @@
-//! Enclave client types for TEE proof generation.
-
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use base_enclave::{AggregateRequest, BlockId, Genesis, GenesisSystemConfig, RollupConfig};

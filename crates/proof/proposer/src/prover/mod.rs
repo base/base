@@ -1,8 +1,3 @@
-//! Prover module for TEE-based block validation.
-//!
-//! This module provides the core prover functionality for generating
-//! TEE-signed proposals for L2 block transitions.
-
 mod types;
 use std::{sync::Arc, time::Duration};
 

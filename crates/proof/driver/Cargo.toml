@@ -47,4 +47,6 @@ std = [
 	"spin/std",
 	"thiserror/std",
 	"tracing/std",
+	"base-consensus-genesis/std",
+	"base-protocol/std"
 ]

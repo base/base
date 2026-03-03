@@ -1,15 +1,3 @@
-//! Combined health-check and optional admin JSON-RPC HTTP server.
-//!
-//! Provides:
-//! - `GET /healthz` — liveness probe (always 200 while the process is alive)
-//! - `GET /readyz`  — readiness probe (200 when the service is fully initialised)
-//! - `POST /`       — JSON-RPC admin methods (only when admin is enabled)
-//!
-//! The admin JSON-RPC methods mirror the Go `op-proposer` admin API:
-//! - `admin_startProposer`  — start the driver loop
-//! - `admin_stopProposer`   — stop the driver loop
-//! - `admin_proposerRunning` — query whether the driver is running
-
 use std::{
     net::SocketAddr,
     sync::{

@@ -1,8 +1,3 @@
-//! `AnchorStateRegistry` contract bindings.
-//!
-//! Provides the anchor state (latest finalized output root) used as the starting
-//! point when no pending dispute games exist.
-
 use alloy_primitives::{Address, B256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::sol;

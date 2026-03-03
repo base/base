@@ -1,5 +1,3 @@
-//! Parent game state recovery from onchain data.
-
 use alloy_primitives::B256;
 use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient};
 use eyre::Result;
