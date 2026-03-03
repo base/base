@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use base_protocol::BlockInfo;
 
 use crate::{
-    BlobData, BlobProvider, BlobProviderError, ChainProvider, DataAvailabilityProvider,
-    PipelineError, PipelineResult, ResetError,
+    BlobData, BlobProvider, ChainProvider, DataAvailabilityProvider, PipelineError, PipelineResult,
+    ResetError,
 };
 
 /// A data iterator that reads from a blob.
