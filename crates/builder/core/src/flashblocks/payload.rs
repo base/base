@@ -535,10 +535,15 @@ where
         // Inject the flashblock index TX at the start of each flashblock (if configured).
         // Errors are logged rather than propagated so that a misconfigured contract or
         // transient DB issue does not abort block production.
-        if let Some(ref config) = ctx.flashblock_index_config
-            && let Err(err) = ctx.execute_flashblock_index_tx(info, state, flashblock_index, config)
-        {
-            warn!(target: "payload_builder", error = %err, flashblock_index, "failed to execute flashblock index TX, skipping");
+        if let Some(ref config) = ctx.flashblock_index_config {
+            let index_tx_start = Instant::now();
+            if let Err(err) = ctx.execute_flashblock_index_tx(info, state, flashblock_index, config)
+            {
+                warn!(target: "payload_builder", error = %err, flashblock_index, "failed to execute flashblock index TX, skipping");
+            }
+            let index_tx_time = index_tx_start.elapsed();
+            ctx.metrics.flashblock_index_tx_duration.record(index_tx_time);
+            ctx.metrics.flashblock_index_tx_gauge.set(index_tx_time);
         }
 
         let best_txs_start_time = Instant::now();
