@@ -20,7 +20,7 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
 use reth_trie::{HashedPostStateSorted, SortedTrieData, updates::TrieUpdatesSorted};
-use tokio::{sync::watch, task, time};
+use tokio::{sync::watch, task};
 use tracing::{debug, error, info};
 
 // Safety threshold for maximum blocks to prune automatically on startup.
@@ -33,9 +33,6 @@ const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
 
 /// How close to tip before we process blocks in real-time vs batch. Default is 1024 blocks.
 const REAL_TIME_BLOCKS_THRESHOLD: u64 = 1024;
-
-/// How long to sleep when sync task is caught up. Default is 5 seconds.
-const SYNC_IDLE_SLEEP_SECS: u64 = 5;
 
 /// Default proofs history window: 1 month of blocks at 2s block time
 const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
@@ -340,7 +337,11 @@ where
             };
 
             if latest >= target {
-                time::sleep(Duration::from_secs(SYNC_IDLE_SLEEP_SECS)).await;
+                // Wait for the target to be updated instead of polling
+                if sync_target_rx.changed().await.is_err() {
+                    debug!(target: "optimism::exex", "Sync target sender dropped, exiting sync loop");
+                    break;
+                }
                 continue;
             }
 
