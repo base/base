@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
+use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_primitives::{Address, B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use base_execution_chainspec::OpChainSpec;
@@ -151,11 +151,10 @@ where
         extra_data: header.extra_data().clone(),
     };
 
-    // Pre-fetch account information for all transactions before creating builder. The
-    // account information is used to validate the transaction.
+    // Pre-fetch account information for transaction validation
     let mut account_infos: HashMap<Address, (Option<Account>, Option<Bytecode>)> = HashMap::new();
     for tx in bundle.transactions() {
-        let from = tx.recover_signer()?;
+        let from = tx.signer();
         let account = db.database.basic_account(&from)?;
         let code = db.database.account_code(&from)?;
         account_infos.insert(from, (account, code));
@@ -176,7 +175,7 @@ where
         for tx in bundle.transactions() {
             let tx_start = Instant::now();
             let tx_hash = tx.tx_hash();
-            let from = tx.recover_signer()?;
+            let from = tx.signer();
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
