@@ -7,7 +7,7 @@ TEE-based output proposer for OP Stack chains.
 
 ## Overview
 
-- **Contracts**: L1 transaction submission via `OutputProposer` (local and remote signing modes). Shared contract bindings (dispute game factory, anchor state registry, aggregate verifier) are provided by [`base-proof-common`](../common/) and re-exported here.
+- **Output Proposer**: L1 transaction submission via `OutputProposer` (local and remote signing modes). Shared contract bindings (dispute game factory, anchor state registry, aggregate verifier) are provided by [`base-proof-common`](../common/).
 - **RPC**: Async clients for L1, L2, and rollup node communication with caching.
 - **Enclave**: TEE enclave client for stateless block validation and proof aggregation.
 - **Prover**: Core prover for generating TEE-signed proposals.

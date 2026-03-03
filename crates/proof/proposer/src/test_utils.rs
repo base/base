@@ -11,11 +11,8 @@ use base_enclave::{
 };
 
 use crate::{
-    ContractError, ProposerError,
-    contracts::{
-        AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
-        OutputProposer,
-    },
+    AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
+    OutputProposer, ProposerError,
     enclave::EnclaveClientTrait,
     prover::{Prover, ProverProposal},
     rpc::{
