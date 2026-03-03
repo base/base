@@ -296,24 +296,32 @@ pub struct SingleChainProviders {
 #[cfg(test)]
 mod test {
     use alloy_primitives::B256;
-    use clap::{CommandFactory, Parser};
+    use clap::{CommandFactory, FromArgMatches};
 
     use crate::single::SingleChainHost;
 
-    /// Clear all env vars that clap would read via `#[arg(env)]` so tests are
-    /// isolated from the host environment.
-    fn clear_clap_env_vars() {
-        for arg in SingleChainHost::command().get_arguments() {
-            if let Some(env_var) = arg.get_env() {
-                unsafe { std::env::remove_var(env_var) };
-            }
+    /// Parse [`SingleChainHost`] from the given args while ignoring any
+    /// `#[arg(env)]` fallbacks so the test is isolated from the host environment.
+    fn try_parse_without_env<I, T>(args: I) -> Result<SingleChainHost, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let mut cmd = SingleChainHost::command();
+        for arg_name in cmd
+            .get_arguments()
+            .filter(|a| a.get_env().is_some())
+            .map(|a| a.get_id().clone())
+            .collect::<Vec<_>>()
+        {
+            cmd = cmd.mut_arg(arg_name, |a| a.env(None::<&str>));
         }
+        let matches = cmd.try_get_matches_from(args)?;
+        SingleChainHost::from_arg_matches(&matches).map_err(Into::into)
     }
 
     #[test]
     fn test_flags() {
-        clear_clap_env_vars();
-
         let zero_hash_str = &B256::ZERO.to_string();
         let default_flags = [
             "single",
@@ -376,7 +384,7 @@ mod test {
         for (args_ext, valid) in cases {
             let args = default_flags.iter().chain(args_ext.iter()).copied().collect::<Vec<_>>();
 
-            let parsed = SingleChainHost::try_parse_from(args);
+            let parsed = try_parse_without_env(args);
             assert_eq!(parsed.is_ok(), valid);
         }
     }
