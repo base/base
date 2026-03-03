@@ -49,7 +49,7 @@ Background task on a dedicated blocking thread that continuously drains
 |---------|---------|-------------|
 | `resend_after` | 4s (2 blocks) | Skip txs sent within this window |
 | `channel_capacity` | 10,000 | Bounded channel size |
-| `poll_interval` | 1ms | Sleep when iterator empty |
+| `poll_interval` | 10ms | Sleep when no new transactions sent |
 
 ### Metrics
 

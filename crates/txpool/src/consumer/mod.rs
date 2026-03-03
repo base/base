@@ -3,7 +3,6 @@ use std::{sync::Arc, thread};
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
 
 mod config;
 pub use config::ConsumerConfig;
