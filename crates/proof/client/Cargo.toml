@@ -40,6 +40,8 @@ std = [
 	"base-alloy-consensus/std",
 	"base-alloy-evm/std",
 	"base-consensus-genesis/std",
+	"base-proof-driver/std",
+	"base-proof-executor/std",
 	"base-proof-preimage/std",
 	"base-proof/std",
 	"base-protocol/std",

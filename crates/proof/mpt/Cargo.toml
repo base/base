@@ -38,6 +38,13 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = [ "serde" ]
+std = [
+	"alloy-primitives/std",
+	"alloy-rlp/std",
+	"alloy-trie/std",
+	"base-alloy-rpc-types-engine/std",
+	"thiserror/std",
+]
 serde = [
 	"alloy-primitives/serde",
 	"alloy-trie/serde",

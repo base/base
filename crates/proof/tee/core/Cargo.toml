@@ -11,7 +11,7 @@ base-revm = { workspace = true, features = ["std"] }
 
 # Alloy
 alloy-rlp.workspace = true
-alloy-trie.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
 alloy-chains.workspace = true
 alloy-evm = { workspace = true, features = ["op"] }
 alloy-eips = { workspace = true, features = ["serde"] }
@@ -20,16 +20,16 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-engine.workspace = true
 
 # Base Alloy
-base-alloy-evm.workspace = true
+base-alloy-evm = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["serde"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # Proof
-base-proof.workspace = true
-base-proof-mpt.workspace = true
-base-proof-driver.workspace = true
-base-proof-executor.workspace = true
-base-proof-preimage.workspace = true
+base-proof = { workspace = true, features = ["std"] }
+base-proof-mpt = { workspace = true, features = ["std"] }
+base-proof-driver = { workspace = true, features = ["std"] }
+base-proof-executor = { workspace = true, features = ["std"] }
+base-proof-preimage = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Consensus

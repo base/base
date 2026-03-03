@@ -19,6 +19,9 @@ no_std_packages=(
   base-consensus-registry
   base-consensus-derive
   base-protocol
+
+  # proof crates are checked via check-no-std-proof.sh (nightly, -Zbuild-std=core,alloc),
+  # which is strictly more thorough than the stable --no-default-features check here.
 )
 
 for package in "${no_std_packages[@]}"; do
