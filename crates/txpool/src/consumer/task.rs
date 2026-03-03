@@ -75,6 +75,8 @@ where
                 }
             }
 
+            self.metrics.iterations.increment(1);
+
             if txs_read > 0 {
                 self.metrics.txs_read.increment(txs_read);
                 self.metrics.txs_sent.increment(txs_sent);

@@ -19,6 +19,7 @@ alloy-primitives.workspace = true
 
 # reth
 reth-evm.workspace = true
+reth-tasks.workspace = true
 reth-metrics.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true

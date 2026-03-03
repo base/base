@@ -15,9 +15,6 @@ const PRUNE_INTERVAL: u64 = 1000;
 /// and whose entry is younger than `resend_after` will be skipped. Expired
 /// entries are pruned periodically (every [`PRUNE_INTERVAL`] lookups) to
 /// bound memory.
-///
-/// This type is **not** thread-safe — it is designed to be used exclusively
-/// from the single consumer blocking thread.
 pub struct RecentlySent {
     seen: HashMap<B256, Instant>,
     resend_after: Duration,

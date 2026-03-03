@@ -7,9 +7,11 @@ use reth_metrics::{
 #[derive(Metrics, Clone)]
 #[metrics(scope = "txpool.consumer")]
 pub struct ConsumerMetrics {
+    /// Total consumer loop iterations.
+    pub iterations: Counter,
     /// Total transactions read from the pool iterator.
     pub txs_read: Counter,
-    /// Total transactions sent to the channel after deduplication.
+    /// Total transactions broadcast after deduplication.
     pub txs_sent: Counter,
     /// Total transactions skipped by the validator.
     pub txs_ignored: Counter,

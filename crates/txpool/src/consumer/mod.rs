@@ -1,5 +1,6 @@
 use std::{sync::Arc, thread};
 
+use reth_tasks::spawn_os_thread;
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
@@ -42,12 +43,9 @@ impl<T: PoolTransaction> ConsumerHandle<T> {
         let cancel = CancellationToken::new();
         let consumer = Consumer::new(pool, config, broadcast_sender, metrics, cancel.child_token());
 
-        let handle = thread::Builder::new()
-            .name("txpool-consumer".into())
-            .spawn(move || {
-                consumer.run();
-            })
-            .expect("failed to spawn txpool-consumer thread");
+        let handle = spawn_os_thread("txpool-consumer", move || {
+            consumer.run();
+        });
 
         Self { sender, cancel, handle: Some(handle) }
     }
