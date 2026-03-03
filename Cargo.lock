@@ -3911,7 +3911,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-common"
+name = "base-proof-contracts"
 version = "0.0.0"
 dependencies = [
  "alloy-contract",
@@ -4095,7 +4095,7 @@ dependencies = [
  "base-cli-utils",
  "base-enclave",
  "base-enclave-client",
- "base-proof-common",
+ "base-proof-contracts",
  "base-protocol",
  "bytes",
  "clap",

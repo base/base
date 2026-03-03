@@ -2,7 +2,7 @@
 #![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-pub use base_proof_common::{
+pub use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorRoot,
     AnchorStateRegistryClient, AnchorStateRegistryContractClient, ContractError,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex, GameInfo,
