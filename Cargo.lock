@@ -4023,6 +4023,7 @@ dependencies = [
  "base-alloy-network",
  "base-alloy-rpc-types",
  "base-enclave",
+ "metrics",
  "moka",
  "serde",
  "serde_json",

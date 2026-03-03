@@ -61,7 +61,8 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify);
+        .with_skip_tls_verify(config.skip_tls_verify)
+        .with_metrics_prefix("base_proposer");
     let l1_client = Arc::new(L1ClientImpl::new(l1_config)?);
     info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
@@ -69,7 +70,8 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify);
+        .with_skip_tls_verify(config.skip_tls_verify)
+        .with_metrics_prefix("base_proposer");
     let l2_client = Arc::new(create_l2_client(l2_config, config.l2_reth)?);
     info!(endpoint = %config.l2_eth_rpc, reth = config.l2_reth, "L2 client initialized");
 

@@ -1,3 +1,5 @@
+//! Async trait definitions for RPC clients.
+
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{Header, TransactionReceipt};
 use async_trait::async_trait;

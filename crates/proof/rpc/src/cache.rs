@@ -1,3 +1,5 @@
+//! LRU cache wrapper with metrics.
+
 use std::{
     hash::Hash,
     sync::atomic::{AtomicU64, Ordering},
@@ -70,6 +72,8 @@ where
     metrics: CacheMetrics,
     /// Name of this cache for identification.
     name: String,
+    /// Optional prefix for Prometheus counter metrics.
+    metrics_prefix: Option<String>,
 }
 
 impl<K, V> MeteredCache<K, V>
@@ -84,7 +88,29 @@ where
 
     /// Creates a new metered cache with the given name and capacity.
     pub fn with_capacity(name: impl Into<String>, capacity: usize) -> Self {
-        Self { cache: Cache::new(capacity as u64), metrics: CacheMetrics::new(), name: name.into() }
+        Self {
+            cache: Cache::new(capacity as u64),
+            metrics: CacheMetrics::new(),
+            name: name.into(),
+            metrics_prefix: None,
+        }
+    }
+
+    /// Creates a new metered cache with the given name, capacity, and Prometheus metrics prefix.
+    ///
+    /// When set, cache hits and misses are emitted as Prometheus counters:
+    /// `{prefix}_cache_hits_total` and `{prefix}_cache_misses_total`.
+    pub fn with_metrics_prefix(
+        name: impl Into<String>,
+        capacity: usize,
+        prefix: impl Into<String>,
+    ) -> Self {
+        Self {
+            cache: Cache::new(capacity as u64),
+            metrics: CacheMetrics::new(),
+            name: name.into(),
+            metrics_prefix: Some(prefix.into()),
+        }
     }
 
     /// Gets a value from the cache, returning `None` if not present.
@@ -92,8 +118,22 @@ where
         let value = self.cache.get(key).await;
         if value.is_some() {
             self.metrics.record_hit();
+            if let Some(prefix) = &self.metrics_prefix {
+                metrics::counter!(
+                    format!("{prefix}_cache_hits_total"),
+                    "cache_name" => self.name.clone(),
+                )
+                .increment(1);
+            }
         } else {
             self.metrics.record_miss();
+            if let Some(prefix) = &self.metrics_prefix {
+                metrics::counter!(
+                    format!("{prefix}_cache_misses_total"),
+                    "cache_name" => self.name.clone(),
+                )
+                .increment(1);
+            }
         }
         value
     }

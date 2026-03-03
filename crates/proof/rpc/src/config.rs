@@ -3,7 +3,7 @@ use std::time::Duration;
 use backon::ExponentialBuilder;
 
 /// Default LRU cache size for RPC responses.
-pub const DEFAULT_CACHE_SIZE: usize = 1000;
+pub(crate) const DEFAULT_CACHE_SIZE: usize = 1000;
 
 /// Default maximum number of retry attempts for RPC operations.
 const DEFAULT_RPC_MAX_RETRIES: u32 = 5;

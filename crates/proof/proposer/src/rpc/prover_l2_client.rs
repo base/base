@@ -28,7 +28,9 @@ impl ProverL2Client for Box<dyn ProverL2Client> {
     }
 }
 
-// Implement L2Client for Box<dyn ProverL2Client> by delegating to the inner trait object.
+// Delegate L2Client supertrait methods for Box<dyn ProverL2Client>.
+// Rust does not auto-delegate supertrait methods through trait objects,
+// so this must stay in sync with the L2Client trait in base-proof-rpc.
 #[async_trait]
 impl L2Client for Box<dyn ProverL2Client> {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {

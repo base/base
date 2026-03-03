@@ -1,5 +1,5 @@
 use alloy_primitives::Bytes;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Deserializes a vector while treating JSON `null` as an empty vector.
 fn deserialize_null_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
@@ -16,7 +16,7 @@ where
 /// This needs to be converted to the standard [`ExecutionWitness`] format.
 /// The `headers` field preserves the block headers included by the node,
 /// which are needed for BLOCKHASH opcode support in the enclave.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RethExecutionWitness {
     /// Block headers needed for BLOCKHASH opcode support.
     /// Geth includes exactly the headers referenced by this block.

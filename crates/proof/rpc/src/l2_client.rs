@@ -1,3 +1,5 @@
+//! L2 RPC client implementation.
+
 use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;
@@ -49,6 +51,8 @@ pub struct L2ClientConfig {
     pub retry_config: RetryConfig,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
+    /// Optional Prometheus metrics prefix for cache counters.
+    pub metrics_prefix: Option<String>,
 }
 
 impl L2ClientConfig {
@@ -60,6 +64,7 @@ impl L2ClientConfig {
             cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
             skip_tls_verify: false,
+            metrics_prefix: None,
         }
     }
 
@@ -84,6 +89,12 @@ impl L2ClientConfig {
     /// Sets whether to skip TLS certificate verification.
     pub const fn with_skip_tls_verify(mut self, skip: bool) -> Self {
         self.skip_tls_verify = skip;
+        self
+    }
+
+    /// Sets the Prometheus metrics prefix for cache counters.
+    pub fn with_metrics_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.metrics_prefix = Some(prefix.into());
         self
     }
 }
@@ -134,13 +145,23 @@ impl L2ClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        Ok(Self {
-            provider,
-            blocks_cache: MeteredCache::with_capacity("l2_blocks", config.cache_size),
-            headers_cache: MeteredCache::with_capacity("l2_headers", config.cache_size),
-            proofs_cache: MeteredCache::with_capacity("l2_proofs", config.cache_size),
-            retry_config: config.retry_config,
-        })
+        let (blocks_cache, headers_cache, proofs_cache) = if let Some(prefix) =
+            config.metrics_prefix
+        {
+            (
+                MeteredCache::with_metrics_prefix("l2_blocks", config.cache_size, &prefix),
+                MeteredCache::with_metrics_prefix("l2_headers", config.cache_size, &prefix),
+                MeteredCache::with_metrics_prefix("l2_proofs", config.cache_size, &prefix),
+            )
+        } else {
+            (
+                MeteredCache::with_capacity("l2_blocks", config.cache_size),
+                MeteredCache::with_capacity("l2_headers", config.cache_size),
+                MeteredCache::with_capacity("l2_proofs", config.cache_size),
+            )
+        };
+
+        Ok(Self { provider, blocks_cache, headers_cache, proofs_cache, retry_config: config.retry_config })
     }
 
     /// Returns the blocks cache.
