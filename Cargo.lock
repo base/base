@@ -2692,6 +2692,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-comp"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "arbitrary",
+ "base-consensus-genesis",
+ "base-protocol",
+ "brotli",
+ "miniz_oxide 0.9.0",
+ "proptest",
+ "rand 0.9.2",
+ "serde_json",
+ "spin 0.10.0",
+ "thiserror 2.0.18",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
 name = "base-consensus"
 version = "0.0.0"
 dependencies = [
@@ -5921,7 +5942,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -16606,7 +16627,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.1",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

@@ -157,6 +157,7 @@ base-metering = { path = "crates/client/metering" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 
 # Consensus
+base-comp = { path = "crates/consensus/comp", default-features = false }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-disc = { path = "crates/consensus/disc", default-features = false }
