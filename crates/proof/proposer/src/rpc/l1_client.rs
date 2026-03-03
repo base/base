@@ -1,3 +1,5 @@
+//! L1 RPC client implementation.
+
 use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;

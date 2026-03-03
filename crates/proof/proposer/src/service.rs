@@ -1,3 +1,5 @@
+//! Full proposer service lifecycle.
+
 use std::{
     net::SocketAddr,
     sync::{

@@ -1,3 +1,5 @@
+//! Error types for the proposer.
+
 use base_proof_contracts::ContractError;
 use thiserror::Error;
 

@@ -1,3 +1,5 @@
+//! Periodic L1 balance monitoring for the proposer address.
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;

@@ -1,3 +1,5 @@
+//! Rollup RPC client implementation for OP Stack rollup nodes.
+
 use std::time::Duration;
 
 use alloy_provider::{Provider, RootProvider};

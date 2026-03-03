@@ -1,3 +1,5 @@
+//! Signal handling for graceful shutdown.
+
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 

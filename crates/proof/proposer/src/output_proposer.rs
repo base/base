@@ -1,3 +1,11 @@
+//! `OutputProposer` trait and implementations for L1 transaction submission.
+//!
+//! Submits output proposals by creating new dispute games via `DisputeGameFactory.create()`.
+//!
+//! Supports two signing modes:
+//! - **Local**: Signs with an in-process private key via [`EthereumWallet`].
+//! - **Remote**: Calls a signer sidecar's `eth_signTransaction` JSON-RPC method.
+
 use std::{future::Future, sync::Arc};
 
 use alloy_eips::Encodable2718;

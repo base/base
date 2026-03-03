@@ -1,3 +1,9 @@
+//! Reth-specific L2 client implementation.
+//!
+//! Reth returns execution witnesses in a different format (arrays instead of maps).
+//! This client handles the conversion and also populates block headers for BLOCKHASH
+//! opcode support.
+
 use std::collections::HashMap;
 
 use alloy_eips::BlockNumberOrTag;

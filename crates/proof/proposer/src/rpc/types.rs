@@ -1,3 +1,5 @@
+//! Custom RPC response types for Optimism rollup nodes.
+
 use alloy_primitives::{B256, Bytes};
 use serde::{Deserialize, Deserializer, Serialize};
 

@@ -1,3 +1,5 @@
+//! Types for the prover module.
+
 use base_enclave::Proposal;
 
 use crate::rpc::L2BlockRef;
