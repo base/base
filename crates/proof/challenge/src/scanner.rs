@@ -174,10 +174,11 @@ impl GameScanner {
             return Ok(None);
         }
 
-        let GameInfo { root_claim, l2_block_number, parent_index } =
-            self.verifier_client.game_info(proxy).await?;
-
-        let starting_block_number = self.verifier_client.starting_block_number(proxy).await?;
+        let (GameInfo { root_claim, l2_block_number, parent_index }, starting_block_number) =
+            tokio::try_join!(
+                self.verifier_client.game_info(proxy),
+                self.verifier_client.starting_block_number(proxy),
+            )?;
 
         Ok(Some(CandidateGame {
             index,
