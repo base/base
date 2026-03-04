@@ -9,3 +9,8 @@ pub const BASE_MAINNET_MAX_GAS_LIMIT: u64 = 105_000_000;
 
 /// Max gas limit on Base Sepolia: <https://sepolia.basescan.org/block/12506483>
 pub const BASE_SEPOLIA_MAX_GAS_LIMIT: u64 = 45_000_000;
+
+//------------------------------- BASE DEVNET-0 -------------------------------//
+
+/// Gas limit on Base devnet-0 at genesis.
+pub const BASE_DEVNET_0_GAS_LIMIT: u64 = 25_000_000;
