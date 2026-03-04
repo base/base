@@ -143,11 +143,12 @@ impl ChallengerConfig {
 
         // Read private key from environment only — never accepted as a CLI argument
         // because command-line arguments are visible in process listings.
-        let private_key = std::env::var("CHALLENGER_PRIVATE_KEY").ok();
+        let private_key: Option<Zeroizing<String>> =
+            std::env::var("CHALLENGER_PRIVATE_KEY").ok().map(Zeroizing::new);
 
         // Validate and extract signing config
         let signing = build_signing_config(
-            private_key.as_deref(),
+            private_key,
             cli.challenger.signer_endpoint.as_ref(),
             cli.challenger.signer_address.as_ref(),
         )?;
@@ -189,14 +190,12 @@ fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
 ///
 /// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
 fn build_signing_config(
-    private_key: Option<&str>,
+    private_key: Option<Zeroizing<String>>,
     signer_endpoint: Option<&Url>,
     signer_address: Option<&Address>,
 ) -> Result<SigningConfig, ConfigError> {
     match (private_key, signer_endpoint, signer_address) {
-        (Some(pk), None, None) => {
-            Ok(SigningConfig::Local { private_key: Zeroizing::new(pk.to_string()) })
-        }
+        (Some(pk), None, None) => Ok(SigningConfig::Local { private_key: pk }),
         (None, Some(endpoint), Some(address)) => {
             validate_url(endpoint, "signer-endpoint")?;
             Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
@@ -368,7 +367,8 @@ mod tests {
     #[test]
     fn test_signing_config_local() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let signing = build_signing_config(Some(pk), None, None).unwrap();
+        let signing =
+            build_signing_config(Some(Zeroizing::new(pk.to_string())), None, None).unwrap();
         assert!(matches!(signing, SigningConfig::Local { .. }));
     }
 
@@ -390,7 +390,8 @@ mod tests {
     fn test_signing_config_both_provided() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let url = Url::parse("http://localhost:8546").unwrap();
-        let result = build_signing_config(Some(pk), Some(&url), None);
+        let result =
+            build_signing_config(Some(Zeroizing::new(pk.to_string())), Some(&url), None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
