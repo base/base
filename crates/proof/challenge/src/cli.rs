@@ -1,6 +1,9 @@
 //! CLI argument definitions for the challenger.
 
-use std::time::Duration;
+use std::{
+    net::IpAddr,
+    time::Duration,
+};
 
 use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
@@ -11,7 +14,7 @@ base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
 
 /// Challenger - ZK-proof dispute game challenger for OP Stack chains.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Parser)]
 #[command(name = "challenger")]
 #[command(version, about, long_about = None)]
 #[command(styles = CliStyles::init())]
@@ -29,8 +32,18 @@ pub struct Cli {
     pub metrics: MetricsArgs,
 }
 
+impl std::fmt::Debug for Cli {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cli")
+            .field("challenger", &self.challenger)
+            .field("logging", &self.logging)
+            .field("metrics", &self.metrics)
+            .finish()
+    }
+}
+
 /// Core challenger configuration arguments.
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Parser)]
 #[command(next_help_heading = "Challenger")]
 pub struct ChallengerArgs {
     /// URL of the L1 Ethereum RPC endpoint.
@@ -87,12 +100,18 @@ pub struct ChallengerArgs {
     pub poll_interval: Duration,
 
     /// URL of the ZK proof service endpoint.
-    #[arg(long = "zk-proof-service-endpoint", env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT")]
-    pub zk_proof_service_endpoint: String,
+    #[arg(
+        long = "zk-proof-service-endpoint",
+        env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT",
+        value_parser = parse_url
+    )]
+    pub zk_proof_service_endpoint: Url,
 
     /// Private key for local transaction signing (hex-encoded, for development).
     /// Mutually exclusive with --signer-endpoint/--signer-address.
-    #[arg(long = "private-key", env = "CHALLENGER_PRIVATE_KEY")]
+    /// Only accepted via environment variable for security — command-line
+    /// arguments are visible in process listings.
+    #[arg(env = "CHALLENGER_PRIVATE_KEY", hide = true)]
     pub private_key: Option<String>,
 
     /// URL of the signer sidecar JSON-RPC endpoint (for production).
@@ -120,6 +139,43 @@ pub struct ChallengerArgs {
         default_value = "1000"
     )]
     pub lookback_games: u64,
+
+    /// Health server bind address.
+    #[arg(
+        long = "health.addr",
+        env = "CHALLENGER_HEALTH_ADDR",
+        default_value = "0.0.0.0"
+    )]
+    pub health_addr: IpAddr,
+
+    /// Health server port.
+    #[arg(
+        long = "health.port",
+        env = "CHALLENGER_HEALTH_PORT",
+        default_value = "8080"
+    )]
+    pub health_port: u16,
+}
+
+impl std::fmt::Debug for ChallengerArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChallengerArgs")
+            .field("l1_eth_rpc", &self.l1_eth_rpc)
+            .field("l2_eth_rpc", &self.l2_eth_rpc)
+            .field("rollup_rpc", &self.rollup_rpc)
+            .field("dispute_game_factory_addr", &self.dispute_game_factory_addr)
+            .field("anchor_state_registry_addr", &self.anchor_state_registry_addr)
+            .field("game_type", &self.game_type)
+            .field("poll_interval", &self.poll_interval)
+            .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
+            .field("private_key", &"[redacted]")
+            .field("signer_endpoint", &self.signer_endpoint)
+            .field("signer_address", &self.signer_address)
+            .field("lookback_games", &self.lookback_games)
+            .field("health_addr", &self.health_addr)
+            .field("health_port", &self.health_port)
+            .finish()
+    }
 }
 
 /// Parse a duration string like "12s", "5m", "1h".
@@ -213,6 +269,10 @@ mod tests {
         assert!(cli.challenger.private_key.is_none());
         assert!(cli.challenger.signer_endpoint.is_none());
         assert!(cli.challenger.signer_address.is_none());
+
+        // Check health server defaults
+        assert_eq!(cli.challenger.health_addr, "0.0.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(cli.challenger.health_port, 8080);
     }
 
     #[test]
@@ -239,5 +299,32 @@ mod tests {
             "http://localhost:5000",
         ];
         assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn test_debug_redacts_private_key() {
+        let args = ChallengerArgs {
+            l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
+            l2_eth_rpc: Url::parse("http://localhost:9545").unwrap(),
+            rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
+            dispute_game_factory_addr: "0x1234567890123456789012345678901234567890"
+                .parse()
+                .unwrap(),
+            anchor_state_registry_addr: "0x2234567890123456789012345678901234567890"
+                .parse()
+                .unwrap(),
+            game_type: 1,
+            poll_interval: Duration::from_secs(12),
+            zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
+            private_key: Some("0xdeadbeef".to_string()),
+            signer_endpoint: None,
+            signer_address: None,
+            lookback_games: 1000,
+            health_addr: "0.0.0.0".parse().unwrap(),
+            health_port: 8080,
+        };
+        let debug_output = format!("{args:?}");
+        assert!(debug_output.contains("[redacted]"));
+        assert!(!debug_output.contains("deadbeef"));
     }
 }

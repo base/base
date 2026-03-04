@@ -1,11 +1,15 @@
 //! Configuration types and validation for the challenger.
 
-use std::time::Duration;
+use std::{
+    net::SocketAddr,
+    time::Duration,
+};
 
 use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, MetricsConfig};
 use thiserror::Error;
 use url::Url;
+use zeroize::Zeroizing;
 
 use crate::cli::Cli;
 
@@ -43,8 +47,9 @@ pub enum ConfigError {
 pub enum SigningConfig {
     /// Local signing with an in-process private key (development).
     Local {
-        /// The private key (hex-encoded).
-        private_key: String,
+        /// The private key (hex-encoded), wrapped in [`Zeroizing`] for
+        /// automatic memory zeroing on drop.
+        private_key: Zeroizing<String>,
     },
     /// Remote signing via a signer sidecar JSON-RPC endpoint (production).
     Remote {
@@ -86,11 +91,13 @@ pub struct ChallengerConfig {
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK proof service endpoint.
-    pub zk_proof_service_endpoint: String,
+    pub zk_proof_service_endpoint: Url,
     /// Signing configuration for L1 transaction submission.
     pub signing: SigningConfig,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
+    /// Health server socket address.
+    pub health_addr: SocketAddr,
     /// Logging configuration (from base-cli-utils).
     pub log: LogConfig,
     /// Metrics server configuration.
@@ -104,6 +111,7 @@ impl ChallengerConfig {
         validate_url(&cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
         validate_url(&cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
         validate_url(&cli.challenger.rollup_rpc, "rollup-rpc")?;
+        validate_url(&cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
 
         // Validate poll_interval > 0
         if cli.challenger.poll_interval.is_zero() {
@@ -128,6 +136,8 @@ impl ChallengerConfig {
             cli.challenger.signer_address.as_ref(),
         )?;
 
+        let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
+
         Ok(Self {
             l1_eth_rpc: cli.challenger.l1_eth_rpc,
             l2_eth_rpc: cli.challenger.l2_eth_rpc,
@@ -139,6 +149,7 @@ impl ChallengerConfig {
             zk_proof_service_endpoint: cli.challenger.zk_proof_service_endpoint,
             signing,
             lookback_games: cli.challenger.lookback_games,
+            health_addr,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
         })
@@ -167,17 +178,19 @@ fn build_signing_config(
     signer_address: Option<&Address>,
 ) -> Result<SigningConfig, ConfigError> {
     match (private_key, signer_endpoint, signer_address) {
-        (Some(pk), None, None) => Ok(SigningConfig::Local { private_key: pk.to_string() }),
+        (Some(pk), None, None) => {
+            Ok(SigningConfig::Local { private_key: Zeroizing::new(pk.to_string()) })
+        }
         (None, Some(endpoint), Some(address)) => {
             validate_url(endpoint, "signer-endpoint")?;
             Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
         }
         (None, None, None) => Err(ConfigError::Signing(
-            "one of --private-key or (--signer-endpoint + --signer-address) must be provided"
+            "one of CHALLENGER_PRIVATE_KEY or (--signer-endpoint + --signer-address) must be provided"
                 .to_string(),
         )),
         (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(ConfigError::Signing(
-            "--private-key is mutually exclusive with --signer-endpoint/--signer-address"
+            "CHALLENGER_PRIVATE_KEY is mutually exclusive with --signer-endpoint/--signer-address"
                 .to_string(),
         )),
         (None, Some(_), None) => {
@@ -191,6 +204,8 @@ fn build_signing_config(
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
     use base_cli_utils::LogFormat;
 
     use super::*;
@@ -210,13 +225,16 @@ mod tests {
                     .unwrap(),
                 game_type: 1,
                 poll_interval: Duration::from_secs(12),
-                zk_proof_service_endpoint: "http://localhost:5000".to_string(),
+                zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
+                // Hardhat/Anvil account #0 — never use in production.
                 private_key: Some(
                     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
                 ),
                 signer_endpoint: None,
                 signer_address: None,
                 lookback_games: 1000,
+                health_addr: "0.0.0.0".parse().unwrap(),
+                health_port: 8080,
             },
             logging: LogArgs {
                 level: 3,
@@ -240,6 +258,7 @@ mod tests {
         assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.lookback_games, 1000);
+        assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
     }
 
     #[test]
@@ -374,5 +393,35 @@ mod tests {
         cli.challenger.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
+    }
+
+    #[test]
+    fn test_zk_proof_endpoint_validated() {
+        let mut cli = minimal_cli();
+        cli.challenger.zk_proof_service_endpoint = Url::parse("file:///no/host").unwrap();
+        let result = ChallengerConfig::from_cli(cli);
+        assert!(matches!(
+            result,
+            Err(ConfigError::InvalidUrl { field: "zk-proof-service-endpoint", .. })
+        ));
+    }
+
+    #[test]
+    fn test_health_addr_configurable() {
+        let mut cli = minimal_cli();
+        cli.challenger.health_addr = "127.0.0.1".parse::<IpAddr>().unwrap();
+        cli.challenger.health_port = 9090;
+        let config = ChallengerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_signing_config_debug_redacts() {
+        let signing = SigningConfig::Local {
+            private_key: Zeroizing::new("0xdeadbeef".to_string()),
+        };
+        let debug_output = format!("{signing:?}");
+        assert!(debug_output.contains("[redacted]"));
+        assert!(!debug_output.contains("deadbeef"));
     }
 }

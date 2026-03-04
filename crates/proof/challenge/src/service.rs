@@ -1,11 +1,8 @@
 //! Full challenger service lifecycle.
 
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use eyre::Result;
@@ -14,12 +11,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::ChallengerConfig;
-
-/// Default health server bind address.
-const HEALTH_ADDR: &str = "0.0.0.0";
-
-/// Default health server port.
-const HEALTH_PORT: u16 = 8080;
 
 /// Runs the full challenger service lifecycle.
 ///
@@ -51,7 +42,7 @@ pub async fn run(config: ChallengerConfig) -> Result<()> {
     // Ready flag is hardcoded to false — no driver is wired yet.
     let ready = Arc::new(AtomicBool::new(false));
     let health_handle: JoinHandle<Result<()>> = {
-        let addr: SocketAddr = format!("{HEALTH_ADDR}:{HEALTH_PORT}").parse()?;
+        let addr = config.health_addr;
         let ready_flag = Arc::clone(&ready);
         let health_cancel = cancel.clone();
         tokio::spawn(async move { crate::serve(addr, ready_flag, health_cancel).await })
