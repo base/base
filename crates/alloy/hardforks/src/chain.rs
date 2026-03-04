@@ -53,6 +53,11 @@ impl OpChainHardforks {
     pub fn devnet() -> Self {
         Self::new(OpHardfork::devnet())
     }
+
+    /// Creates a new [`OpChainHardforks`] with Base devnet-0 configuration.
+    pub fn base_devnet_0() -> Self {
+        Self::new(OpHardfork::base_devnet_0())
+    }
 }
 
 impl EthereumHardforks for OpChainHardforks {
