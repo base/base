@@ -11,7 +11,7 @@ use base_execution_rpc::{
     witness::OpDebugWitnessApi,
 };
 use base_execution_txpool::OpPooledTx;
-use base_node_core::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
+use base_node_core::{OpEngineApiBuilder, OpNodeTypes};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
@@ -66,22 +66,12 @@ where
     }
 }
 
-impl<N> Default for BaseAddOns<N, OpEthApiBuilder, OpEngineValidatorBuilder>
-where
-    N: FullNodeComponents<Types: OpNodeTypes>,
-    OpEthApiBuilder: EthApiBuilder<N>,
-{
-    fn default() -> Self {
-        Self::builder().build()
-    }
-}
-
 impl<N, NetworkT, RpcMiddleware>
     BaseAddOns<
         N,
         OpEthApiBuilder<NetworkT>,
-        OpEngineValidatorBuilder,
-        OpEngineApiBuilder<OpEngineValidatorBuilder>,
+        crate::BasePayloadValidatorBuilder,
+        OpEngineApiBuilder<crate::BasePayloadValidatorBuilder>,
         RpcMiddleware,
     >
 where

@@ -87,12 +87,7 @@ use crate::cached_execution::{
 /// updates as blocks are validated, avoiding expensive re-execution later.
 pub trait OnValidatedBlockHook: Send + Sync + 'static {
     /// Called after a block is validated with its execution output and trie updates.
-    fn on_validated_block(
-        &self,
-        block: &SealedBlock<OpBlock>,
-        output: &BlockExecutionOutput<OpReceipt>,
-        trie_updates: &TrieUpdates,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    fn on_validated_block(&self, timestamp: u64);
 }
 
 /// No-op implementation of [`OnValidatedBlockHook`].
@@ -100,13 +95,8 @@ pub trait OnValidatedBlockHook: Send + Sync + 'static {
 pub struct NoopOnValidatedBlockHook;
 
 impl OnValidatedBlockHook for NoopOnValidatedBlockHook {
-    fn on_validated_block(
-        &self,
-        _block: &SealedBlock<OpBlock>,
-        _output: &BlockExecutionOutput<OpReceipt>,
-        _trie_updates: &TrieUpdates,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async {})
+    fn on_validated_block(&self, _timestamp: u64) {
+        // no-op
     }
 }
 
@@ -676,7 +666,7 @@ where
 
         info!(hook_exists = self.on_validated_block.is_some(), "Calling on_validated_block hook");
         if let Some(hook) = &self.on_validated_block {
-            Handle::current().block_on(hook.on_validated_block(&block, &output, &trie_output));
+            hook.on_validated_block(block.header().timestamp());
         }
 
         if let Some(valid_block_tx) = valid_block_tx {
@@ -1615,6 +1605,11 @@ impl<EV> BaseEngineValidatorBuilder<EV> {
     /// Sets the [`OnValidatedBlockHook`] called after each block is validated.
     pub fn with_on_validated_block(mut self, hook: Arc<dyn OnValidatedBlockHook>) -> Self {
         self.on_validated_block = Some(hook);
+        self
+    }
+
+    pub fn with_payload_validator_builder(mut self, payload_validator: EV) -> Self {
+        self.payload_validator_builder = payload_validator;
         self
     }
 }

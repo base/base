@@ -8,8 +8,11 @@ use base_execution_rpc::{
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
 use base_execution_trie::{MdbxProofsStorage, OpProofsStorage};
-use base_node_core::args::RollupArgs;
-use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_node_core::{OpEngineApiBuilder, OpEngineValidatorBuilder, args::RollupArgs};
+use base_node_runner::{
+    BaseNodeExtension, BasePayloadValidator, BasePayloadValidatorBuilder, FromExtensionConfig,
+    NodeHooks,
+};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
 use reth_primitives_traits::SealedBlock;
@@ -41,15 +44,8 @@ impl ProofsHistoryExtension {
 struct SlowValidatedBlockHook;
 
 impl OnValidatedBlockHook for SlowValidatedBlockHook {
-    fn on_validated_block(
-        &self,
-        _block: &SealedBlock<OpBlock>,
-        _output: &BlockExecutionOutput<OpReceipt>,
-        _trie_updates: &TrieUpdates,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async {
-            sleep(Duration::from_secs(1)).await;
-        })
+    fn on_validated_block(&self, _timestamp: u64) {
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -67,10 +63,17 @@ impl BaseNodeExtension for ProofsHistoryExtension {
             // TODO: replace with real hook that forwards trie updates to proofs collector
             hooks = hooks.add_add_ons_hook(move |add_ons| {
                 use reth_node_builder::rpc::EngineValidatorAddOn;
+                let hook: Arc<dyn OnValidatedBlockHook> = Arc::new(SlowValidatedBlockHook);
+                let pvb = BasePayloadValidatorBuilder::new(OpEngineValidatorBuilder::default())
+                    .with_on_validated_block(Arc::clone(&hook));
                 let builder = add_ons
                     .engine_validator_builder()
-                    .with_on_validated_block(Arc::new(SlowValidatedBlockHook));
-                add_ons.with_engine_validator(builder)
+                    .with_on_validated_block(hook)
+                    .with_payload_validator_builder(pvb.clone());
+                add_ons
+                    .with_engine_validator(builder)
+                    .with_engine_api(OpEngineApiBuilder::new(pvb.clone()))
+                    .with_payload_validator(pvb)
             });
             let path = args
                 .proofs_history_storage_path

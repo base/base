@@ -109,6 +109,13 @@ pub struct OpEngineApiBuilder<EV> {
     engine_validator_builder: EV,
 }
 
+impl<EV> OpEngineApiBuilder<EV> {
+    /// Creates a new builder with the given payload validator builder.
+    pub fn new(engine_validator_builder: EV) -> Self {
+        Self { engine_validator_builder }
+    }
+}
+
 impl<N, EV> EngineApiBuilder<N> for OpEngineApiBuilder<EV>
 where
     N: FullNodeComponents<

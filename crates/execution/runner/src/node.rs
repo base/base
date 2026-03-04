@@ -7,8 +7,8 @@ use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::eth::OpEthApiBuilder;
 use base_execution_storage::OpStorage;
 use base_node_core::{
-    OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
-    OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
+    OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpExecutorBuilder, OpNetworkBuilder,
+    OpNodeComponentBuilder, OpNodeTypes,
     args::RollupArgs,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };
@@ -20,7 +20,7 @@ use reth_node_builder::{
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
 
-use crate::{BaseAddOns, BaseAddOnsBuilder};
+use crate::{BaseAddOns, BaseAddOnsBuilder, BasePayloadValidatorBuilder};
 
 /// Type configuration for a regular Base node.
 #[derive(Debug, Default, Clone)]
@@ -145,9 +145,9 @@ where
     type AddOns = BaseAddOns<
         NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
         OpEthApiBuilder,
-        OpEngineValidatorBuilder,
-        OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        BaseEngineValidatorBuilder<OpEngineValidatorBuilder>,
+        BasePayloadValidatorBuilder,
+        OpEngineApiBuilder<BasePayloadValidatorBuilder>,
+        BaseEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {

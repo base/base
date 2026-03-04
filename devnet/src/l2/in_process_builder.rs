@@ -133,7 +133,7 @@ impl InProcessBuilder {
         let addons: base_node_runner::BaseAddOns<
             _,
             base_execution_rpc::OpEthApiBuilder,
-            base_node_core::OpEngineValidatorBuilder,
+            base_node_runner::BasePayloadValidatorBuilder,
         > = base_node
             .add_ons_builder()
             .with_sequencer(rollup_args.sequencer.clone())

@@ -21,6 +21,9 @@ pub use types::{BaseNodeBuilder, OpNodeTypes, OpProvider};
 mod node;
 pub use node::BaseNode;
 
+mod validator;
+pub use validator::{BasePayloadValidator, BasePayloadValidatorBuilder};
+
 mod add_ons;
 pub use add_ons::{BaseAddOns, BaseAddOnsBuilder};
 
