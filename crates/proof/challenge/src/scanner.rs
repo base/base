@@ -102,7 +102,8 @@ impl GameScanner {
 
         let end = game_count - 1;
         let lookback_start = game_count.saturating_sub(self.config.lookback_games);
-        let start = last_scanned.map_or(lookback_start, |idx| idx.saturating_add(1).max(lookback_start));
+        let start =
+            last_scanned.map_or(lookback_start, |idx| idx.saturating_add(1).max(lookback_start));
 
         if start > end {
             debug!(
