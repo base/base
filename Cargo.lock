@@ -2643,8 +2643,10 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
+ "async-trait",
  "axum",
  "base-cli-utils",
+ "base-proof-contracts",
  "clap",
  "eyre",
  "hex",
@@ -4320,6 +4322,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "async-trait",
  "base-alloy-consensus",
  "base-alloy-flz",
  "base-execution-chainspec",
@@ -4343,10 +4346,10 @@ dependencies = [
  "reth-tasks",
  "reth-transaction-pool",
  "serde",
- "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]

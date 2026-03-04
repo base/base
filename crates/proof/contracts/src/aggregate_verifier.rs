@@ -65,6 +65,15 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// Queries game details from a game proxy address.
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError>;
 
+    /// Returns the current game status (`0=IN_PROGRESS`, `1=CHALLENGER_WINS`, `2=DEFENDER_WINS`).
+    async fn status(&self, game_address: Address) -> Result<u8, ContractError>;
+
+    /// Returns the address that provided a ZK proof for the given game.
+    async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
+
+    /// Returns the starting block number for the given game.
+    async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError>;
+
     /// Reads `BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
     async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError>;
 
@@ -116,6 +125,41 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .map_err(|e| ContractError::Call { context: "parentIndex failed".into(), source: e })?;
 
         Ok(GameInfo { root_claim, l2_block_number, parent_index })
+    }
+
+    async fn status(&self, game_address: Address) -> Result<u8, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .status()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "status failed".into(), source: e })
+    }
+
+    async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .zkProver()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "zkProver failed".into(), source: e })
+    }
+
+    async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        let block_u256: U256 = contract.startingBlockNumber().call().await.map_err(|e| {
+            ContractError::Call { context: "startingBlockNumber failed".into(), source: e }
+        })?;
+
+        block_u256
+            .try_into()
+            .map_err(|_| ContractError::Validation("startingBlockNumber overflows u64".into()))
     }
 
     async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError> {

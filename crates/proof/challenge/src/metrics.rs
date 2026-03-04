@@ -9,6 +9,12 @@ impl ChallengerMetrics {
     /// Gauge: challenger is running (set to 1 at startup).
     pub const UP: &str = "base_challenger_up";
 
+    /// Counter: total number of games evaluated during scanning.
+    pub const GAMES_SCANNED_TOTAL: &str = "base_challenger_games_scanned_total";
+
+    /// Gauge: latest factory index scanned by the game scanner.
+    pub const SCAN_HEAD: &str = "base_challenger_scan_head";
+
     /// Label key for version.
     pub const LABEL_VERSION: &str = "version";
 
