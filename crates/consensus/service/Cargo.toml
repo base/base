@@ -45,6 +45,7 @@ base-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-alloy-provider.workspace = true
 
 # general
+serde.workspace = true
 url.workspace = true
 libp2p.workspace = true
 libp2p-stream.workspace = true
