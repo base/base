@@ -2713,6 +2713,7 @@ dependencies = [
  "serde",
  "strum 0.28.0",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4280,6 +4281,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "async-trait",
  "base-alloy-consensus",
  "base-alloy-flz",
  "base-execution-chainspec",
@@ -4303,10 +4305,10 @@ dependencies = [
  "reth-tasks",
  "reth-transaction-pool",
  "serde",
- "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
