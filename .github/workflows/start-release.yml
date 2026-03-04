@@ -15,6 +15,8 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   start:
@@ -32,8 +34,25 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
       - name: Create release branch
         run: ./etc/scripts/release/start-release.sh "${{ inputs.bump_type }}"
+
+      - name: Run version sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(cat "${{ runner.temp }}/release_branch")
+          ./etc/scripts/release/version-sync.sh "$BRANCH"
+
+      - name: Create release tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH=$(cat "${{ runner.temp }}/release_branch")
+          ./etc/scripts/release/create-issue.sh "$BRANCH"
 
       - name: Summary
         run: |
