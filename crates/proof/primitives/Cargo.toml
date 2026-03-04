@@ -1,0 +1,33 @@
+[package]
+name = "base-proof-primitives"
+description = "Shared primitive types and traits for the Base proof system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# General
+alloy-primitives = { workspace = true }
+base-proof-preimage = { workspace = true }
+
+[dependencies.serde]
+workspace = true
+optional = true
+features = ["derive"]
+
+[features]
+default = []
+std = [
+    "alloy-primitives/std",
+    "base-proof-preimage/std",
+]
+serde = [
+    "dep:serde",
+    "alloy-primitives/serde",
+    "base-proof-preimage/serde",
+]

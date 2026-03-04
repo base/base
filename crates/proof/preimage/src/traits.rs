@@ -111,6 +111,27 @@ pub trait PreimageServerBackend: PreimageFetcher + HintRouter {}
 // Implement the super trait for any type that satisfies the bounds
 impl<T: PreimageFetcher + HintRouter> PreimageServerBackend for T {}
 
+/// A cache that can be flushed to discard cached data.
+pub trait FlushableCache {
+    /// Flush the cache, discarding all cached entries.
+    fn flush(&self);
+}
+
+/// A witness oracle that supports preimage insertion and finalization.
+///
+/// Extends [`CommsClient`] and [`FlushableCache`] to provide a unified
+/// interface for oracle implementations across TEE, ZK, and FPVM backends.
+pub trait WitnessOracle: CommsClient + FlushableCache + Send + Sync {
+    /// Insert a preimage into the oracle under the given key.
+    fn insert_preimage(&mut self, key: PreimageKey, value: Vec<u8>);
+
+    /// Finalize the oracle, signaling that no more preimages will be inserted.
+    fn finalize(&mut self);
+
+    /// Return the number of preimages currently held by the oracle.
+    fn preimage_count(&self) -> usize;
+}
+
 /// A [`Channel`] is a high-level interface to read and write data to a counterparty.
 #[async_trait]
 pub trait Channel {
