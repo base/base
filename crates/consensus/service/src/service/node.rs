@@ -258,47 +258,44 @@ impl RollupNode {
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
-        let derivation: ConfiguredDerivationActor =
-            if let Some(l2_source) = self.delegate_l2_source.clone() {
-                ConfiguredDerivationActor::DelegateL2(Box::new(
-                    DelegateL2DerivationActor::<_>::new(
-                        QueuedDerivationEngineClient {
-                            engine_actor_request_tx: engine_actor_request_tx.clone(),
-                        },
-                        engine_actor_request_tx.clone(),
-                        cancellation.clone(),
-                        derivation_actor_request_rx,
-                        self.l2_provider.clone(),
-                        l2_source,
-                    ),
-                ))
-            } else if let Some(provider) = self.derivation_delegate_provider.clone() {
-                // L1 Provider for sanity checking Derivation Delegation
-                let l1_provider = AlloyChainProvider::new(
-                    self.l1_config.engine_provider.clone(),
-                    DERIVATION_PROVIDER_CACHE_SIZE,
-                );
-                ConfiguredDerivationActor::Delegate(Box::new(DelegateDerivationActor::<_>::new(
-                    QueuedDerivationEngineClient {
-                        engine_actor_request_tx: engine_actor_request_tx.clone(),
-                    },
-                    cancellation.clone(),
-                    derivation_actor_request_rx,
-                    provider,
-                    l1_provider,
-                )))
-            } else {
-                ConfiguredDerivationActor::Normal(Box::new(
-                    DerivationActor::<_, OnlinePipeline>::new(
-                        QueuedDerivationEngineClient {
-                            engine_actor_request_tx: engine_actor_request_tx.clone(),
-                        },
-                        cancellation.clone(),
-                        derivation_actor_request_rx,
-                        self.create_pipeline().await,
-                    ),
-                ))
-            };
+        let derivation: ConfiguredDerivationActor = if let Some(l2_source) =
+            self.delegate_l2_source.clone()
+        {
+            ConfiguredDerivationActor::DelegateL2(Box::new(DelegateL2DerivationActor::<_>::new(
+                QueuedDerivationEngineClient {
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                },
+                engine_actor_request_tx.clone(),
+                cancellation.clone(),
+                derivation_actor_request_rx,
+                self.l2_provider.clone(),
+                l2_source,
+            )))
+        } else if let Some(provider) = self.derivation_delegate_provider.clone() {
+            // L1 Provider for sanity checking Derivation Delegation
+            let l1_provider = AlloyChainProvider::new(
+                self.l1_config.engine_provider.clone(),
+                DERIVATION_PROVIDER_CACHE_SIZE,
+            );
+            ConfiguredDerivationActor::Delegate(Box::new(DelegateDerivationActor::<_>::new(
+                QueuedDerivationEngineClient {
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                },
+                cancellation.clone(),
+                derivation_actor_request_rx,
+                provider,
+                l1_provider,
+            )))
+        } else {
+            ConfiguredDerivationActor::Normal(Box::new(DerivationActor::<_, OnlinePipeline>::new(
+                QueuedDerivationEngineClient {
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                },
+                cancellation.clone(),
+                derivation_actor_request_rx,
+                self.create_pipeline().await,
+            )))
+        };
 
         // Create the p2p actor.
         let (

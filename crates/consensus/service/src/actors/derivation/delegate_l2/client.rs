@@ -1,14 +1,12 @@
 use std::fmt::Debug;
 
-use alloy_consensus::{Block, BlockHeader};
+use alloy_consensus::Block;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
-use base_alloy_rpc_types_engine::{
-    OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadSidecar,
-};
+use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use thiserror::Error;
 use url::Url;
 
@@ -83,13 +81,6 @@ impl L2SourceClient for DelegateL2Client {
             .map_err(|e| DelegateL2ClientError::FetchBlock { tag: format!("{number}"), source: e })?
             .ok_or_else(|| DelegateL2ClientError::BlockNotFound(format!("{number}")))?;
 
-        info!(
-            "Fetched block {} with hash {} from L2 EL, requests hash present: {}",
-            rpc_block.header.number,
-            rpc_block.header.hash,
-            rpc_block.header.requests_hash.is_some()
-        );
-
         let block_hash = rpc_block.header.hash;
         let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;
 
@@ -107,16 +98,6 @@ impl L2SourceClient for DelegateL2Client {
                 withdrawals: rpc_block.withdrawals,
             },
         };
-
-        let sidecar = OpExecutionPayloadSidecar::from_block(&consensus_block);
-
-        info!(
-            "Extracted sidecar for block {}: ecotone fields present: {}, isthmus fields present: {}, requests hash: {}",
-            consensus_block.header.number,
-            sidecar.ecotone().is_some(),
-            sidecar.isthmus().is_some(),
-            consensus_block.requests_hash().is_some(),
-        );
 
         let (execution_payload, _sidecar) =
             OpExecutionPayload::from_block_unchecked(block_hash, &consensus_block);

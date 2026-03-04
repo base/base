@@ -49,6 +49,7 @@ impl Cli {
 
 /// Commands for the Base Consensus CLI.
 #[derive(Subcommand, Clone, Debug)]
+#[expect(clippy::large_enum_variant)]
 pub enum Commands {
     /// Start the node
     #[command(name = "node")]
@@ -133,19 +134,18 @@ impl Follow {
             mode: NodeMode::Validator,
         };
 
-        let local_l2_provider =
-            alloy_provider::RootProvider::<base_alloy_network::Base>::new_http(
-                self.l2_rpc_url.clone(),
-            );
+        let local_l2_provider = alloy_provider::RootProvider::<base_alloy_network::Base>::new_http(
+            self.l2_rpc_url.clone(),
+        );
         let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
 
         FollowNode::new(rollup_config, engine_config, local_l2_provider, l2_source)
             .start()
             .await
             .map_err(|e| {
-                error!(target: "rollup_node", error = %e, "Failed to start follow node");
-                eyre::eyre!("{e}")
-            })?;
+            error!(target: "rollup_node", error = %e, "Failed to start follow node");
+            eyre::eyre!("{e}")
+        })?;
 
         Ok(())
     }

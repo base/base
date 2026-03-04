@@ -33,7 +33,8 @@ where
     engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     local_l2_provider: RootProvider<Base>,
     l2_source: L2Source,
-    local_head: u64,
+    sent_head: u64,
+    engine_head: u64,
 }
 
 impl<DerivationEngineClient_, L2Source> CancellableContext
@@ -53,7 +54,7 @@ where
     L2Source: L2SourceClient,
 {
     /// Creates a new [`DelegateL2DerivationActor`].
-    pub fn new(
+    pub const fn new(
         engine_client: DerivationEngineClient_,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
         cancellation_token: CancellationToken,
@@ -68,7 +69,8 @@ where
             engine_actor_request_tx,
             local_l2_provider,
             l2_source,
-            local_head: 0,
+            sent_head: 0,
+            engine_head: 0,
         }
     }
 }
@@ -96,15 +98,17 @@ where
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
     async fn run(mut self) -> Result<(), DerivationError> {
-        if self.local_head == 0 {
-            self.local_head = self
+        if self.sent_head == 0 {
+            let head = self
                 .local_l2_provider
                 .get_block_number()
                 .await
                 .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+            self.sent_head = head;
+            self.engine_head = head;
         }
 
-        info!(target: "derivation", local_head = self.local_head, "Starting L2 delegate derivation");
+        info!(target: "derivation", head = self.sent_head, "Starting L2 delegate derivation");
         let mut ticker = time::interval(Self::POLL_INTERVAL);
         ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
@@ -140,11 +144,11 @@ where
         match request_type {
             DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(safe_head) => {
                 debug!(target: "derivation", safe_head = ?*safe_head, "Received safe head from engine.");
-                self.local_head = safe_head.block_info.number;
+                self.engine_head = safe_head.block_info.number;
             }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
                 info!(target: "derivation", head = safe_head.block_info.number, "Engine sync completed.");
-                self.local_head = safe_head.block_info.number;
+                self.engine_head = safe_head.block_info.number;
             }
             DerivationActorRequest::ProcessEngineSignalRequest(_)
             | DerivationActorRequest::ProcessFinalizedL1Block(_)
@@ -163,11 +167,11 @@ where
             .await
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
 
-        if remote_head <= self.local_head {
+        if remote_head <= self.sent_head {
             return Ok(());
         }
 
-        for block_num in (self.local_head + 1)..=remote_head {
+        for block_num in (self.sent_head + 1)..=remote_head {
             if self.cancellation_token.is_cancelled() {
                 info!(target: "derivation", block = block_num, "Sync interrupted by shutdown");
                 return Ok(());
@@ -186,9 +190,7 @@ where
             );
 
             self.engine_actor_request_tx
-                .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(
-                    payload,
-                )))
+                .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload)))
                 .await
                 .map_err(|_| {
                     DerivationError::Sender(Box::new(std::io::Error::new(
@@ -197,7 +199,7 @@ where
                     )))
                 })?;
 
-            self.local_head = block_num;
+            self.sent_head = block_num;
         }
 
         self.update_safe_and_finalized().await?;
@@ -207,10 +209,8 @@ where
 
     async fn update_safe_and_finalized(&self) -> Result<(), DerivationError> {
         if let Ok(safe_number) = self.l2_source.get_block_number(BlockNumberOrTag::Safe).await {
-            let clamped_safe = safe_number.min(self.local_head);
-            if let Ok(safe_payload) =
-                self.l2_source.get_payload_by_number(clamped_safe).await
-            {
+            let clamped_safe = safe_number.min(self.engine_head);
+            if let Ok(safe_payload) = self.l2_source.get_payload_by_number(clamped_safe).await {
                 let safe_l2 = L2BlockInfo {
                     block_info: base_protocol::BlockInfo {
                         hash: safe_payload.execution_payload.block_hash(),
@@ -227,16 +227,11 @@ where
             }
         }
 
-        if let Ok(finalized_number) = self
-            .l2_source
-            .get_block_number(BlockNumberOrTag::Finalized)
-            .await
+        if let Ok(finalized_number) =
+            self.l2_source.get_block_number(BlockNumberOrTag::Finalized).await
         {
-            let clamped_finalized = finalized_number.min(self.local_head);
-            let _ = self
-                .engine_client
-                .send_finalized_l2_block(clamped_finalized)
-                .await;
+            let clamped_finalized = finalized_number.min(self.engine_head);
+            let _ = self.engine_client.send_finalized_l2_block(clamped_finalized).await;
         }
 
         Ok(())
@@ -256,8 +251,7 @@ mod tests {
 
     use super::*;
     use crate::actors::derivation::{
-        delegate_l2::client::MockL2SourceClient,
-        engine_client::MockDerivationEngineClient,
+        delegate_l2::client::MockL2SourceClient, engine_client::MockDerivationEngineClient,
     };
 
     fn dummy_l2_block_info(number: u64) -> L2BlockInfo {
@@ -307,9 +301,8 @@ mod tests {
         let (deriv_tx, deriv_rx) = mpsc::channel(16);
         let (engine_tx, engine_rx) = mpsc::channel(16);
 
-        let local_l2_provider = RootProvider::<Base>::new_http(
-            "http://localhost:1234".parse().unwrap(),
-        );
+        let local_l2_provider =
+            RootProvider::<Base>::new_http("http://localhost:1234".parse().unwrap());
 
         let actor = DelegateL2DerivationActor::new(
             engine_client,
@@ -329,17 +322,17 @@ mod tests {
         let l2_source = MockL2SourceClient::new();
         let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
 
-        assert_eq!(actor.local_head, 0);
+        assert_eq!(actor.engine_head, 0);
 
         let safe_head = dummy_l2_block_info(42);
         actor
-            .handle_request(DerivationActorRequest::ProcessEngineSyncCompletionRequest(
-                Box::new(safe_head),
-            ))
+            .handle_request(DerivationActorRequest::ProcessEngineSyncCompletionRequest(Box::new(
+                safe_head,
+            )))
             .await
             .unwrap();
 
-        assert_eq!(actor.local_head, 42);
+        assert_eq!(actor.engine_head, 42);
     }
 
     #[tokio::test]
@@ -350,13 +343,13 @@ mod tests {
 
         let safe_head = dummy_l2_block_info(100);
         actor
-            .handle_request(DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(
-                Box::new(safe_head),
-            ))
+            .handle_request(DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(
+                safe_head,
+            )))
             .await
             .unwrap();
 
-        assert_eq!(actor.local_head, 100);
+        assert_eq!(actor.engine_head, 100);
     }
 
     #[tokio::test]
@@ -366,20 +359,16 @@ mod tests {
         let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
 
         actor
-            .handle_request(DerivationActorRequest::ProcessL1HeadUpdateRequest(
-                Box::new(BlockInfo::default()),
-            ))
+            .handle_request(DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::default()))
             .await
             .unwrap();
 
         actor
-            .handle_request(DerivationActorRequest::ProcessFinalizedL1Block(
-                Box::new(BlockInfo::default()),
-            ))
+            .handle_request(DerivationActorRequest::ProcessFinalizedL1Block(Box::default()))
             .await
             .unwrap();
 
-        assert_eq!(actor.local_head, 0);
+        assert_eq!(actor.engine_head, 0);
     }
 
     #[tokio::test]
@@ -387,16 +376,13 @@ mod tests {
         let engine_client = MockDerivationEngineClient::new();
         let mut l2_source = MockL2SourceClient::new();
 
-        l2_source
-            .expect_get_block_number()
-            .with(eq(BlockNumberOrTag::Latest))
-            .returning(|_| Ok(5));
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(5));
 
         let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
-        actor.local_head = 10;
+        actor.sent_head = 10;
 
         actor.sync_from_source().await.unwrap();
-        assert_eq!(actor.local_head, 10);
+        assert_eq!(actor.sent_head, 10);
     }
 
     #[tokio::test]
@@ -404,10 +390,7 @@ mod tests {
         let mut engine_client = MockDerivationEngineClient::new();
         let mut l2_source = MockL2SourceClient::new();
 
-        l2_source
-            .expect_get_block_number()
-            .with(eq(BlockNumberOrTag::Latest))
-            .returning(|_| Ok(3));
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(3));
 
         l2_source
             .expect_get_payload_by_number()
@@ -422,10 +405,7 @@ mod tests {
             .with(eq(3))
             .returning(|n| Ok(dummy_payload_envelope(n)));
 
-        l2_source
-            .expect_get_block_number()
-            .with(eq(BlockNumberOrTag::Safe))
-            .returning(|_| Ok(2));
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(2));
         l2_source
             .expect_get_payload_by_number()
             .with(eq(2))
@@ -435,18 +415,15 @@ mod tests {
             .with(eq(BlockNumberOrTag::Finalized))
             .returning(|_| Ok(1));
 
-        engine_client
-            .expect_send_safe_l2_signal()
-            .returning(|_| Ok(()));
-        engine_client
-            .expect_send_finalized_l2_block()
-            .returning(|_| Ok(()));
+        engine_client.expect_send_safe_l2_signal().returning(|_| Ok(()));
+        engine_client.expect_send_finalized_l2_block().returning(|_| Ok(()));
 
         let (mut actor, _, mut engine_rx, _) = make_actor(engine_client, l2_source);
-        actor.local_head = 0;
+        actor.sent_head = 0;
+        actor.engine_head = 2; // Allow safe/finalized updates up to block 2
 
         actor.sync_from_source().await.unwrap();
-        assert_eq!(actor.local_head, 3);
+        assert_eq!(actor.sent_head, 3);
 
         for expected_num in 1..=3 {
             let req = engine_rx.try_recv().unwrap();
@@ -470,12 +447,12 @@ mod tests {
             .returning(|_| Ok(100));
 
         let (mut actor, _, engine_rx, cancel) = make_actor(engine_client, l2_source);
-        actor.local_head = 0;
+        actor.sent_head = 0;
 
         cancel.cancel();
         actor.sync_from_source().await.unwrap();
 
-        assert_eq!(actor.local_head, 0);
+        assert_eq!(actor.sent_head, 0);
         assert!(engine_rx.is_empty());
     }
 
@@ -485,7 +462,7 @@ mod tests {
         let l2_source = MockL2SourceClient::new();
         let (mut actor, _deriv_tx, _engine_rx, cancel) = make_actor(engine_client, l2_source);
 
-        actor.local_head = 10;
+        actor.sent_head = 10;
         cancel.cancel();
 
         let result = actor.run().await;
@@ -498,7 +475,7 @@ mod tests {
         let l2_source = MockL2SourceClient::new();
         let (mut actor, deriv_tx, _engine_rx, _cancel) = make_actor(engine_client, l2_source);
 
-        actor.local_head = 10;
+        actor.sent_head = 10;
         drop(deriv_tx);
 
         let result = actor.run().await;
