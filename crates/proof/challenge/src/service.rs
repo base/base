@@ -3,7 +3,6 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use eyre::Result;
-use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::ChallengerConfig;
@@ -51,16 +50,11 @@ impl ChallengerService {
 
         // ── 2. Start health HTTP server ──────────────────────────────────────
         // Ready flag is hardcoded to false — no driver is wired yet.
-        // The CancellationToken is never explicitly cancelled; when
-        // `run_until_ctrl_c` receives Ctrl-C the runtime drops and aborts
-        // all spawned tasks.
         let ready = Arc::new(AtomicBool::new(false));
-        let health_cancel = CancellationToken::new();
         let health_handle = {
             let addr = config.health_addr;
             let ready_flag = Arc::clone(&ready);
-            let cancel = health_cancel;
-            tokio::spawn(async move { crate::HealthServer::serve(addr, ready_flag, cancel).await })
+            tokio::spawn(async move { crate::HealthServer::serve(addr, ready_flag).await })
         };
 
         info!("Service initialised, waiting for shutdown signal");

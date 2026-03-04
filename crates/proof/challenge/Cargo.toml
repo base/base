@@ -16,7 +16,6 @@ workspace = true
 alloy-primitives.workspace = true
 
 # Async
-tokio-util.workspace = true
 tokio.workspace = true
 
 # Tracing
