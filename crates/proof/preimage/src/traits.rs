@@ -123,10 +123,10 @@ pub trait FlushableCache {
 /// interface for oracle implementations across TEE, ZK, and FPVM backends.
 pub trait WitnessOracle: CommsClient + FlushableCache + Send + Sync {
     /// Insert a preimage into the oracle under the given key.
-    fn insert_preimage(&mut self, key: PreimageKey, value: Vec<u8>);
+    fn insert_preimage(&self, key: PreimageKey, value: Vec<u8>);
 
     /// Finalize the oracle, signaling that no more preimages will be inserted.
-    fn finalize(&mut self);
+    fn finalize(&self);
 
     /// Return the number of preimages currently held by the oracle.
     fn preimage_count(&self) -> usize;
