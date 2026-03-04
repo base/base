@@ -2,11 +2,20 @@
 
 use std::time::Duration;
 
+use alloy_consensus::TxReceipt;
+use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, U256};
+use alloy_provider::Provider;
+use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolConstructor, SolEvent};
 use base_builder_core::{
-    BuilderConfig, FlashblocksConfig,
-    test_utils::{TransactionBuilderExt, funded_signer, setup_test_instance_with_builder_config},
+    BuilderConfig, FlashblockIndexConfig, FlashblocksConfig,
+    test_utils::{
+        BUILDER_PRIVATE_KEY, ONE_ETH, TransactionBuilderExt, funded_signer,
+        setup_test_instance_with_builder_config,
+    },
 };
+use base_contracts_bindings::l2::FlashblockIndex;
 
 /// Verify that flashblock metadata contains correct `new_account_balances` and `receipts`.
 ///
@@ -361,6 +370,95 @@ async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
         B256::ZERO,
         "State root should be zero when disable_state_root is true"
     );
+
+    Ok(())
+}
+
+/// Verifies that when `FlashblockIndexConfig` is enabled, the builder injects index
+/// transactions at each flashblock boundary and users can read the on-chain state.
+#[tokio::test]
+async fn test_flashblock_index_written_on_chain() -> eyre::Result<()> {
+    let deployer: PrivateKeySigner = BUILDER_PRIVATE_KEY.parse()?;
+    let index_signer = PrivateKeySigner::random();
+
+    let contract_address = deployer.address().create(0);
+
+    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true);
+    let config = BuilderConfig::for_tests()
+        .with_block_time_ms(2000)
+        .with_flashblocks(flashblocks)
+        .with_flashblock_index(FlashblockIndexConfig {
+            signer: index_signer.clone(),
+            contract_address,
+        });
+
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+
+    // Block 1: deploy the FlashblockIndex contract and fund the index signer.
+    // Deploy TX goes first (nonce 0) so the pre-computed contract address matches.
+    // Index TXs with the unfunded signer will silently fail this block.
+    let constructor =
+        FlashblockIndex::constructorCall { builder: index_signer.address() }.abi_encode();
+    let mut deploy_bytecode = FlashblockIndex::BYTECODE.to_vec();
+    deploy_bytecode.extend_from_slice(&constructor);
+
+    let _ = driver
+        .create_transaction()
+        .with_create()
+        .with_input(deploy_bytecode.into())
+        .with_gas_limit(1_000_000)
+        .with_signer(&deployer)
+        .send()
+        .await?;
+    let _ = driver
+        .create_transaction()
+        .with_to(index_signer.address())
+        .with_value(10 * ONE_ETH)
+        .with_signer(&deployer)
+        .send()
+        .await?;
+    driver.build_new_block_with_current_timestamp(None).await?;
+
+    let code = driver.provider().get_code_at(contract_address).await?;
+    assert!(!code.is_empty(), "FlashblockIndex should be deployed at {contract_address}");
+
+    // Block 2: build with flashblocks — index TX fires at each flashblock boundary.
+    let _ = driver.create_transaction().random_valid_transfer().send().await?;
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let block_number = block.header.number;
+
+    // Verify the on-chain state written by the index TXs.
+    let contract = FlashblockIndex::new(contract_address, driver.provider());
+    let result = contract.get().call().await?;
+
+    // Flashblock indices start at 1, so flashblockIndex == number of index TXs injected.
+    let num_index_txs = result.flashblockIndex as usize;
+    assert!(num_index_txs > 0, "flashblockIndex should be > 0");
+
+    // The block should contain exactly: 1 deposit TX + N index TXs + 1 user TX.
+    assert_eq!(
+        block.transactions.len(),
+        1 + num_index_txs + 1,
+        "block should contain 1 deposit + {num_index_txs} index TXs + 1 user TX",
+    );
+    assert_eq!(
+        result.blockNumber.to::<u64>(),
+        block_number,
+        "blockNumber from get() should match the latest block",
+    );
+
+    // Collect FlashblockIndexUpdated events from all receipts and verify indices 1..=N.
+    let mut seen_indices = Vec::new();
+    for tx in block.transactions.as_transactions().unwrap() {
+        let receipt = driver.provider().get_transaction_receipt(tx.tx_hash()).await?.unwrap();
+        for log in receipt.inner.inner.logs() {
+            if let Ok(e) = FlashblockIndex::FlashblockIndexUpdated::decode_log(&log.inner) {
+                seen_indices.push(e.flashblockIndex);
+            }
+        }
+    }
+    assert_eq!(seen_indices, (1..=num_index_txs as u8).collect::<Vec<_>>());
 
     Ok(())
 }

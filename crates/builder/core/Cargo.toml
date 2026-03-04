@@ -59,6 +59,7 @@ base-node-runner.workspace = true
 base-alloy-flashblocks.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true
+base-contracts-bindings.workspace = true
 
 # reth
 reth-cli.workspace = true
