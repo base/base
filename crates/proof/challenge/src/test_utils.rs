@@ -348,6 +348,7 @@ mod tests {
     }
 
     /// Error resilience: a per-game error is logged and skipped, other games still returned.
+    /// `new_last_scanned` is set to one before the errored index so it will be retried.
     #[tokio::test]
     async fn test_scan_skips_errored_games() {
         // 3 games: index 1 will error, indices 0 and 2 are valid candidates
@@ -377,11 +378,98 @@ mod tests {
 
         // start = max(0, 3-1000) = 0, end = 2
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
+        // new_last_scanned = lowest_error(1) - 1 = 0, so next scan retries from index 1.
         let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].index, 0);
         assert_eq!(candidates[1].index, 2);
+        assert_eq!(new_last_scanned, Some(0));
+    }
+
+    /// Retry: errored games are retried on the next scan when the error clears.
+    #[tokio::test]
+    async fn test_scan_retries_errored_games() {
+        // Phase 1: index 1 errors, so new_last_scanned = Some(0)
+        let factory = Arc::new(ErrorOnIndexFactory {
+            inner: MockDisputeGameFactory {
+                games: vec![
+                    factory_game(0, TARGET_TYPE),
+                    factory_game(1, TARGET_TYPE),
+                    factory_game(2, TARGET_TYPE),
+                ],
+            },
+            error_indices: vec![1],
+        });
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
+        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
+        verifier_games.insert(addr(2), mock_state(0, Address::ZERO, 300));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games.clone() });
+
+        let scanner = GameScanner::new(
+            factory,
+            verifier,
+            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+        );
+
+        let (_, new_last_scanned) = scanner.scan(None).await.unwrap();
+        assert_eq!(new_last_scanned, Some(0));
+
+        // Phase 2: no errors, pass last_scanned = Some(0) to retry from index 1
+        let factory2 = Arc::new(MockDisputeGameFactory {
+            games: vec![
+                factory_game(0, TARGET_TYPE),
+                factory_game(1, TARGET_TYPE),
+                factory_game(2, TARGET_TYPE),
+            ],
+        });
+
+        let verifier2 = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let scanner2 = GameScanner::new(
+            factory2,
+            verifier2,
+            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+        );
+
+        let (candidates, new_last_scanned) = scanner2.scan(Some(0)).await.unwrap();
+
+        // Indices 1 and 2 are now scanned successfully
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].index, 1);
+        assert_eq!(candidates[1].index, 2);
         assert_eq!(new_last_scanned, Some(2));
+    }
+
+    /// Error at the first index (0) with `last_scanned = None` preserves fresh-start semantics.
+    #[tokio::test]
+    async fn test_scan_error_at_first_index() {
+        let factory = Arc::new(ErrorOnIndexFactory {
+            inner: MockDisputeGameFactory {
+                games: vec![factory_game(0, TARGET_TYPE), factory_game(1, TARGET_TYPE)],
+            },
+            error_indices: vec![0],
+        });
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let scanner = GameScanner::new(
+            factory,
+            verifier,
+            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+        );
+
+        // last_scanned = None, lowest_error = 0 -> preserves None (fresh-start semantics)
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].index, 1);
+        assert_eq!(new_last_scanned, None);
     }
 }

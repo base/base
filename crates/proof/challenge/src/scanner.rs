@@ -116,6 +116,7 @@ impl GameScanner {
 
         let games_to_scan = end - start + 1;
         let mut candidates = Vec::new();
+        let mut lowest_error: Option<u64> = None;
 
         for i in start..=end {
             match self.evaluate_game(i).await {
@@ -123,6 +124,7 @@ impl GameScanner {
                 Ok(None) => {}
                 Err(e) => {
                     warn!(error = %e, index = i, "failed to query game, skipping");
+                    lowest_error = lowest_error.map_or(Some(i), |prev| Some(prev.min(i)));
                 }
             }
         }
@@ -137,7 +139,12 @@ impl GameScanner {
             "scan complete"
         );
 
-        Ok((candidates, Some(end)))
+        let new_last_scanned = match lowest_error {
+            Some(0) => last_scanned,
+            Some(e) => Some(e - 1),
+            None => Some(end),
+        };
+        Ok((candidates, new_last_scanned))
     }
 
     /// Evaluates a single game at the given factory index.
