@@ -3,10 +3,11 @@
 use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
+use alloy_signer::k256::ecdsa::SigningKey;
+use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::{LogConfig, MetricsConfig};
 use thiserror::Error;
 use url::Url;
-use zeroize::Zeroizing;
 
 use crate::cli::Cli;
 
@@ -44,9 +45,8 @@ pub enum ConfigError {
 pub enum SigningConfig {
     /// Local signing with an in-process private key (development).
     Local {
-        /// The private key (hex-encoded), wrapped in [`Zeroizing`] for
-        /// automatic memory zeroing on drop.
-        private_key: Zeroizing<String>,
+        /// The parsed private-key signer, ready for transaction signing.
+        signer: PrivateKeySigner,
     },
     /// Remote signing via a signer sidecar JSON-RPC endpoint (production).
     Remote {
@@ -60,8 +60,8 @@ pub enum SigningConfig {
 impl std::fmt::Debug for SigningConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Local { .. } => {
-                f.debug_struct("Local").field("private_key", &"[redacted]").finish()
+            Self::Local { signer } => {
+                f.debug_struct("Local").field("address", &signer.address()).finish()
             }
             Self::Remote { endpoint, address } => f
                 .debug_struct("Remote")
@@ -143,12 +143,11 @@ impl ChallengerConfig {
 
         // Read private key from environment only — never accepted as a CLI argument
         // because command-line arguments are visible in process listings.
-        let private_key: Option<Zeroizing<String>> =
-            std::env::var("CHALLENGER_PRIVATE_KEY").ok().map(Zeroizing::new);
+        let private_key: Option<String> = std::env::var("CHALLENGER_PRIVATE_KEY").ok();
 
         // Validate and extract signing config
         let signing = build_signing_config(
-            private_key,
+            private_key.as_deref(),
             cli.challenger.signer_endpoint.as_ref(),
             cli.challenger.signer_address.as_ref(),
         )?;
@@ -190,12 +189,20 @@ fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
 ///
 /// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
 fn build_signing_config(
-    private_key: Option<Zeroizing<String>>,
+    private_key: Option<&str>,
     signer_endpoint: Option<&Url>,
     signer_address: Option<&Address>,
 ) -> Result<SigningConfig, ConfigError> {
     match (private_key, signer_endpoint, signer_address) {
-        (Some(pk), None, None) => Ok(SigningConfig::Local { private_key: pk }),
+        (Some(pk), None, None) => {
+            let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
+            let key_bytes = hex::decode(hex_str)
+                .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?;
+            let signing_key = SigningKey::from_slice(&key_bytes)
+                .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
+            let signer = PrivateKeySigner::from_signing_key(signing_key);
+            Ok(SigningConfig::Local { signer })
+        }
         (None, Some(endpoint), Some(address)) => {
             validate_url(endpoint, "signer-endpoint")?;
             Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
@@ -354,8 +361,7 @@ mod tests {
     #[test]
     fn test_signing_config_local() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let signing =
-            build_signing_config(Some(Zeroizing::new(pk.to_string())), None, None).unwrap();
+        let signing = build_signing_config(Some(pk), None, None).unwrap();
         assert!(matches!(signing, SigningConfig::Local { .. }));
     }
 
@@ -377,8 +383,7 @@ mod tests {
     fn test_signing_config_both_provided() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let url = Url::parse("http://localhost:8546").unwrap();
-        let result =
-            build_signing_config(Some(Zeroizing::new(pk.to_string())), Some(&url), None);
+        let result = build_signing_config(Some(pk), Some(&url), None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
@@ -407,11 +412,11 @@ mod tests {
     }
 
     #[test]
-    fn test_signing_config_debug_redacts() {
-        let signing =
-            SigningConfig::Local { private_key: Zeroizing::new("0xdeadbeef".to_string()) };
+    fn test_signing_config_debug_shows_address() {
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let signing = build_signing_config(Some(pk), None, None).unwrap();
         let debug_output = format!("{signing:?}");
-        assert!(debug_output.contains("[redacted]"));
-        assert!(!debug_output.contains("deadbeef"));
+        assert!(debug_output.contains("address"));
+        assert!(!debug_output.contains("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"));
     }
 }

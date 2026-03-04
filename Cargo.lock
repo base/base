@@ -2641,10 +2641,13 @@ name = "base-challenger"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "axum",
  "base-cli-utils",
  "clap",
  "eyre",
+ "hex",
  "humantime",
  "metrics",
  "reqwest 0.13.2",
@@ -2655,7 +2658,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
- "zeroize",
 ]
 
 [[package]]

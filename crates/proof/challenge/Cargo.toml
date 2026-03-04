@@ -30,7 +30,9 @@ thiserror.workspace = true
 eyre.workspace = true
 
 # Crypto
-zeroize.workspace = true
+alloy-signer-local.workspace = true
+alloy-signer.workspace = true
+hex.workspace = true
 
 # CLI
 base-cli-utils.workspace = true
