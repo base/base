@@ -7,6 +7,7 @@ use base_alloy_network::Base;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
 use futures::future::OptionFuture;
+use serde::Deserialize;
 use tokio::{select, sync::mpsc, task::JoinHandle, time};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, error, info, warn};
@@ -16,6 +17,13 @@ use crate::{
     NodeActor,
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
+
+const PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
+
+#[derive(Debug, Deserialize)]
+struct ProofsSyncStatus {
+    latest: u64,
+}
 
 /// The [`NodeActor`] for the L2 delegate derivation sub-routine.
 ///
@@ -38,6 +46,7 @@ where
     l2_source: Arc<L2Source>,
     sent_head: u64,
     engine_head: u64,
+    proofs_enabled: bool,
 }
 
 impl<DerivationEngineClient_, L2Source> CancellableContext
@@ -74,7 +83,15 @@ where
             l2_source: Arc::new(l2_source),
             sent_head: 0,
             engine_head: 0,
+            proofs_enabled: false,
         }
+    }
+
+    /// Enables proofs sync gating. When enabled, sync will not advance beyond
+    /// `proofs_latest + 512` to prevent proofs from falling too far behind.
+    pub const fn with_proofs(mut self, enabled: bool) -> Self {
+        self.proofs_enabled = enabled;
+        self
     }
 }
 
@@ -163,6 +180,8 @@ where
                     let engine_actor_request_tx = self.engine_actor_request_tx.clone();
                     let engine_head = self.engine_head;
                     let sent_head = self.sent_head;
+                    let proofs_enabled = self.proofs_enabled;
+                    let local_l2_provider = self.local_l2_provider.clone();
 
                     sync_task = Some(tokio::spawn(async move {
                         SyncFromSourceTask::new(
@@ -172,6 +191,8 @@ where
                             engine_head,
                             sent_head,
                             l2_source,
+                            proofs_enabled,
+                            local_l2_provider,
                         )
                         .sync_from_source()
                         .await
@@ -217,6 +238,8 @@ pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
     engine_head: u64,
     sent_head: u64,
     l2_source: Arc<L2Source>,
+    proofs_enabled: bool,
+    local_l2_provider: RootProvider<Base>,
 }
 
 impl<DerivationEngineClient_, L2Source> SyncFromSourceTask<DerivationEngineClient_, L2Source>
@@ -231,6 +254,8 @@ where
         engine_head: u64,
         sent_head: u64,
         l2_source: Arc<L2Source>,
+        proofs_enabled: bool,
+        local_l2_provider: RootProvider<Base>,
     ) -> Self {
         Self {
             engine_client,
@@ -239,6 +264,8 @@ where
             engine_head,
             sent_head,
             l2_source,
+            proofs_enabled,
+            local_l2_provider,
         }
     }
 
@@ -251,6 +278,43 @@ where
             .get_block_number(BlockNumberOrTag::Latest)
             .await
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+
+        let sync_limit = if self.proofs_enabled {
+            match self
+                .local_l2_provider
+                .raw_request::<_, ProofsSyncStatus>("debug_proofsSyncStatus".into(), ())
+                .await
+            {
+                Ok(status) => {
+                    let cap = status.latest + PROOFS_MAX_BLOCKS_AHEAD;
+                    debug!(
+                        target: "derivation",
+                        proofs_latest = status.latest,
+                        cap,
+                        "Proofs sync gate active"
+                    );
+                    cap
+                }
+                Err(e) => {
+                    warn!(target: "derivation", error = %e, "Failed to fetch proofs sync status, skipping sync");
+                    return Ok(self.sent_head);
+                }
+            }
+        } else {
+            u64::MAX
+        };
+
+        let original_remote_head = remote_head;
+        let remote_head = remote_head.min(sync_limit);
+
+        if remote_head != original_remote_head {
+            info!(
+                target: "derivation",
+                sync_limit,
+                remote_head = original_remote_head,
+                "Remote head is ahead of proofs sync limit, capping sync"
+            );
+        }
 
         if remote_head <= self.sent_head {
             return Ok(self.sent_head);
@@ -413,6 +477,8 @@ mod tests {
     ) {
         let cancel = CancellationToken::new();
         let (engine_tx, engine_rx) = mpsc::channel(16);
+        let local_l2_provider =
+            RootProvider::<Base>::new_http("http://localhost:1234".parse().unwrap());
 
         let task = SyncFromSourceTask::new(
             Arc::new(engine_client),
@@ -421,6 +487,8 @@ mod tests {
             engine_head,
             sent_head,
             Arc::new(l2_source),
+            false,
+            local_l2_provider,
         );
 
         (task, engine_rx, cancel)

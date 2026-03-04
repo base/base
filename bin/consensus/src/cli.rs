@@ -97,6 +97,10 @@ pub struct Follow {
     #[command(flatten)]
     pub logging: LogArgs,
 
+    /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
+    #[arg(long = "proofs", env = "BASE_NODE_PROOFS")]
+    pub proofs: bool,
+
     /// L2 configuration file.
     #[clap(flatten)]
     pub l2_config: L2ConfigFile,
@@ -140,12 +144,13 @@ impl Follow {
         let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
 
         FollowNode::new(rollup_config, engine_config, local_l2_provider, l2_source)
+            .with_proofs(self.proofs)
             .start()
             .await
             .map_err(|e| {
-            error!(target: "rollup_node", error = %e, "Failed to start follow node");
-            eyre::eyre!("{e}")
-        })?;
+                error!(target: "rollup_node", error = %e, "Failed to start follow node");
+                eyre::eyre!("{e}")
+            })?;
 
         Ok(())
     }

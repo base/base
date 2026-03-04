@@ -24,6 +24,7 @@ pub struct FollowNode {
     engine_config: EngineConfig,
     local_l2_provider: RootProvider<Base>,
     l2_source: DelegateL2Client,
+    proofs_enabled: bool,
 }
 
 impl FollowNode {
@@ -34,7 +35,13 @@ impl FollowNode {
         local_l2_provider: RootProvider<Base>,
         l2_source: DelegateL2Client,
     ) -> Self {
-        Self { config, engine_config, local_l2_provider, l2_source }
+        Self { config, engine_config, local_l2_provider, l2_source, proofs_enabled: false }
+    }
+
+    /// Enables proofs sync gating via `debug_proofsSyncStatus`.
+    pub const fn with_proofs(mut self, enabled: bool) -> Self {
+        self.proofs_enabled = enabled;
+        self
     }
 
     #[allow(clippy::type_complexity)]
@@ -102,7 +109,8 @@ impl FollowNode {
             derivation_actor_request_rx,
             self.local_l2_provider.clone(),
             self.l2_source.clone(),
-        );
+        )
+        .with_proofs(self.proofs_enabled);
 
         crate::service::spawn_and_wait!(
             cancellation,

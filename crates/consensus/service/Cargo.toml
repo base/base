@@ -45,6 +45,7 @@ base-alloy-consensus.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # general
+serde.workspace = true
 url.workspace = true
 futures.workspace = true
 tower.workspace = true
