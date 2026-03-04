@@ -22,6 +22,7 @@ pub use task::{Forwarder, ValidTransaction};
 ///
 /// Cancels all forwarder tasks on drop. For a clean shutdown that waits for
 /// in-flight RPC requests to complete, use [`ForwarderHandle::shutdown`].
+#[must_use = "dropping the handle cancels all forwarder tasks without draining buffers — call shutdown() for graceful termination"]
 pub struct ForwarderHandle {
     cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
