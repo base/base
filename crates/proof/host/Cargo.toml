@@ -55,5 +55,5 @@ rocksdb = { workspace = true, optional = true, features = ["snappy", "bindgen-ru
 proptest.workspace = true
 
 [features]
-disk = ["dep:rocksdb"]
-precompiles = ["dep:revm"]
+disk = [ "dep:rocksdb" ]
+precompiles = [ "dep:revm" ]
