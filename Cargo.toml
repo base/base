@@ -43,6 +43,7 @@ default-members = [
   "bin/node",
   "bin/basectl",
   "bin/builder",
+  "bin/challenger",
   "bin/consensus",
   "bin/ingress-rpc",
   "bin/audit-archiver",
