@@ -179,6 +179,7 @@ where
                 let consensus = tx.transaction.clone_into_consensus();
                 let raw = Bytes::from(consensus.inner().encoded_2718());
                 self.buffer.push(ValidTransaction { sender, raw });
+                self.metrics.buffer_size.set(self.buffer.len() as f64);
                 false
             }
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -215,6 +216,7 @@ where
             self.buffer.len().min(self.config.max_batch_size)
         };
         let batch: Vec<ValidTransaction> = self.buffer.drain(..batch_size).collect();
+        self.metrics.buffer_size.set(self.buffer.len() as f64);
 
         if batch.is_empty() {
             return;

@@ -9,3 +9,14 @@ pub trait BuilderApi {
     #[method(name = "insertValidatedTransactions")]
     async fn insert_validated_transactions(&self, txs: Vec<ValidTransaction>) -> RpcResult<()>;
 }
+
+/// Stub server implementation. Will be filled in by the builder crate.
+#[derive(Debug)]
+pub struct BuilderApiHandler;
+
+#[async_trait::async_trait]
+impl BuilderApiServer for BuilderApiHandler {
+    async fn insert_validated_transactions(&self, _txs: Vec<ValidTransaction>) -> RpcResult<()> {
+        todo!("implement on builder side")
+    }
+}

@@ -1,4 +1,4 @@
-use metrics::{Counter, Histogram, Label, counter, histogram};
+use metrics::{Counter, Gauge, Histogram, Label, counter, gauge, histogram};
 
 /// Prometheus metrics for a single forwarder instance, labeled by builder URL.
 #[derive(Clone)]
@@ -15,6 +15,8 @@ pub struct ForwarderMetrics {
     pub txs_lagged: Counter,
     /// RPC round-trip latency in seconds (including retries).
     pub rpc_latency: Histogram,
+    /// Current number of transactions buffered and awaiting send.
+    pub buffer_size: Gauge,
 }
 
 impl ForwarderMetrics {
@@ -27,7 +29,8 @@ impl ForwarderMetrics {
             rpc_errors: counter!("txpool.forwarder.rpc_errors", labels.clone()),
             batches_lagged: counter!("txpool.forwarder.batches_lagged", labels.clone()),
             txs_lagged: counter!("txpool.forwarder.txs_lagged", labels.clone()),
-            rpc_latency: histogram!("txpool.forwarder.rpc_latency", labels),
+            rpc_latency: histogram!("txpool.forwarder.rpc_latency", labels.clone()),
+            buffer_size: gauge!("txpool.forwarder.buffer_size", labels),
         }
     }
 }
