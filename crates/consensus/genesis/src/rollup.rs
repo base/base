@@ -48,6 +48,12 @@ pub struct RollupConfig {
     /// The channel timeout after the Granite hardfork.
     #[cfg_attr(feature = "serde", serde(default = "default_granite_channel_timeout"))]
     pub granite_channel_timeout: u64,
+    /// Optional override for the Fjord max sequencer drift constant.
+    /// Allows chains with extended L1 finality requirements to customize the drift value.
+    /// When `None`, falls back to [`FJORD_MAX_SEQUENCER_DRIFT`] (1800s).
+    #[cfg(feature = "rollup_config_override")]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub fjord_max_sequencer_drift: Option<u64>,
     /// The L1 chain ID
     pub l1_chain_id: u64,
     /// The L2 chain ID
@@ -91,6 +97,8 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             seq_window_size: u.arbitrary()?,
             channel_timeout: u.arbitrary()?,
             granite_channel_timeout: u.arbitrary()?,
+            #[cfg(feature = "rollup_config_override")]
+            fjord_max_sequencer_drift: Option::<u64>::arbitrary(u)?,
             l1_chain_id: u.arbitrary()?,
             l2_chain_id: u.arbitrary()?,
             hardforks: HardForkConfig::arbitrary(u)?,
@@ -114,6 +122,8 @@ impl Default for RollupConfig {
             seq_window_size: 0,
             channel_timeout: 0,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            #[cfg(feature = "rollup_config_override")]
+            fjord_max_sequencer_drift: None,
             l1_chain_id: 0,
             l2_chain_id: Chain::from_id(0),
             hardforks: HardForkConfig::default(),
@@ -279,10 +289,13 @@ impl RollupConfig {
     /// Returns the max sequencer drift for the given timestamp.
     pub fn max_sequencer_drift(&self, timestamp: u64) -> u64 {
         if self.is_fjord_active(timestamp) {
-            FJORD_MAX_SEQUENCER_DRIFT
-        } else {
-            self.max_sequencer_drift
+            #[cfg(feature = "rollup_config_override")]
+            if let Some(drift) = self.fjord_max_sequencer_drift {
+                return drift;
+            }
+            return FJORD_MAX_SEQUENCER_DRIFT;
         }
+        self.max_sequencer_drift
     }
 
     /// Returns the max rlp bytes per channel for the given timestamp.
@@ -411,6 +424,7 @@ impl OpHardforks for RollupConfig {
 mod tests {
     #[cfg(feature = "serde")]
     use alloy_eips::BlockNumHash;
+    #[cfg(feature = "serde")]
     use alloy_primitives::address;
     #[cfg(feature = "serde")]
     use alloy_primitives::{U256, b256};
@@ -763,6 +777,8 @@ mod tests {
             seq_window_size: 3600,
             channel_timeout: 300,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            #[cfg(feature = "rollup_config_override")]
+            fjord_max_sequencer_drift: None,
             l1_chain_id: 3151908,
             l2_chain_id: Chain::from_id(1337),
             hardforks: HardForkConfig {
@@ -844,5 +860,23 @@ mod tests {
 
         assert_eq!(cfg.block_number_from_timestamp(20), 5);
         assert_eq!(cfg.block_number_from_timestamp(30), 10);
+    }
+
+    #[test]
+    #[cfg(feature = "rollup_config_override")]
+    fn test_fjord_max_sequencer_drift_override() {
+        let mut config = RollupConfig {
+            fjord_max_sequencer_drift: Some(3600),
+            max_sequencer_drift: 100,
+            hardforks: HardForkConfig { fjord_time: Some(100), ..Default::default() },
+            ..Default::default()
+        };
+        // Before Fjord: use configured value
+        assert_eq!(config.max_sequencer_drift(50), 100);
+        // At Fjord: use override
+        assert_eq!(config.max_sequencer_drift(100), 3600);
+        // With None override: fall back to constant
+        config.fjord_max_sequencer_drift = None;
+        assert_eq!(config.max_sequencer_drift(100), FJORD_MAX_SEQUENCER_DRIFT);
     }
 }

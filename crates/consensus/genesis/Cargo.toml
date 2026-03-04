@@ -79,3 +79,4 @@ serde = [
 	"base-revm?/serde",
 	"dep:serde",
 ]
+rollup_config_override = []

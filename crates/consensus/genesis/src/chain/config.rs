@@ -124,6 +124,8 @@ impl ChainConfig {
             block_time: self.block_time,
             seq_window_size: self.seq_window_size,
             max_sequencer_drift: self.max_sequencer_drift,
+            #[cfg(feature = "rollup_config_override")]
+            fjord_max_sequencer_drift: None,
             hardforks: self.hardfork_config,
             batch_inbox_address: self.batch_inbox_addr,
             deposit_contract_address: self
