@@ -86,6 +86,7 @@ where
 
     /// Executes a single transaction and updates internal state.
     /// Should be called in order for each transaction.
+    #[instrument(level = "debug", skip_all, fields(tx_hash = %transaction.tx_hash(), idx = idx))]
     pub fn execute_transaction(
         &mut self,
         idx: usize,
