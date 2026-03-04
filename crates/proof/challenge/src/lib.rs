@@ -9,13 +9,13 @@ mod config;
 pub use config::{ChallengerConfig, ConfigError, SigningConfig};
 
 mod health;
-pub use health::serve;
+pub use health::HealthServer;
 
 mod metrics;
-pub use metrics::{INFO, LABEL_VERSION, UP, record_startup_metrics};
+pub use metrics::{ChallengerMetrics, INFO, LABEL_VERSION, UP};
 
 mod service;
-pub use service::run;
+pub use service::ChallengerService;
 
 mod signal;
 pub use signal::SignalHandler;

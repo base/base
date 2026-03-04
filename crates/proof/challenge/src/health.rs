@@ -50,41 +50,47 @@ async fn readiness(State(state): State<ServerState>) -> StatusCode {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Starts the health HTTP server.
-///
-/// The server binds to `addr` and runs until `cancel` is triggered.
-///
-/// # Arguments
-///
-/// * `addr`   — socket address to listen on (e.g. `0.0.0.0:8080`)
-/// * `ready`  — shared flag; `/readyz` returns 200 when this is `true`
-/// * `cancel` — cancellation token for graceful shutdown
-///
-/// # Errors
-///
-/// Returns an error if the TCP listener cannot bind to `addr`.
-pub async fn serve(
-    addr: SocketAddr,
-    ready: Arc<AtomicBool>,
-    cancel: CancellationToken,
-) -> eyre::Result<()> {
-    let state = ServerState { ready };
+/// Health-check HTTP server.
+#[derive(Debug)]
+pub struct HealthServer;
 
-    let app = Router::new()
-        .route("/healthz", get(liveness))
-        .route("/readyz", get(readiness))
-        .with_state(state);
+impl HealthServer {
+    /// Starts the health HTTP server.
+    ///
+    /// The server binds to `addr` and runs until `cancel` is triggered.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr`   — socket address to listen on (e.g. `0.0.0.0:8080`)
+    /// * `ready`  — shared flag; `/readyz` returns 200 when this is `true`
+    /// * `cancel` — cancellation token for graceful shutdown
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the TCP listener cannot bind to `addr`.
+    pub async fn serve(
+        addr: SocketAddr,
+        ready: Arc<AtomicBool>,
+        cancel: CancellationToken,
+    ) -> eyre::Result<()> {
+        let state = ServerState { ready };
 
-    let listener = TcpListener::bind(addr).await?;
-    info!(%addr, "Health server started");
+        let app = Router::new()
+            .route("/healthz", get(liveness))
+            .route("/readyz", get(readiness))
+            .with_state(state);
 
-    let cancel_for_shutdown = cancel;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move { cancel_for_shutdown.cancelled().await })
-        .await?;
+        let listener = TcpListener::bind(addr).await?;
+        info!(%addr, "Health server started");
 
-    info!("Health server stopped");
-    Ok(())
+        let cancel_for_shutdown = cancel;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { cancel_for_shutdown.cancelled().await })
+            .await?;
+
+        info!("Health server stopped");
+        Ok(())
+    }
 }
 
 #[cfg(test)]

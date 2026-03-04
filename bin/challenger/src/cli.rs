@@ -14,6 +14,6 @@ pub(crate) struct Cli {
 impl Cli {
     /// Run the challenger service.
     pub(crate) async fn run(self) -> eyre::Result<()> {
-        base_challenger::run(base_challenger::ChallengerConfig::from_cli(self.args)?).await
+        base_challenger::ChallengerService::run(base_challenger::ChallengerConfig::from_cli(self.args)?).await
     }
 }
