@@ -14,14 +14,8 @@ use crate::cli::Cli;
 
 /// Error returned when URL validation fails.
 #[derive(Debug, Error)]
-pub enum UrlValidationError {
-    /// The URL is missing a scheme.
-    #[error("missing scheme")]
-    MissingScheme,
-    /// The URL is missing a host.
-    #[error("missing host")]
-    MissingHost,
-}
+#[error("missing host")]
+pub struct UrlValidationError;
 
 /// A wrapper that guarantees the inner value has been validated.
 #[derive(Debug, Clone)]
@@ -31,11 +25,8 @@ impl TryFrom<Url> for Validated<Url> {
     type Error = UrlValidationError;
 
     fn try_from(url: Url) -> Result<Self, Self::Error> {
-        if url.scheme().is_empty() {
-            return Err(UrlValidationError::MissingScheme);
-        }
         if url.host().is_none() {
-            return Err(UrlValidationError::MissingHost);
+            return Err(UrlValidationError);
         }
         Ok(Self(url))
     }
@@ -383,7 +374,7 @@ mod tests {
     fn test_url_without_host() {
         let url = Url::parse("file:///some/path").unwrap();
         let result = Validated::try_from(url);
-        assert!(matches!(result, Err(UrlValidationError::MissingHost)));
+        assert!(matches!(result, Err(UrlValidationError)));
     }
 
     #[rstest]
