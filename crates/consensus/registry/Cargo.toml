@@ -50,3 +50,4 @@ std = [
 	"toml/std",
 ]
 test-utils = []
+rollup_config_override = ["base-consensus-genesis/rollup_config_override"]

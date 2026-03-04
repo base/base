@@ -44,6 +44,8 @@ pub const BASE_MAINNET_CONFIG: RollupConfig = RollupConfig {
     seq_window_size: 3600,
     channel_timeout: 300,
     granite_channel_timeout: 50,
+    #[cfg(feature = "rollup_config_override")]
+    fjord_max_sequencer_drift: None,
     l1_chain_id: 1,
     l2_chain_id: Chain::base_mainnet(),
     hardforks: HardForkConfig {
