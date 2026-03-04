@@ -30,6 +30,7 @@ members = [
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
+  "crates/proof/challenge",
   "crates/utilities/*",
   "crates/builder/*",
   "crates/infra/*",
@@ -43,6 +44,7 @@ default-members = [
   "bin/node",
   "bin/basectl",
   "bin/builder",
+  "bin/challenger",
   "bin/consensus",
   "bin/ingress-rpc",
   "bin/audit-archiver",
@@ -222,6 +224,7 @@ base-enclave-server = { path = "crates/proof/tee/server" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
+base-challenger = { path = "crates/proof/challenge" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
@@ -382,6 +385,7 @@ k256 = "0.13"
 ciborium = "0.2"
 x509-cert = "0.2"
 rustls = "0.23.35"
+zeroize = "1"
 secp256k1 = "0.30"
 rustls-pki-types = "1.0"
 rsa = { version = "0.9.10", features = ["sha2"] }
