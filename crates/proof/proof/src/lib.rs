@@ -29,7 +29,7 @@ mod boot;
 pub use boot::*;
 
 mod caching_oracle;
-pub use caching_oracle::{CachingOracle, FlushableCache};
+pub use caching_oracle::CachingOracle;
 
 mod blocking_runtime;
 pub use blocking_runtime::block_on;

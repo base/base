@@ -20,13 +20,14 @@ RUSTFLAGS="${RUSTFLAGS} --cfg getrandom_backend=\"custom\""
 export RUSTFLAGS
 
 proof_packages=(
-  base-proof-preimage
-  base-proof-mpt
-  base-proof-executor
-  base-proof-driver
   base-proof
   base-proof-client
+  base-proof-driver
+  base-proof-executor
   base-proof-fpvm-precompiles
+  base-proof-mpt
+  base-proof-preimage
+  base-proof-primitives
 )
 
 for package in "${proof_packages[@]}"; do

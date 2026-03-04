@@ -7,7 +7,8 @@ use core::num::NonZeroUsize;
 
 use async_trait::async_trait;
 use base_proof_preimage::{
-    HintWriterClient, PreimageKey, PreimageOracleClient, errors::PreimageOracleResult,
+    FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient,
+    errors::PreimageOracleResult,
 };
 use lru::LruCache;
 use spin::Mutex;
@@ -45,12 +46,6 @@ where
             hint_writer,
         }
     }
-}
-
-/// A trait that provides a method to flush a cache.
-pub trait FlushableCache {
-    /// Flushes the cache, removing all entries.
-    fn flush(&self);
 }
 
 impl<OR, HW> FlushableCache for CachingOracle<OR, HW>

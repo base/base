@@ -3078,8 +3078,6 @@ dependencies = [
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
- "base-proof",
- "base-proof-driver",
  "base-proof-executor",
  "base-proof-mpt",
  "base-proof-preimage",
@@ -4037,6 +4035,15 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "base-proof-primitives"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-proof-preimage",
+ "serde",
 ]
 
 [[package]]
