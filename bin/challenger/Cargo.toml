@@ -19,4 +19,5 @@ workspace = true
 base-challenger.workspace = true
 base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
+zeroize.workspace = true
 eyre.workspace = true

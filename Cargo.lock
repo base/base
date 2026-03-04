@@ -2669,6 +2669,7 @@ dependencies = [
  "base-cli-utils",
  "clap",
  "eyre",
+ "zeroize",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 //! CLI definition for the challenger binary.
 
 use clap::Parser;
+use zeroize::Zeroizing;
 
 /// Base Challenger.
 #[derive(Parser)]
@@ -14,7 +15,7 @@ pub(crate) struct Cli {
 impl Cli {
     /// Run the challenger service.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        let private_key = std::env::var("CHALLENGER_PRIVATE_KEY").ok();
+        let private_key = std::env::var("CHALLENGER_PRIVATE_KEY").ok().map(Zeroizing::new);
         let config = base_challenger::ChallengerConfig::from_cli(self.args, private_key)?;
         base_cli_utils::RuntimeManager::run_until_ctrl_c(base_challenger::ChallengerService::run(
             config,

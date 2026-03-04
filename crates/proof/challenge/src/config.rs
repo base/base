@@ -164,7 +164,7 @@ impl ChallengerConfig {
     /// # Errors
     ///
     /// Returns [`ConfigError`] if any validation check fails.
-    pub fn from_cli(cli: Cli, private_key: Option<String>) -> Result<Self, ConfigError> {
+    pub fn from_cli(cli: Cli, private_key: Option<Zeroizing<String>>) -> Result<Self, ConfigError> {
         let validate = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
             Validated::try_from(url)
                 .map_err(|e| ConfigError::InvalidUrl { field, reason: e.to_string() })
@@ -195,7 +195,7 @@ impl ChallengerConfig {
 
         // Validate and extract signing config
         let signing = build_signing_config(
-            private_key.as_deref(),
+            private_key.as_deref().map(String::as_str),
             cli.challenger.signer_endpoint,
             cli.challenger.signer_address.as_ref(),
         )?;
