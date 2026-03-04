@@ -1,21 +1,22 @@
-//! Chain specification for the Base devnet-0 network.
+//! Chain specification for the Base devnet-0-sepolia-dev-0 network.
 
 use alloc::{sync::Arc, vec};
 
 use alloy_chains::Chain;
 use alloy_primitives::{U256, b256};
-use base_execution_forks::{BASE_DEVNET_0_HARDFORKS, OpHardfork};
+use base_execution_forks::{BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS, OpHardfork};
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec, Hardfork};
 use reth_ethereum_forks::EthereumHardfork;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
 use crate::OpChainSpec;
 
-/// The Base devnet-0 spec
-pub static BASE_DEVNET_0: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
-    let genesis = serde_json::from_str(include_str!("../res/genesis/devnet_0_base.json"))
-        .expect("Can't deserialize Base devnet-0 genesis json");
-    let hardforks = BASE_DEVNET_0_HARDFORKS.clone();
+/// The Base devnet-0-sepolia-dev-0 spec
+pub static BASE_DEVNET_0_SEPOLIA_DEV_0: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+    let genesis =
+        serde_json::from_str(include_str!("../res/genesis/devnet_0_sepolia_dev_0_base.json"))
+            .expect("Can't deserialize Base devnet-0-sepolia-dev-0 genesis json");
+    let hardforks = BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS.clone();
     OpChainSpec {
         inner: ChainSpec {
             chain: Chain::from_id(11763072),

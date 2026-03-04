@@ -2,10 +2,11 @@ use alloy_chains::{Chain, NamedChain};
 use alloy_hardforks::{ForkCondition, hardfork};
 
 use crate::{
-    BASE_DEVNET_0_BEDROCK_BLOCK, BASE_DEVNET_0_CANYON_TIMESTAMP, BASE_DEVNET_0_ECOTONE_TIMESTAMP,
-    BASE_DEVNET_0_FJORD_TIMESTAMP, BASE_DEVNET_0_GRANITE_TIMESTAMP,
-    BASE_DEVNET_0_HOLOCENE_TIMESTAMP, BASE_DEVNET_0_ISTHMUS_TIMESTAMP,
-    BASE_DEVNET_0_JOVIAN_TIMESTAMP, BASE_DEVNET_0_REGOLITH_TIMESTAMP, BASE_MAINNET_BEDROCK_BLOCK,
+    BASE_DEVNET_0_SEPOLIA_DEV_0_BEDROCK_BLOCK, BASE_DEVNET_0_SEPOLIA_DEV_0_CANYON_TIMESTAMP,
+    BASE_DEVNET_0_SEPOLIA_DEV_0_ECOTONE_TIMESTAMP, BASE_DEVNET_0_SEPOLIA_DEV_0_FJORD_TIMESTAMP,
+    BASE_DEVNET_0_SEPOLIA_DEV_0_GRANITE_TIMESTAMP, BASE_DEVNET_0_SEPOLIA_DEV_0_HOLOCENE_TIMESTAMP,
+    BASE_DEVNET_0_SEPOLIA_DEV_0_ISTHMUS_TIMESTAMP, BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP,
+    BASE_DEVNET_0_SEPOLIA_DEV_0_REGOLITH_TIMESTAMP, BASE_MAINNET_BEDROCK_BLOCK,
     BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP, BASE_MAINNET_FJORD_TIMESTAMP,
     BASE_MAINNET_GRANITE_TIMESTAMP, BASE_MAINNET_HOLOCENE_TIMESTAMP,
     BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_MAINNET_REGOLITH_TIMESTAMP,
@@ -120,18 +121,33 @@ impl OpHardfork {
         ]
     }
 
-    /// Base devnet-0 list of hardforks.
-    pub const fn base_devnet_0() -> [(Self, ForkCondition); 9] {
+    /// Base devnet-0-sepolia-dev-0 list of hardforks.
+    pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 9] {
         [
-            (Self::Bedrock, ForkCondition::Block(BASE_DEVNET_0_BEDROCK_BLOCK)),
-            (Self::Regolith, ForkCondition::Timestamp(BASE_DEVNET_0_REGOLITH_TIMESTAMP)),
-            (Self::Canyon, ForkCondition::Timestamp(BASE_DEVNET_0_CANYON_TIMESTAMP)),
-            (Self::Ecotone, ForkCondition::Timestamp(BASE_DEVNET_0_ECOTONE_TIMESTAMP)),
-            (Self::Fjord, ForkCondition::Timestamp(BASE_DEVNET_0_FJORD_TIMESTAMP)),
-            (Self::Granite, ForkCondition::Timestamp(BASE_DEVNET_0_GRANITE_TIMESTAMP)),
-            (Self::Holocene, ForkCondition::Timestamp(BASE_DEVNET_0_HOLOCENE_TIMESTAMP)),
-            (Self::Isthmus, ForkCondition::Timestamp(BASE_DEVNET_0_ISTHMUS_TIMESTAMP)),
-            (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_JOVIAN_TIMESTAMP)),
+            (Self::Bedrock, ForkCondition::Block(BASE_DEVNET_0_SEPOLIA_DEV_0_BEDROCK_BLOCK)),
+            (
+                Self::Regolith,
+                ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_REGOLITH_TIMESTAMP),
+            ),
+            (Self::Canyon, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_CANYON_TIMESTAMP)),
+            (
+                Self::Ecotone,
+                ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_ECOTONE_TIMESTAMP),
+            ),
+            (Self::Fjord, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_FJORD_TIMESTAMP)),
+            (
+                Self::Granite,
+                ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_GRANITE_TIMESTAMP),
+            ),
+            (
+                Self::Holocene,
+                ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_HOLOCENE_TIMESTAMP),
+            ),
+            (
+                Self::Isthmus,
+                ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_ISTHMUS_TIMESTAMP),
+            ),
+            (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
         ]
     }
 
