@@ -1,7 +1,9 @@
 //! Contains the [`SystemConfig`] type.
 
 use alloy_consensus::{Eip658Value, Receipt};
-use alloy_primitives::{Address, B64, B256, Log, U256};
+#[cfg(feature = "serde")]
+use alloy_primitives::B256;
+use alloy_primitives::{Address, B64, Log, U256};
 
 use crate::{
     CONFIG_UPDATE_TOPIC, RollupConfig, SystemConfigLog, SystemConfigUpdateError,
