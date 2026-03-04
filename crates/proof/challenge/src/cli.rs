@@ -49,38 +49,23 @@ impl std::fmt::Debug for Cli {
 #[command(next_help_heading = "Challenger")]
 pub struct ChallengerArgs {
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(
-        long = "l1-eth-rpc",
-        env = "CHALLENGER_L1_ETH_RPC",
-    )]
+    #[arg(long = "l1-eth-rpc", env = "CHALLENGER_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(
-        long = "l2-eth-rpc",
-        env = "CHALLENGER_L2_ETH_RPC",
-    )]
+    #[arg(long = "l2-eth-rpc", env = "CHALLENGER_L2_ETH_RPC")]
     pub l2_eth_rpc: Url,
 
     /// URL of the rollup RPC endpoint.
-    #[arg(
-        long = "rollup-rpc",
-        env = "CHALLENGER_ROLLUP_RPC",
-    )]
+    #[arg(long = "rollup-rpc", env = "CHALLENGER_ROLLUP_RPC")]
     pub rollup_rpc: Url,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(
-        long = "dispute-game-factory-addr",
-        env = "CHALLENGER_DISPUTE_GAME_FACTORY_ADDR",
-    )]
+    #[arg(long = "dispute-game-factory-addr", env = "CHALLENGER_DISPUTE_GAME_FACTORY_ADDR")]
     pub dispute_game_factory_addr: Address,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(
-        long = "anchor-state-registry-addr",
-        env = "CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR",
-    )]
+    #[arg(long = "anchor-state-registry-addr", env = "CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR")]
     pub anchor_state_registry_addr: Address,
 
     /// Game type ID for dispute games to monitor.
@@ -97,26 +82,17 @@ pub struct ChallengerArgs {
     pub poll_interval: Duration,
 
     /// URL of the ZK proof service endpoint.
-    #[arg(
-        long = "zk-proof-service-endpoint",
-        env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT",
-    )]
+    #[arg(long = "zk-proof-service-endpoint", env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT")]
     pub zk_proof_service_endpoint: Url,
 
     /// URL of the signer sidecar JSON-RPC endpoint (for production).
     /// Must be used together with --signer-address.
-    #[arg(
-        long = "signer-endpoint",
-        env = "CHALLENGER_SIGNER_ENDPOINT",
-    )]
+    #[arg(long = "signer-endpoint", env = "CHALLENGER_SIGNER_ENDPOINT")]
     pub signer_endpoint: Option<Url>,
 
     /// Address of the signer account on the signer sidecar.
     /// Must be used together with --signer-endpoint.
-    #[arg(
-        long = "signer-address",
-        env = "CHALLENGER_SIGNER_ADDRESS",
-    )]
+    #[arg(long = "signer-address", env = "CHALLENGER_SIGNER_ADDRESS")]
     pub signer_address: Option<Address>,
 
     /// Number of past games to scan on startup.

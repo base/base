@@ -15,8 +15,8 @@ impl Cli {
     /// Run the challenger service.
     pub(crate) fn run(self) -> eyre::Result<()> {
         let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
-        base_cli_utils::RuntimeManager::run_until_ctrl_c(
-            base_challenger::ChallengerService::run(config),
-        )
+        base_cli_utils::RuntimeManager::run_until_ctrl_c(base_challenger::ChallengerService::run(
+            config,
+        ))
     }
 }

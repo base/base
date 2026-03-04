@@ -46,24 +46,15 @@ pub struct ProposerArgs {
     pub allow_non_finalized: bool,
 
     /// URL of the enclave RPC endpoint.
-    #[arg(
-        long = "enclave-rpc",
-        env = "BASE_PROPOSER_ENCLAVE_RPC",
-    )]
+    #[arg(long = "enclave-rpc", env = "BASE_PROPOSER_ENCLAVE_RPC")]
     pub enclave_rpc: Url,
 
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(
-        long = "l1-eth-rpc",
-        env = "BASE_PROPOSER_L1_ETH_RPC",
-    )]
+    #[arg(long = "l1-eth-rpc", env = "BASE_PROPOSER_L1_ETH_RPC")]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(
-        long = "l2-eth-rpc",
-        env = "BASE_PROPOSER_L2_ETH_RPC",
-    )]
+    #[arg(long = "l2-eth-rpc", env = "BASE_PROPOSER_L2_ETH_RPC")]
     pub l2_eth_rpc: Url,
 
     /// Use reth-specific RPC calls for L2.
@@ -71,17 +62,11 @@ pub struct ProposerArgs {
     pub l2_reth: bool,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(
-        long = "anchor-state-registry-addr",
-        env = "BASE_PROPOSER_ANCHOR_STATE_REGISTRY_ADDR",
-    )]
+    #[arg(long = "anchor-state-registry-addr", env = "BASE_PROPOSER_ANCHOR_STATE_REGISTRY_ADDR")]
     pub anchor_state_registry_addr: Address,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(
-        long = "dispute-game-factory-addr",
-        env = "BASE_PROPOSER_DISPUTE_GAME_FACTORY_ADDR",
-    )]
+    #[arg(long = "dispute-game-factory-addr", env = "BASE_PROPOSER_DISPUTE_GAME_FACTORY_ADDR")]
     pub dispute_game_factory_addr: Address,
 
     /// Game type ID for `AggregateVerifier` dispute games.
@@ -89,10 +74,7 @@ pub struct ProposerArgs {
     pub game_type: u32,
 
     /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
-    #[arg(
-        long = "tee-image-hash",
-        env = "BASE_PROPOSER_TEE_IMAGE_HASH",
-    )]
+    #[arg(long = "tee-image-hash", env = "BASE_PROPOSER_TEE_IMAGE_HASH")]
     pub tee_image_hash: B256,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
@@ -114,10 +96,7 @@ pub struct ProposerArgs {
     pub rpc_timeout: Duration,
 
     /// URL of the rollup RPC endpoint.
-    #[arg(
-        long = "rollup-rpc",
-        env = "BASE_PROPOSER_ROLLUP_RPC",
-    )]
+    #[arg(long = "rollup-rpc", env = "BASE_PROPOSER_ROLLUP_RPC")]
     pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
@@ -161,18 +140,12 @@ pub struct ProposerArgs {
 
     /// URL of the signer sidecar JSON-RPC endpoint (for production).
     /// Must be used together with --signer-address.
-    #[arg(
-        long = "signer-endpoint",
-        env = "BASE_PROPOSER_SIGNER_ENDPOINT",
-    )]
+    #[arg(long = "signer-endpoint", env = "BASE_PROPOSER_SIGNER_ENDPOINT")]
     pub signer_endpoint: Option<Url>,
 
     /// Address of the signer account on the signer sidecar.
     /// Must be used together with --signer-endpoint.
-    #[arg(
-        long = "signer-address",
-        env = "BASE_PROPOSER_SIGNER_ADDRESS",
-    )]
+    #[arg(long = "signer-address", env = "BASE_PROPOSER_SIGNER_ADDRESS")]
     pub signer_address: Option<Address>,
 }
 

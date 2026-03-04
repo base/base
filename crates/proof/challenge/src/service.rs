@@ -1,9 +1,6 @@
 //! Full challenger service lifecycle.
 
-use std::sync::{
-    Arc,
-    atomic::AtomicBool,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
@@ -63,9 +60,7 @@ impl ChallengerService {
             let addr = config.health_addr;
             let ready_flag = Arc::clone(&ready);
             let cancel = health_cancel.clone();
-            tokio::spawn(
-                async move { crate::HealthServer::serve(addr, ready_flag, cancel).await },
-            )
+            tokio::spawn(async move { crate::HealthServer::serve(addr, ready_flag, cancel).await })
         };
 
         info!("Service initialised, waiting for shutdown signal");

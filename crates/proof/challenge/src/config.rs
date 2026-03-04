@@ -169,10 +169,8 @@ impl ChallengerConfig {
     /// Returns [`ConfigError`] if any validation check fails.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
         let validate = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
-            Validated::try_from(url).map_err(|e| ConfigError::InvalidUrl {
-                field,
-                reason: e.to_string(),
-            })
+            Validated::try_from(url)
+                .map_err(|e| ConfigError::InvalidUrl { field, reason: e.to_string() })
         };
 
         // Validate URLs have scheme and host
@@ -407,10 +405,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case::local(Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"), None, None, true)]
-    #[case::remote(None, Some("http://localhost:8546"), Some("0x1234567890123456789012345678901234567890"), true)]
+    #[case::local(
+        Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+        None,
+        None,
+        true
+    )]
+    #[case::remote(
+        None,
+        Some("http://localhost:8546"),
+        Some("0x1234567890123456789012345678901234567890"),
+        true
+    )]
     #[case::none_provided(None, None, None, false)]
-    #[case::both_provided(Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"), Some("http://localhost:8546"), None, false)]
+    #[case::both_provided(
+        Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+        Some("http://localhost:8546"),
+        None,
+        false
+    )]
     #[case::endpoint_without_address(None, Some("http://localhost:8546"), None, false)]
     fn test_signing_config(
         #[case] pk: Option<&str>,
@@ -451,6 +464,9 @@ mod tests {
         let signing = build_signing_config(Some(pk), None, None).unwrap();
         let debug_output = format!("{signing:?}");
         assert!(debug_output.contains("address"));
-        assert!(!debug_output.contains("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"));
+        assert!(
+            !debug_output
+                .contains("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+        );
     }
 }
