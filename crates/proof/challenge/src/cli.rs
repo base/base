@@ -281,5 +281,4 @@ mod tests {
         ];
         assert!(Cli::try_parse_from(args).is_err());
     }
-
 }

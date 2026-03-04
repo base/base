@@ -243,9 +243,7 @@ mod tests {
                 poll_interval: Duration::from_secs(12),
                 zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
                 signer_endpoint: Some(Url::parse("http://localhost:8546").unwrap()),
-                signer_address: Some(
-                    "0x1234567890123456789012345678901234567890".parse().unwrap(),
-                ),
+                signer_address: Some("0x1234567890123456789012345678901234567890".parse().unwrap()),
                 lookback_games: 1000,
                 health_addr: "0.0.0.0".parse().unwrap(),
                 health_port: 8080,
