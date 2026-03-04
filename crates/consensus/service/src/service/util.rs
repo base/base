@@ -40,7 +40,7 @@ macro_rules! spawn_and_wait {
         )*
 
         // Create the shutdown signal future
-        let shutdown = $crate::service::shutdown_signal();
+        let shutdown = $crate::service::util::ShutdownSignal::wait();
         tokio::pin!(shutdown);
 
         loop {
@@ -79,28 +79,34 @@ macro_rules! spawn_and_wait {
 pub(crate) use spawn_and_wait;
 
 /// Listens for OS shutdown signals (SIGTERM, SIGINT)
-pub(crate) async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
-    };
+#[derive(Debug)]
+pub(crate) struct ShutdownSignal;
 
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
+impl ShutdownSignal {
+    /// Waits for OS shutdown signals (SIGTERM, SIGINT).
+    pub(crate) async fn wait() {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        };
 
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
 
-    tokio::select! {
-        _ = ctrl_c => {
-            info!(target: "rollup_node", "Received SIGINT (Ctrl+C)");
-        },
-        _ = terminate => {
-            info!(target: "rollup_node", "Received SIGTERM");
-        },
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {
+                info!(target: "rollup_node", "Received SIGINT (Ctrl+C)");
+            },
+            _ = terminate => {
+                info!(target: "rollup_node", "Received SIGTERM");
+            },
+        }
     }
 }
