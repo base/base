@@ -1,4 +1,4 @@
-name = "Base devnet 0"
+name = "Base devnet-0-sepolia-dev-0"
 public_rpc = ""
 sequencer_rpc = ""
 explorer = ""
