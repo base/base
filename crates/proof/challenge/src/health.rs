@@ -78,7 +78,7 @@ pub async fn serve(
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "Health server started");
 
-    let cancel_for_shutdown = cancel.clone();
+    let cancel_for_shutdown = cancel;
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { cancel_for_shutdown.cancelled().await })
         .await?;
