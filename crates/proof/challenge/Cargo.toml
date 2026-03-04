@@ -1,0 +1,49 @@
+[package]
+name = "base-challenger"
+description = "Base Challenger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Alloy
+alloy-primitives.workspace = true
+
+# Async
+tokio-util.workspace = true
+tokio.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Serialization
+serde.workspace = true
+
+# Error handling
+thiserror.workspace = true
+eyre.workspace = true
+
+# CLI
+base-cli-utils.workspace = true
+clap.workspace = true
+
+# Metrics
+metrics.workspace = true
+
+# TLS
+rustls = { workspace = true, features = ["ring"] }
+
+# Misc
+axum = { workspace = true, features = ["http1", "tokio"] }
+humantime.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true, features = ["json"] }

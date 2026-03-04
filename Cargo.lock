@@ -2637,6 +2637,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-challenger"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "axum",
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "humantime",
+ "metrics",
+ "reqwest 0.13.2",
+ "rustls 0.23.37",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-challenger-bin"
+version = "0.0.0"
+dependencies = [
+ "base-challenger",
+ "clap",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [

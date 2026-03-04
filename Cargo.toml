@@ -29,6 +29,7 @@ members = [
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
+  "crates/proof/challenge",
   "crates/utilities/*",
   "crates/builder/*",
   "crates/infra/*",
@@ -220,6 +221,7 @@ base-enclave-server = { path = "crates/proof/tee/server" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
+base-challenger = { path = "crates/proof/challenge" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
