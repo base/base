@@ -26,7 +26,7 @@ main() {
 
     # Get latest FINAL tag (exact vX.Y.Z, exclude RCs and other suffixes)
     CURRENT_VERSION=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-        | grep -Px 'v\d+\.\d+\.\d+$' | sort -V | tail -1 | sed 's/^v//')
+        | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 | sed 's/^v//')
 
     if [[ -z "$CURRENT_VERSION" ]]; then
         echo "Error: No final release tags found. Cannot determine current version." >&2
