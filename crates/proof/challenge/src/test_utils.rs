@@ -159,29 +159,28 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
 mod tests {
     use super::*;
 
-    const TARGET_TYPE: u32 = 1;
-
-    /// Happy path: mixed games, only matching / `IN_PROGRESS` / unchallenged returned.
+    /// Happy path: mixed games, only `IN_PROGRESS` / unchallenged returned.
     #[tokio::test]
     async fn test_scan_happy_path() {
-        // Game 0: matching type, IN_PROGRESS, unchallenged -> candidate
-        // Game 1: wrong type -> skipped
-        // Game 2: matching type, status=1 (not in progress) -> skipped
-        // Game 3: matching type, IN_PROGRESS, already challenged -> skipped
-        // Game 4: matching type, IN_PROGRESS, unchallenged -> candidate
+        // Game 0: type 1, IN_PROGRESS, unchallenged -> candidate
+        // Game 1: type 99, IN_PROGRESS, unchallenged -> candidate (all types scanned)
+        // Game 2: type 1, status=1 (not in progress) -> skipped
+        // Game 3: type 1, IN_PROGRESS, already challenged -> skipped
+        // Game 4: type 1, IN_PROGRESS, unchallenged -> candidate
         let factory = Arc::new(MockDisputeGameFactory {
             games: vec![
-                factory_game(0, TARGET_TYPE),
+                factory_game(0, 1),
                 factory_game(1, 99),
-                factory_game(2, TARGET_TYPE),
-                factory_game(3, TARGET_TYPE),
-                factory_game(4, TARGET_TYPE),
+                factory_game(2, 1),
+                factory_game(3, 1),
+                factory_game(4, 1),
             ],
         });
 
         let challenger_addr = Address::repeat_byte(0xCC);
         let mut verifier_games = HashMap::new();
         verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
+        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 150));
         verifier_games.insert(addr(2), mock_state(1, Address::ZERO, 200));
         verifier_games.insert(addr(3), mock_state(0, challenger_addr, 300));
         verifier_games.insert(addr(4), mock_state(0, Address::ZERO, 400));
@@ -191,19 +190,24 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
         // last_scanned=None, start = max(0, 5-1000) = 0, so games 0..=4 scanned
-        // Game 0: candidate. Game 1: wrong type. Game 2: status != 0.
+        // Game 0: candidate. Game 1: candidate. Game 2: status != 0.
         // Game 3: challenged. Game 4: candidate.
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].index, 0);
+        assert_eq!(candidates[0].game_type, 1);
         assert_eq!(candidates[0].l2_block_number, 100);
-        assert_eq!(candidates[1].index, 4);
-        assert_eq!(candidates[1].l2_block_number, 400);
+        assert_eq!(candidates[1].index, 1);
+        assert_eq!(candidates[1].game_type, 99);
+        assert_eq!(candidates[1].l2_block_number, 150);
+        assert_eq!(candidates[2].index, 4);
+        assert_eq!(candidates[2].game_type, 1);
+        assert_eq!(candidates[2].l2_block_number, 400);
         assert_eq!(new_last_scanned, Some(4));
     }
 
@@ -214,9 +218,9 @@ mod tests {
 
         let factory = Arc::new(MockDisputeGameFactory {
             games: vec![
-                factory_game(0, TARGET_TYPE),
-                factory_game(1, TARGET_TYPE),
-                factory_game(2, TARGET_TYPE),
+                factory_game(0, 1),
+                factory_game(1, 1),
+                factory_game(2, 1),
             ],
         });
 
@@ -231,7 +235,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         // Scan from the beginning (last_scanned=None, lookback covers all)
@@ -244,33 +248,6 @@ mod tests {
         assert_eq!(new_last_scanned, Some(2));
     }
 
-    /// Games with non-matching `game_type` are skipped.
-    #[tokio::test]
-    async fn test_scan_filters_wrong_game_type() {
-        let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![factory_game(0, 99), factory_game(1, 50), factory_game(2, TARGET_TYPE)],
-        });
-
-        let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(2), mock_state(0, Address::ZERO, 100));
-
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
-
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
-        );
-
-        // start = max(0, 3-1000) = 0, end = 2
-        // Game 0: wrong type. Game 1: wrong type. Game 2: matching -> candidate.
-        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
-
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].index, 2);
-        assert_eq!(new_last_scanned, Some(2));
-    }
-
     /// Empty factory returns empty vec without error.
     #[tokio::test]
     async fn test_scan_empty_factory() {
@@ -280,7 +257,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
@@ -293,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_no_new_games() {
         let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![factory_game(0, TARGET_TYPE), factory_game(1, TARGET_TYPE)],
+            games: vec![factory_game(0, 1), factory_game(1, 1)],
         });
 
         let mut verifier_games = HashMap::new();
@@ -305,7 +282,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         // last_scanned = Some(1) (gameCount - 1), so start = 2 > end = 1
@@ -323,7 +300,7 @@ mod tests {
         let mut verifier_games = HashMap::new();
 
         for i in 0..100u64 {
-            games.push(factory_game(i, TARGET_TYPE));
+            games.push(factory_game(i, 1));
             verifier_games.insert(addr(i), mock_state(0, Address::ZERO, i * 10));
         }
 
@@ -333,7 +310,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 3 },
+            ScannerConfig { lookback_games: 3 },
         );
 
         // Fresh start: last_scanned = None
@@ -355,9 +332,9 @@ mod tests {
         let factory = Arc::new(ErrorOnIndexFactory {
             inner: MockDisputeGameFactory {
                 games: vec![
-                    factory_game(0, TARGET_TYPE),
-                    factory_game(1, TARGET_TYPE),
-                    factory_game(2, TARGET_TYPE),
+                    factory_game(0, 1),
+                    factory_game(1, 1),
+                    factory_game(2, 1),
                 ],
             },
             error_indices: vec![1],
@@ -373,7 +350,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         // start = max(0, 3-1000) = 0, end = 2
@@ -394,9 +371,9 @@ mod tests {
         let factory = Arc::new(ErrorOnIndexFactory {
             inner: MockDisputeGameFactory {
                 games: vec![
-                    factory_game(0, TARGET_TYPE),
-                    factory_game(1, TARGET_TYPE),
-                    factory_game(2, TARGET_TYPE),
+                    factory_game(0, 1),
+                    factory_game(1, 1),
+                    factory_game(2, 1),
                 ],
             },
             error_indices: vec![1],
@@ -412,7 +389,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         let (_, new_last_scanned) = scanner.scan(None).await.unwrap();
@@ -421,9 +398,9 @@ mod tests {
         // Phase 2: no errors, pass last_scanned = Some(0) to retry from index 1
         let factory2 = Arc::new(MockDisputeGameFactory {
             games: vec![
-                factory_game(0, TARGET_TYPE),
-                factory_game(1, TARGET_TYPE),
-                factory_game(2, TARGET_TYPE),
+                factory_game(0, 1),
+                factory_game(1, 1),
+                factory_game(2, 1),
             ],
         });
 
@@ -432,7 +409,7 @@ mod tests {
         let scanner2 = GameScanner::new(
             factory2,
             verifier2,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         let (candidates, new_last_scanned) = scanner2.scan(Some(0)).await.unwrap();
@@ -449,7 +426,7 @@ mod tests {
     async fn test_scan_error_at_first_index() {
         let factory = Arc::new(ErrorOnIndexFactory {
             inner: MockDisputeGameFactory {
-                games: vec![factory_game(0, TARGET_TYPE), factory_game(1, TARGET_TYPE)],
+                games: vec![factory_game(0, 1), factory_game(1, 1)],
             },
             error_indices: vec![0],
         });
@@ -462,7 +439,7 @@ mod tests {
         let scanner = GameScanner::new(
             factory,
             verifier,
-            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+            ScannerConfig { lookback_games: 1000 },
         );
 
         // last_scanned = None, lowest_error = 0 -> preserves None (fresh-start semantics)

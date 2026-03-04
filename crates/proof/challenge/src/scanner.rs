@@ -2,13 +2,12 @@
 //!
 //! Scans the [`DisputeGameFactory`](base_proof_contracts::DisputeGameFactoryClient)
 //! for dispute games requiring validation. Each game is evaluated through a
-//! three-stage filter:
+//! two-stage filter:
 //!
-//! 1. **Game type** — must match [`ScannerConfig::game_type`].
-//! 2. **Status** — must be `IN_PROGRESS` ([`STATUS_IN_PROGRESS`]).
-//! 3. **Challenge state** — `zkProver` must be `Address::ZERO` (unchallenged).
+//! 1. **Status** — must be `IN_PROGRESS` ([`STATUS_IN_PROGRESS`]).
+//! 2. **Challenge state** — `zkProver` must be `Address::ZERO` (unchallenged).
 //!
-//! Games passing all three filters are returned as [`CandidateGame`] structs.
+//! Games passing both filters are returned as [`CandidateGame`] structs.
 
 use std::sync::Arc;
 
@@ -27,8 +26,6 @@ pub const STATUS_IN_PROGRESS: u8 = 0;
 /// Configuration for the game scanner.
 #[derive(Debug, Clone)]
 pub struct ScannerConfig {
-    /// Game type ID to filter for.
-    pub game_type: u32,
     /// Number of past games to scan on startup (lookback window).
     pub lookback_games: u64,
 }
@@ -38,6 +35,8 @@ pub struct ScannerConfig {
 pub struct CandidateGame {
     /// The factory index of this game.
     pub index: u64,
+    /// The game type ID from the factory.
+    pub game_type: u32,
     /// The proxy address of the game contract.
     pub proxy: Address,
     /// The output root claimed by this game.
@@ -153,21 +152,11 @@ impl GameScanner {
 
     /// Evaluates a single game at the given factory index.
     ///
-    /// Returns `Some(CandidateGame)` if the game matches the configured game type,
-    /// is `IN_PROGRESS`, and has not been challenged (`zkProver` == zero).
-    /// Returns `None` if the game should be skipped.
+    /// Returns `Some(CandidateGame)` if the game is `IN_PROGRESS` and has not
+    /// been challenged (`zkProver` == zero). Returns `None` if the game should
+    /// be skipped.
     async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
         let GameAtIndex { game_type, proxy, .. } = self.factory_client.game_at_index(index).await?;
-
-        if game_type != self.config.game_type {
-            debug!(
-                index = index,
-                game_type = game_type,
-                expected = self.config.game_type,
-                "skipping non-matching game type"
-            );
-            return Ok(None);
-        }
 
         let status = self.verifier_client.status(proxy).await?;
         if status != STATUS_IN_PROGRESS {
@@ -192,6 +181,7 @@ impl GameScanner {
 
         Ok(Some(CandidateGame {
             index,
+            game_type,
             proxy,
             root_claim,
             l2_block_number,

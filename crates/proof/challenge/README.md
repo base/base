@@ -7,7 +7,7 @@ ZK-proof dispute game challenger.
 
 ## Overview
 
-- **Scanner**: Reads the `DisputeGameFactory` for new dispute games, filtering by game type, `IN_PROGRESS` status, and unchallenged state (`zkProver == zero`) to produce `CandidateGame`s for downstream processing.
+- **Scanner**: Reads the `DisputeGameFactory` for new dispute games, filtering by `IN_PROGRESS` status and unchallenged state (`zkProver == zero`) to produce `CandidateGame`s for downstream processing.
 - **Service**: Lifecycle orchestration for the challenger (init, health, metrics, shutdown).
 - **Config**: Validated runtime configuration with CLI argument parsing.
 - **Health**: HTTP liveness (`/healthz`) and readiness (`/readyz`) probes.

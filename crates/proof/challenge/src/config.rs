@@ -125,8 +125,6 @@ pub struct ChallengerConfig {
     pub dispute_game_factory_addr: Address,
     /// Address of the `AnchorStateRegistry` contract on L1.
     pub anchor_state_registry_addr: Address,
-    /// Game type ID for dispute games to monitor.
-    pub game_type: u32,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK proof service endpoint.
@@ -216,7 +214,6 @@ impl ChallengerConfig {
             rollup_rpc,
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
             anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
-            game_type: cli.challenger.game_type,
             poll_interval: cli.challenger.poll_interval,
             zk_proof_service_endpoint,
             signing,
@@ -293,7 +290,6 @@ mod tests {
             ("--rollup-rpc", "http://localhost:7545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
             ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
-            ("--game-type", "1"),
             ("--zk-proof-service-endpoint", "http://localhost:5000"),
             ("--signer-endpoint", "http://localhost:8546"),
             ("--signer-address", "0x1234567890123456789012345678901234567890"),
@@ -314,7 +310,6 @@ mod tests {
     fn test_valid_config() {
         let cli = cli_from_args(&[]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
-        assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.lookback_games, 1000);
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
