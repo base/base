@@ -147,19 +147,24 @@ pub struct ChallengerConfig {
 impl ChallengerConfig {
     /// Creates a validated [`ChallengerConfig`] from parsed CLI arguments.
     ///
+    /// `private_key` is the raw hex private key (with or without `0x` prefix)
+    /// read from the `CHALLENGER_PRIVATE_KEY` environment variable by the
+    /// binary entrypoint. Passing it explicitly keeps this function pure and
+    /// free of process-global state.
+    ///
     /// # Validation
     ///
     /// - Every URL field must have a scheme and host.
     /// - `poll_interval` must be greater than zero.
     /// - When metrics are enabled, the metrics port must be non-zero.
     /// - Exactly one signing method must be configured: either
-    ///   `CHALLENGER_PRIVATE_KEY` (local/dev) **or** both
+    ///   `private_key` (local/dev) **or** both
     ///   `--signer-endpoint` and `--signer-address` (remote/production).
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError`] if any validation check fails.
-    pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
+    pub fn from_cli(cli: Cli, private_key: Option<String>) -> Result<Self, ConfigError> {
         let validate = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
             Validated::try_from(url)
                 .map_err(|e| ConfigError::InvalidUrl { field, reason: e.to_string() })
@@ -187,10 +192,6 @@ impl ChallengerConfig {
                 "metrics port must be non-zero when metrics are enabled".to_string(),
             ));
         }
-
-        // Read private key from environment only — never accepted as a CLI argument
-        // because command-line arguments are visible in process listings.
-        let private_key: Option<String> = std::env::var("CHALLENGER_PRIVATE_KEY").ok();
 
         // Validate and extract signing config
         let signing = build_signing_config(
@@ -304,7 +305,7 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let cli = cli_from_args(&[]);
-        let config = ChallengerConfig::from_cli(cli).unwrap();
+        let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.lookback_games, 1000);
@@ -315,7 +316,7 @@ mod tests {
     #[test]
     fn test_zero_poll_interval() {
         let cli = cli_from_args(&["--poll-interval", "0s"]);
-        let result = ChallengerConfig::from_cli(cli);
+        let result = ChallengerConfig::from_cli(cli, None);
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
     }
 
@@ -324,7 +325,7 @@ mod tests {
     #[case::disabled(&["--metrics.port", "0"], false)]
     fn test_metrics_port_zero(#[case] args: &[&str], #[case] expect_error: bool) {
         let cli = cli_from_args(args);
-        let result = ChallengerConfig::from_cli(cli);
+        let result = ChallengerConfig::from_cli(cli, None);
         if expect_error {
             assert!(matches!(result, Err(ConfigError::Metrics(_))));
         } else {
@@ -438,7 +439,7 @@ mod tests {
     #[test]
     fn test_zk_proof_endpoint_validated() {
         let cli = cli_from_args(&["--zk-proof-service-endpoint", "file:///no/host"]);
-        let result = ChallengerConfig::from_cli(cli);
+        let result = ChallengerConfig::from_cli(cli, None);
         assert!(matches!(
             result,
             Err(ConfigError::InvalidUrl { field: "zk-proof-service-endpoint", .. })
@@ -448,7 +449,7 @@ mod tests {
     #[test]
     fn test_health_addr_configurable() {
         let cli = cli_from_args(&["--health.addr", "127.0.0.1", "--health.port", "9090"]);
-        let config = ChallengerConfig::from_cli(cli).unwrap();
+        let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
     }
 
