@@ -399,4 +399,90 @@ mod tests {
             Err(TxValidationError::AuthorizationListIsEmpty)
         );
     }
+
+    #[test]
+    fn test_validate_tx_requires_clearing_l1_cost_cache_between_distinct_txs() {
+        let signer = BaseAccount::Alice.signer();
+
+        let mut tx_small = TxEip1559 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1u128,
+            max_priority_fee_per_gas: 1u128,
+            to: Address::random().into(),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: bytes!("01"),
+        };
+
+        let mut tx_large = TxEip1559 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1u128,
+            max_priority_fee_per_gas: 1u128,
+            to: Address::random().into(),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Bytes::from(vec![0xAB; 512]),
+        };
+
+        let signature_small = signer.sign_transaction_sync(&mut tx_small).unwrap();
+        let recovered_small = OpTxEnvelope::Eip1559(tx_small.into_signed(signature_small))
+            .try_into_recovered()
+            .unwrap();
+
+        let signature_large = signer.sign_transaction_sync(&mut tx_large).unwrap();
+        let recovered_large = OpTxEnvelope::Eip1559(tx_large.into_signed(signature_large))
+            .try_into_recovered()
+            .unwrap();
+
+        let mut l1_for_small = L1BlockInfo {
+            l1_base_fee: U256::from(1_000_000u64),
+            l1_fee_overhead: Some(U256::from(1_000_000u64)),
+            l1_base_fee_scalar: U256::from(1_000_000u64),
+            ..Default::default()
+        };
+        let l1_small =
+            l1_for_small.calculate_tx_l1_cost(&recovered_small.encoded_2718(), OpSpecId::ISTHMUS);
+
+        let mut l1_for_large = L1BlockInfo {
+            l1_base_fee: U256::from(1_000_000u64),
+            l1_fee_overhead: Some(U256::from(1_000_000u64)),
+            l1_base_fee_scalar: U256::from(1_000_000u64),
+            ..Default::default()
+        };
+        let l1_large =
+            l1_for_large.calculate_tx_l1_cost(&recovered_large.encoded_2718(), OpSpecId::ISTHMUS);
+
+        assert!(l1_large > l1_small, "expected larger tx input to have higher L1 cost");
+
+        let txn_cost_large =
+            U256::from(recovered_large.max_fee_per_gas() * recovered_large.gas_limit() as u128);
+        let account_balance = txn_cost_large.saturating_add(l1_small);
+        let account = create_account(0, account_balance);
+
+        let mut shared_l1_block_info = L1BlockInfo {
+            l1_base_fee: U256::from(1_000_000u64),
+            l1_fee_overhead: Some(U256::from(1_000_000u64)),
+            l1_base_fee_scalar: U256::from(1_000_000u64),
+            ..Default::default()
+        };
+
+        assert!(validate_tx(account, None, &recovered_small, &mut shared_l1_block_info).is_ok());
+
+        // Without clearing, the cached L1 cost from the first tx is reused.
+        assert!(validate_tx(account, None, &recovered_large, &mut shared_l1_block_info).is_ok());
+
+        shared_l1_block_info.clear_tx_l1_cost();
+
+        assert_eq!(
+            validate_tx(account, None, &recovered_large, &mut shared_l1_block_info),
+            Err(TxValidationError::InsufficientFundsForL1Gas(
+                txn_cost_large.saturating_add(l1_large),
+                account_balance
+            ))
+        );
+    }
 }
