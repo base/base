@@ -1,20 +1,17 @@
-name: Create Release
+name: Build Release
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      release_branch:
-        description: 'Release branch (e.g., releases/v1.0.0)'
+      tag:
+        description: 'Tag to build and publish'
         required: true
         type: string
-      release_type:
-        description: 'Release type'
-        required: true
-        type: choice
-        options:
-          - rc
-          - final
-        default: rc
+      is_final:
+        description: 'Whether this is a final release (creates GitHub release + uploads binaries)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
@@ -23,56 +20,9 @@ permissions:
   contents: write
   packages: write
 
-concurrency:
-  group: release-${{ inputs.release_branch }}
-  cancel-in-progress: false
-
 jobs:
-  create-tag:
-    runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.read-tag.outputs.tag }}
-
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: ${{ inputs.release_branch }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Create and push tag
-        run: |
-          ./etc/scripts/release/create-tag.sh "${{ inputs.release_branch }}" "${{ inputs.release_type }}"
-
-      - name: Read tag
-        id: read-tag
-        run: |
-          TAG_FILE="${{ runner.temp }}/release_tag"
-          if [[ ! -f "$TAG_FILE" ]]; then
-            echo "::error::release_tag file not found — create-tag.sh may have failed"
-            exit 1
-          fi
-          TAG=$(cat "$TAG_FILE")
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Release tag: $TAG"
-
-      - name: Summary
-        run: |
-          TAG="${{ steps.read-tag.outputs.tag }}"
-          echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Type**: ${{ inputs.release_type }}" >> $GITHUB_STEP_SUMMARY
-
   # Build native binaries for release artifacts
   build-binaries:
-    needs: [create-tag]
     strategy:
       matrix:
         target:
@@ -98,7 +48,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ needs.create-tag.outputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Install system dependencies (Linux)
         if: matrix.target.os == 'linux'
@@ -114,7 +64,7 @@ jobs:
 
       - name: Package binaries
         run: |
-          TAG="${{ needs.create-tag.outputs.tag }}"
+          TAG="${{ inputs.tag }}"
           TARGET="${{ matrix.target.triple }}"
           for bin in base-reth-node basectl; do
             ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
@@ -138,7 +88,6 @@ jobs:
 
   # Build multi-arch Docker images
   build-and-push:
-    needs: [create-tag]
     strategy:
       matrix:
         settings:
@@ -163,7 +112,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ needs.create-tag.outputs.tag }}
+          ref: ${{ inputs.tag }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
@@ -208,9 +157,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Merge manifests and create release
+  # Merge manifests and publish
   publish:
-    needs: [create-tag, build-and-push, build-binaries]
+    needs: [build-and-push, build-binaries]
     runs-on: ubuntu-latest
 
     steps:
@@ -222,7 +171,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ needs.create-tag.outputs.tag }}
+          ref: ${{ inputs.tag }}
           fetch-depth: 0
           fetch-tags: true
 
@@ -246,16 +195,12 @@ jobs:
       - name: Determine Docker tags
         id: tags
         run: |
-          TAG="${{ needs.create-tag.outputs.tag }}"
+          TAG="${{ inputs.tag }}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-          # Check if this is an RC tag (contains -rc.)
           if [[ "$TAG" =~ -rc\. ]]; then
-            echo "is_rc=true" >> $GITHUB_OUTPUT
             echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG}" >> $GITHUB_OUTPUT
           else
-            echo "is_rc=false" >> $GITHUB_OUTPUT
-            # For final release, extract version components
             VERSION="${TAG#v}"
             IFS='.' read -r major minor patch <<< "$VERSION"
             echo "docker_tags=${{ env.REGISTRY_IMAGE }}:${TAG},${{ env.REGISTRY_IMAGE }}:${major}.${minor},${{ env.REGISTRY_IMAGE }}:${major},${{ env.REGISTRY_IMAGE }}:latest" >> $GITHUB_OUTPUT
@@ -285,11 +230,11 @@ jobs:
           docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.tags.outputs.tag }}
 
       - name: Create GitHub Release
-        if: steps.tags.outputs.is_rc == 'false'
+        if: inputs.is_final
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ steps.tags.outputs.tag }}"
+          TAG="${{ inputs.tag }}"
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "GitHub Release $TAG already exists, skipping creation"
           else
@@ -297,7 +242,7 @@ jobs:
           fi
 
       - name: Download binary artifacts
-        if: steps.tags.outputs.is_rc == 'false'
+        if: inputs.is_final
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: ${{ runner.temp }}/binaries
@@ -305,25 +250,24 @@ jobs:
           merge-multiple: true
 
       - name: Upload binaries to GitHub Release
-        if: steps.tags.outputs.is_rc == 'false'
+        if: inputs.is_final
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ steps.tags.outputs.tag }}"
+          TAG="${{ inputs.tag }}"
           gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256
 
       - name: Summary
         run: |
-          TAG="${{ steps.tags.outputs.tag }}"
-          IS_RC="${{ steps.tags.outputs.is_rc }}"
+          TAG="${{ inputs.tag }}"
 
           echo "## Release Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
-          if [[ "$IS_RC" == "true" ]]; then
-            echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
-          else
+          if [[ "${{ inputs.is_final }}" == "true" ]]; then
             echo "**Type**: Final Release" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Type**: Release Candidate" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Docker Images" >> $GITHUB_STEP_SUMMARY

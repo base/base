@@ -1,0 +1,108 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.6.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: publish-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read-tag.outputs.tag }}
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate and prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ inputs.version }}"
+          RELEASE_BRANCH="releases/v${VERSION}"
+          TAG="v${VERSION}"
+
+          # Validate semver format
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION (expected X.Y.Z)"
+            exit 1
+          fi
+
+          # Validate release branch exists
+          git fetch origin "$RELEASE_BRANCH" || {
+            echo "::error::Branch $RELEASE_BRANCH not found. Run Start Release first."
+            exit 1
+          }
+
+          # Validate Cargo.toml version on the release branch
+          CARGO_VERSION=$(git show "origin/$RELEASE_BRANCH:Cargo.toml" | grep '^version' | head -1 | awk -F'"' '{print $2}')
+          if [[ "$CARGO_VERSION" == "0.0.0" ]]; then
+            echo "::error::Cargo.toml on $RELEASE_BRANCH is still 0.0.0 — merge the version sync PR first"
+            exit 1
+          fi
+
+          # Ensure no final release already exists
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::Release $TAG already exists"
+            exit 1
+          fi
+
+      - name: Checkout release branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: releases/v${{ inputs.version }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Create and push tag
+        run: ./etc/scripts/release/create-tag.sh "releases/v${{ inputs.version }}" final
+
+      - name: Read tag
+        id: read-tag
+        run: |
+          TAG_FILE="${{ runner.temp }}/release_tag"
+          if [[ ! -f "$TAG_FILE" ]]; then
+            echo "::error::release_tag file not found — create-tag.sh may have failed"
+            exit 1
+          fi
+          TAG=$(cat "$TAG_FILE")
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Summary
+        run: |
+          TAG="${{ steps.read-tag.outputs.tag }}"
+
+          echo "## Tag Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Building release — Docker images and binaries will be published automatically." >> $GITHUB_STEP_SUMMARY
+
+  build:
+    needs: [create-tag]
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ needs.create-tag.outputs.tag }}
+      is_final: true
+    secrets: inherit
