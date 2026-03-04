@@ -77,7 +77,7 @@ pub struct EngineApi<P: Protocol = Ipc> {
 }
 
 impl<P: Protocol> EngineApi<P> {
-    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static + use<P> {
+    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
         P::client(self.jwt_secret, self.address.clone()).await
     }
 }
