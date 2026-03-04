@@ -82,14 +82,17 @@ impl GameScanner {
     /// is the latest factory index that was evaluated. The caller is responsible
     /// for tracking `last_scanned` between calls.
     ///
-    /// On a fresh start, pass `0` as `last_scanned` and the lookback window will
+    /// On a fresh start, pass `None` as `last_scanned` and the lookback window will
     /// determine the scan range.
     ///
     /// Individual game query failures are logged and skipped so that a transient
     /// RPC error on one game does not abort the entire scan. After evaluation,
     /// the `base_challenger_games_scanned_total` counter and
     /// `base_challenger_scan_head` gauge are updated.
-    pub async fn scan(&self, last_scanned: u64) -> Result<(Vec<CandidateGame>, u64)> {
+    pub async fn scan(
+        &self,
+        last_scanned: Option<u64>,
+    ) -> Result<(Vec<CandidateGame>, Option<u64>)> {
         let game_count = self.factory_client.game_count().await?;
 
         if game_count == 0 {
@@ -98,11 +101,12 @@ impl GameScanner {
         }
 
         let end = game_count - 1;
-        let start = (last_scanned + 1).max(game_count.saturating_sub(self.config.lookback_games));
+        let lookback_start = game_count.saturating_sub(self.config.lookback_games);
+        let start = last_scanned.map_or(lookback_start, |idx| (idx + 1).max(lookback_start));
 
         if start > end {
             debug!(
-                last_scanned = last_scanned,
+                last_scanned = ?last_scanned,
                 game_count = game_count,
                 "no new games since last scan"
             );
@@ -132,7 +136,7 @@ impl GameScanner {
             "scan complete"
         );
 
-        Ok((candidates, end))
+        Ok((candidates, Some(end)))
     }
 
     /// Evaluates a single game at the given factory index.

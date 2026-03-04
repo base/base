@@ -1,7 +1,6 @@
 //! Test utilities: mock stubs for contract clients and scanner tests.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
@@ -195,15 +194,17 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
         );
 
-        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
-        // last_scanned=0, start = max(0+1, 5-1000) = 1, so games 1..=4 scanned
-        // But game 0 is at index 0 which is < start=1, so only games 1-4.
-        // Game 1: wrong type. Game 2: status != 0. Game 3: challenged. Game 4: candidate.
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].index, 4);
-        assert_eq!(candidates[0].l2_block_number, 400);
-        assert_eq!(new_last_scanned, 4);
+        // last_scanned=None, start = max(0, 5-1000) = 0, so games 0..=4 scanned
+        // Game 0: candidate. Game 1: wrong type. Game 2: status != 0.
+        // Game 3: challenged. Game 4: candidate.
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].index, 0);
+        assert_eq!(candidates[0].l2_block_number, 100);
+        assert_eq!(candidates[1].index, 4);
+        assert_eq!(candidates[1].l2_block_number, 400);
+        assert_eq!(new_last_scanned, Some(4));
     }
 
     /// Already-challenged games (zkProver != zero) are filtered out.
@@ -233,14 +234,14 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
         );
 
-        // Scan from the beginning (last_scanned=0, lookback covers all)
-        // start = max(0+1, 3-1000) = 1, end = 2
-        // Game 1: unchallenged -> candidate. Game 2: challenged -> skip.
-        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+        // Scan from the beginning (last_scanned=None, lookback covers all)
+        // start = max(0, 3-1000) = 0, end = 2
+        // Game 0: challenged -> skip. Game 1: unchallenged -> candidate. Game 2: challenged -> skip.
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].index, 1);
-        assert_eq!(new_last_scanned, 2);
+        assert_eq!(new_last_scanned, Some(2));
     }
 
     /// Games with non-matching `game_type` are skipped.
@@ -261,13 +262,13 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
         );
 
-        // start = max(0+1, 3-1000) = 1, end = 2
-        // Game 1: wrong type. Game 2: matching -> candidate.
-        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+        // start = max(0, 3-1000) = 0, end = 2
+        // Game 0: wrong type. Game 1: wrong type. Game 2: matching -> candidate.
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].index, 2);
-        assert_eq!(new_last_scanned, 2);
+        assert_eq!(new_last_scanned, Some(2));
     }
 
     /// Empty factory returns empty vec without error.
@@ -282,10 +283,10 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
         );
 
-        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
         assert!(candidates.is_empty());
-        assert_eq!(new_last_scanned, 0);
+        assert_eq!(new_last_scanned, None);
     }
 
     /// No new games since last scan returns empty vec.
@@ -307,11 +308,11 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
         );
 
-        // last_scanned = 1 (gameCount - 1), so start = 2 > end = 1
-        let (candidates, new_last_scanned) = scanner.scan(1).await.unwrap();
+        // last_scanned = Some(1) (gameCount - 1), so start = 2 > end = 1
+        let (candidates, new_last_scanned) = scanner.scan(Some(1)).await.unwrap();
 
         assert!(candidates.is_empty());
-        assert_eq!(new_last_scanned, 1);
+        assert_eq!(new_last_scanned, Some(1));
     }
 
     /// Lookback window: on fresh start with large factory, only `lookback_games` are scanned.
@@ -335,15 +336,15 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 3 },
         );
 
-        // Fresh start: last_scanned = 0
-        // start = max(0+1, 100-3) = 97, end = 99
-        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+        // Fresh start: last_scanned = None
+        // start = max(0, 100-3) = 97, end = 99
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].index, 97);
         assert_eq!(candidates[1].index, 98);
         assert_eq!(candidates[2].index, 99);
-        assert_eq!(new_last_scanned, 99);
+        assert_eq!(new_last_scanned, Some(99));
     }
 
     /// Error resilience: a per-game error is logged and skipped, other games still returned.
@@ -374,12 +375,13 @@ mod tests {
             ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
         );
 
-        // start = max(0+1, 3-1000) = 1, end = 2
-        // Index 1 errors -> skipped. Index 2 -> candidate.
-        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+        // start = max(0, 3-1000) = 0, end = 2
+        // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].index, 2);
-        assert_eq!(new_last_scanned, 2);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].index, 0);
+        assert_eq!(candidates[1].index, 2);
+        assert_eq!(new_last_scanned, Some(2));
     }
 }
