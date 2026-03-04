@@ -82,7 +82,6 @@ pub enum ConfigError {
 }
 
 /// Signing configuration for L1 transaction submission.
-#[derive(Clone)]
 pub enum SigningConfig {
     /// Local signing with an in-process private key (development).
     Local {
@@ -114,7 +113,7 @@ impl std::fmt::Debug for SigningConfig {
 }
 
 /// Validated challenger configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChallengerConfig {
     /// URL of the L1 Ethereum RPC endpoint.
     pub l1_eth_rpc: Validated<Url>,
