@@ -45,7 +45,7 @@ pub async fn run(config: ChallengerConfig) -> Result<()> {
     crate::SignalHandler::install(cancel.clone());
 
     // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
-    config.metrics.init().expect("failed to install Prometheus recorder");
+    config.metrics.init().map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
 
     // Record startup metrics (no-ops if no recorder installed).
     crate::record_startup_metrics(env!("CARGO_PKG_VERSION"));

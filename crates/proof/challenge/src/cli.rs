@@ -109,13 +109,6 @@ pub struct ChallengerArgs {
     )]
     pub zk_proof_service_endpoint: Url,
 
-    /// Private key for local transaction signing (hex-encoded, for development).
-    /// Mutually exclusive with --signer-endpoint/--signer-address.
-    /// Only accepted via environment variable for security — command-line
-    /// arguments are visible in process listings.
-    #[arg(env = "CHALLENGER_PRIVATE_KEY", hide = true)]
-    pub private_key: Option<String>,
-
     /// URL of the signer sidecar JSON-RPC endpoint (for production).
     /// Must be used together with --signer-address.
     #[arg(
@@ -158,7 +151,6 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("game_type", &self.game_type)
             .field("poll_interval", &self.poll_interval)
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
-            .field("private_key", &"[redacted]")
             .field("signer_endpoint", &self.signer_endpoint)
             .field("signer_address", &self.signer_address)
             .field("lookback_games", &self.lookback_games)
@@ -256,7 +248,6 @@ mod tests {
         assert_eq!(cli.metrics.port, 7310);
 
         // Check signing defaults (all None)
-        assert!(cli.challenger.private_key.is_none());
         assert!(cli.challenger.signer_endpoint.is_none());
         assert!(cli.challenger.signer_address.is_none());
 
@@ -291,30 +282,4 @@ mod tests {
         assert!(Cli::try_parse_from(args).is_err());
     }
 
-    #[test]
-    fn test_debug_redacts_private_key() {
-        let args = ChallengerArgs {
-            l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
-            l2_eth_rpc: Url::parse("http://localhost:9545").unwrap(),
-            rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
-            dispute_game_factory_addr: "0x1234567890123456789012345678901234567890"
-                .parse()
-                .unwrap(),
-            anchor_state_registry_addr: "0x2234567890123456789012345678901234567890"
-                .parse()
-                .unwrap(),
-            game_type: 1,
-            poll_interval: Duration::from_secs(12),
-            zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
-            private_key: Some("0xdeadbeef".to_string()),
-            signer_endpoint: None,
-            signer_address: None,
-            lookback_games: 1000,
-            health_addr: "0.0.0.0".parse().unwrap(),
-            health_port: 8080,
-        };
-        let debug_output = format!("{args:?}");
-        assert!(debug_output.contains("[redacted]"));
-        assert!(!debug_output.contains("deadbeef"));
-    }
 }

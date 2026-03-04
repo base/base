@@ -16,11 +16,15 @@ pub enum ChallengerError {
     /// Shutdown error.
     #[error("shutdown error: {0}")]
     Shutdown(String),
+
+    /// Internal error.
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 impl From<eyre::Error> for ChallengerError {
     fn from(err: eyre::Error) -> Self {
-        Self::Rpc(err.to_string())
+        Self::Internal(err.to_string())
     }
 }
 

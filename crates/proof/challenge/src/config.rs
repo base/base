@@ -141,9 +141,13 @@ impl ChallengerConfig {
             ));
         }
 
+        // Read private key from environment only — never accepted as a CLI argument
+        // because command-line arguments are visible in process listings.
+        let private_key = std::env::var("CHALLENGER_PRIVATE_KEY").ok();
+
         // Validate and extract signing config
         let signing = build_signing_config(
-            cli.challenger.private_key.as_deref(),
+            private_key.as_deref(),
             cli.challenger.signer_endpoint.as_ref(),
             cli.challenger.signer_address.as_ref(),
         )?;
@@ -238,13 +242,10 @@ mod tests {
                 game_type: 1,
                 poll_interval: Duration::from_secs(12),
                 zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
-                // Hardhat/Anvil account #0 — never use in production.
-                private_key: Some(
-                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-                        .to_string(),
+                signer_endpoint: Some(Url::parse("http://localhost:8546").unwrap()),
+                signer_address: Some(
+                    "0x1234567890123456789012345678901234567890".parse().unwrap(),
                 ),
-                signer_endpoint: None,
-                signer_address: None,
                 lookback_games: 1000,
                 health_addr: "0.0.0.0".parse().unwrap(),
                 health_port: 8080,
@@ -272,6 +273,7 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.lookback_games, 1000);
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
+        assert!(matches!(config.signing, SigningConfig::Remote { .. }));
     }
 
     #[test]
@@ -367,44 +369,37 @@ mod tests {
 
     #[test]
     fn test_signing_config_local() {
-        let cli = minimal_cli();
-        let config = ChallengerConfig::from_cli(cli).unwrap();
-        assert!(matches!(config.signing, SigningConfig::Local { .. }));
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let signing = build_signing_config(Some(pk), None, None).unwrap();
+        assert!(matches!(signing, SigningConfig::Local { .. }));
     }
 
     #[test]
     fn test_signing_config_remote() {
-        let mut cli = minimal_cli();
-        cli.challenger.private_key = None;
-        cli.challenger.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
-        cli.challenger.signer_address =
-            Some("0x1234567890123456789012345678901234567890".parse().unwrap());
-        let config = ChallengerConfig::from_cli(cli).unwrap();
-        assert!(matches!(config.signing, SigningConfig::Remote { .. }));
+        let url = Url::parse("http://localhost:8546").unwrap();
+        let addr: Address = "0x1234567890123456789012345678901234567890".parse().unwrap();
+        let signing = build_signing_config(None, Some(&url), Some(&addr)).unwrap();
+        assert!(matches!(signing, SigningConfig::Remote { .. }));
     }
 
     #[test]
     fn test_signing_config_none_provided() {
-        let mut cli = minimal_cli();
-        cli.challenger.private_key = None;
-        let result = ChallengerConfig::from_cli(cli);
+        let result = build_signing_config(None, None, None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
     #[test]
     fn test_signing_config_both_provided() {
-        let mut cli = minimal_cli();
-        cli.challenger.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
-        let result = ChallengerConfig::from_cli(cli);
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let url = Url::parse("http://localhost:8546").unwrap();
+        let result = build_signing_config(Some(pk), Some(&url), None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
     #[test]
     fn test_signing_config_endpoint_without_address() {
-        let mut cli = minimal_cli();
-        cli.challenger.private_key = None;
-        cli.challenger.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
-        let result = ChallengerConfig::from_cli(cli);
+        let url = Url::parse("http://localhost:8546").unwrap();
+        let result = build_signing_config(None, Some(&url), None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
