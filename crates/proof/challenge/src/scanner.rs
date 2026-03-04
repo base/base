@@ -130,20 +130,24 @@ impl GameScanner {
         }
 
         metrics::counter!(ChallengerMetrics::GAMES_SCANNED_TOTAL).increment(games_to_scan);
-        metrics::gauge!(ChallengerMetrics::SCAN_HEAD).set(end as f64);
-
-        info!(
-            games_found = candidates.len(),
-            scan_head = end,
-            games_scanned = games_to_scan,
-            "scan complete"
-        );
 
         let new_last_scanned = match lowest_error {
             Some(0) => last_scanned,
             Some(e) => Some(e - 1),
             None => Some(end),
         };
+
+        if let Some(head) = new_last_scanned {
+            metrics::gauge!(ChallengerMetrics::SCAN_HEAD).set(head as f64);
+        }
+
+        info!(
+            games_found = candidates.len(),
+            scan_head = ?new_last_scanned,
+            games_scanned = games_to_scan,
+            "scan complete"
+        );
+
         Ok((candidates, new_last_scanned))
     }
 
