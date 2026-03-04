@@ -22,12 +22,5 @@ features = ["derive"]
 
 [features]
 default = []
-std = [
-    "alloy-primitives/std",
-    "base-proof-preimage/std",
-]
-serde = [
-    "dep:serde",
-    "alloy-primitives/serde",
-    "base-proof-preimage/serde",
-]
+std = [ "alloy-primitives/std", "base-proof-preimage/std" ]
+serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
