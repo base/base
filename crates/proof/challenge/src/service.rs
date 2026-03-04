@@ -3,7 +3,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use eyre::Result;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::ChallengerConfig;
 
@@ -62,8 +62,8 @@ impl ChallengerService {
         // ── 3. Await health server (runs until runtime shutdown) ─────────────
         match health_handle.await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!(error = %e, "Health server error"),
-            Err(e) => warn!(error = %e, "Health server task panicked"),
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(eyre::eyre!("Health server task panicked: {e}")),
         }
 
         info!("Service stopped");
