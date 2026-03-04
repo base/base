@@ -16,6 +16,3 @@ pub use metrics::{ChallengerMetrics, INFO, LABEL_VERSION, UP};
 
 mod service;
 pub use service::ChallengerService;
-
-mod signal;
-pub use signal::SignalHandler;

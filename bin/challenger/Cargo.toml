@@ -17,6 +17,6 @@ workspace = true
 
 [dependencies]
 base-challenger.workspace = true
+base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 eyre.workspace = true
-tokio = { workspace = true, features = ["full"] }

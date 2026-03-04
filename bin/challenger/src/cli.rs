@@ -13,7 +13,10 @@ pub(crate) struct Cli {
 
 impl Cli {
     /// Run the challenger service.
-    pub(crate) async fn run(self) -> eyre::Result<()> {
-        base_challenger::ChallengerService::run(base_challenger::ChallengerConfig::from_cli(self.args)?).await
+    pub(crate) fn run(self) -> eyre::Result<()> {
+        let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
+        base_cli_utils::RuntimeManager::run_until_ctrl_c(
+            base_challenger::ChallengerService::run(config),
+        )
     }
 }

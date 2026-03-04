@@ -2,11 +2,10 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::AtomicBool,
 };
 
 use eyre::Result;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -20,18 +19,17 @@ impl ChallengerService {
     /// Runs the full challenger service lifecycle.
     ///
     /// This is the scaffolding entry point for the challenger. It sets up
-    /// infrastructure (logging, TLS, metrics, health endpoints, signal handling)
-    /// and waits for a shutdown signal. No business logic (dispute-game
-    /// monitoring, proof generation, or challenge submission) is wired yet —
-    /// those will be added in subsequent steps.
+    /// infrastructure (logging, TLS, metrics, health endpoints) and blocks
+    /// until the runtime is shut down (e.g. via `RuntimeManager::run_until_ctrl_c`).
+    /// No business logic (dispute-game monitoring, proof generation, or
+    /// challenge submission) is wired yet — those will be added in subsequent
+    /// steps.
     ///
     /// # Lifecycle
     ///
     /// 1. Initialise logging, TLS, and metrics
-    /// 2. Install signal handlers for graceful shutdown
-    /// 3. Start health HTTP server (`/readyz` returns 503 — no driver wired yet)
-    /// 4. Wait for SIGTERM or SIGINT
-    /// 5. Graceful shutdown in reverse order
+    /// 2. Start health HTTP server (`/readyz` returns 503 — no driver wired yet)
+    /// 3. Block until runtime shutdown
     ///
     /// # Errors
     ///
@@ -45,11 +43,7 @@ impl ChallengerService {
 
         info!(version = env!("CARGO_PKG_VERSION"), "Challenger starting");
 
-        // ── 1. Global cancellation token and signal handler ──────────────────
-        let cancel = CancellationToken::new();
-        crate::SignalHandler::install(cancel.clone());
-
-        // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
+        // ── 1. Metrics recorder (if enabled) ─────────────────────────────────
         config
             .metrics
             .init()
@@ -58,30 +52,28 @@ impl ChallengerService {
         // Record startup metrics (no-ops if no recorder installed).
         crate::ChallengerMetrics::record_startup(env!("CARGO_PKG_VERSION"));
 
-        // ── 3. Start health HTTP server ──────────────────────────────────────
+        // ── 2. Start health HTTP server ──────────────────────────────────────
         // Ready flag is hardcoded to false — no driver is wired yet.
+        // The CancellationToken is never explicitly cancelled; when
+        // `run_until_ctrl_c` receives Ctrl-C the runtime drops and aborts
+        // all spawned tasks.
         let ready = Arc::new(AtomicBool::new(false));
-        let health_handle: JoinHandle<Result<()>> = {
+        let health_cancel = CancellationToken::new();
+        let health_handle = {
             let addr = config.health_addr;
             let ready_flag = Arc::clone(&ready);
-            let health_cancel = cancel.clone();
+            let cancel = health_cancel.clone();
             tokio::spawn(
-                async move { crate::HealthServer::serve(addr, ready_flag, health_cancel).await },
+                async move { crate::HealthServer::serve(addr, ready_flag, cancel).await },
             )
         };
 
         info!("Service initialised, waiting for shutdown signal");
 
-        // ── 4. Wait for shutdown signal ──────────────────────────────────────
-        cancel.cancelled().await;
-        info!("Shutdown signal received, stopping service...");
-
-        // ── 5. Graceful shutdown (reverse initialisation order) ──────────────
-        ready.store(false, Ordering::SeqCst);
-
+        // ── 3. Await health server (runs until runtime shutdown) ─────────────
         match health_handle.await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
+            Ok(Err(e)) => warn!(error = %e, "Health server error"),
             Err(e) => warn!(error = %e, "Health server task panicked"),
         }
 

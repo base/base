@@ -2666,9 +2666,9 @@ name = "base-challenger-bin"
 version = "0.0.0"
 dependencies = [
  "base-challenger",
+ "base-cli-utils",
  "clap",
  "eyre",
- "tokio",
 ]
 
 [[package]]
