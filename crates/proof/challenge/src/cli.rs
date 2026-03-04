@@ -5,10 +5,7 @@
 //! `BASE_CHALLENGER_` prefix via [`base_cli_utils`] macros. The default
 //! metrics port is **7310** (distinct from the proposer's 7300).
 
-use std::{
-    net::IpAddr,
-    time::Duration,
-};
+use std::{net::IpAddr, time::Duration};
 
 use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
@@ -138,27 +135,15 @@ pub struct ChallengerArgs {
     pub signer_address: Option<Address>,
 
     /// Number of past games to scan on startup.
-    #[arg(
-        long = "lookback-games",
-        env = "CHALLENGER_LOOKBACK_GAMES",
-        default_value = "1000"
-    )]
+    #[arg(long = "lookback-games", env = "CHALLENGER_LOOKBACK_GAMES", default_value = "1000")]
     pub lookback_games: u64,
 
     /// Health server bind address.
-    #[arg(
-        long = "health.addr",
-        env = "CHALLENGER_HEALTH_ADDR",
-        default_value = "0.0.0.0"
-    )]
+    #[arg(long = "health.addr", env = "CHALLENGER_HEALTH_ADDR", default_value = "0.0.0.0")]
     pub health_addr: IpAddr,
 
     /// Health server port.
-    #[arg(
-        long = "health.port",
-        env = "CHALLENGER_HEALTH_PORT",
-        default_value = "8080"
-    )]
+    #[arg(long = "health.port", env = "CHALLENGER_HEALTH_PORT", default_value = "8080")]
     pub health_port: u16,
 }
 

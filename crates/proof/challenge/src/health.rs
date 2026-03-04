@@ -70,10 +70,10 @@ pub async fn serve(
 ) -> eyre::Result<()> {
     let state = ServerState { ready };
 
-    let app =
-        Router::new().route("/healthz", get(liveness)).route("/readyz", get(readiness)).with_state(
-            state,
-        );
+    let app = Router::new()
+        .route("/healthz", get(liveness))
+        .route("/readyz", get(readiness))
+        .with_state(state);
 
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "Health server started");

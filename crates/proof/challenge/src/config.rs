@@ -1,9 +1,6 @@
 //! Configuration types and validation for the challenger.
 
-use std::{
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, MetricsConfig};
@@ -63,7 +60,9 @@ pub enum SigningConfig {
 impl std::fmt::Debug for SigningConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Local { .. } => f.debug_struct("Local").field("private_key", &"[redacted]").finish(),
+            Self::Local { .. } => {
+                f.debug_struct("Local").field("private_key", &"[redacted]").finish()
+            }
             Self::Remote { endpoint, address } => f
                 .debug_struct("Remote")
                 .field("endpoint", endpoint)
@@ -241,7 +240,8 @@ mod tests {
                 zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
                 // Hardhat/Anvil account #0 — never use in production.
                 private_key: Some(
-                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                        .to_string(),
                 ),
                 signer_endpoint: None,
                 signer_address: None,
@@ -430,9 +430,8 @@ mod tests {
 
     #[test]
     fn test_signing_config_debug_redacts() {
-        let signing = SigningConfig::Local {
-            private_key: Zeroizing::new("0xdeadbeef".to_string()),
-        };
+        let signing =
+            SigningConfig::Local { private_key: Zeroizing::new("0xdeadbeef".to_string()) };
         let debug_output = format!("{signing:?}");
         assert!(debug_output.contains("[redacted]"));
         assert!(!debug_output.contains("deadbeef"));
