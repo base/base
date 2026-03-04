@@ -103,7 +103,7 @@ impl Host {
                 .as_ref()
                 .ok_or_else(|| HostError::Custom("Provider must be set".into()))?,
         )
-        .await;
+        .await?;
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
             self.config
                 .l1_beacon_address
@@ -117,12 +117,14 @@ impl Host {
                 .as_ref()
                 .ok_or_else(|| HostError::Custom("L2 node address must be set".into()))?,
         )
-        .await;
+        .await?;
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
     }
 }
 
-async fn rpc_provider<N: Network>(url: &str) -> RootProvider<N> {
-    RootProvider::connect(url).await.unwrap()
+async fn rpc_provider<N: Network>(url: &str) -> Result<RootProvider<N>> {
+    RootProvider::connect(url)
+        .await
+        .map_err(|e| HostError::Custom(format!("failed to connect to RPC at {url}: {e}")))
 }

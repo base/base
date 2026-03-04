@@ -10,7 +10,6 @@ homepage.workspace = true
 [dependencies]
 # Workspace
 tokio.workspace = true
-anyhow.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true

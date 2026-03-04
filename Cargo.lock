@@ -3985,7 +3985,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-beacon",
  "alloy-transport",
- "anyhow",
  "ark-ff 0.5.0",
  "async-trait",
  "base-alloy-network",

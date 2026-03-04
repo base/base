@@ -92,7 +92,7 @@ pub enum HostError {
     SerdeJson(#[from] serde_json::Error),
     /// Preimage oracle error.
     #[error("Preimage oracle error: {0}")]
-    PreimageOracle(#[from] PreimageOracleError),
+    PreimageOracle(PreimageOracleError),
     /// Base derive error.
     #[error("Base derive error: {0}")]
     BaseDerive(String),

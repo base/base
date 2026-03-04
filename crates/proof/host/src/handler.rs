@@ -7,7 +7,6 @@ use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
-use anyhow::{Result, anyhow, ensure};
 use ark_ff::{BigInteger, PrimeField};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
@@ -15,7 +14,9 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot, Predeploys};
 use tracing::warn;
 
-use crate::{HostConfig, HostProviders, SharedKeyValueStore, store_ordered_trie};
+use crate::{
+    HostConfig, HostError, HostProviders, Result, SharedKeyValueStore, store_ordered_trie,
+};
 
 /// Parses a blob hint, supporting both legacy (48-byte) and new (40-byte) formats.
 ///
@@ -45,12 +46,10 @@ pub fn parse_blob_hint(hint_data: &[u8]) -> Result<(B256, u64)> {
             let timestamp = u64::from_be_bytes(timestamp_data_bytes);
             Ok((hash, timestamp))
         }
-        _ => {
-            anyhow::bail!(
-                "Invalid blob hint length: expected 40 or 48 bytes, got {}",
-                hint_data.len()
-            );
-        }
+        _ => Err(HostError::Custom(format!(
+            "Invalid blob hint length: expected 40 or 48 bytes, got {}",
+            hint_data.len()
+        ))),
     }
 }
 
@@ -63,7 +62,9 @@ pub async fn handle_hint(
 ) -> Result<()> {
     match hint.ty {
         HintType::L1BlockHeader => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
             let raw_header: Bytes =
@@ -73,7 +74,9 @@ pub async fn handle_hint(
             kv_lock.set(PreimageKey::new_keccak256(*hash).into(), raw_header.into())?;
         }
         HintType::L1Transactions => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
             let Block { transactions, .. } = providers
@@ -81,7 +84,7 @@ pub async fn handle_hint(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or_else(|| anyhow!("Block not found"))?;
+                .ok_or(HostError::BlockNotFound)?;
             let encoded_transactions = transactions
                 .into_transactions()
                 .map(|tx| tx.inner.encoded_2718())
@@ -90,7 +93,9 @@ pub async fn handle_hint(
             store_ordered_trie(kv.as_ref(), encoded_transactions.as_slice()).await?;
         }
         HintType::L1Receipts => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
             let raw_receipts: Vec<Bytes> =
@@ -108,9 +113,9 @@ pub async fn handle_hint(
                 .blobs
                 .fetch_filtered_blob_sidecars(&partial_block_ref, &[blob_hash])
                 .await
-                .map_err(|e| anyhow!("Failed to fetch blobs with proofs: {e}"))?;
+                .map_err(|e| HostError::BlobSidecarFetchFailed(e.to_string()))?;
             if blobs.len() != 1 {
-                anyhow::bail!("Expected 1 blob, got {}", blobs.len());
+                return Err(HostError::BlobCountMismatch { expected: 1, actual: blobs.len() });
             }
             let sidecar = blobs.pop().expect("Expected 1 blob");
             let blob = &sidecar.blob;
@@ -149,7 +154,9 @@ pub async fn handle_hint(
             )?;
         }
         HintType::L1Precompile => {
-            ensure!(hint.data.len() >= 28, "Invalid hint data length");
+            if hint.data.len() < 28 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let input_hash = keccak256(hint.data.as_ref());
 
@@ -177,7 +184,9 @@ pub async fn handle_hint(
                 .set(PreimageKey::new(*input_hash, PreimageKeyType::Precompile).into(), result)?;
         }
         HintType::L2BlockHeader => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
             let raw_header: Bytes =
@@ -187,7 +196,9 @@ pub async fn handle_hint(
             kv_lock.set(PreimageKey::new_keccak256(*hash).into(), raw_header.into())?;
         }
         HintType::L2Transactions => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
             let Block { transactions, .. } = providers
@@ -195,7 +206,7 @@ pub async fn handle_hint(
                 .get_block_by_hash(hash)
                 .full()
                 .await?
-                .ok_or_else(|| anyhow!("Block not found."))?;
+                .ok_or(HostError::BlockNotFound)?;
 
             let encoded_transactions = transactions
                 .into_transactions()
@@ -204,7 +215,9 @@ pub async fn handle_hint(
             store_ordered_trie(kv.as_ref(), encoded_transactions.as_slice()).await?;
         }
         HintType::StartingL2Output => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let raw_header: Bytes = providers
                 .l2
@@ -226,10 +239,9 @@ pub async fn handle_hint(
             );
             let output_root_hash = output_root.hash();
 
-            ensure!(
-                output_root_hash == cfg.agreed_l2_output_root,
-                "Output root does not match L2 head."
-            );
+            if output_root_hash != cfg.agreed_l2_output_root {
+                return Err(HostError::OutputRootMismatch);
+            }
 
             let mut kv_write_lock = kv.write().await;
             kv_write_lock.set(
@@ -240,7 +252,9 @@ pub async fn handle_hint(
         HintType::L2Code => {
             const CODE_PREFIX: u8 = b'c';
 
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
 
@@ -258,14 +272,16 @@ pub async fn handle_hint(
                     .client()
                     .request::<&[B256; 1], Bytes>("debug_dbGet", &[hash])
                     .await
-                    .map_err(|e| anyhow!("Error fetching code hash preimage: {e}"))?,
+                    .map_err(|e| HostError::CodeHashPreimageFetchFailed(e.to_string()))?,
             };
 
             let mut kv_lock = kv.write().await;
             kv_lock.set(PreimageKey::new_keccak256(*hash).into(), code.into())?;
         }
         HintType::L2StateNode => {
-            ensure!(hint.data.len() == 32, "Invalid hint data length");
+            if hint.data.len() != 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
 
@@ -278,7 +294,9 @@ pub async fn handle_hint(
             kv_write_lock.set(PreimageKey::new_keccak256(*hash).into(), preimage.into())?;
         }
         HintType::L2AccountProof => {
-            ensure!(hint.data.len() == 8 + 20, "Invalid hint data length");
+            if hint.data.len() != 8 + 20 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let block_number = u64::from_be_bytes(hint.data.as_ref()[..8].try_into()?);
             let address = Address::from_slice(&hint.data.as_ref()[8..28]);
@@ -294,17 +312,19 @@ pub async fn handle_hint(
                 let node_hash = keccak256(node.as_ref());
                 let key = PreimageKey::new_keccak256(*node_hash);
                 kv_lock.set(key.into(), node.into())?;
-                Ok::<(), anyhow::Error>(())
+                Ok::<(), HostError>(())
             })?;
         }
         HintType::L2AccountStorageProof => {
-            ensure!(hint.data.len() == 8 + 20 + 32, "Invalid hint data length");
+            if hint.data.len() != 8 + 20 + 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let block_number = u64::from_be_bytes(hint.data.as_ref()[..8].try_into()?);
             let address = Address::from_slice(&hint.data.as_ref()[8..28]);
             let slot = B256::from_slice(&hint.data.as_ref()[28..]);
 
-            let mut proof_response =
+            let proof_response =
                 providers.l2.get_proof(address, vec![slot]).block_id(block_number.into()).await?;
 
             let mut kv_lock = kv.write().await;
@@ -313,15 +333,19 @@ pub async fn handle_hint(
                 let node_hash = keccak256(node.as_ref());
                 let key = PreimageKey::new_keccak256(*node_hash);
                 kv_lock.set(key.into(), node.into())?;
-                Ok::<(), anyhow::Error>(())
+                Ok::<(), HostError>(())
             })?;
 
-            let storage_proof = proof_response.storage_proof.remove(0);
+            let storage_proof = proof_response
+                .storage_proof
+                .into_iter()
+                .next()
+                .ok_or_else(|| HostError::Custom("empty storage proof from RPC".into()))?;
             storage_proof.proof.into_iter().try_for_each(|node| {
                 let node_hash = keccak256(node.as_ref());
                 let key = PreimageKey::new_keccak256(*node_hash);
                 kv_lock.set(key.into(), node.into())?;
-                Ok::<(), anyhow::Error>(())
+                Ok::<(), HostError>(())
             })?;
         }
         HintType::L2PayloadWitness => {
@@ -330,12 +354,14 @@ pub async fn handle_hint(
                 return Ok(());
             }
 
-            ensure!(hint.data.len() >= 32, "Invalid hint data length");
+            if hint.data.len() < 32 {
+                return Err(HostError::InvalidHintDataLength);
+            }
 
             let parent_block_hash = B256::from_slice(&hint.data.as_ref()[..32]);
             let payload_attributes: OpPayloadAttributes = serde_json::from_slice(&hint.data[32..])?;
 
-            let Ok(execute_payload_response) = providers
+            let execute_payload_response = match providers
                 .l2
                 .client()
                 .request::<(B256, OpPayloadAttributes), ExecutionWitness>(
@@ -343,8 +369,12 @@ pub async fn handle_hint(
                     (parent_block_hash, payload_attributes),
                 )
                 .await
-            else {
-                return Ok(());
+            {
+                Ok(response) => response,
+                Err(e) => {
+                    warn!(error = %e, "debug_executePayload failed");
+                    return Ok(());
+                }
             };
 
             let preimages = execute_payload_response
