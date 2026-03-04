@@ -59,7 +59,7 @@ impl ChallengerService {
         let health_handle = {
             let addr = config.health_addr;
             let ready_flag = Arc::clone(&ready);
-            let cancel = health_cancel.clone();
+            let cancel = health_cancel;
             tokio::spawn(async move { crate::HealthServer::serve(addr, ready_flag, cancel).await })
         };
 
