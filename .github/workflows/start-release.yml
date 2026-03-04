@@ -43,6 +43,7 @@ jobs:
       - name: Run version sync
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
           BRANCH=$(cat "${{ runner.temp }}/release_branch")
           git checkout "$BRANCH"
           ./etc/scripts/release/version-sync.sh "$BRANCH"
