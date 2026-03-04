@@ -6,9 +6,9 @@ use alloy_chains::Chain;
 use alloy_primitives::U256;
 use base_execution_forks::DEV_HARDFORKS;
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec};
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
-use crate::{LazyLock, OpChainSpec, make_op_genesis_header};
+use crate::OpChainSpec;
 
 /// OP dev testnet specification
 ///
@@ -18,7 +18,8 @@ pub static OP_DEV: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
     let genesis = serde_json::from_str(include_str!("../res/genesis/dev.json"))
         .expect("Can't deserialize Dev testnet genesis json");
     let hardforks = DEV_HARDFORKS.clone();
-    let genesis_header = SealedHeader::seal_slow(make_op_genesis_header(&genesis, &hardforks));
+    let genesis_header =
+        SealedHeader::seal_slow(OpChainSpec::make_genesis_header(&genesis, &hardforks));
     OpChainSpec {
         inner: ChainSpec {
             chain: Chain::dev(),

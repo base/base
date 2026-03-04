@@ -7,9 +7,9 @@ use alloy_primitives::{U256, b256};
 use base_execution_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec, Hardfork};
 use reth_ethereum_forks::EthereumHardfork;
-use reth_primitives_traits::SealedHeader;
+use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
-use crate::{LazyLock, OpChainSpec, make_op_genesis_header};
+use crate::OpChainSpec;
 
 /// The Base Sepolia spec
 pub static BASE_SEPOLIA: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
@@ -20,7 +20,7 @@ pub static BASE_SEPOLIA: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
         inner: ChainSpec {
             chain: Chain::base_sepolia(),
             genesis_header: SealedHeader::new(
-                make_op_genesis_header(&genesis, &hardforks),
+                OpChainSpec::make_genesis_header(&genesis, &hardforks),
                 b256!("0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4"),
             ),
             genesis,
