@@ -2752,6 +2752,7 @@ dependencies = [
  "serde",
  "strum 0.28.0",
  "tracing",
+ "url",
 ]
 
 [[package]]

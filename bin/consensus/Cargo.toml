@@ -45,5 +45,6 @@ tracing = { workspace = true, features = ["std"] }
 metrics.workspace = true
 
 # misc
+url.workspace = true
 eyre.workspace = true
 serde.workspace = true
