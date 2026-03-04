@@ -185,6 +185,7 @@ where
             let account = account.ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
 
             // Don't waste resources metering invalid transactions
+            l1_block_info.clear_tx_l1_cost();
             validate_tx(account, sender_code.as_ref(), tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
