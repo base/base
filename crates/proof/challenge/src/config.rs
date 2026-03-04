@@ -219,52 +219,44 @@ fn build_signing_config(
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-
     use base_cli_utils::LogFormat;
 
-    use super::*;
-    use crate::cli::{ChallengerArgs, LogArgs, MetricsArgs};
+    use clap::Parser;
 
-    fn minimal_cli() -> Cli {
-        Cli {
-            challenger: ChallengerArgs {
-                l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
-                l2_eth_rpc: Url::parse("http://localhost:9545").unwrap(),
-                rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
-                dispute_game_factory_addr: "0x1234567890123456789012345678901234567890"
-                    .parse()
-                    .unwrap(),
-                anchor_state_registry_addr: "0x2234567890123456789012345678901234567890"
-                    .parse()
-                    .unwrap(),
-                game_type: 1,
-                poll_interval: Duration::from_secs(12),
-                zk_proof_service_endpoint: Url::parse("http://localhost:5000").unwrap(),
-                signer_endpoint: Some(Url::parse("http://localhost:8546").unwrap()),
-                signer_address: Some("0x1234567890123456789012345678901234567890".parse().unwrap()),
-                lookback_games: 1000,
-                health_addr: "0.0.0.0".parse().unwrap(),
-                health_port: 8080,
-            },
-            logging: LogArgs {
-                level: 3,
-                stdout_quiet: false,
-                stdout_format: LogFormat::Full,
-                ..Default::default()
-            },
-            metrics: MetricsArgs {
-                enabled: false,
-                addr: "0.0.0.0".parse().unwrap(),
-                port: 7310,
-                ..Default::default()
-            },
+    use super::*;
+    use crate::cli::{LogArgs, MetricsArgs};
+
+    /// Parse a mock CLI command with required args plus any overrides.
+    ///
+    /// Keys present in `extra_args` replace their base defaults so clap never
+    /// sees the same flag twice.
+    fn cli_from_args(extra_args: &[&str]) -> Cli {
+        let base: &[(&str, &str)] = &[
+            ("--l1-eth-rpc", "http://localhost:8545"),
+            ("--l2-eth-rpc", "http://localhost:9545"),
+            ("--rollup-rpc", "http://localhost:7545"),
+            ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
+            ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
+            ("--game-type", "1"),
+            ("--zk-proof-service-endpoint", "http://localhost:5000"),
+            ("--signer-endpoint", "http://localhost:8546"),
+            ("--signer-address", "0x1234567890123456789012345678901234567890"),
+        ];
+
+        let mut args = vec!["challenger"];
+        for (key, value) in base {
+            if !extra_args.contains(key) {
+                args.push(key);
+                args.push(value);
+            }
         }
+        args.extend_from_slice(extra_args);
+        Cli::try_parse_from(args).unwrap()
     }
 
     #[test]
     fn test_valid_config() {
-        let cli = minimal_cli();
+        let cli = cli_from_args(&[]);
         let config = ChallengerConfig::from_cli(cli).unwrap();
         assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
@@ -275,26 +267,21 @@ mod tests {
 
     #[test]
     fn test_zero_poll_interval() {
-        let mut cli = minimal_cli();
-        cli.challenger.poll_interval = Duration::ZERO;
+        let cli = cli_from_args(&["--poll-interval", "0s"]);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
     }
 
     #[test]
     fn test_metrics_port_zero_when_enabled() {
-        let mut cli = minimal_cli();
-        cli.metrics.enabled = true;
-        cli.metrics.port = 0;
+        let cli = cli_from_args(&["--metrics.enabled", "--metrics.port", "0"]);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::Metrics(_))));
     }
 
     #[test]
     fn test_metrics_port_zero_when_disabled() {
-        let mut cli = minimal_cli();
-        cli.metrics.enabled = false;
-        cli.metrics.port = 0;
+        let cli = cli_from_args(&["--metrics.port", "0"]);
         let result = ChallengerConfig::from_cli(cli);
         assert!(result.is_ok());
     }
@@ -404,8 +391,7 @@ mod tests {
 
     #[test]
     fn test_zk_proof_endpoint_validated() {
-        let mut cli = minimal_cli();
-        cli.challenger.zk_proof_service_endpoint = Url::parse("file:///no/host").unwrap();
+        let cli = cli_from_args(&["--zk-proof-service-endpoint", "file:///no/host"]);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(
             result,
@@ -415,9 +401,7 @@ mod tests {
 
     #[test]
     fn test_health_addr_configurable() {
-        let mut cli = minimal_cli();
-        cli.challenger.health_addr = "127.0.0.1".parse::<IpAddr>().unwrap();
-        cli.challenger.health_port = 9090;
+        let cli = cli_from_args(&["--health.addr", "127.0.0.1", "--health.port", "9090"]);
         let config = ChallengerConfig::from_cli(cli).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
     }
