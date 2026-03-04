@@ -171,7 +171,7 @@ pub struct OpPayloadBuilderCtx {
     pub execution_metering_mode: ExecutionMeteringMode,
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
-    /// Optional flashblock index TX config (signer + contract address).
+    /// Optional flashblock index tx config (signer + contract address).
     pub flashblock_index_config: Option<FlashblockIndexConfig>,
 }
 
@@ -488,7 +488,7 @@ impl OpPayloadBuilderCtx {
             target: "payload_builder",
             flashblock_index,
             contract = %config.contract_address,
-            "executing flashblock index TX",
+            "executing flashblock index tx",
         );
 
         let signer_address = config.signer.address();
@@ -523,7 +523,7 @@ impl OpPayloadBuilderCtx {
                 target: "payload_builder",
                 flashblock_index,
                 contract = %config.contract_address,
-                "flashblock index TX reverted, skipping inclusion",
+                "flashblock index tx reverted, skipping inclusion",
             );
             return Ok(());
         }
@@ -550,7 +550,7 @@ impl OpPayloadBuilderCtx {
         info.executed_transactions.push(tx.into_inner());
 
         // NOTE: execute_best_transactions overwrites access_list_builder with its own
-        // fresh FBALBuilderDb, so the index TX's accesses won't appear in the final list.
+        // fresh FBALBuilderDb, so the index tx's accesses won't appear in the final list.
         // This matches the existing pattern across all execute_* methods.
         match fbal_db.finish() {
             Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
@@ -563,7 +563,7 @@ impl OpPayloadBuilderCtx {
             target: "payload_builder",
             flashblock_index,
             gas_used,
-            "flashblock index TX executed",
+            "flashblock index tx executed",
         );
 
         Ok(())

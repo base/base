@@ -396,7 +396,7 @@ async fn test_flashblock_index_written_on_chain() -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Block 1: deploy the FlashblockIndex contract and fund the index signer.
-    // Deploy TX goes first (nonce 0) so the pre-computed contract address matches.
+    // Deploy tx goes first (nonce 0) so the pre-computed contract address matches.
     // Index TXs with the unfunded signer will silently fail this block.
     let constructor =
         FlashblockIndex::constructorCall { builder: index_signer.address() }.abi_encode();
@@ -423,7 +423,7 @@ async fn test_flashblock_index_written_on_chain() -> eyre::Result<()> {
     let code = driver.provider().get_code_at(contract_address).await?;
     assert!(!code.is_empty(), "FlashblockIndex should be deployed at {contract_address}");
 
-    // Block 2: build with flashblocks — index TX fires at each flashblock boundary.
+    // Block 2: build with flashblocks — index tx fires at each flashblock boundary.
     let _ = driver.create_transaction().random_valid_transfer().send().await?;
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let block_number = block.header.number;
@@ -436,11 +436,11 @@ async fn test_flashblock_index_written_on_chain() -> eyre::Result<()> {
     let num_index_txs = result.flashblockIndex as usize;
     assert!(num_index_txs > 0, "flashblockIndex should be > 0");
 
-    // The block should contain exactly: 1 deposit TX + N index TXs + 1 user TX.
+    // The block should contain exactly: 1 deposit tx + N index txs + 1 user tx.
     assert_eq!(
         block.transactions.len(),
         1 + num_index_txs + 1,
-        "block should contain 1 deposit + {num_index_txs} index TXs + 1 user TX",
+        "block should contain 1 deposit + {num_index_txs} index txs + 1 user tx",
     );
     assert_eq!(
         result.blockNumber.to::<u64>(),
