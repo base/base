@@ -165,9 +165,9 @@ mod tests {
     fn test_parse_bootnode_error_variants(#[case] raw: &str, #[case] expected: ParseErrorKind) {
         let err = BootNode::parse_bootnode(raw).expect_err("input should fail to parse");
         match (expected, err) {
-            (ParseErrorKind::Enr, BootNodeParseError::Enr(_)) => {}
-            (ParseErrorKind::NodeRecord, BootNodeParseError::NodeRecord(_)) => {}
-            (ParseErrorKind::PeerIdConversion, BootNodeParseError::PeerIdConversion(_)) => {}
+            (ParseErrorKind::Enr, BootNodeParseError::Enr(_))
+            | (ParseErrorKind::NodeRecord, BootNodeParseError::NodeRecord(_))
+            | (ParseErrorKind::PeerIdConversion, BootNodeParseError::PeerIdConversion(_)) => {}
             (expected, actual) => {
                 panic!("expected {expected:?}, got {actual:?}");
             }
