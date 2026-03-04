@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
 use base_execution_primitives::OpTransactionSigned;
@@ -12,7 +14,7 @@ use tracing::debug;
 use crate::{BasePooledTransaction, BuilderApiMetrics, forwarder::ValidTransaction};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
-#[rpc(server, client, namespace = "base")]
+#[rpc(server, namespace = "base")]
 pub trait BuilderApi {
     /// Inserts a single pre-validated transaction into the builder's pool.
     ///
@@ -67,7 +69,11 @@ where
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len);
 
         // Insert into the pool
-        match self.pool.add_external_transaction(pool_tx).await {
+        let start = Instant::now();
+        let result = self.pool.add_external_transaction(pool_tx).await;
+        self.metrics.insert_duration.record(start.elapsed().as_secs_f64());
+
+        match result {
             Ok(_) => {
                 debug!(sender = %sender, "inserted validated transaction");
                 self.metrics.txs_inserted.increment(1);

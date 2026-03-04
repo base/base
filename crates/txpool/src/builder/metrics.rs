@@ -1,4 +1,4 @@
-use metrics::Counter;
+use metrics::{Counter, Histogram};
 use metrics_derive::Metrics;
 
 /// Metrics for the builder RPC handler.
@@ -14,4 +14,7 @@ pub struct BuilderApiMetrics {
     /// Transactions rejected by the pool.
     #[metric(describe = "Transactions rejected by the pool")]
     pub pool_rejections: Counter,
+    /// Insert duration.
+    #[metric(describe = "Insert duration")]
+    pub insert_duration: Histogram,
 }

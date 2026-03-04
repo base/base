@@ -269,7 +269,7 @@ where
 
                     self.metrics.txs_forwarded.increment(ok_count);
                     if err_count > 0 {
-                        self.metrics.rpc_errors.increment(err_count);
+                        self.metrics.tx_batch_rejections.increment(err_count);
                     }
                     return;
                 }
