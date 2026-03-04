@@ -14,6 +14,9 @@ use tracing::{debug, info, warn};
 
 use crate::ChallengerMetrics;
 
+/// Game status indicating the dispute is still in progress.
+pub const STATUS_IN_PROGRESS: u8 = 0;
+
 /// Configuration for the game scanner.
 #[derive(Debug, Clone)]
 pub struct ScannerConfig {
@@ -123,7 +126,7 @@ impl GameScanner {
     /// Evaluates a single game at the given factory index.
     ///
     /// Returns `Some(CandidateGame)` if the game matches the configured game type,
-    /// is `IN_PROGRESS`, and has not been challenged (zkProver == zero).
+    /// is `IN_PROGRESS`, and has not been challenged (`zkProver` == zero).
     /// Returns `None` if the game should be skipped.
     async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
         let GameAtIndex { game_type, proxy, .. } = self.factory_client.game_at_index(index).await?;
@@ -139,7 +142,7 @@ impl GameScanner {
         }
 
         let status = self.verifier_client.status(proxy).await?;
-        if status != 0 {
+        if status != STATUS_IN_PROGRESS {
             debug!(index = index, status = status, "skipping game not in progress");
             return Ok(None);
         }

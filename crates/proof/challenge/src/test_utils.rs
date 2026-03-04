@@ -126,13 +126,43 @@ fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameStat
     }
 }
 
+/// Mock factory that returns an error for specific indices.
+pub(crate) struct ErrorOnIndexFactory {
+    /// The inner factory providing normal game data.
+    pub inner: MockDisputeGameFactory,
+    /// Indices that should return an error when queried.
+    pub error_indices: Vec<u64>,
+}
+
+#[async_trait]
+impl DisputeGameFactoryClient for ErrorOnIndexFactory {
+    async fn game_count(&self) -> Result<u64, ContractError> {
+        self.inner.game_count().await
+    }
+
+    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+        if self.error_indices.contains(&index) {
+            return Err(ContractError::Validation(format!("simulated error at index {index}")));
+        }
+        self.inner.game_at_index(index).await
+    }
+
+    async fn init_bonds(&self, game_type: u32) -> Result<U256, ContractError> {
+        self.inner.init_bonds(game_type).await
+    }
+
+    async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
+        self.inner.game_impls(game_type).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const TARGET_TYPE: u32 = 1;
 
-    /// Happy path: mixed games, only matching / IN_PROGRESS / unchallenged returned.
+    /// Happy path: mixed games, only matching / `IN_PROGRESS` / unchallenged returned.
     #[tokio::test]
     async fn test_scan_happy_path() {
         // Game 0: matching type, IN_PROGRESS, unchallenged -> candidate
@@ -213,7 +243,7 @@ mod tests {
         assert_eq!(new_last_scanned, 2);
     }
 
-    /// Games with non-matching game_type are skipped.
+    /// Games with non-matching `game_type` are skipped.
     #[tokio::test]
     async fn test_scan_filters_wrong_game_type() {
         let factory = Arc::new(MockDisputeGameFactory {
@@ -284,7 +314,7 @@ mod tests {
         assert_eq!(new_last_scanned, 1);
     }
 
-    /// Lookback window: on fresh start with large factory, only lookback_games are scanned.
+    /// Lookback window: on fresh start with large factory, only `lookback_games` are scanned.
     #[tokio::test]
     async fn test_scan_lookback_window() {
         // Factory with 100 games, but lookback is 3 -> only scan indices 97, 98, 99
@@ -314,5 +344,42 @@ mod tests {
         assert_eq!(candidates[1].index, 98);
         assert_eq!(candidates[2].index, 99);
         assert_eq!(new_last_scanned, 99);
+    }
+
+    /// Error resilience: a per-game error is logged and skipped, other games still returned.
+    #[tokio::test]
+    async fn test_scan_skips_errored_games() {
+        // 3 games: index 1 will error, indices 0 and 2 are valid candidates
+        let factory = Arc::new(ErrorOnIndexFactory {
+            inner: MockDisputeGameFactory {
+                games: vec![
+                    factory_game(0, TARGET_TYPE),
+                    factory_game(1, TARGET_TYPE),
+                    factory_game(2, TARGET_TYPE),
+                ],
+            },
+            error_indices: vec![1],
+        });
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
+        // index 1 won't be queried on the verifier because the factory errors first
+        verifier_games.insert(addr(2), mock_state(0, Address::ZERO, 300));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let scanner = GameScanner::new(
+            factory,
+            verifier,
+            ScannerConfig { game_type: TARGET_TYPE, lookback_games: 1000 },
+        );
+
+        // start = max(0+1, 3-1000) = 1, end = 2
+        // Index 1 errors -> skipped. Index 2 -> candidate.
+        let (candidates, new_last_scanned) = scanner.scan(0).await.unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].index, 2);
+        assert_eq!(new_last_scanned, 2);
     }
 }

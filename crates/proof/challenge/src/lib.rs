@@ -15,10 +15,10 @@ mod metrics;
 pub use metrics::ChallengerMetrics;
 
 mod scanner;
-pub use scanner::{CandidateGame, GameScanner, ScannerConfig};
+pub use scanner::{CandidateGame, GameScanner, STATUS_IN_PROGRESS, ScannerConfig};
 
 mod service;
 pub use service::ChallengerService;
 
 #[cfg(test)]
-mod test_utils;
+pub mod test_utils;
