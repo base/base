@@ -16,7 +16,6 @@ workspace = true
 alloy-primitives.workspace = true
 
 # Async
-async-trait.workspace = true
 tokio.workspace = true
 
 # Tracing
@@ -55,5 +54,6 @@ url.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+async-trait.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true, features = ["json"] }
