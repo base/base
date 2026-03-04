@@ -1,9 +1,265 @@
 //! End-to-end tests for the mempool rebroadcaster.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use alloy_rpc_types::txpool::TxpoolContent;
 use mempool_rebroadcaster::Rebroadcaster;
+use serde_json::{Map, Value, json};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::oneshot,
+    task::JoinHandle,
+};
+
+const GENESIS_BLOCK_JSON: &str = r#"{"hash":"0x102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d","parentHash":"0x0000000000000000000000000000000000000000000000000000000000000000","sha3Uncles":"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347","miner":"0x4200000000000000000000000000000000000011","stateRoot":"0x06787a17a3ed87c339a39dbbeeb311578a0c83ed29daa2db95da62b28efce8a9","transactionsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","difficulty":"0x0","number":"0x0","gasLimit":"0x1c9c380","gasUsed":"0x0","timestamp":"0x64d6dbac","extraData":"0x424544524f434b","mixHash":"0x0000000000000000000000000000000000000000000000000000000000000000","nonce":"0x0000000000000000","baseFeePerGas":"0x0","size":"0x209","uncles":[],"transactions":[]}"#;
+
+#[derive(Clone, Copy)]
+enum SendRawBehavior {
+    RpcNonceTooLow,
+    CloseConnection,
+    OkHash,
+}
+
+#[derive(Clone)]
+struct RpcServerConfig {
+    txpool_content: Value,
+    send_raw_behavior: SendRawBehavior,
+    send_raw_calls: Arc<AtomicUsize>,
+}
+
+struct RpcServerHandle {
+    endpoint: String,
+    send_raw_calls: Arc<AtomicUsize>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl RpcServerHandle {
+    fn endpoint(&self) -> String {
+        self.endpoint.clone()
+    }
+
+    fn send_raw_calls(&self) -> usize {
+        self.send_raw_calls.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for RpcServerHandle {
+    fn drop(&mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        self.task.abort();
+    }
+}
+
+async fn spawn_rpc_server(config: RpcServerConfig) -> RpcServerHandle {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("failed to bind rpc mock server");
+    let addr = listener.local_addr().expect("failed to get rpc mock server address");
+    let endpoint = format!("http://{addr}");
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+    let shared_cfg = Arc::new(config);
+    let send_raw_calls = Arc::clone(&shared_cfg.send_raw_calls);
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accept_result = listener.accept() => {
+                    let (stream, _) = match accept_result {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    };
+                    let cfg = Arc::clone(&shared_cfg);
+                    tokio::spawn(async move {
+                        let _ = handle_rpc_connection(stream, cfg).await;
+                    });
+                }
+            }
+        }
+    });
+
+    RpcServerHandle { endpoint, send_raw_calls, shutdown_tx: Some(shutdown_tx), task }
+}
+
+async fn handle_rpc_connection(
+    mut stream: TcpStream,
+    config: Arc<RpcServerConfig>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let request_body = read_http_json_body(&mut stream).await?;
+    let request: Value = serde_json::from_str(&request_body)?;
+    let method = request.get("method").and_then(Value::as_str).unwrap_or_default();
+    let id = request.get("id").cloned().unwrap_or(Value::Null);
+
+    let response = match method {
+        "eth_getBlockByNumber" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": serde_json::from_str::<Value>(GENESIS_BLOCK_JSON)?,
+        }),
+        "eth_gasPrice" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": "0x0",
+        }),
+        "txpool_content" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": config.txpool_content.clone(),
+        }),
+        "eth_sendRawTransaction" => {
+            config.send_raw_calls.fetch_add(1, Ordering::SeqCst);
+            match config.send_raw_behavior {
+                SendRawBehavior::RpcNonceTooLow => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32000,
+                        "message": "nonce too low",
+                    },
+                }),
+                SendRawBehavior::CloseConnection => {
+                    // Simulate transport-level failure by closing without any HTTP response.
+                    return Ok(());
+                }
+                SendRawBehavior::OkHash => json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                }),
+            }
+        }
+        _ => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": "method not found",
+            },
+        }),
+    };
+
+    write_http_json_response(&mut stream, &response).await?;
+    Ok(())
+}
+
+async fn read_http_json_body(
+    stream: &mut TcpStream,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let mut buffer = Vec::with_capacity(4096);
+    let mut chunk = [0_u8; 1024];
+    let mut header_end = None;
+
+    loop {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        header_end = find_header_end(&buffer);
+        if header_end.is_some() {
+            break;
+        }
+    }
+
+    let header_end = header_end.ok_or("failed to read http headers")?;
+    let header_bytes = &buffer[..header_end];
+    let header = std::str::from_utf8(header_bytes)?;
+    let content_length = header
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            if key.eq_ignore_ascii_case("content-length") {
+                value.trim().parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .ok_or("missing content-length header")?;
+
+    while buffer.len() < header_end + content_length {
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+
+    if buffer.len() < header_end + content_length {
+        return Err("incomplete http request body".into());
+    }
+
+    Ok(std::str::from_utf8(&buffer[header_end..header_end + content_length])?.to_string())
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n").map(|pos| pos + 4)
+}
+
+async fn write_http_json_response(
+    stream: &mut TcpStream,
+    payload: &Value,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let body = serde_json::to_string(payload)?;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream.write_all(response.as_bytes()).await?;
+    stream.shutdown().await?;
+    Ok(())
+}
+
+fn single_tx_geth_mempool_json() -> Value {
+    let mut mempool: Value = serde_json::from_str(include_str!("../testdata/geth_mempool.json"))
+        .expect("failed to parse geth mempool json");
+    let pending =
+        mempool.get("pending").and_then(Value::as_object).expect("pending section must be present");
+    let (account, nonce_map) = pending
+        .iter()
+        .next()
+        .map(|(account, nonce_map)| (account.clone(), nonce_map.clone()))
+        .expect("pending section must have at least one account");
+    let nonce_map =
+        nonce_map.as_object().expect("account entry in pending section must be an object");
+    let (nonce, tx) = nonce_map
+        .iter()
+        .next()
+        .map(|(nonce, tx)| (nonce.clone(), tx.clone()))
+        .expect("pending account must have at least one transaction");
+
+    let mut single_nonce_map = Map::new();
+    single_nonce_map.insert(nonce, tx);
+
+    let mut single_pending = Map::new();
+    single_pending.insert(account, Value::Object(single_nonce_map));
+
+    let mut empty_queued = Map::new();
+    if let Some(existing_queued) = mempool.get("queued").and_then(Value::as_object) {
+        for account in existing_queued.keys() {
+            empty_queued.insert(account.clone(), Value::Object(Map::new()));
+        }
+    }
+
+    if let Some(obj) = mempool.as_object_mut() {
+        obj.insert("pending".to_string(), Value::Object(single_pending));
+        obj.insert("queued".to_string(), Value::Object(empty_queued));
+    }
+
+    mempool
+}
+
+fn empty_mempool_json() -> Value {
+    serde_json::from_str(include_str!("../testdata/reth_mempool.json"))
+        .expect("failed to parse empty mempool json")
+}
 
 fn load_static_mempool_content<P: AsRef<Path>>(
     filepath: P,
@@ -110,4 +366,56 @@ async fn test_e2e_filtering_logic() {
         total_pending + total_queued,
         "All transactions should be filtered out with very high base fee"
     );
+}
+
+#[tokio::test]
+async fn test_run_ignores_nonce_too_low_rpc_errors() {
+    let geth_server = spawn_rpc_server(RpcServerConfig {
+        txpool_content: single_tx_geth_mempool_json(),
+        send_raw_behavior: SendRawBehavior::OkHash,
+        send_raw_calls: Arc::new(AtomicUsize::new(0)),
+    })
+    .await;
+
+    let reth_server = spawn_rpc_server(RpcServerConfig {
+        txpool_content: empty_mempool_json(),
+        send_raw_behavior: SendRawBehavior::RpcNonceTooLow,
+        send_raw_calls: Arc::new(AtomicUsize::new(0)),
+    })
+    .await;
+
+    let rebroadcaster = Rebroadcaster::new(geth_server.endpoint(), reth_server.endpoint());
+    let result = rebroadcaster.run().await.expect("run should complete");
+
+    assert_eq!(1, reth_server.send_raw_calls(), "expected one rebroadcast attempt");
+    assert_eq!(0, result.success_geth_to_reth);
+    assert_eq!(0, result.unexpected_failed_geth_to_reth);
+    assert_eq!(0, result.success_reth_to_geth);
+    assert_eq!(0, result.unexpected_failed_reth_to_geth);
+}
+
+#[tokio::test]
+async fn test_run_counts_transport_errors_as_unexpected_failures() {
+    let geth_server = spawn_rpc_server(RpcServerConfig {
+        txpool_content: single_tx_geth_mempool_json(),
+        send_raw_behavior: SendRawBehavior::OkHash,
+        send_raw_calls: Arc::new(AtomicUsize::new(0)),
+    })
+    .await;
+
+    let reth_server = spawn_rpc_server(RpcServerConfig {
+        txpool_content: empty_mempool_json(),
+        send_raw_behavior: SendRawBehavior::CloseConnection,
+        send_raw_calls: Arc::new(AtomicUsize::new(0)),
+    })
+    .await;
+
+    let rebroadcaster = Rebroadcaster::new(geth_server.endpoint(), reth_server.endpoint());
+    let result = rebroadcaster.run().await.expect("run should complete");
+
+    assert_eq!(1, reth_server.send_raw_calls(), "expected one rebroadcast attempt");
+    assert_eq!(0, result.success_geth_to_reth);
+    assert_eq!(1, result.unexpected_failed_geth_to_reth);
+    assert_eq!(0, result.success_reth_to_geth);
+    assert_eq!(0, result.unexpected_failed_reth_to_geth);
 }

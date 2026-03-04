@@ -11,8 +11,12 @@ use alloy_rpc_types::txpool::TxpoolContent;
 use alloy_rpc_types_eth::{BlockId, Transaction as RpcTransaction};
 use tracing::{debug, error, info, warn};
 
-const IGNORED_ERRORS: [&str; 3] =
-    ["transaction underpriced", "replacement transaction underpriced", "already known"];
+const IGNORED_ERRORS: [&str; 4] = [
+    "transaction underpriced",
+    "replacement transaction underpriced",
+    "already known",
+    "nonce too low",
+];
 
 /// Synchronizes transaction pools between geth and reth nodes by rebroadcasting
 /// transactions that exist in one mempool but not the other.
@@ -112,14 +116,25 @@ impl Rebroadcaster {
                 .await;
 
             if let Err(e) = result {
-                let err_msg = e.as_error_resp().unwrap().message.to_string();
-                if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
+                if let Some(err_resp) = e.as_error_resp() {
+                    let err_msg = err_resp.message.to_string();
+                    if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
+                        output.unexpected_failed_geth_to_reth += 1;
+                        error!(
+                            tx = ?hash,
+                            error = ?err_msg,
+                            from = sender,
+                            "error sending txn from geth to reth"
+                        );
+                    }
+                } else {
+                    // Transport or other non-RPC error
                     output.unexpected_failed_geth_to_reth += 1;
                     error!(
                         tx = ?hash,
-                        error = ?err_msg,
+                        error = ?e,
                         from = sender,
-                        "error sending txn from geth to reth"
+                        "transport error sending txn from geth to reth"
                     );
                 }
                 continue;
@@ -138,14 +153,25 @@ impl Rebroadcaster {
                 .await;
 
             if let Err(e) = result {
-                let err_msg = e.as_error_resp().unwrap().message.to_string();
-                if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
+                if let Some(err_resp) = e.as_error_resp() {
+                    let err_msg = err_resp.message.to_string();
+                    if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
+                        output.unexpected_failed_reth_to_geth += 1;
+                        error!(
+                            tx = ?hash,
+                            error = ?err_msg,
+                            from = sender,
+                            "error sending txn from reth to geth"
+                        );
+                    }
+                } else {
+                    // Transport or other non-RPC error
                     output.unexpected_failed_reth_to_geth += 1;
                     error!(
                         tx = ?hash,
-                        error = ?err_msg,
+                        error = ?e,
                         from = sender,
-                        "error sending txn from reth to geth"
+                        "transport error sending txn from reth to geth"
                     );
                 }
                 continue;
