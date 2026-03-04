@@ -81,7 +81,6 @@ humantime.workspace = true
 backon.workspace = true
 bytes.workspace = true
 hex.workspace = true
-zeroize.workspace = true
 url.workspace = true
 
 [dev-dependencies]

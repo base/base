@@ -46,15 +46,27 @@ pub struct ProposerArgs {
     pub allow_non_finalized: bool,
 
     /// URL of the enclave RPC endpoint.
-    #[arg(long = "enclave-rpc", env = "BASE_PROPOSER_ENCLAVE_RPC")]
+    #[arg(
+        long = "enclave-rpc",
+        env = "BASE_PROPOSER_ENCLAVE_RPC",
+        value_parser = parse_url
+    )]
     pub enclave_rpc: Url,
 
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(long = "l1-eth-rpc", env = "BASE_PROPOSER_L1_ETH_RPC")]
+    #[arg(
+        long = "l1-eth-rpc",
+        env = "BASE_PROPOSER_L1_ETH_RPC",
+        value_parser = parse_url
+    )]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(long = "l2-eth-rpc", env = "BASE_PROPOSER_L2_ETH_RPC")]
+    #[arg(
+        long = "l2-eth-rpc",
+        env = "BASE_PROPOSER_L2_ETH_RPC",
+        value_parser = parse_url
+    )]
     pub l2_eth_rpc: Url,
 
     /// Use reth-specific RPC calls for L2.
@@ -62,11 +74,19 @@ pub struct ProposerArgs {
     pub l2_reth: bool,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(long = "anchor-state-registry-addr", env = "BASE_PROPOSER_ANCHOR_STATE_REGISTRY_ADDR")]
+    #[arg(
+        long = "anchor-state-registry-addr",
+        env = "BASE_PROPOSER_ANCHOR_STATE_REGISTRY_ADDR",
+        value_parser = parse_address
+    )]
     pub anchor_state_registry_addr: Address,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(long = "dispute-game-factory-addr", env = "BASE_PROPOSER_DISPUTE_GAME_FACTORY_ADDR")]
+    #[arg(
+        long = "dispute-game-factory-addr",
+        env = "BASE_PROPOSER_DISPUTE_GAME_FACTORY_ADDR",
+        value_parser = parse_address
+    )]
     pub dispute_game_factory_addr: Address,
 
     /// Game type ID for `AggregateVerifier` dispute games.
@@ -74,7 +94,11 @@ pub struct ProposerArgs {
     pub game_type: u32,
 
     /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
-    #[arg(long = "tee-image-hash", env = "BASE_PROPOSER_TEE_IMAGE_HASH")]
+    #[arg(
+        long = "tee-image-hash",
+        env = "BASE_PROPOSER_TEE_IMAGE_HASH",
+        value_parser = parse_b256
+    )]
     pub tee_image_hash: B256,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
@@ -82,7 +106,7 @@ pub struct ProposerArgs {
         long = "poll-interval",
         env = "BASE_PROPOSER_POLL_INTERVAL",
         default_value = "12s",
-        value_parser = humantime::parse_duration
+        value_parser = parse_duration
     )]
     pub poll_interval: Duration,
 
@@ -91,12 +115,16 @@ pub struct ProposerArgs {
         long = "rpc-timeout",
         env = "BASE_PROPOSER_RPC_TIMEOUT",
         default_value = "30s",
-        value_parser = humantime::parse_duration
+        value_parser = parse_duration
     )]
     pub rpc_timeout: Duration,
 
     /// URL of the rollup RPC endpoint.
-    #[arg(long = "rollup-rpc", env = "BASE_PROPOSER_ROLLUP_RPC")]
+    #[arg(
+        long = "rollup-rpc",
+        env = "BASE_PROPOSER_ROLLUP_RPC",
+        value_parser = parse_url
+    )]
     pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
@@ -120,7 +148,7 @@ pub struct ProposerArgs {
         long = "rpc-retry-initial-delay",
         env = "BASE_PROPOSER_RPC_RETRY_INITIAL_DELAY",
         default_value = "100ms",
-        value_parser = humantime::parse_duration
+        value_parser = parse_duration
     )]
     pub rpc_retry_initial_delay: Duration,
 
@@ -129,7 +157,7 @@ pub struct ProposerArgs {
         long = "rpc-retry-max-delay",
         env = "BASE_PROPOSER_RPC_RETRY_MAX_DELAY",
         default_value = "10s",
-        value_parser = humantime::parse_duration
+        value_parser = parse_duration
     )]
     pub rpc_retry_max_delay: Duration,
 
@@ -140,12 +168,20 @@ pub struct ProposerArgs {
 
     /// URL of the signer sidecar JSON-RPC endpoint (for production).
     /// Must be used together with --signer-address.
-    #[arg(long = "signer-endpoint", env = "BASE_PROPOSER_SIGNER_ENDPOINT")]
+    #[arg(
+        long = "signer-endpoint",
+        env = "BASE_PROPOSER_SIGNER_ENDPOINT",
+        value_parser = parse_url
+    )]
     pub signer_endpoint: Option<Url>,
 
     /// Address of the signer account on the signer sidecar.
     /// Must be used together with --signer-endpoint.
-    #[arg(long = "signer-address", env = "BASE_PROPOSER_SIGNER_ADDRESS")]
+    #[arg(
+        long = "signer-address",
+        env = "BASE_PROPOSER_SIGNER_ADDRESS",
+        value_parser = parse_address
+    )]
     pub signer_address: Option<Address>,
 }
 
@@ -181,11 +217,62 @@ pub struct RpcServerArgs {
     pub port: u16,
 }
 
+/// Parse a duration string like "12s", "5m", "1h".
+fn parse_duration(s: &str) -> Result<Duration, humantime::DurationError> {
+    humantime::parse_duration(s)
+}
+
+/// Parse a URL string.
+fn parse_url(s: &str) -> Result<Url, url::ParseError> {
+    Url::parse(s)
+}
+
+/// Parse an Ethereum address from hex string.
+fn parse_address(s: &str) -> Result<Address, alloy_primitives::hex::FromHexError> {
+    s.parse()
+}
+
+/// Parse a 32-byte hash from hex string (0x-prefixed).
+fn parse_b256(s: &str) -> Result<B256, alloy_primitives::hex::FromHexError> {
+    s.parse()
+}
+
 #[cfg(test)]
 mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
+
+    #[test]
+    fn test_parse_duration_valid() {
+        assert_eq!(parse_duration("12s").unwrap(), Duration::from_secs(12));
+        assert_eq!(parse_duration("5m").unwrap(), Duration::from_secs(300));
+        assert_eq!(parse_duration("1h").unwrap(), Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_parse_url_valid() {
+        let url = parse_url("https://example.com").unwrap();
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_parse_url_invalid() {
+        assert!(parse_url("not-a-url").is_err());
+    }
+
+    #[test]
+    fn test_parse_address_valid() {
+        let addr = parse_address("0x1234567890123456789012345678901234567890").unwrap();
+        assert_eq!(addr.to_string(), "0x1234567890123456789012345678901234567890");
+    }
+
+    #[test]
+    fn test_parse_address_invalid() {
+        assert!(parse_address("0xnotanaddress").is_err());
+        assert!(parse_address("invalid").is_err());
+    }
 
     #[test]
     fn test_cli_defaults() {
