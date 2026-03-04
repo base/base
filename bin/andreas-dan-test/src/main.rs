@@ -108,7 +108,7 @@ fn main() -> eyre::Result<()> {
             probe_db(&db, DatabaseEnvKind::RO);
         }
         Err(e) => {
-            error!(error = %e, "open_db_read_only: FAILED");
+            error!(error = %format!("{e:#}"), "open_db_read_only: FAILED");
         }
     }
 
@@ -139,7 +139,7 @@ fn main() -> eyre::Result<()> {
             probe_db(&db, DatabaseEnvKind::RW);
         }
         Err(e) => {
-            error!(error = %e, "open_db (RW): FAILED");
+            error!(error = %format!("{e:#}"), "open_db (RW): FAILED");
             // If RO succeeded but RW failed the most likely cause is the
             // WRITEMAP flag mismatch.  If both failed, it's more likely a
             // page-size mismatch or corrupted env header.
@@ -186,7 +186,7 @@ fn check_filesystem(path: &Path) {
     }
 
     // A stale `mdbx.lck` can prevent a new writer from acquiring the env.
-    // reth acquires its own `<datadir>/.lock` file *before* calling MDBX,
+    // reth acquires its own `<datadir>/lock` file *before* calling MDBX,
     // so a crash can leave both files behind.
     let mdbx_lck = path.join("mdbx.lck");
     if mdbx_lck.exists() {
@@ -208,11 +208,15 @@ fn check_filesystem(path: &Path) {
     }
 
     // reth also writes its own advisory lock file (not MDBX's).
-    let reth_lock = path.join(".lock");
+    // The file is named "lock" (no dot prefix), stored in the db directory.
+    // It contains the PID and process start time of the owning reth process.
+    let reth_lock = path.join("lock");
     if reth_lock.exists() {
+        let contents = fs::read_to_string(&reth_lock).unwrap_or_default();
         warn!(
-            lock = %reth_lock.display(),
-            "reth .lock file is present — another reth process may own this database"
+            lock     = %reth_lock.display(),
+            contents = %contents.trim(),
+            "reth lock file is present — another reth process may own this database (RW opens will fail)"
         );
     }
 }
