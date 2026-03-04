@@ -1,12 +1,7 @@
-//! This module contains all CLI-specific code for the single chain entrypoint.
-
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
-use alloy_provider::RootProvider;
-use base_alloy_network::Base;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
 use base_proof_preimage::{BidirectionalChannel, Channel, HintReader, OracleServer};
 use base_proof_std_fpvm::{FileChannel, FileDescriptor};
@@ -17,16 +12,16 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-use super::{SingleChainHintHandler, SingleChainLocalInputs};
+#[cfg(feature = "disk")]
+use crate::DiskKeyValueStore;
 use crate::{
-    DiskKeyValueStore, MemoryKeyValueStore, OfflineHostBackend, OnlineHostBackend,
-    OnlineHostBackendCfg, PreimageServer, PreimageServerError, SharedKeyValueStore,
-    SplitKeyValueStore, rpc_provider,
+    HostError, LocalInputs, MemoryKeyValueStore, OfflineHostBackend, OnlineHostBackend,
+    PreimageServer, Result, SharedKeyValueStore, SplitKeyValueStore, rpc_provider,
 };
 
 /// The host binary CLI application arguments.
 #[derive(Default, Parser, Serialize, Clone, Debug)]
-pub struct SingleChainHost {
+pub struct Host {
     /// Hash of the L1 head block. Derivation stops after this block is processed.
     #[arg(long, env)]
     pub l1_head: B256,
@@ -51,7 +46,7 @@ pub struct SingleChainHost {
         env
     )]
     pub l2_node_address: Option<String>,
-    /// Address of L1 JSON-RPC endpoint to use (eth and debug namespace required)
+    /// Address of L1 JSON-RPC endpoint to use (eth and debug namespace required).
     #[arg(
         long,
         visible_alias = "l1",
@@ -101,60 +96,34 @@ pub struct SingleChainHost {
         env
     )]
     pub rollup_config_path: Option<PathBuf>,
-    /// Path to l1 config.
+    /// Path to L1 config.
     #[arg(long, alias = "l1-cfg", env)]
     pub l1_config_path: Option<PathBuf>,
-    /// Optionally enables the use of `debug_executePayload` to collect the execution witness.
+    /// Enables the use of `debug_executePayload` to collect the execution witness.
     #[arg(long, env)]
     pub enable_experimental_witness_endpoint: bool,
 }
 
-/// An error that can occur when handling single chain hosts
-#[derive(Debug, thiserror::Error)]
-pub enum SingleChainHostError {
-    /// An error when handling preimage requests.
-    #[error("Error handling preimage request: {0}")]
-    PreimageServerError(#[from] PreimageServerError),
-    /// An IO error.
-    #[error("IO error: {0}")]
-    IOError(#[from] std::io::Error),
-    /// A JSON parse error.
-    #[error("Failed deserializing RollupConfig: {0}")]
-    ParseError(#[from] serde_json::Error),
-    /// Task failed to execute to completion.
-    #[error("Join error: {0}")]
-    ExecutionError(#[from] tokio::task::JoinError),
-    /// No rollup config found.
-    #[error("No rollup config found")]
-    NoRollupConfig,
-    /// No l1 config found.
-    #[error("No l1 config found")]
-    NoL1Config,
-    /// Any other error.
-    #[error("Error: {0}")]
-    Other(&'static str),
-}
-
-impl SingleChainHost {
-    /// Starts the [`SingleChainHost`] application.
-    pub async fn start(self) -> Result<(), SingleChainHostError> {
+impl Host {
+    /// Starts the [`Host`] application.
+    pub async fn start(self) -> Result<()> {
         if self.server {
             let hint = FileChannel::new(FileDescriptor::HintRead, FileDescriptor::HintWrite);
             let preimage =
                 FileChannel::new(FileDescriptor::PreimageRead, FileDescriptor::PreimageWrite);
 
-            self.start_server(hint, preimage).await?.await?
+            self.start_server(hint, preimage)
+                .await?
+                .await
+                .map_err(|e| HostError::Custom(e.to_string()))??;
+            Ok(())
         } else {
             self.start_native().await
         }
     }
 
     /// Starts the preimage server, communicating with the client over the provided channels.
-    pub async fn start_server<C>(
-        &self,
-        hint: C,
-        preimage: C,
-    ) -> Result<JoinHandle<Result<(), SingleChainHostError>>, SingleChainHostError>
+    pub async fn start_server<C>(&self, hint: C, preimage: C) -> Result<JoinHandle<Result<()>>>
     where
         C: Channel + Send + Sync + 'static,
     {
@@ -169,17 +138,12 @@ impl SingleChainHost {
                 )
                 .start()
                 .await
-                .map_err(SingleChainHostError::from)
+                .map_err(HostError::from)
             })
         } else {
             let providers = self.create_providers().await?;
-            let backend = OnlineHostBackend::new(
-                self.clone(),
-                Arc::clone(&kv_store),
-                providers,
-                SingleChainHintHandler,
-            )
-            .with_proactive_hint(HintType::L2PayloadWitness);
+            let backend = OnlineHostBackend::new(self.clone(), Arc::clone(&kv_store), providers)
+                .with_proactive_hint(HintType::L2PayloadWitness);
 
             task::spawn(async {
                 PreimageServer::new(
@@ -189,7 +153,7 @@ impl SingleChainHost {
                 )
                 .start()
                 .await
-                .map_err(SingleChainHostError::from)
+                .map_err(HostError::from)
             })
         };
 
@@ -198,14 +162,17 @@ impl SingleChainHost {
 
     /// Starts the host in native mode, running both the client and preimage server in the same
     /// process.
-    async fn start_native(&self) -> Result<(), SingleChainHostError> {
+    async fn start_native(&self) -> Result<()> {
         let hint = BidirectionalChannel::new()?;
         let preimage = BidirectionalChannel::new()?;
 
         let server_task = self.start_server(hint.host, preimage.host).await?;
-        let client_task = task::spawn(async { Ok::<(), SingleChainHostError>(()) });
+        let client_task = task::spawn(async { Ok::<(), HostError>(()) });
 
-        let (_, _client_result) = tokio::try_join!(server_task, client_task)?;
+        let (_, _client_result) = tokio::try_join!(
+            async { server_task.await.map_err(|e| HostError::Custom(e.to_string()))? },
+            async { client_task.await.map_err(|e| HostError::Custom(e.to_string()))? },
+        )?;
 
         Ok(())
     }
@@ -218,31 +185,38 @@ impl SingleChainHost {
             && self.data_dir.is_some()
     }
 
-    /// Reads the [`RollupConfig`] from the file system and returns the deserialized configuration.
-    pub fn read_rollup_config(&self) -> Result<RollupConfig, SingleChainHostError> {
-        let path =
-            self.rollup_config_path.as_ref().ok_or_else(|| SingleChainHostError::NoRollupConfig)?;
-
+    /// Reads the [`RollupConfig`] from the file system.
+    pub fn read_rollup_config(&self) -> Result<RollupConfig> {
+        let path = self.rollup_config_path.as_ref().ok_or(HostError::NoRollupConfig)?;
         let ser_config = std::fs::read_to_string(path)?;
-        serde_json::from_str(&ser_config).map_err(SingleChainHostError::ParseError)
+        serde_json::from_str(&ser_config).map_err(HostError::from)
     }
 
-    /// Reads the [`L1ChainConfig`] from the file system and returns the deserialized configuration.
-    pub fn read_l1_config(&self) -> Result<L1ChainConfig, SingleChainHostError> {
-        let path = self.l1_config_path.as_ref().ok_or_else(|| SingleChainHostError::NoL1Config)?;
-
+    /// Reads the [`L1ChainConfig`] from the file system.
+    pub fn read_l1_config(&self) -> Result<L1ChainConfig> {
+        let path = self.l1_config_path.as_ref().ok_or(HostError::NoL1Config)?;
         let ser_config = std::fs::read_to_string(path)?;
-        serde_json::from_str(&ser_config).map_err(SingleChainHostError::ParseError)
+        serde_json::from_str(&ser_config).map_err(HostError::from)
     }
 
     /// Creates the key-value store for the host backend.
-    pub fn create_key_value_store(&self) -> Result<SharedKeyValueStore, SingleChainHostError> {
-        let local_kv_store = SingleChainLocalInputs::new(self.clone());
+    pub fn create_key_value_store(&self) -> Result<SharedKeyValueStore> {
+        let local_kv_store = LocalInputs::new(self.clone());
 
         let kv_store: SharedKeyValueStore = if let Some(ref data_dir) = self.data_dir {
-            let disk_kv_store = DiskKeyValueStore::new(data_dir.clone());
-            let split_kv_store = SplitKeyValueStore::new(local_kv_store, disk_kv_store);
-            Arc::new(RwLock::new(split_kv_store))
+            #[cfg(feature = "disk")]
+            {
+                let disk_kv_store = DiskKeyValueStore::new(data_dir.clone());
+                let split_kv_store = SplitKeyValueStore::new(local_kv_store, disk_kv_store);
+                Arc::new(RwLock::new(split_kv_store))
+            }
+            #[cfg(not(feature = "disk"))]
+            {
+                let _ = data_dir;
+                let mem_kv_store = MemoryKeyValueStore::new();
+                let split_kv_store = SplitKeyValueStore::new(local_kv_store, mem_kv_store);
+                Arc::new(RwLock::new(split_kv_store))
+            }
         } else {
             let mem_kv_store = MemoryKeyValueStore::new();
             let split_kv_store = SplitKeyValueStore::new(local_kv_store, mem_kv_store);
@@ -253,44 +227,31 @@ impl SingleChainHost {
     }
 
     /// Creates the providers required for the host backend.
-    pub async fn create_providers(&self) -> Result<SingleChainProviders, SingleChainHostError> {
+    pub async fn create_providers(&self) -> Result<crate::HostProviders> {
+        use base_alloy_network::Base;
+        use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+
         let l1_provider = rpc_provider(
             self.l1_node_address
                 .as_ref()
-                .ok_or(SingleChainHostError::Other("Provider must be set"))?,
+                .ok_or_else(|| HostError::Custom("Provider must be set".into()))?,
         )
         .await;
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
             self.l1_beacon_address
                 .clone()
-                .ok_or(SingleChainHostError::Other("Beacon API URL must be set"))?,
+                .ok_or_else(|| HostError::Custom("Beacon API URL must be set".into()))?,
         ))
         .await;
         let l2_provider = rpc_provider::<Base>(
             self.l2_node_address
                 .as_ref()
-                .ok_or(SingleChainHostError::Other("L2 node address must be set"))?,
+                .ok_or_else(|| HostError::Custom("L2 node address must be set".into()))?,
         )
         .await;
 
-        Ok(SingleChainProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
+        Ok(crate::HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
     }
-}
-
-impl OnlineHostBackendCfg for SingleChainHost {
-    type HintType = HintType;
-    type Providers = SingleChainProviders;
-}
-
-/// The providers required for the single chain host.
-#[derive(Debug, Clone)]
-pub struct SingleChainProviders {
-    /// The L1 EL provider.
-    pub l1: RootProvider,
-    /// The L1 beacon node provider.
-    pub blobs: OnlineBlobProvider<OnlineBeaconClient>,
-    /// The L2 EL provider.
-    pub l2: RootProvider<Base>,
 }
 
 #[cfg(test)]
@@ -298,16 +259,14 @@ mod test {
     use alloy_primitives::B256;
     use clap::{CommandFactory, FromArgMatches};
 
-    use crate::single::SingleChainHost;
+    use super::Host;
 
-    /// Parse [`SingleChainHost`] from the given args while ignoring any
-    /// `#[arg(env)]` fallbacks so the test is isolated from the host environment.
-    fn try_parse_without_env<I, T>(args: I) -> Result<SingleChainHost, clap::Error>
+    fn try_parse_without_env<I, T>(args: I) -> Result<Host, clap::Error>
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        let mut cmd = SingleChainHost::command();
+        let mut cmd = Host::command();
         for arg_name in cmd
             .get_arguments()
             .filter(|a| a.get_env().is_some())
@@ -317,14 +276,13 @@ mod test {
             cmd = cmd.mut_arg(arg_name, |a| a.env(None::<&str>));
         }
         let matches = cmd.try_get_matches_from(args)?;
-        SingleChainHost::from_arg_matches(&matches).map_err(Into::into)
-    }
+        Host::from_arg_matches(&matches)}
 
     #[test]
     fn test_flags() {
         let zero_hash_str = &B256::ZERO.to_string();
         let default_flags = [
-            "single",
+            "host",
             "--l1-head",
             zero_hash_str,
             "--l2-head",

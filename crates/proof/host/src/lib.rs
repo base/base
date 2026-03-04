@@ -15,19 +15,21 @@ pub use kv::DiskKeyValueStore;
 pub use kv::{KeyValueStore, MemoryKeyValueStore, SharedKeyValueStore, SplitKeyValueStore};
 
 mod backend;
-#[cfg(feature = "single")]
-pub use backend::{HintHandler, OnlineHostBackend, OnlineHostBackendCfg};
-pub use backend::{OfflineHostBackend, store_ordered_trie};
+pub use backend::{OfflineHostBackend, OnlineHostBackend, store_ordered_trie};
 
 #[cfg(feature = "precompiles")]
 mod precompiles;
 #[cfg(feature = "precompiles")]
 pub use precompiles::execute;
 
-#[cfg(feature = "single")]
-mod single;
-#[cfg(feature = "single")]
-pub use single::{
-    SingleChainHintHandler, SingleChainHost, SingleChainHostError, SingleChainLocalInputs,
-    SingleChainProviders, parse_blob_hint,
-};
+mod host;
+pub use host::Host;
+
+mod providers;
+pub use providers::HostProviders;
+
+mod handler;
+pub use handler::{handle_hint, parse_blob_hint};
+
+mod local_kv;
+pub use local_kv::LocalInputs;

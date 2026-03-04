@@ -7,6 +7,8 @@ use alloy_transport::TransportError;
 use base_proof_preimage::errors::PreimageOracleError;
 use thiserror::Error;
 
+use crate::PreimageServerError;
+
 /// Result type for host operations.
 pub type Result<T> = std::result::Result<T, HostError>;
 
@@ -28,9 +30,12 @@ pub enum HostError {
     /// Failed precompile execution.
     #[error("Failed precompile execution: {0}")]
     PrecompileExecutionFailed(String),
-    /// No rollup config found for chain ID.
-    #[error("No rollup config found for chain ID: {0}")]
-    NoRollupConfig(u64),
+    /// No rollup config found.
+    #[error("No rollup config found")]
+    NoRollupConfig,
+    /// No L1 config found.
+    #[error("No L1 config found")]
+    NoL1Config,
     /// Output root mismatch.
     #[error("Output root does not match L2 head")]
     OutputRootMismatch,
@@ -86,6 +91,9 @@ pub enum HostError {
     /// Preimage oracle error.
     #[error("Preimage oracle error: {0}")]
     PreimageOracle(#[from] PreimageOracleError),
+    /// Preimage server error.
+    #[error("Preimage server error: {0}")]
+    PreimageServer(#[from] PreimageServerError),
     /// Base derive error.
     #[error("Base derive error: {0}")]
     BaseDerive(String),
