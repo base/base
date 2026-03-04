@@ -5,22 +5,22 @@ use base_proof::{
 };
 use base_proof_preimage::PreimageKey;
 
-use crate::{Host, KeyValueStore, Result};
+use crate::{HostConfig, KeyValueStore, Result};
 
-/// A read-only key-value store backed by [`Host`] configuration.
+/// A read-only key-value store that serves boot parameters from [`HostConfig`].
 #[derive(Debug)]
-pub struct LocalInputs {
-    cfg: Host,
+pub struct BootKeyValueStore {
+    cfg: HostConfig,
 }
 
-impl LocalInputs {
-    /// Create a new [`LocalInputs`] with the given [`Host`] config.
-    pub const fn new(cfg: Host) -> Self {
+impl BootKeyValueStore {
+    /// Creates a new [`BootKeyValueStore`].
+    pub const fn new(cfg: HostConfig) -> Self {
         Self { cfg }
     }
 }
 
-impl KeyValueStore for LocalInputs {
+impl KeyValueStore for BootKeyValueStore {
     fn get(&self, key: B256) -> Option<Vec<u8>> {
         let preimage_key = PreimageKey::try_from(*key).ok()?;
         match preimage_key.key_value() {
@@ -48,6 +48,6 @@ impl KeyValueStore for LocalInputs {
     }
 
     fn set(&mut self, _: B256, _: Vec<u8>) -> Result<()> {
-        unreachable!("LocalInputs is read-only")
+        unreachable!("BootKeyValueStore is read-only")
     }
 }

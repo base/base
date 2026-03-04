@@ -9,11 +9,11 @@ use base_proof_preimage::{
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
 
-use crate::{Host, HostProviders, SharedKeyValueStore, handler::handle_hint};
+use crate::{HostConfig, HostProviders, SharedKeyValueStore, handler::handle_hint};
 
 /// Fetches data from remote sources in response to hints.
 pub struct OnlineHostBackend {
-    cfg: Host,
+    cfg: HostConfig,
     kv: SharedKeyValueStore,
     providers: HostProviders,
     proactive_hints: HashSet<HintType>,
@@ -28,7 +28,7 @@ impl fmt::Debug for OnlineHostBackend {
 
 impl OnlineHostBackend {
     /// Creates a new [`OnlineHostBackend`].
-    pub fn new(cfg: Host, kv: SharedKeyValueStore, providers: HostProviders) -> Self {
+    pub fn new(cfg: HostConfig, kv: SharedKeyValueStore, providers: HostProviders) -> Self {
         Self {
             cfg,
             kv,

@@ -1,13 +1,9 @@
-//! Error types for host operations.
-
 use std::array::TryFromSliceError;
 
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
 use base_proof_preimage::errors::PreimageOracleError;
 use thiserror::Error;
-
-use crate::PreimageServerError;
 
 /// Result type for host operations.
 pub type Result<T> = std::result::Result<T, HostError>;
@@ -76,6 +72,12 @@ pub enum HostError {
     /// Error fetching code hash preimage.
     #[error("Error fetching code hash preimage: {0}")]
     CodeHashPreimageFetchFailed(String),
+    /// Failed to serve a preimage request.
+    #[error("Failed to serve preimage request: {0}")]
+    PreimageRequestFailed(PreimageOracleError),
+    /// Failed to route a hint.
+    #[error("Failed to route hint: {0}")]
+    RouteHintFailed(PreimageOracleError),
     /// Transport error.
     #[error("Transport error: {0}")]
     Transport(#[from] TransportError),
@@ -91,9 +93,6 @@ pub enum HostError {
     /// Preimage oracle error.
     #[error("Preimage oracle error: {0}")]
     PreimageOracle(#[from] PreimageOracleError),
-    /// Preimage server error.
-    #[error("Preimage server error: {0}")]
-    PreimageServer(#[from] PreimageServerError),
     /// Base derive error.
     #[error("Base derive error: {0}")]
     BaseDerive(String),

@@ -15,7 +15,7 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot, Predeploys};
 use tracing::warn;
 
-use crate::{Host, HostProviders, SharedKeyValueStore, store_ordered_trie};
+use crate::{HostConfig, HostProviders, SharedKeyValueStore, store_ordered_trie};
 
 /// Parses a blob hint, supporting both legacy (48-byte) and new (40-byte) formats.
 ///
@@ -57,7 +57,7 @@ pub fn parse_blob_hint(hint_data: &[u8]) -> Result<(B256, u64)> {
 /// Fetches data in response to a hint.
 pub async fn handle_hint(
     hint: Hint<HintType>,
-    cfg: &Host,
+    cfg: &HostConfig,
     providers: &HostProviders,
     kv: SharedKeyValueStore,
 ) -> Result<()> {
