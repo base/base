@@ -23,38 +23,11 @@ echo "Version: $VERSION"
 
 BODY="## Release Checklist for v${VERSION}
 
-- [ ] Create RC
 - [ ] Deploy to devnet
 - [ ] Deploy to testnet
 - [ ] Deploy to mainnet
-- [ ] Create final release
-- [ ] Draft release notes using template below
-
----
-
-## Release Notes Template
-
-\`\`\`
-Release: [Component] v${VERSION}
-Summary: [Short overview of the update's primary goal.]
-
-Breaking Changes & Deadlines
-Breaking? [Yes/No]
-Deadline: [Date/Block Height]
-Required for: [Target group, e.g., \"Flashblock nodes only\"]
-Details: [What will break if not updated]
-Environments: [Sepolia/Mainnet]
-
-Key Features
-Feature: [Benefit]
-
-Operational Requirements
-Action: [e.g., Pull latest base/node v${VERSION}]
-
-Links
-Client Release: [Link]
-Docs: [Link]
-\`\`\`
+- [ ] Verify draft release notes and set as latest
+- [ ] Create a release in base/node
 
 ---
 *This issue was automatically created by the release workflow.*"
