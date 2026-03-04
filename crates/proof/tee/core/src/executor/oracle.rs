@@ -1,9 +1,8 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use async_trait::async_trait;
-use base_proof::FlushableCache;
 use base_proof_preimage::{
-    HintWriterClient, PreimageKey, PreimageOracleClient,
+    FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient,
     errors::{PreimageOracleError, PreimageOracleResult},
 };
 

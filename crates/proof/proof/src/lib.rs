@@ -29,7 +29,6 @@ mod boot;
 pub use boot::*;
 
 mod caching_oracle;
-pub use base_proof_preimage::FlushableCache;
 pub use caching_oracle::CachingOracle;
 
 mod blocking_runtime;

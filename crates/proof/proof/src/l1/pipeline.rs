@@ -14,12 +14,12 @@ use base_consensus_derive::{
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
-use base_proof_preimage::CommsClient;
+use base_proof_preimage::{CommsClient, FlushableCache};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use spin::RwLock;
 
 use crate::{
-    FlushableCache, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
+    OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
     boot::BootInfo,
     sync::{SafeHeadFetcher, new_oracle_pipeline_cursor},
 };
