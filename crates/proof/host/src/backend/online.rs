@@ -1,10 +1,7 @@
-//! Contains the [`OnlineHostBackend`] definition.
+use std::{collections::HashSet, fmt, sync::Arc};
 
-use std::{collections::HashSet, fmt, hash::Hash, str::FromStr, sync::Arc};
-
-use anyhow::Result;
 use async_trait::async_trait;
-use base_proof::{Hint, HintParsingError};
+use base_proof::{Hint, HintType};
 use base_proof_preimage::{
     HintRouter, PreimageFetcher, PreimageKey,
     errors::{PreimageOracleError, PreimageOracleResult},
@@ -12,106 +9,53 @@ use base_proof_preimage::{
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
 
-use crate::SharedKeyValueStore;
+use crate::{HostConfig, HostProviders, SharedKeyValueStore, handler::handle_hint};
 
-/// The [`OnlineHostBackendCfg`] trait is used to define the type configuration for the
-/// [`OnlineHostBackend`].
-pub trait OnlineHostBackendCfg {
-    /// The hint type describing the range of hints that can be received.
-    type HintType: FromStr<Err = HintParsingError> + Hash + Eq + PartialEq + Clone + Send + Sync;
-
-    /// The providers that are used to fetch data in response to hints.
-    type Providers: Send + Sync;
-}
-
-/// A [`HintHandler`] is an interface for receiving hints, fetching remote data, and storing it in
-/// the key-value store.
-#[async_trait]
-pub trait HintHandler {
-    /// The type configuration for the [`HintHandler`].
-    type Cfg: OnlineHostBackendCfg;
-
-    /// Fetches data in response to a hint.
-    async fn fetch_hint(
-        hint: Hint<<Self::Cfg as OnlineHostBackendCfg>::HintType>,
-        cfg: &Self::Cfg,
-        providers: &<Self::Cfg as OnlineHostBackendCfg>::Providers,
-        kv: SharedKeyValueStore,
-    ) -> Result<()>;
-}
-
-/// The [`OnlineHostBackend`] is a [`HintRouter`] and [`PreimageFetcher`] that is used to fetch data
-/// from remote sources in response to hints.
-pub struct OnlineHostBackend<C, H>
-where
-    C: OnlineHostBackendCfg,
-    H: HintHandler,
-{
-    /// The configuration that is used to route hints.
-    cfg: C,
-    /// The key-value store that is used to store preimages.
+/// Fetches data from remote sources in response to hints.
+pub struct OnlineHostBackend {
+    cfg: HostConfig,
     kv: SharedKeyValueStore,
-    /// The providers that are used to fetch data in response to hints.
-    providers: C::Providers,
-    /// Hints that should be immediately executed by the host.
-    proactive_hints: HashSet<C::HintType>,
-    /// The last hint that was received.
-    last_hint: Arc<RwLock<Option<Hint<C::HintType>>>>,
-    /// Phantom marker for the [`HintHandler`].
-    _hint_handler: std::marker::PhantomData<H>,
+    providers: HostProviders,
+    proactive_hints: HashSet<HintType>,
+    last_hint: Arc<RwLock<Option<Hint<HintType>>>>,
 }
 
-impl<C, H> fmt::Debug for OnlineHostBackend<C, H>
-where
-    C: OnlineHostBackendCfg,
-    H: HintHandler,
-{
+impl fmt::Debug for OnlineHostBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OnlineHostBackend").finish_non_exhaustive()
     }
 }
 
-impl<C, H> OnlineHostBackend<C, H>
-where
-    C: OnlineHostBackendCfg,
-    H: HintHandler,
-{
-    /// Creates a new [`OnlineHostBackend`] with the given configuration, key-value store, providers, and
-    /// external configuration.
-    pub fn new(cfg: C, kv: SharedKeyValueStore, providers: C::Providers, _: H) -> Self {
+impl OnlineHostBackend {
+    /// Creates a new [`OnlineHostBackend`].
+    pub fn new(cfg: HostConfig, kv: SharedKeyValueStore, providers: HostProviders) -> Self {
         Self {
             cfg,
             kv,
             providers,
             proactive_hints: HashSet::default(),
             last_hint: Arc::new(RwLock::new(None)),
-            _hint_handler: std::marker::PhantomData,
         }
     }
 
-    /// Adds a new proactive hint to the [`OnlineHostBackend`].
-    pub fn with_proactive_hint(mut self, hint_type: C::HintType) -> Self {
+    /// Adds a proactive hint type that is immediately fetched upon receipt.
+    pub fn with_proactive_hint(mut self, hint_type: HintType) -> Self {
         self.proactive_hints.insert(hint_type);
         self
     }
 }
 
 #[async_trait]
-impl<C, H> HintRouter for OnlineHostBackend<C, H>
-where
-    C: OnlineHostBackendCfg + Send + Sync,
-    H: HintHandler<Cfg = C> + Send + Sync,
-{
-    /// Set the last hint to be received.
+impl HintRouter for OnlineHostBackend {
     async fn route_hint(&self, hint: String) -> PreimageOracleResult<()> {
         trace!(target: "host_backend", raw_hint = %hint, "received hint");
 
         let parsed_hint = hint
-            .parse::<Hint<C::HintType>>()
+            .parse::<Hint<HintType>>()
             .map_err(|e| PreimageOracleError::HintParseFailed(e.to_string()))?;
         if self.proactive_hints.contains(&parsed_hint.ty) {
             debug!(target: "host_backend", raw_hint = %hint, "proactive hint received, immediately fetching");
-            H::fetch_hint(parsed_hint, &self.cfg, &self.providers, Arc::clone(&self.kv))
+            handle_hint(parsed_hint, &self.cfg, &self.providers, Arc::clone(&self.kv))
                 .await
                 .map_err(|e| PreimageOracleError::Other(e.to_string()))?;
         } else {
@@ -124,12 +68,7 @@ where
 }
 
 #[async_trait]
-impl<C, H> PreimageFetcher for OnlineHostBackend<C, H>
-where
-    C: OnlineHostBackendCfg + Send + Sync,
-    H: HintHandler<Cfg = C> + Send + Sync,
-{
-    /// Get the preimage for the given key.
+impl PreimageFetcher for OnlineHostBackend {
     async fn get_preimage(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
         trace!(target: "host_backend", preimage_key = %key, "preimage requested");
 
@@ -140,7 +79,7 @@ where
         while preimage.is_none() {
             if let Some(hint) = self.last_hint.read().await.as_ref() {
                 let value =
-                    H::fetch_hint(hint.clone(), &self.cfg, &self.providers, Arc::clone(&self.kv))
+                    handle_hint(hint.clone(), &self.cfg, &self.providers, Arc::clone(&self.kv))
                         .await;
 
                 if let Err(e) = value {

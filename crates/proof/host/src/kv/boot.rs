@@ -1,6 +1,3 @@
-//! Contains a concrete implementation of the [`KeyValueStore`] trait that returns data from a
-//! [`SingleChainHost`] config.
-
 use alloy_primitives::B256;
 use base_proof::{
     L1_CONFIG_KEY, L1_HEAD_KEY, L2_CHAIN_ID_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CLAIM_KEY,
@@ -8,23 +5,22 @@ use base_proof::{
 };
 use base_proof_preimage::PreimageKey;
 
-use super::SingleChainHost;
-use crate::{KeyValueStore, Result};
+use crate::{HostConfig, KeyValueStore, Result};
 
-/// A simple, synchronous key-value store that returns data from a [`SingleChainHost`] config.
+/// A read-only key-value store that serves boot parameters from [`HostConfig`].
 #[derive(Debug)]
-pub struct SingleChainLocalInputs {
-    cfg: SingleChainHost,
+pub struct BootKeyValueStore {
+    cfg: HostConfig,
 }
 
-impl SingleChainLocalInputs {
-    /// Create a new [`SingleChainLocalInputs`] with the given [`SingleChainHost`] config.
-    pub const fn new(cfg: SingleChainHost) -> Self {
+impl BootKeyValueStore {
+    /// Creates a new [`BootKeyValueStore`].
+    pub const fn new(cfg: HostConfig) -> Self {
         Self { cfg }
     }
 }
 
-impl KeyValueStore for SingleChainLocalInputs {
+impl KeyValueStore for BootKeyValueStore {
     fn get(&self, key: B256) -> Option<Vec<u8>> {
         let preimage_key = PreimageKey::try_from(*key).ok()?;
         match preimage_key.key_value() {
@@ -52,6 +48,6 @@ impl KeyValueStore for SingleChainLocalInputs {
     }
 
     fn set(&mut self, _: B256, _: Vec<u8>) -> Result<()> {
-        unreachable!("LocalKeyValueStore is read-only")
+        Err(crate::HostError::Custom("BootKeyValueStore is read-only".into()))
     }
 }

@@ -1,0 +1,130 @@
+use std::sync::Arc;
+
+use alloy_provider::{Network, RootProvider};
+use base_alloy_network::Base;
+use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_proof::HintType;
+use base_proof_preimage::{Channel, HintReader, OracleServer};
+use tokio::{
+    sync::RwLock,
+    task::{self, JoinHandle},
+};
+
+#[cfg(feature = "disk")]
+use crate::DiskKeyValueStore;
+use crate::{
+    BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore,
+    OfflineHostBackend, OnlineHostBackend, PreimageServer, Result, SharedKeyValueStore,
+    SplitKeyValueStore,
+};
+
+/// The proof host orchestrator.
+#[derive(Debug)]
+pub struct Host {
+    /// The host configuration.
+    pub config: HostConfig,
+}
+
+impl Host {
+    /// Creates a new [`Host`] from the given [`HostConfig`].
+    pub const fn new(config: HostConfig) -> Self {
+        Self { config }
+    }
+
+    /// Starts the preimage server, communicating with the client over the provided channels.
+    pub async fn start_server<C>(&self, hint: C, preimage: C) -> Result<JoinHandle<Result<()>>>
+    where
+        C: Channel + Send + Sync + 'static,
+    {
+        let kv_store = self.create_key_value_store()?;
+
+        let task_handle = if self.config.is_offline() {
+            task::spawn(async {
+                PreimageServer::new(
+                    OracleServer::new(preimage),
+                    HintReader::new(hint),
+                    Arc::new(OfflineHostBackend::new(kv_store)),
+                )
+                .start()
+                .await
+            })
+        } else {
+            let providers = self.create_providers().await?;
+            let backend =
+                OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
+                    .with_proactive_hint(HintType::L2PayloadWitness);
+
+            task::spawn(async {
+                PreimageServer::new(
+                    OracleServer::new(preimage),
+                    HintReader::new(hint),
+                    Arc::new(backend),
+                )
+                .start()
+                .await
+            })
+        };
+
+        Ok(task_handle)
+    }
+
+    /// Creates the key-value store for the host backend.
+    pub fn create_key_value_store(&self) -> Result<SharedKeyValueStore> {
+        let boot_kv = BootKeyValueStore::new(self.config.clone());
+
+        let kv_store: SharedKeyValueStore = if let Some(ref data_dir) = self.config.data_dir {
+            #[cfg(feature = "disk")]
+            {
+                let disk_kv_store = DiskKeyValueStore::new(data_dir.clone());
+                let split_kv_store = SplitKeyValueStore::new(boot_kv, disk_kv_store);
+                Arc::new(RwLock::new(split_kv_store))
+            }
+            #[cfg(not(feature = "disk"))]
+            {
+                let _ = data_dir;
+                let mem_kv_store = MemoryKeyValueStore::new();
+                let split_kv_store = SplitKeyValueStore::new(boot_kv, mem_kv_store);
+                Arc::new(RwLock::new(split_kv_store))
+            }
+        } else {
+            let mem_kv_store = MemoryKeyValueStore::new();
+            let split_kv_store = SplitKeyValueStore::new(boot_kv, mem_kv_store);
+            Arc::new(RwLock::new(split_kv_store))
+        };
+
+        Ok(kv_store)
+    }
+
+    /// Creates the providers required for the host backend.
+    pub async fn create_providers(&self) -> Result<HostProviders> {
+        let l1_provider = rpc_provider(
+            self.config
+                .l1_node_address
+                .as_ref()
+                .ok_or_else(|| HostError::Custom("Provider must be set".into()))?,
+        )
+        .await?;
+        let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
+            self.config
+                .l1_beacon_address
+                .clone()
+                .ok_or_else(|| HostError::Custom("Beacon API URL must be set".into()))?,
+        ))
+        .await;
+        let l2_provider = rpc_provider::<Base>(
+            self.config
+                .l2_node_address
+                .as_ref()
+                .ok_or_else(|| HostError::Custom("L2 node address must be set".into()))?,
+        )
+        .await?;
+
+        Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
+    }
+}
+
+async fn rpc_provider<N: Network>(url: &str) -> Result<RootProvider<N>> {
+    RootProvider::connect(url)
+        .await
+        .map_err(|e| HostError::Custom(format!("failed to connect to RPC at {url}: {e}")))
+}
