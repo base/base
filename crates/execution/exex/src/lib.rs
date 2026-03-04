@@ -220,6 +220,20 @@ where
         self.ensure_initialized()?;
         let sync_target_tx = self.spawn_sync_task();
 
+        // If storage is behind tip, start syncing immediately rather than waiting
+        // for the first notification.
+        let best_block = self.ctx.provider().best_block_number()?;
+        let latest_stored = self.storage.get_latest_block_number()?.map(|(n, _)| n).unwrap_or(0);
+        if latest_stored < best_block {
+            info!(
+                target: "optimism::exex",
+                latest_stored,
+                best_block,
+                "Storage behind tip, starting sync immediately"
+            );
+            sync_target_tx.send(best_block)?;
+        }
+
         let prune_task = OpProofStoragePrunerTask::new(
             self.storage.clone(),
             self.ctx.provider().clone(),
@@ -464,7 +478,7 @@ where
             // Process each block from latest_stored + 1 to tip
             let start = latest_stored.saturating_add(1);
             for block_number in start..=new.tip().number() {
-                self.process_block(block_number, &new, collector)?;
+                self.process_block(block_number, Some(new.as_ref()), collector)?;
             }
         } else {
             debug!(
@@ -488,7 +502,7 @@ where
     fn process_block(
         &self,
         block_number: u64,
-        chain: &Chain<Primitives>,
+        chain: Option<&Chain<Primitives>>,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
     ) -> eyre::Result<()> {
         // Check if this block should be verified via full execution
@@ -497,13 +511,15 @@ where
 
         // Try to get block data from the chain first
         // 1. Fast Path: Try to use pre-computed state from the notification
-        if let Some(block) = chain.blocks().get(&block_number) {
+        if let Some(block) = chain.and_then(|c| c.blocks().get(&block_number)) {
             // Check if we have BOTH trie updates and hashed state.
             // If either is missing, we fall back to execution to ensure data integrity.
-            if let Some((trie_updates, hashed_state)) = chain.trie_data_at(block_number).map(|d| {
-                let SortedTrieData { hashed_state, trie_updates } = d.get();
-                (trie_updates, hashed_state)
-            }) {
+            if let Some((trie_updates, hashed_state)) =
+                chain.and_then(|c| c.trie_data_at(block_number)).map(|d| {
+                    let SortedTrieData { hashed_state, trie_updates } = d.get();
+                    (trie_updates, hashed_state)
+                })
+            {
                 // Use fast path only if we're not scheduled to verify this block
                 if !should_verify {
                     debug!(
