@@ -201,7 +201,7 @@ The builder injects a **flashblock index transaction** at the start of each flas
 
 ### Mechanism
 
-- The builder signs a regular **EIP-1559** transaction calling `setIndex(uint256)` on the FlashblockIndex contract.
+- The builder signs a regular **EIP-1559** transaction targeting the `FlashblockIndex` contract's `fallback()` with 1 byte of calldata — the flashblock index encoded as a `uint8`.
 - The transaction is injected at position 0 of each flashblock's transaction list, before any pool transactions.
 
 ### Configuration
@@ -218,6 +218,7 @@ Both must be provided together. If neither is set, no flashblock index transacti
 ### Transaction Details
 
 - **Type**: EIP-1559 (type 2)
+- **Calldata**: the flashblock index as `uint8`
 - **Gas limit**: 50,000 (initial cold `SSTORE` costs ~22k gas, subsequent warm writes ~5k)
 - **Max fee per gas**: set to current block base fee
 - **Max priority fee per gas**: 0 (the builder is the sequencer)

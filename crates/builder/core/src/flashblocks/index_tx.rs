@@ -1,10 +1,12 @@
-//! EIP-1559 transaction builder for the flashblock index `setIndex(uint256)` call.
+//! EIP-1559 transaction builder for the flashblock index contract.
+//!
+//! The `FlashblockIndex` contract uses a `fallback()` that accepts exactly 1 byte
+//! of calldata — the flashblock index as a `uint8`.
 
 use alloy_consensus::TxEip1559;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Bytes, TxKind, U256};
-use alloy_sol_types::{SolCall, sol};
 use base_alloy_consensus::OpTypedTransaction;
 use base_alloy_flz::tx_estimated_size_fjord_bytes;
 use base_execution_primitives::OpTransactionSigned;
@@ -13,15 +15,12 @@ use reth_primitives::Recovered;
 
 use super::FlashblockIndexConfig;
 
-sol! {
-    /// The `setIndex` function on the `FlashblockIndex` contract.
-    function setIndex(uint256 index);
-}
-
-/// Gas limit for the `setIndex` call (initial cold SSTORE costs ~22k gas, subsequent warm writes ~5k).
+/// Gas limit for the flashblock index call (initial cold SSTORE costs ~22k gas, subsequent warm
+/// writes ~5k).
 const SET_INDEX_GAS_LIMIT: u64 = 50_000;
 
-/// Builds a signed EIP-1559 transaction calling `setIndex(flashblock_index)`.
+/// Builds a signed EIP-1559 transaction invoking the `FlashblockIndex` contract's `fallback()`
+/// with 1 byte of calldata encoding the flashblock index.
 ///
 /// Returns the recovered signed transaction and its DA size metrics
 /// (compressed DA size, uncompressed size).
@@ -32,7 +31,7 @@ pub(super) fn build_flashblock_index_tx(
     base_fee: u64,
     flashblock_index: u64,
 ) -> Result<(Recovered<OpTransactionSigned>, u64, u64), PayloadBuilderError> {
-    let calldata = setIndexCall { index: U256::from(flashblock_index) }.abi_encode();
+    let calldata = [flashblock_index as u8];
 
     let tx = TxEip1559 {
         chain_id,

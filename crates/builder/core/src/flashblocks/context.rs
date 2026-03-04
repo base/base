@@ -475,8 +475,8 @@ impl OpPayloadBuilderCtx {
 
     /// Executes the flashblock index transaction at the start of each flashblock.
     ///
-    /// Signs and injects an EIP-1559 transaction calling `setIndex(flashblock_index)`
-    /// on the configured `FlashblockIndex` contract.
+    /// Signs and injects an EIP-1559 transaction calling the `FlashblockIndex` contract's
+    /// `fallback()` with 1 byte of calldata encoding the flashblock index.
     pub(super) fn execute_flashblock_index_tx(
         &self,
         info: &mut ExecutionInfo,
