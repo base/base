@@ -2736,6 +2736,8 @@ version = "0.0.0"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
+ "alloy-provider",
+ "base-alloy-network",
  "base-cli-utils",
  "base-client-cli",
  "base-consensus-derive",

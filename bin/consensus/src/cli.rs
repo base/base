@@ -8,7 +8,9 @@ use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
-use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
+use base_consensus_node::{
+    DelegateL2Client, EngineConfig, FollowNode, L1ConfigBuilder, NodeMode, RollupNodeBuilder,
+};
 use base_consensus_registry::Registry;
 use clap::{Args, Parser, Subcommand};
 use strum::IntoEnumIterator;
@@ -64,6 +66,18 @@ pub struct Follow {
     #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
     pub source_l2_rpc: Url,
 
+    /// Local L2 execution RPC URL (non-engine, e.g. port 8545).
+    #[arg(
+        long = "l2-rpc-url",
+        default_value = "http://localhost:8545",
+        env = "BASE_NODE_L2_RPC_URL"
+    )]
+    pub l2_rpc_url: Url,
+
+    /// L1 execution layer RPC URL.
+    #[arg(long = "l1-eth-rpc", env = "BASE_NODE_L1_ETH_RPC")]
+    pub l1_eth_rpc: Url,
+
     /// L2 engine CLI arguments.
     #[clap(flatten)]
     pub l2_client_args: L2ClientArgs,
@@ -99,6 +113,40 @@ impl Follow {
 
     /// Run the Follow subcommand.
     pub async fn exec(&self) -> eyre::Result<()> {
+        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+
+        info!(
+            target: "rollup_node",
+            chain_id = cfg.l2_chain_id.id(),
+            source = %self.source_l2_rpc,
+            "Starting follow node"
+        );
+
+        let jwt_secret = self.l2_client_args.validate_jwt().await?;
+        let rollup_config = Arc::new(cfg);
+
+        let engine_config = EngineConfig {
+            config: Arc::clone(&rollup_config),
+            l2_url: self.l2_client_args.l2_engine_rpc.clone(),
+            l2_jwt_secret: jwt_secret,
+            l1_url: self.l1_eth_rpc.clone(),
+            mode: NodeMode::Validator,
+        };
+
+        let local_l2_provider =
+            alloy_provider::RootProvider::<base_alloy_network::Base>::new_http(
+                self.l2_rpc_url.clone(),
+            );
+        let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
+
+        FollowNode::new(rollup_config, engine_config, local_l2_provider, l2_source)
+            .start()
+            .await
+            .map_err(|e| {
+                error!(target: "rollup_node", error = %e, "Failed to start follow node");
+                eyre::eyre!("{e}")
+            })?;
+
         Ok(())
     }
 }
