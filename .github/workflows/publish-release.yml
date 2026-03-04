@@ -40,7 +40,6 @@ jobs:
         run: |
           VERSION="${{ inputs.version }}"
           RELEASE_BRANCH="releases/v${VERSION}"
-          TAG="v${VERSION}"
 
           # Validate semver format
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -54,10 +53,31 @@ jobs:
             exit 1
           }
 
-          # Validate Cargo.toml version on the release branch
-          CARGO_VERSION=$(git show "origin/$RELEASE_BRANCH:Cargo.toml" | grep '^version' | head -1 | awk -F'"' '{print $2}')
+      - name: Checkout release branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: releases/v${{ inputs.version }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate version and tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ inputs.version }}"
+          TAG="v${VERSION}"
+
+          # Validate Cargo.toml version using cargo metadata via common.sh
+          source ./etc/scripts/release/common.sh
+          CARGO_VERSION=$(get_cargo_version)
           if [[ "$CARGO_VERSION" == "0.0.0" ]]; then
-            echo "::error::Cargo.toml on $RELEASE_BRANCH is still 0.0.0 — merge the version sync PR first"
+            echo "::error::Cargo.toml on releases/v${VERSION} is still 0.0.0 — merge the version sync PR first"
+            exit 1
+          fi
+
+          # Ensure no final git tag already exists
+          if git rev-parse "v${VERSION}" > /dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} already exists"
             exit 1
           fi
 
@@ -66,13 +86,6 @@ jobs:
             echo "::error::Release $TAG already exists"
             exit 1
           fi
-
-      - name: Checkout release branch
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          ref: releases/v${{ inputs.version }}
-          fetch-depth: 0
-          fetch-tags: true
 
       - name: Create and push tag
         run: ./etc/scripts/release/create-tag.sh "releases/v${{ inputs.version }}" final
