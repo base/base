@@ -4043,6 +4043,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-eth",
+ "alloy-transport",
+ "alloy-transport-http",
+ "async-trait",
+ "backon",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
+ "base-enclave",
+ "metrics",
+ "moka",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-proof-std-fpvm"
 version = "0.0.0"
 dependencies = [
@@ -4110,6 +4137,7 @@ dependencies = [
  "base-enclave",
  "base-enclave-client",
  "base-proof-contracts",
+ "base-proof-rpc",
  "base-protocol",
  "bytes",
  "clap",

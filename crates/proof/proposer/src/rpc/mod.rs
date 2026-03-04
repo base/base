@@ -1,50 +1,95 @@
-use alloy_network::Ethereum;
-use alloy_provider::RootProvider;
-use base_alloy_network::Base;
+use alloy_primitives::{Address, B256, Bytes};
+use alloy_rpc_types_eth::Header;
+use async_trait::async_trait;
+use base_enclave::{AccountResult, ExecutionWitness};
+use base_proof_rpc::{L2Client, L2ClientConfig, L2Provider, OpBlock, RpcResult};
 
-/// Shared type alias for the L1 HTTP provider.
-/// Uses `RootProvider` directly since these clients only perform read operations.
-pub type HttpProvider = RootProvider<Ethereum>;
+mod prover_l2_client;
+pub use prover_l2_client::ProverL2Provider;
 
-/// L2-specific provider type using the Base network.
-/// Required for deserializing OP Stack deposit transactions (type 0x7E).
-pub type L2HttpProvider = RootProvider<Base>;
-
-mod cache;
-pub use cache::{CacheMetrics, MeteredCache};
-
-mod error;
-pub use error::{RpcError, RpcResult};
-
-mod l1_client;
-pub use l1_client::{L1ClientConfig, L1ClientImpl};
-
-mod l2_client;
-pub use l2_client::{L2ClientConfig, L2ClientImpl, ProofCacheKey};
+// Impl-only: provides ProverL2Provider impl for L2Client.
+mod l2_client_ext;
 
 mod reth_client;
 pub use reth_client::RethL2Client;
 
-mod rollup_client;
-pub use rollup_client::{RollupClientConfig, RollupClientImpl};
-
-mod traits;
-pub use traits::{L1Client, L2Client, RollupClient};
-
 mod types;
-pub use types::{
-    GenesisL2BlockRef, L1BlockId, L1BlockRef, L2BlockRef, OpBlock, RethExecutionWitness, SyncStatus,
-};
+pub use types::RethExecutionWitness;
 
-/// Creates an L2 client based on the configuration.
+/// Enum dispatch for [`ProverL2Provider`], replacing `Box<dyn ProverL2Provider>`.
 ///
-/// If `is_reth` is true, returns a [`RethL2Client`] that handles reth-specific
-/// witness format conversion. Otherwise, returns a standard [`L2ClientImpl`].
-pub fn create_l2_client(config: L2ClientConfig, is_reth: bool) -> RpcResult<Box<dyn L2Client>> {
-    if is_reth {
-        Ok(Box::new(RethL2Client::new(config)?))
-    } else {
-        Ok(Box::new(L2ClientImpl::new(config)?))
+/// Since there are only two concrete implementations, enum dispatch avoids
+/// trait-object boilerplate and the fragile supertrait delegation it requires.
+#[derive(Debug)]
+pub enum L2ClientKind {
+    /// Standard geth-compatible L2 client.
+    Standard(L2Client),
+    /// Reth-specific L2 client with witness format conversion.
+    Reth(RethL2Client),
+}
+
+impl L2ClientKind {
+    /// Creates an L2 client based on the configuration.
+    ///
+    /// If `is_reth` is true, returns a [`RethL2Client`] that handles reth-specific
+    /// witness format conversion. Otherwise, returns a standard [`L2Client`].
+    pub fn new(config: L2ClientConfig, is_reth: bool) -> RpcResult<Self> {
+        if is_reth {
+            Ok(Self::Reth(RethL2Client::new(config)?))
+        } else {
+            Ok(Self::Standard(L2Client::new(config)?))
+        }
+    }
+
+    /// Returns a reference to the underlying [`L2Client`].
+    ///
+    /// Both variants delegate all [`L2Provider`] methods to an [`L2Client`],
+    /// so this helper eliminates per-method match arms for supertrait dispatch.
+    const fn as_l2_client(&self) -> &L2Client {
+        match self {
+            Self::Standard(c) => c,
+            Self::Reth(c) => c.as_l2_client(),
+        }
+    }
+}
+
+#[async_trait]
+impl L2Provider for L2ClientKind {
+    async fn chain_config(&self) -> RpcResult<serde_json::Value> {
+        self.as_l2_client().chain_config().await
+    }
+
+    async fn get_proof(&self, address: Address, block_hash: B256) -> RpcResult<AccountResult> {
+        self.as_l2_client().get_proof(address, block_hash).await
+    }
+
+    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<Header> {
+        self.as_l2_client().header_by_number(number).await
+    }
+
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
+        self.as_l2_client().block_by_number(number).await
+    }
+
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
+        self.as_l2_client().block_by_hash(hash).await
+    }
+}
+
+#[async_trait]
+impl ProverL2Provider for L2ClientKind {
+    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
+        match self {
+            Self::Standard(c) => c.execution_witness(block_number).await,
+            Self::Reth(c) => c.execution_witness(block_number).await,
+        }
+    }
+
+    async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
+        match self {
+            Self::Standard(c) => c.db_get(key).await,
+            Self::Reth(c) => c.db_get(key).await,
+        }
     }
 }
 
@@ -57,14 +102,14 @@ mod tests {
     #[test]
     fn test_create_l2_client_standard() {
         let config = L2ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        let client = create_l2_client(config, false);
+        let client = L2ClientKind::new(config, false);
         assert!(client.is_ok());
     }
 
     #[test]
     fn test_create_l2_client_reth() {
         let config = L2ClientConfig::new(Url::parse("http://localhost:8545").unwrap());
-        let client = create_l2_client(config, true);
+        let client = L2ClientKind::new(config, true);
         assert!(client.is_ok());
     }
 }

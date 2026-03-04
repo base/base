@@ -2,12 +2,15 @@
 
 use std::{
     hash::Hash,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use moka::future::Cache;
 
-use crate::{constants::DEFAULT_CACHE_SIZE, metrics as proposer_metrics};
+use super::config::DEFAULT_CACHE_SIZE;
 
 /// Cache metrics for tracking hit/miss rates.
 #[derive(Debug, Default)]
@@ -71,7 +74,11 @@ where
     /// Metrics for this cache.
     metrics: CacheMetrics,
     /// Name of this cache for identification.
-    name: String,
+    name: Arc<str>,
+    /// Precomputed Prometheus counter name for cache hits.
+    hits_metric_name: Option<Arc<str>>,
+    /// Precomputed Prometheus counter name for cache misses.
+    misses_metric_name: Option<Arc<str>>,
 }
 
 impl<K, V> MeteredCache<K, V>
@@ -80,13 +87,29 @@ where
     V: Clone + Send + Sync + 'static,
 {
     /// Creates a new metered cache with the given name and default size.
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
         Self::with_capacity(name, DEFAULT_CACHE_SIZE)
     }
 
     /// Creates a new metered cache with the given name and capacity.
-    pub fn with_capacity(name: impl Into<String>, capacity: usize) -> Self {
-        Self { cache: Cache::new(capacity as u64), metrics: CacheMetrics::new(), name: name.into() }
+    pub fn with_capacity(name: impl Into<Arc<str>>, capacity: usize) -> Self {
+        Self {
+            cache: Cache::new(capacity as u64),
+            metrics: CacheMetrics::new(),
+            name: name.into(),
+            hits_metric_name: None,
+            misses_metric_name: None,
+        }
+    }
+
+    /// Sets a Prometheus metrics prefix on this cache.
+    ///
+    /// When set, cache hits and misses are emitted as Prometheus counters:
+    /// `{prefix}_cache_hits_total` and `{prefix}_cache_misses_total`.
+    pub fn with_metrics_prefix(mut self, prefix: &str) -> Self {
+        self.hits_metric_name = Some(format!("{prefix}_cache_hits_total").into());
+        self.misses_metric_name = Some(format!("{prefix}_cache_misses_total").into());
+        self
     }
 
     /// Gets a value from the cache, returning `None` if not present.
@@ -94,10 +117,22 @@ where
         let value = self.cache.get(key).await;
         if value.is_some() {
             self.metrics.record_hit();
-            metrics::counter!(proposer_metrics::CACHE_HITS_TOTAL, proposer_metrics::LABEL_CACHE_NAME => self.name.clone()).increment(1);
+            if let Some(name) = &self.hits_metric_name {
+                metrics::counter!(
+                    Arc::clone(name),
+                    "cache_name" => Arc::clone(&self.name),
+                )
+                .increment(1);
+            }
         } else {
             self.metrics.record_miss();
-            metrics::counter!(proposer_metrics::CACHE_MISSES_TOTAL, proposer_metrics::LABEL_CACHE_NAME => self.name.clone()).increment(1);
+            if let Some(name) = &self.misses_metric_name {
+                metrics::counter!(
+                    Arc::clone(name),
+                    "cache_name" => Arc::clone(&self.name),
+                )
+                .increment(1);
+            }
         }
         value
     }

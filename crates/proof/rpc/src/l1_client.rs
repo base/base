@@ -17,10 +17,10 @@ use url::Url;
 use super::{
     HttpProvider,
     cache::MeteredCache,
+    config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
-    traits::L1Client,
+    traits::L1Provider,
 };
-use crate::{config::RetryConfig, constants::DEFAULT_CACHE_SIZE};
 
 /// Configuration for the L1 client.
 #[derive(Debug, Clone)]
@@ -35,6 +35,8 @@ pub struct L1ClientConfig {
     pub retry_config: RetryConfig,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
+    /// Optional Prometheus metrics prefix for cache counters.
+    pub metrics_prefix: Option<String>,
 }
 
 impl L1ClientConfig {
@@ -46,6 +48,7 @@ impl L1ClientConfig {
             cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
             skip_tls_verify: false,
+            metrics_prefix: None,
         }
     }
 
@@ -72,10 +75,16 @@ impl L1ClientConfig {
         self.skip_tls_verify = skip;
         self
     }
+
+    /// Sets the Prometheus metrics prefix for cache counters.
+    pub fn with_metrics_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.metrics_prefix = Some(prefix.into());
+        self
+    }
 }
 
 /// L1 RPC client implementation using Alloy.
-pub struct L1ClientImpl {
+pub struct L1Client {
     /// The underlying HTTP provider.
     provider: HttpProvider,
     /// Cache for headers by hash.
@@ -86,16 +95,16 @@ pub struct L1ClientImpl {
     retry_config: RetryConfig,
 }
 
-impl std::fmt::Debug for L1ClientImpl {
+impl std::fmt::Debug for L1Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L1ClientImpl")
+        f.debug_struct("L1Client")
             .field("headers_cache_entries", &self.headers_cache.entry_count())
             .field("receipts_cache_entries", &self.receipts_cache.entry_count())
             .finish_non_exhaustive()
     }
 }
 
-impl L1ClientImpl {
+impl L1Client {
     /// Creates a new L1 client from the given configuration.
     pub fn new(config: L1ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
@@ -117,12 +126,14 @@ impl L1ClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        Ok(Self {
-            provider,
-            headers_cache: MeteredCache::with_capacity("l1_headers", config.cache_size),
-            receipts_cache: MeteredCache::with_capacity("l1_receipts", config.cache_size),
-            retry_config: config.retry_config,
-        })
+        let mut headers_cache = MeteredCache::with_capacity("l1_headers", config.cache_size);
+        let mut receipts_cache = MeteredCache::with_capacity("l1_receipts", config.cache_size);
+        if let Some(prefix) = &config.metrics_prefix {
+            headers_cache = headers_cache.with_metrics_prefix(prefix);
+            receipts_cache = receipts_cache.with_metrics_prefix(prefix);
+        }
+
+        Ok(Self { provider, headers_cache, receipts_cache, retry_config: config.retry_config })
     }
 
     /// Returns the headers cache metrics.
@@ -137,7 +148,7 @@ impl L1ClientImpl {
 }
 
 #[async_trait]
-impl L1Client for L1ClientImpl {
+impl L1Provider for L1Client {
     async fn block_number(&self) -> RpcResult<u64> {
         let backoff = self.retry_config.to_backoff_builder();
 

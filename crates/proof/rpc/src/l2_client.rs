@@ -10,17 +10,17 @@ use alloy_rpc_types_eth::{BlockId, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use base_enclave::{AccountResult, ExecutionWitness};
+use base_enclave::AccountResult;
 use url::Url;
 
 use super::{
     L2HttpProvider,
     cache::MeteredCache,
+    config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
-    traits::L2Client,
+    traits::L2Provider,
     types::OpBlock,
 };
-use crate::{config::RetryConfig, constants::DEFAULT_CACHE_SIZE};
 
 /// Cache key for account proofs (address + block hash).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -51,6 +51,8 @@ pub struct L2ClientConfig {
     pub retry_config: RetryConfig,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
+    /// Optional Prometheus metrics prefix for cache counters.
+    pub metrics_prefix: Option<String>,
 }
 
 impl L2ClientConfig {
@@ -62,6 +64,7 @@ impl L2ClientConfig {
             cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
             skip_tls_verify: false,
+            metrics_prefix: None,
         }
     }
 
@@ -88,10 +91,16 @@ impl L2ClientConfig {
         self.skip_tls_verify = skip;
         self
     }
+
+    /// Sets the Prometheus metrics prefix for cache counters.
+    pub fn with_metrics_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.metrics_prefix = Some(prefix.into());
+        self
+    }
 }
 
 /// L2 RPC client implementation using Alloy.
-pub struct L2ClientImpl {
+pub struct L2Client {
     /// The underlying HTTP provider (Optimism network for deposit tx support).
     provider: L2HttpProvider,
     /// Cache for blocks by hash.
@@ -104,9 +113,9 @@ pub struct L2ClientImpl {
     retry_config: RetryConfig,
 }
 
-impl std::fmt::Debug for L2ClientImpl {
+impl std::fmt::Debug for L2Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("L2ClientImpl")
+        f.debug_struct("L2Client")
             .field("blocks_cache_entries", &self.blocks_cache.entry_count())
             .field("headers_cache_entries", &self.headers_cache.entry_count())
             .field("proofs_cache_entries", &self.proofs_cache.entry_count())
@@ -114,7 +123,7 @@ impl std::fmt::Debug for L2ClientImpl {
     }
 }
 
-impl L2ClientImpl {
+impl L2Client {
     /// Creates a new L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
@@ -136,11 +145,20 @@ impl L2ClientImpl {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
+        let mut blocks_cache = MeteredCache::with_capacity("l2_blocks", config.cache_size);
+        let mut headers_cache = MeteredCache::with_capacity("l2_headers", config.cache_size);
+        let mut proofs_cache = MeteredCache::with_capacity("l2_proofs", config.cache_size);
+        if let Some(prefix) = &config.metrics_prefix {
+            blocks_cache = blocks_cache.with_metrics_prefix(prefix);
+            headers_cache = headers_cache.with_metrics_prefix(prefix);
+            proofs_cache = proofs_cache.with_metrics_prefix(prefix);
+        }
+
         Ok(Self {
             provider,
-            blocks_cache: MeteredCache::with_capacity("l2_blocks", config.cache_size),
-            headers_cache: MeteredCache::with_capacity("l2_headers", config.cache_size),
-            proofs_cache: MeteredCache::with_capacity("l2_proofs", config.cache_size),
+            blocks_cache,
+            headers_cache,
+            proofs_cache,
             retry_config: config.retry_config,
         })
     }
@@ -172,7 +190,7 @@ impl L2ClientImpl {
 }
 
 #[async_trait]
-impl L2Client for L2ClientImpl {
+impl L2Provider for L2Client {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         let backoff = self.retry_config.to_backoff_builder();
 
@@ -294,53 +312,6 @@ impl L2Client for L2ClientImpl {
         self.headers_cache.insert(hash, block.header.clone()).await;
 
         Ok(block)
-    }
-
-    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
-        let backoff = self.retry_config.to_backoff_builder();
-
-        (|| async {
-            self.provider
-                .raw_request::<_, ExecutionWitness>(
-                    "debug_executionWitness".into(),
-                    (BlockNumberOrTag::Number(block_number),),
-                )
-                .await
-                .map_err(|e| {
-                    // Truncate the error to avoid logging multi-MB witness JSON in error messages.
-                    let msg = e.to_string();
-                    let truncated = if msg.len() > 500 {
-                        let end = msg.floor_char_boundary(500);
-                        format!("{}... (truncated)", &msg[..end])
-                    } else {
-                        msg
-                    };
-                    RpcError::WitnessNotFound(format!("Block {block_number}: {truncated}"))
-                })
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::execution_witness");
-        })
-        .await
-    }
-
-    async fn db_get(&self, key: B256) -> RpcResult<alloy_primitives::Bytes> {
-        let backoff = self.retry_config.to_backoff_builder();
-
-        (|| async {
-            self.provider
-                .raw_request::<_, alloy_primitives::Bytes>("debug_dbGet".into(), (key,))
-                .await
-                .map_err(|e| RpcError::InvalidResponse(format!("Failed to db_get key {key}: {e}")))
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::db_get");
-        })
-        .await
     }
 }
 

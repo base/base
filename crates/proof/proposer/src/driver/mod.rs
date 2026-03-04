@@ -22,6 +22,7 @@ use std::{
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+use base_proof_rpc::{L1Provider, L2BlockRef, RollupProvider, RpcError};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -33,7 +34,7 @@ use crate::{
     enclave::EnclaveClientTrait,
     is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
-    rpc::{L1Client, L2Client, RollupClient},
+    rpc::ProverL2Provider,
 };
 
 /// Driver configuration.
@@ -86,10 +87,10 @@ struct ParentGameState {
 /// The main driver that coordinates proposal generation.
 pub struct Driver<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client,
-    L2: L2Client,
+    L1: L1Provider,
+    L2: ProverL2Provider,
     E: EnclaveClientTrait,
-    R: RollupClient,
+    R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
 {
@@ -114,10 +115,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for Driver<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client,
-    L2: L2Client,
+    L1: L1Provider,
+    L2: ProverL2Provider,
     E: EnclaveClientTrait,
-    R: RollupClient,
+    R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
 {
@@ -132,10 +133,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> Driver<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -332,7 +333,7 @@ where
 
             let block = match self.l2_client.block_by_number(Some(number)).await {
                 Ok(block) => block,
-                Err(crate::rpc::RpcError::BlockNotFound(_)) => {
+                Err(RpcError::BlockNotFound(_)) => {
                     break;
                 }
                 Err(e) => {
@@ -497,7 +498,7 @@ where
     }
 
     /// Returns the latest safe L2 block reference.
-    async fn latest_safe_block(&self) -> Result<crate::rpc::L2BlockRef, ProposerError> {
+    async fn latest_safe_block(&self) -> Result<L2BlockRef, ProposerError> {
         let sync_status = self.rollup_client.sync_status().await?;
         if self.config.allow_non_finalized {
             Ok(sync_status.safe_l2)
@@ -632,10 +633,10 @@ pub trait ProposerDriverControl: Send + Sync {
 /// into a spawned task for the duration of a session.
 pub struct DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -653,10 +654,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -669,10 +670,10 @@ where
 
 impl<L1, L2, E, R, ASR, F> DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -696,10 +697,10 @@ where
 #[async_trait]
 impl<L1, L2, E, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, E, R, ASR, F>
 where
-    L1: L1Client + 'static,
-    L2: L2Client + 'static,
+    L1: L1Provider + 'static,
+    L2: ProverL2Provider + 'static,
     E: EnclaveClientTrait + 'static,
-    R: RollupClient + 'static,
+    R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
@@ -772,13 +773,13 @@ mod tests {
     use async_trait::async_trait;
     use base_enclave::{Proposal, RollupConfig};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_proof_rpc::SyncStatus;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
         enclave::EnclaveClientTrait,
         prover::{Prover, test_helpers::test_proposal},
-        rpc::SyncStatus,
         test_utils::{
             MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
             MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,

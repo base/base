@@ -19,6 +19,7 @@ use backon::Retryable;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
+use base_proof_rpc::RetryConfig;
 use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use tokio::sync::OnceCell;
 use tracing::info;
@@ -26,7 +27,7 @@ use url::Url;
 
 use crate::{
     ProposerError,
-    config::{RetryConfig, SigningConfig},
+    config::SigningConfig,
     constants::{
         ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
         GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,

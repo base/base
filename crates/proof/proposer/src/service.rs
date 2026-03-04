@@ -13,16 +13,18 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
+use base_proof_rpc::{
+    L1Client, L1ClientConfig, L2ClientConfig, RollupClient, RollupClientConfig, RollupProvider,
+};
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Driver, DriverConfig, DriverHandle, L1ClientConfig, L1ClientImpl, L2ClientConfig,
-    ProposerConfig, ProposerDriverControl, Prover, RollupClient, RollupClientConfig,
-    RollupClientImpl, SigningConfig, create_enclave_client, create_l2_client,
-    create_output_proposer, rollup_config_to_per_chain_config,
+    Driver, DriverConfig, DriverHandle, L2ClientKind, ProposerConfig, ProposerDriverControl,
+    Prover, SigningConfig, create_enclave_client, create_output_proposer,
+    rollup_config_to_per_chain_config,
 };
 
 /// Runs the full proposer service lifecycle.
@@ -61,16 +63,18 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify);
-    let l1_client = Arc::new(L1ClientImpl::new(l1_config)?);
+        .with_skip_tls_verify(config.skip_tls_verify)
+        .with_metrics_prefix("base_proposer");
+    let l1_client = Arc::new(L1Client::new(l1_config)?);
     info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
     // Create L2 client
     let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify);
-    let l2_client = Arc::new(create_l2_client(l2_config, config.l2_reth)?);
+        .with_skip_tls_verify(config.skip_tls_verify)
+        .with_metrics_prefix("base_proposer");
+    let l2_client = Arc::new(L2ClientKind::new(l2_config, config.l2_reth)?);
     info!(endpoint = %config.l2_eth_rpc, reth = config.l2_reth, "L2 client initialized");
 
     // Create Rollup client
@@ -79,7 +83,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
         .with_skip_tls_verify(config.skip_tls_verify);
-    let rollup_client = Arc::new(RollupClientImpl::new(rollup_config)?);
+    let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
     info!(endpoint = %rollup_rpc, "Rollup client initialized");
 
     // Fetch chain configuration from op-node

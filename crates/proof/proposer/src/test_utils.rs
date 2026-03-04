@@ -11,15 +11,16 @@ use base_enclave::{
 use base_proof_contracts::{
     AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
 };
+use base_proof_rpc::{
+    L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, RollupProvider, RpcError,
+    RpcResult, SyncStatus,
+};
 
 use crate::{
     OutputProposer, ProposerError,
     enclave::EnclaveClientTrait,
     prover::{Prover, ProverProposal},
-    rpc::{
-        L1BlockId, L1BlockRef, L1Client, L2BlockRef, L2Client, OpBlock, RollupClient, RpcError,
-        RpcResult, SyncStatus,
-    },
+    rpc::ProverL2Provider,
 };
 
 /// Mock L1 client with configurable `block_number()` return.
@@ -28,7 +29,7 @@ pub(crate) struct MockL1 {
 }
 
 #[async_trait]
-impl L1Client for MockL1 {
+impl L1Provider for MockL1 {
     async fn block_number(&self) -> RpcResult<u64> {
         Ok(self.latest_block_number)
     }
@@ -64,7 +65,7 @@ pub(crate) struct MockL2 {
 }
 
 #[async_trait]
-impl L2Client for MockL2 {
+impl L2Provider for MockL2 {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         unimplemented!()
     }
@@ -85,6 +86,10 @@ impl L2Client for MockL2 {
     async fn block_by_hash(&self, _: B256) -> RpcResult<OpBlock> {
         unimplemented!()
     }
+}
+
+#[async_trait]
+impl ProverL2Provider for MockL2 {
     async fn execution_witness(&self, _: u64) -> RpcResult<ExecutionWitness> {
         unimplemented!()
     }
@@ -99,7 +104,7 @@ pub(crate) struct MockRollupClient {
 }
 
 #[async_trait]
-impl RollupClient for MockRollupClient {
+impl RollupProvider for MockRollupClient {
     async fn rollup_config(&self) -> RpcResult<RollupConfig> {
         unimplemented!()
     }

@@ -16,6 +16,7 @@ use base_enclave::{
     AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info, output_root_v0,
 };
 use base_enclave_client::ExecuteStatelessRequest;
+use base_proof_rpc::{L1BlockId, L1Provider, L2BlockRef, OpBlock};
 use base_protocol::Predeploys;
 pub use types::ProverProposal;
 #[cfg(test)]
@@ -24,7 +25,7 @@ pub(crate) use types::test_helpers;
 use crate::{
     ProposerError,
     enclave::{EnclaveClientTrait, PerChainConfig},
-    rpc::{L1BlockId, L1Client, L2BlockRef, L2Client, OpBlock},
+    rpc::ProverL2Provider,
 };
 
 /// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
@@ -50,8 +51,8 @@ pub struct Prover<L1, L2, E> {
 
 impl<L1, L2, E> Prover<L1, L2, E>
 where
-    L1: L1Client,
-    L2: L2Client,
+    L1: L1Provider,
+    L2: ProverL2Provider,
     E: EnclaveClientTrait,
 {
     /// Creates a new prover instance.

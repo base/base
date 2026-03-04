@@ -9,7 +9,7 @@ mod cli;
 pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
 
 mod config;
-pub use config::{ConfigError, ProposerConfig, RetryConfig, RpcServerConfig, SigningConfig};
+pub use config::{ConfigError, ProposerConfig, RpcServerConfig, SigningConfig};
 
 mod constants;
 pub use constants::*;
@@ -48,12 +48,7 @@ mod recovery;
 pub use recovery::recover_parent_game_state_standalone;
 
 mod rpc;
-pub use rpc::{
-    CacheMetrics, GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L1Client, L1ClientConfig,
-    L1ClientImpl, L2BlockRef, L2Client, L2ClientConfig, L2ClientImpl, L2HttpProvider, MeteredCache,
-    OpBlock, ProofCacheKey, RethExecutionWitness, RethL2Client, RollupClient, RollupClientConfig,
-    RollupClientImpl, RpcError, RpcResult, SyncStatus, create_l2_client,
-};
+pub use rpc::{L2ClientKind, ProverL2Provider, RethExecutionWitness, RethL2Client};
 
 mod service;
 pub use service::run;

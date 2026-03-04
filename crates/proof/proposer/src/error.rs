@@ -1,9 +1,8 @@
 //! Error types for the proposer.
 
 use base_proof_contracts::ContractError;
+use base_proof_rpc::RpcError;
 use thiserror::Error;
-
-use crate::rpc::RpcError;
 
 /// Main error type for the proposer.
 #[derive(Debug, Error)]
