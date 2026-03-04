@@ -6,6 +6,7 @@ use base_consensus_engine::{Engine, EngineState, OpEngineClient};
 use base_consensus_genesis::RollupConfig;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+
 use crate::{
     DelegateL2Client, DelegateL2DerivationActor, EngineActor, EngineActorRequest, EngineConfig,
     EngineProcessor, EngineRpcProcessor, NodeActor, QueuedDerivationEngineClient,
@@ -27,7 +28,7 @@ pub struct FollowNode {
 
 impl FollowNode {
     /// Creates a new [`FollowNode`].
-    pub fn new(
+    pub const fn new(
         config: Arc<RollupConfig>,
         engine_config: EngineConfig,
         local_l2_provider: RootProvider<Base>,
@@ -105,10 +106,7 @@ impl FollowNode {
 
         crate::service::spawn_and_wait!(
             cancellation,
-            actors = [
-                Some((derivation, ())),
-                Some((engine_actor, ())),
-            ]
+            actors = [Some((derivation, ())), Some((engine_actor, ())),]
         );
         Ok(())
     }
