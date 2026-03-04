@@ -1,7 +1,14 @@
 //! Game scanner for the challenger service.
 //!
-//! Scans the `DisputeGameFactory` for dispute games requiring validation,
-//! filtering by game type, status, and challenge state.
+//! Scans the [`DisputeGameFactory`](base_proof_contracts::DisputeGameFactoryClient)
+//! for dispute games requiring validation. Each game is evaluated through a
+//! three-stage filter:
+//!
+//! 1. **Game type** — must match [`ScannerConfig::game_type`].
+//! 2. **Status** — must be `IN_PROGRESS` ([`STATUS_IN_PROGRESS`]).
+//! 3. **Challenge state** — `zkProver` must be `Address::ZERO` (unchallenged).
+//!
+//! Games passing all three filters are returned as [`CandidateGame`] structs.
 
 use std::sync::Arc;
 
@@ -77,6 +84,11 @@ impl GameScanner {
     ///
     /// On a fresh start, pass `0` as `last_scanned` and the lookback window will
     /// determine the scan range.
+    ///
+    /// Individual game query failures are logged and skipped so that a transient
+    /// RPC error on one game does not abort the entire scan. After evaluation,
+    /// the `base_challenger_games_scanned_total` counter and
+    /// `base_challenger_scan_head` gauge are updated.
     pub async fn scan(&self, last_scanned: u64) -> Result<(Vec<CandidateGame>, u64)> {
         let game_count = self.factory_client.game_count().await?;
 
