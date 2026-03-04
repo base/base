@@ -77,6 +77,6 @@ pub static BASE_SEPOLIA_HARDFORKS: Lazy<ChainHardforks> =
 pub static BASE_MAINNET_HARDFORKS: Lazy<ChainHardforks> =
     Lazy::new(|| OpChainHardforks::base_mainnet().to_chain_hardforks());
 
-/// Base devnet-0 list of hardforks.
-pub static BASE_DEVNET_0_HARDFORKS: Lazy<ChainHardforks> =
-    Lazy::new(|| OpChainHardforks::base_devnet_0().to_chain_hardforks());
+/// Base devnet-0-sepolia-dev-0 list of hardforks.
+pub static BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS: Lazy<ChainHardforks> =
+    Lazy::new(|| OpChainHardforks::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
