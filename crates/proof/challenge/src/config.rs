@@ -1,6 +1,6 @@
 //! Configuration types and validation for the challenger.
 
-use std::{net::SocketAddr, time::Duration};
+use std::{fmt, net::SocketAddr, ops::Deref, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer::k256::ecdsa::SigningKey;
@@ -10,6 +10,55 @@ use thiserror::Error;
 use url::Url;
 
 use crate::cli::Cli;
+
+/// Error returned when URL validation fails.
+#[derive(Debug, Error)]
+pub enum UrlValidationError {
+    /// The URL is missing a scheme.
+    #[error("missing scheme")]
+    MissingScheme,
+    /// The URL is missing a host.
+    #[error("missing host")]
+    MissingHost,
+}
+
+/// A wrapper that guarantees the inner value has been validated.
+#[derive(Debug, Clone)]
+pub struct Validated<T>(T);
+
+impl TryFrom<Url> for Validated<Url> {
+    type Error = UrlValidationError;
+
+    fn try_from(url: Url) -> Result<Self, Self::Error> {
+        if url.scheme().is_empty() {
+            return Err(UrlValidationError::MissingScheme);
+        }
+        if url.host().is_none() {
+            return Err(UrlValidationError::MissingHost);
+        }
+        Ok(Self(url))
+    }
+}
+
+impl<T> Deref for Validated<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> AsRef<T> for Validated<T> {
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for Validated<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Errors that can occur during configuration validation.
 #[derive(Debug, Error)]
@@ -51,7 +100,7 @@ pub enum SigningConfig {
     /// Remote signing via a signer sidecar JSON-RPC endpoint (production).
     Remote {
         /// URL of the signer sidecar.
-        endpoint: Url,
+        endpoint: Validated<Url>,
         /// Address of the signer account.
         address: Address,
     },
@@ -76,11 +125,11 @@ impl std::fmt::Debug for SigningConfig {
 #[derive(Debug, Clone)]
 pub struct ChallengerConfig {
     /// URL of the L1 Ethereum RPC endpoint.
-    pub l1_eth_rpc: Url,
+    pub l1_eth_rpc: Validated<Url>,
     /// URL of the L2 Ethereum RPC endpoint.
-    pub l2_eth_rpc: Url,
+    pub l2_eth_rpc: Validated<Url>,
     /// URL of the rollup RPC endpoint.
-    pub rollup_rpc: Url,
+    pub rollup_rpc: Validated<Url>,
     /// Address of the `DisputeGameFactory` contract on L1.
     pub dispute_game_factory_addr: Address,
     /// Address of the `AnchorStateRegistry` contract on L1.
@@ -90,7 +139,7 @@ pub struct ChallengerConfig {
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK proof service endpoint.
-    pub zk_proof_service_endpoint: Url,
+    pub zk_proof_service_endpoint: Validated<Url>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SigningConfig,
     /// Number of past games to scan on startup.
@@ -119,11 +168,19 @@ impl ChallengerConfig {
     ///
     /// Returns [`ConfigError`] if any validation check fails.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
+        let validate = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
+            Validated::try_from(url).map_err(|e| ConfigError::InvalidUrl {
+                field,
+                reason: e.to_string(),
+            })
+        };
+
         // Validate URLs have scheme and host
-        validate_url(&cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
-        validate_url(&cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
-        validate_url(&cli.challenger.rollup_rpc, "rollup-rpc")?;
-        validate_url(&cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
+        let l1_eth_rpc = validate(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
+        let l2_eth_rpc = validate(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
+        let rollup_rpc = validate(cli.challenger.rollup_rpc, "rollup-rpc")?;
+        let zk_proof_service_endpoint =
+            validate(cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
 
         // Validate poll_interval > 0
         if cli.challenger.poll_interval.is_zero() {
@@ -148,21 +205,21 @@ impl ChallengerConfig {
         // Validate and extract signing config
         let signing = build_signing_config(
             private_key.as_deref(),
-            cli.challenger.signer_endpoint.as_ref(),
+            cli.challenger.signer_endpoint,
             cli.challenger.signer_address.as_ref(),
         )?;
 
         let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
 
         Ok(Self {
-            l1_eth_rpc: cli.challenger.l1_eth_rpc,
-            l2_eth_rpc: cli.challenger.l2_eth_rpc,
-            rollup_rpc: cli.challenger.rollup_rpc,
+            l1_eth_rpc,
+            l2_eth_rpc,
+            rollup_rpc,
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
             anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
             game_type: cli.challenger.game_type,
             poll_interval: cli.challenger.poll_interval,
-            zk_proof_service_endpoint: cli.challenger.zk_proof_service_endpoint,
+            zk_proof_service_endpoint,
             signing,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
@@ -172,25 +229,12 @@ impl ChallengerConfig {
     }
 }
 
-/// Validate that a URL has a scheme and host.
-fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
-    if url.scheme().is_empty() {
-        return Err(ConfigError::InvalidUrl { field, reason: "missing scheme".to_string() });
-    }
-
-    if url.host().is_none() {
-        return Err(ConfigError::InvalidUrl { field, reason: "missing host".to_string() });
-    }
-
-    Ok(())
-}
-
 /// Validate and build [`SigningConfig`] from CLI arguments.
 ///
 /// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
 fn build_signing_config(
     private_key: Option<&str>,
-    signer_endpoint: Option<&Url>,
+    signer_endpoint: Option<Url>,
     signer_address: Option<&Address>,
 ) -> Result<SigningConfig, ConfigError> {
     match (private_key, signer_endpoint, signer_address) {
@@ -204,8 +248,12 @@ fn build_signing_config(
             Ok(SigningConfig::Local { signer })
         }
         (None, Some(endpoint), Some(address)) => {
-            validate_url(endpoint, "signer-endpoint")?;
-            Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
+            let endpoint =
+                Validated::try_from(endpoint).map_err(|e| ConfigError::InvalidUrl {
+                    field: "signer-endpoint",
+                    reason: e.to_string(),
+                })?;
+            Ok(SigningConfig::Remote { endpoint, address: *address })
         }
         (None, None, None) => Err(ConfigError::Signing(
             "one of CHALLENGER_PRIVATE_KEY or (--signer-endpoint + --signer-address) must be provided"
@@ -334,8 +382,8 @@ mod tests {
     #[test]
     fn test_url_without_host() {
         let url = Url::parse("file:///some/path").unwrap();
-        let result = validate_url(&url, "test-field");
-        assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "test-field", .. })));
+        let result = Validated::try_from(url);
+        assert!(matches!(result, Err(UrlValidationError::MissingHost)));
     }
 
     #[test]
@@ -369,7 +417,7 @@ mod tests {
     fn test_signing_config_remote() {
         let url = Url::parse("http://localhost:8546").unwrap();
         let addr: Address = "0x1234567890123456789012345678901234567890".parse().unwrap();
-        let signing = build_signing_config(None, Some(&url), Some(&addr)).unwrap();
+        let signing = build_signing_config(None, Some(url), Some(&addr)).unwrap();
         assert!(matches!(signing, SigningConfig::Remote { .. }));
     }
 
@@ -383,14 +431,14 @@ mod tests {
     fn test_signing_config_both_provided() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
         let url = Url::parse("http://localhost:8546").unwrap();
-        let result = build_signing_config(Some(pk), Some(&url), None);
+        let result = build_signing_config(Some(pk), Some(url), None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
     #[test]
     fn test_signing_config_endpoint_without_address() {
         let url = Url::parse("http://localhost:8546").unwrap();
-        let result = build_signing_config(None, Some(&url), None);
+        let result = build_signing_config(None, Some(url), None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 

@@ -6,7 +6,7 @@ mod cli;
 pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs};
 
 mod config;
-pub use config::{ChallengerConfig, ConfigError, SigningConfig};
+pub use config::{ChallengerConfig, ConfigError, SigningConfig, UrlValidationError, Validated};
 
 mod health;
 pub use health::HealthServer;
