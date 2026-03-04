@@ -1,4 +1,9 @@
 //! CLI argument definitions for the challenger.
+//!
+//! All challenger-specific flags use the `CHALLENGER_` environment-variable
+//! prefix (e.g. `CHALLENGER_L1_ETH_RPC`). Logging and metrics flags use the
+//! `BASE_CHALLENGER_` prefix via [`base_cli_utils`] macros. The default
+//! metrics port is **7310** (distinct from the proposer's 7300).
 
 use std::{
     net::IpAddr,

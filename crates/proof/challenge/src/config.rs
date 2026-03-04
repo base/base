@@ -105,7 +105,20 @@ pub struct ChallengerConfig {
 }
 
 impl ChallengerConfig {
-    /// Create a validated configuration from CLI arguments.
+    /// Creates a validated [`ChallengerConfig`] from parsed CLI arguments.
+    ///
+    /// # Validation
+    ///
+    /// - Every URL field must have a scheme and host.
+    /// - `poll_interval` must be greater than zero.
+    /// - When metrics are enabled, the metrics port must be non-zero.
+    /// - Exactly one signing method must be configured: either
+    ///   `CHALLENGER_PRIVATE_KEY` (local/dev) **or** both
+    ///   `--signer-endpoint` and `--signer-address` (remote/production).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if any validation check fails.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
         // Validate URLs have scheme and host
         validate_url(&cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
