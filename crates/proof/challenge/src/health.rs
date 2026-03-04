@@ -28,21 +28,19 @@ struct ServerState {
     ready: Arc<AtomicBool>,
 }
 
-// ---------------------------------------------------------------------------
-// Health endpoints
-// ---------------------------------------------------------------------------
-
-/// `GET /healthz` — liveness probe.
-async fn liveness() -> StatusCode {
-    StatusCode::OK
-}
-
-/// `GET /readyz` — readiness probe.
-async fn readiness(State(state): State<ServerState>) -> StatusCode {
-    if state.ready.load(Ordering::Relaxed) {
+impl ServerState {
+    /// `GET /healthz` — liveness probe.
+    async fn liveness() -> StatusCode {
         StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
+    }
+
+    /// `GET /readyz` — readiness probe.
+    async fn readiness(State(state): State<Self>) -> StatusCode {
+        if state.ready.load(Ordering::Relaxed) {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
     }
 }
 
@@ -76,8 +74,8 @@ impl HealthServer {
         let state = ServerState { ready };
 
         let app = Router::new()
-            .route("/healthz", get(liveness))
-            .route("/readyz", get(readiness))
+            .route("/healthz", get(ServerState::liveness))
+            .route("/readyz", get(ServerState::readiness))
             .with_state(state);
 
         let listener = TcpListener::bind(addr).await?;
@@ -116,8 +114,8 @@ mod tests {
         let state = ServerState { ready };
 
         let app = Router::new()
-            .route("/healthz", get(liveness))
-            .route("/readyz", get(readiness))
+            .route("/healthz", get(ServerState::liveness))
+            .route("/readyz", get(ServerState::readiness))
             .with_state(state);
 
         let cancel_clone = cancel.clone();
