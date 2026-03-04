@@ -12,9 +12,6 @@ pub use config::ForwarderConfig;
 mod metrics;
 pub use metrics::ForwarderMetrics;
 
-mod rpc;
-pub use rpc::{BuilderApiClient, BuilderApiHandler, BuilderApiServer};
-
 mod task;
 pub use task::{Forwarder, ValidTransaction};
 

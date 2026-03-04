@@ -2,14 +2,21 @@ use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Bytes};
-use jsonrpsee::{core::ClientError, http_client::HttpClient};
+use jsonrpsee::{
+    core::{
+        ClientError,
+        client::{BatchResponse, ClientT},
+        params::BatchRequestBuilder,
+    },
+    http_client::HttpClient,
+};
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::broadcast, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
-use super::{config::ForwarderConfig, metrics::ForwarderMetrics, rpc::BuilderApiClient};
+use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
 
 /// Pre-validated transaction for the builder RPC wire format.
 ///
@@ -237,13 +244,33 @@ where
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
-            let result = self.client.insert_validated_transactions(batch.clone()).await;
+            let result = self.send_batch(&batch).await;
 
             match result {
-                Ok(_) => {
+                Ok(response) => {
                     self.metrics.rpc_latency.record(overall_start.elapsed().as_secs_f64());
                     self.metrics.batches_sent.increment(1);
-                    self.metrics.txs_forwarded.increment(tx_count);
+
+                    let mut ok_count = 0u64;
+                    let mut err_count = 0u64;
+                    for res in response {
+                        match res {
+                            Ok(()) => ok_count += 1,
+                            Err(e) => {
+                                debug!(
+                                    builder_url = %self.builder_url,
+                                    error = %e,
+                                    "batch item rejected",
+                                );
+                                err_count += 1;
+                            }
+                        }
+                    }
+
+                    self.metrics.txs_forwarded.increment(ok_count);
+                    if err_count > 0 {
+                        self.metrics.rpc_errors.increment(err_count);
+                    }
                     return;
                 }
                 Err(err) if Self::is_retryable(&err) && attempt < self.config.max_retries => {
@@ -275,6 +302,17 @@ where
                 }
             }
         }
+    }
+
+    async fn send_batch(
+        &self,
+        batch: &[ValidTransaction],
+    ) -> Result<BatchResponse<'_, ()>, ClientError> {
+        let mut request = BatchRequestBuilder::new();
+        for tx in batch {
+            request.insert("base_insertValidatedTransaction", (tx,)).expect("valid method name");
+        }
+        self.client.batch_request(request).await
     }
 
     const fn is_retryable(err: &ClientError) -> bool {
