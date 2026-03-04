@@ -185,6 +185,15 @@ impl ChallengerConfig {
             });
         }
 
+        // Validate lookback_games > 0
+        if cli.challenger.lookback_games == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "lookback-games",
+                constraint: "greater than 0",
+                value: "0".to_string(),
+            });
+        }
+
         // Validate metrics port when enabled
         if cli.metrics.enabled && cli.metrics.port == 0 {
             return Err(ConfigError::Metrics(
@@ -433,6 +442,13 @@ mod tests {
         } else {
             assert!(matches!(result, Err(ConfigError::Signing(_))));
         }
+    }
+
+    #[test]
+    fn test_zero_lookback_games() {
+        let cli = cli_from_args(&["--lookback-games", "0"]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "lookback-games", .. })));
     }
 
     #[test]
