@@ -57,6 +57,7 @@ where
             loop {
                 match connect_async(ws_url.as_str()).await {
                     Ok((ws_stream, _)) => {
+                        backoff = Duration::from_secs(1);
                         info!(message = "WebSocket connection established");
 
                         let mut ping_interval =
