@@ -168,9 +168,6 @@ where
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
         info!(target: "base-payload-validator", has_hook = self.on_validated_block.is_some(), "Building payload validator");
         let inner = self.inner.build(ctx).await?;
-        if !self.on_validated_block.is_some() {
-            panic!("on_validated_block hook is not set");
-        }
         Ok(BasePayloadValidator::new(inner, self.on_validated_block))
     }
 }

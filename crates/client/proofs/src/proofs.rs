@@ -15,6 +15,7 @@ use base_node_runner::{
 };
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
+use reth_node_builder::rpc::EngineValidatorAddOn;
 use reth_primitives_traits::SealedBlock;
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::TaskExecutor;
@@ -49,6 +50,22 @@ impl OnValidatedBlockHook for SlowValidatedBlockHook {
     }
 }
 
+struct WaitForProofsHook {
+    mdbx: Arc<MdbxProofsStorage>,
+}
+
+impl WaitForProofsHook {
+    pub fn new(mdbx: Arc<MdbxProofsStorage>) -> Self {
+        Self { mdbx }
+    }
+}
+
+impl OnValidatedBlockHook for WaitForProofsHook {
+    fn on_validated_block(&self, _timestamp: u64) {
+        self.mdbx.wait_within_time(Duration::from_secs(300));
+    }
+}
+
 impl BaseNodeExtension for ProofsHistoryExtension {
     /// Applies the extension to the supplied hooks.
     fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
@@ -60,21 +77,6 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
 
         if proofs_history_enabled {
-            // TODO: replace with real hook that forwards trie updates to proofs collector
-            hooks = hooks.add_add_ons_hook(move |add_ons| {
-                use reth_node_builder::rpc::EngineValidatorAddOn;
-                let hook: Arc<dyn OnValidatedBlockHook> = Arc::new(SlowValidatedBlockHook);
-                let pvb = BasePayloadValidatorBuilder::new(OpEngineValidatorBuilder::default())
-                    .with_on_validated_block(Arc::clone(&hook));
-                let builder = add_ons
-                    .engine_validator_builder()
-                    .with_on_validated_block(hook)
-                    .with_payload_validator_builder(pvb.clone());
-                add_ons
-                    .with_engine_validator(builder)
-                    .with_engine_api(OpEngineApiBuilder::new(pvb.clone()))
-                    .with_payload_validator(pvb)
-            });
             let path = args
                 .proofs_history_storage_path
                 .expect("Path must be provided if not using in-memory storage");
@@ -90,7 +92,24 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 }
             };
             let mdbx = Arc::new(mdbx);
+            let mdbx_clone = mdbx.clone();
             let storage: OpProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
+
+            // TODO: replace with real hook that forwards trie updates to proofs collector
+            hooks = hooks.add_add_ons_hook(move |add_ons| {
+                let hook: Arc<dyn OnValidatedBlockHook> =
+                    Arc::new(WaitForProofsHook::new(mdbx_clone));
+                let pvb = BasePayloadValidatorBuilder::new(OpEngineValidatorBuilder::default())
+                    .with_on_validated_block(Arc::clone(&hook));
+                let builder = add_ons
+                    .engine_validator_builder()
+                    .with_on_validated_block(hook)
+                    .with_payload_validator_builder(pvb.clone());
+                add_ons
+                    .with_engine_validator(builder)
+                    .with_engine_api(OpEngineApiBuilder::new(pvb.clone()))
+                    .with_payload_validator(pvb)
+            });
 
             let storage_exec = storage.clone();
 

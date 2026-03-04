@@ -37,6 +37,10 @@ where
     Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
     Store: 'tx + OpProofsStore + Clone + 'static,
 {
+    pub fn initialize(&self) -> () {
+        self.handle_chain_committed(Arc::clone(new), latest_stored, collector, sync_target_tx)?
+    }
+
     /// Execute a block and store the updates in the storage.
     pub fn execute_and_store_block_updates(
         &self,

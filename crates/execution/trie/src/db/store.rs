@@ -1,4 +1,9 @@
-use std::{ops::RangeBounds, path::Path};
+use std::{
+    ops::RangeBounds,
+    path::Path,
+    sync::{Condvar, Mutex},
+    time::{Duration, Instant},
+};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
@@ -21,6 +26,7 @@ use reth_trie_common::{
 };
 #[cfg(feature = "metrics")]
 use tracing::error;
+use tracing::info;
 
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey, Tables};
 use crate::{
@@ -43,6 +49,8 @@ use crate::{
 #[derive(Debug)]
 pub struct MdbxProofsStorage {
     env: DatabaseEnv,
+    latest_block_time: Mutex<Option<Instant>>,
+    latest_block_time_cond: Condvar,
 }
 
 struct ProofWindowValue {
@@ -74,7 +82,27 @@ impl MdbxProofsStorage {
     pub fn new(path: &Path) -> Result<Self, OpProofsStorageError> {
         let env = init_db_for::<_, Tables>(path, DatabaseArguments::default())
             .map_err(|e| DatabaseError::Other(format!("Failed to open database: {e}")))?;
-        Ok(Self { env })
+        let storage = Self {
+            env,
+            latest_block_time: Mutex::new(None),
+            latest_block_time_cond: Condvar::new(),
+        };
+
+        let latest_block = storage.get_latest_block_number()?;
+        if latest_block.is_some() {
+            *storage.latest_block_time.lock().unwrap() = Some(Instant::now());
+        }
+
+        Ok(storage)
+    }
+
+    pub fn wait_within_time(&self, duration: Duration) -> () {
+        let mut latest_block_time = self.latest_block_time.lock().unwrap();
+        while latest_block_time.is_none_or(|block_time| block_time.elapsed() < duration) {
+            info!(target: "reth::trie", latest_block_time = ?latest_block_time, "Waiting for proofs within time");
+            // TODO: this causes ctrl-c to not work
+            latest_block_time = self.latest_block_time_cond.wait(latest_block_time).unwrap();
+        }
     }
 
     fn inner_get_latest_block_number_hash(
@@ -143,12 +171,15 @@ impl MdbxProofsStorage {
 
     /// Internal helper to set latest block number hash within an existing transaction
     fn inner_set_latest_block_number(
+        self: &Self,
         tx: &(impl DbTxMut + DbTx),
         block_number: u64,
         hash: B256,
     ) -> OpProofsStorageResult<()> {
         let mut cursor = tx.cursor_write::<ProofWindow>()?;
         cursor.upsert(ProofWindowKey::LatestBlock, &BlockNumberHash::new(block_number, hash))?;
+        *self.latest_block_time.lock().unwrap() = Some(Instant::now());
+        self.latest_block_time_cond.notify_all();
         Ok(())
     }
 
@@ -592,7 +623,7 @@ impl MdbxProofsStorage {
         change_set_cursor.append(block_number, change_set)?;
 
         // Update proof window's latest block
-        Self::inner_set_latest_block_number(tx, block_number, block_ref.block.hash)?;
+        self.inner_set_latest_block_number(tx, block_number, block_ref.block.hash)?;
 
         Ok(WriteCounts {
             account_trie_updates_written_total: change_set.account_trie_keys.len() as u64,
@@ -900,7 +931,7 @@ impl OpProofsStore for MdbxProofsStorage {
                 BlockNumberHash::new(to.block.number.saturating_sub(1), to.parent);
 
             // Update proof window's Latest block
-            Self::inner_set_latest_block_number(
+            self.inner_set_latest_block_number(
                 tx,
                 new_latest_block.number(),
                 *new_latest_block.hash(),
@@ -928,7 +959,7 @@ impl OpProofsStore for MdbxProofsStorage {
 
             // Update the ProofWindow Latest Block to latest_common_block so we can perform
             // `store_trie_updates_append_only`.
-            Self::inner_set_latest_block_number(
+            self.inner_set_latest_block_number(
                 tx,
                 latest_common_block.number,
                 latest_common_block.hash,

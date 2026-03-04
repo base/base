@@ -236,9 +236,30 @@ where
             &self.storage,
         );
 
+        self.initialize(&collector, &sync_target_tx)?;
+
         while let Some(notification) = self.ctx.notifications.try_next().await? {
             self.handle_notification(notification, &collector, &sync_target_tx)?;
         }
+
+        Ok(())
+    }
+
+    fn initialize(
+        &self,
+        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        sync_target_tx: &watch::Sender<u64>,
+    ) -> eyre::Result<()> {
+        let latest_stored = match self.storage.get_latest_block_number()? {
+            Some((n, _)) => n,
+            None => {
+                return Err(eyre::eyre!("No blocks stored in proofs storage"));
+            }
+        };
+
+        let tip_number = self.ctx.provider().best_block_number()?;
+
+        self.handle_chain_committed(tip_number, None, latest_stored, collector, sync_target_tx)?;
 
         Ok(())
     }
@@ -399,7 +420,8 @@ where
 
         match &notification {
             ExExNotification::ChainCommitted { new } => self.handle_chain_committed(
-                Arc::clone(new),
+                new.tip().number(),
+                Some(Arc::clone(new)),
                 latest_stored,
                 collector,
                 sync_target_tx,
@@ -424,23 +446,23 @@ where
 
     fn handle_chain_committed(
         &self,
-        new: Arc<Chain<Primitives>>,
+        new_tip_number: u64,
+        new: Option<Arc<Chain<Primitives>>>,
         latest_stored: u64,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
         sync_target_tx: &watch::Sender<u64>,
     ) -> eyre::Result<()> {
         debug!(
             target: "optimism::exex",
-            block_number = new.tip().number(),
-            block_hash = ?new.tip().hash(),
+            block_number = new_tip_number,
             "ChainCommitted notification received",
         );
 
         // If tip is not newer than what we have, nothing to do.
-        if new.tip().number() <= latest_stored {
+        if new_tip_number <= latest_stored {
             debug!(
                 target: "optimism::exex",
-                block_number = new.tip().number(),
+                block_number = new_tip_number,
                 latest_stored,
                 "Already processed, skipping"
             );
@@ -448,14 +470,16 @@ where
         }
 
         let best_block = self.ctx.provider().best_block_number()?;
-        let is_sequential = new.tip().number() == latest_stored + 1;
-        let is_near_tip =
-            best_block.saturating_sub(new.tip().number()) < REAL_TIME_BLOCKS_THRESHOLD;
+        let is_sequential = new_tip_number == latest_stored + 1;
+        let is_near_tip = best_block.saturating_sub(new_tip_number) < REAL_TIME_BLOCKS_THRESHOLD;
 
-        if is_sequential && is_near_tip {
+        if is_sequential
+            && is_near_tip
+            && let Some(new) = new
+        {
             debug!(
                 target: "optimism::exex",
-                block_number = new.tip().number(),
+                block_number = new_tip_number,
                 latest_stored,
                 best_block,
                 "Processing in real-time"
@@ -463,13 +487,13 @@ where
 
             // Process each block from latest_stored + 1 to tip
             let start = latest_stored.saturating_add(1);
-            for block_number in start..=new.tip().number() {
+            for block_number in start..=new_tip_number {
                 self.process_block(block_number, &new, collector)?;
             }
         } else {
             debug!(
                 target: "optimism::exex",
-                block_number = new.tip().number(),
+                block_number = new_tip_number,
                 latest_stored,
                 best_block,
                 is_sequential,
@@ -478,7 +502,7 @@ where
             );
 
             // Update the sync target to the new tip
-            sync_target_tx.send(new.tip().number())?;
+            sync_target_tx.send(new_tip_number)?;
         }
 
         Ok(())
