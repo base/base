@@ -18,8 +18,8 @@ use tower::ServiceBuilder;
 use url::Url;
 
 use crate::{
-    DelegateL2Client, EngineConfig, NetworkConfig, RollupNode, SequencerConfig,
-    actors::DerivationDelegateClient, service::node::L1Config,
+    EngineConfig, NetworkConfig, RollupNode, SequencerConfig, actors::DerivationDelegateClient,
+    service::node::L1Config,
 };
 
 /// Configuration for Derivation Delegate mode.
@@ -72,8 +72,6 @@ pub struct RollupNodeBuilder {
     /// Optional configuration for Derivation Delegate mode.
     /// When present, the node does not run derivation, instead trusting the configured delegate.
     pub derivation_delegate_config: Option<DerivationDelegateConfig>,
-    /// Optional L2 source URL to follow another L2 node via `NewPayload` + FCU.
-    pub delegate_l2_source_url: Option<Url>,
 }
 
 impl RollupNodeBuilder {
@@ -95,7 +93,6 @@ impl RollupNodeBuilder {
             rpc_config,
             sequencer_config: None,
             derivation_delegate_config: None,
-            delegate_l2_source_url: None,
         }
     }
 
@@ -121,11 +118,6 @@ impl RollupNodeBuilder {
         derivation_delegate_config: Option<DerivationDelegateConfig>,
     ) -> Self {
         Self { derivation_delegate_config, ..self }
-    }
-
-    /// Sets the L2 source URL for following another L2 node via `NewPayload` + FCU.
-    pub fn with_delegate_l2_source_url(self, delegate_l2_source_url: Option<Url>) -> Self {
-        Self { delegate_l2_source_url, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -175,8 +167,6 @@ impl RollupNodeBuilder {
             )
         });
 
-        let delegate_l2_source = self.delegate_l2_source_url.map(DelegateL2Client::new);
-
         RollupNode {
             config: rollup_config,
             l1_config,
@@ -187,7 +177,6 @@ impl RollupNodeBuilder {
             p2p_config,
             sequencer_config,
             derivation_delegate_provider,
-            delegate_l2_source,
         }
     }
 }
