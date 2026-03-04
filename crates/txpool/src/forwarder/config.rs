@@ -21,6 +21,8 @@ pub struct ForwarderConfig {
     pub max_retries: u32,
     /// Base delay between retries (doubles each attempt).
     pub retry_backoff: Duration,
+    /// Per-request timeout for the HTTP client.
+    pub request_timeout: Duration,
 }
 
 impl Default for ForwarderConfig {
@@ -31,6 +33,7 @@ impl Default for ForwarderConfig {
             max_batch_size: 500,
             max_retries: 3,
             retry_backoff: Duration::from_millis(100),
+            request_timeout: Duration::from_secs(1),
         }
     }
 }
@@ -65,6 +68,12 @@ impl ForwarderConfig {
         self.retry_backoff = backoff;
         self
     }
+
+    /// Sets the per-request HTTP timeout.
+    pub const fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -79,6 +88,7 @@ mod tests {
         assert_eq!(config.max_batch_size, 500);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_backoff, Duration::from_millis(100));
+        assert_eq!(config.request_timeout, Duration::from_secs(1));
     }
 
     #[test]
@@ -89,13 +99,15 @@ mod tests {
             .with_max_rps(500)
             .with_max_batch_size(200)
             .with_max_retries(5)
-            .with_retry_backoff(Duration::from_millis(250));
+            .with_retry_backoff(Duration::from_millis(250))
+            .with_request_timeout(Duration::from_millis(500));
 
         assert_eq!(config.builder_urls, vec![url]);
         assert_eq!(config.max_rps, 500);
         assert_eq!(config.max_batch_size, 200);
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.retry_backoff, Duration::from_millis(250));
+        assert_eq!(config.request_timeout, Duration::from_millis(500));
     }
 
     #[test]

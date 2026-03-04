@@ -44,7 +44,7 @@ impl ForwarderHandle {
 
         for url in &config.builder_urls {
             let client = match HttpClientBuilder::default()
-                .request_timeout(Duration::from_secs(5))
+                .request_timeout(config.request_timeout)
                 .build(url.as_str())
             {
                 Ok(client) => client,
