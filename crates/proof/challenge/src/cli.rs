@@ -52,7 +52,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "l1-eth-rpc",
         env = "CHALLENGER_L1_ETH_RPC",
-        value_parser = parse_url
     )]
     pub l1_eth_rpc: Url,
 
@@ -60,7 +59,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "l2-eth-rpc",
         env = "CHALLENGER_L2_ETH_RPC",
-        value_parser = parse_url
     )]
     pub l2_eth_rpc: Url,
 
@@ -68,7 +66,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "rollup-rpc",
         env = "CHALLENGER_ROLLUP_RPC",
-        value_parser = parse_url
     )]
     pub rollup_rpc: Url,
 
@@ -76,7 +73,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "dispute-game-factory-addr",
         env = "CHALLENGER_DISPUTE_GAME_FACTORY_ADDR",
-        value_parser = parse_address
     )]
     pub dispute_game_factory_addr: Address,
 
@@ -84,7 +80,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "anchor-state-registry-addr",
         env = "CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR",
-        value_parser = parse_address
     )]
     pub anchor_state_registry_addr: Address,
 
@@ -97,7 +92,7 @@ pub struct ChallengerArgs {
         long = "poll-interval",
         env = "CHALLENGER_POLL_INTERVAL",
         default_value = "12s",
-        value_parser = parse_duration
+        value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
 
@@ -105,7 +100,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "zk-proof-service-endpoint",
         env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT",
-        value_parser = parse_url
     )]
     pub zk_proof_service_endpoint: Url,
 
@@ -114,7 +108,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "signer-endpoint",
         env = "CHALLENGER_SIGNER_ENDPOINT",
-        value_parser = parse_url
     )]
     pub signer_endpoint: Option<Url>,
 
@@ -123,7 +116,6 @@ pub struct ChallengerArgs {
     #[arg(
         long = "signer-address",
         env = "CHALLENGER_SIGNER_ADDRESS",
-        value_parser = parse_address
     )]
     pub signer_address: Option<Address>,
 
@@ -160,57 +152,11 @@ impl std::fmt::Debug for ChallengerArgs {
     }
 }
 
-/// Parse a duration string like "12s", "5m", "1h".
-fn parse_duration(s: &str) -> Result<Duration, humantime::DurationError> {
-    humantime::parse_duration(s)
-}
-
-/// Parse a URL string.
-fn parse_url(s: &str) -> Result<Url, url::ParseError> {
-    Url::parse(s)
-}
-
-/// Parse an Ethereum address from hex string.
-fn parse_address(s: &str) -> Result<Address, alloy_primitives::hex::FromHexError> {
-    s.parse()
-}
-
 #[cfg(test)]
 mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-
-    #[test]
-    fn test_parse_duration_valid() {
-        assert_eq!(parse_duration("12s").unwrap(), Duration::from_secs(12));
-        assert_eq!(parse_duration("5m").unwrap(), Duration::from_secs(300));
-        assert_eq!(parse_duration("1h").unwrap(), Duration::from_secs(3600));
-    }
-
-    #[test]
-    fn test_parse_url_valid() {
-        let url = parse_url("https://example.com").unwrap();
-        assert_eq!(url.scheme(), "https");
-        assert_eq!(url.host_str(), Some("example.com"));
-    }
-
-    #[test]
-    fn test_parse_url_invalid() {
-        assert!(parse_url("not-a-url").is_err());
-    }
-
-    #[test]
-    fn test_parse_address_valid() {
-        let addr = parse_address("0x1234567890123456789012345678901234567890").unwrap();
-        assert_eq!(addr.to_string(), "0x1234567890123456789012345678901234567890");
-    }
-
-    #[test]
-    fn test_parse_address_invalid() {
-        assert!(parse_address("0xnotanaddress").is_err());
-        assert!(parse_address("invalid").is_err());
-    }
 
     #[test]
     fn test_cli_defaults() {
