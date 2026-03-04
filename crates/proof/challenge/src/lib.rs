@@ -8,9 +8,6 @@ pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs};
 mod config;
 pub use config::{ChallengerConfig, ConfigError, SigningConfig};
 
-mod error;
-pub use error::{ChallengerError, ChallengerResult};
-
 mod health;
 pub use health::serve;
 
