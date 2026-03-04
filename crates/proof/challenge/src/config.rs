@@ -8,6 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::{LogConfig, MetricsConfig};
 use thiserror::Error;
 use url::Url;
+use zeroize::Zeroizing;
 
 use crate::cli::Cli;
 
@@ -238,8 +239,10 @@ fn build_signing_config(
     match (private_key, signer_endpoint, signer_address) {
         (Some(pk), None, None) => {
             let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
-            let key_bytes = hex::decode(hex_str)
-                .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?;
+            let key_bytes = Zeroizing::new(
+                hex::decode(hex_str)
+                    .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?,
+            );
             let signing_key = SigningKey::from_slice(&key_bytes)
                 .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
             let signer = PrivateKeySigner::from_signing_key(signing_key);

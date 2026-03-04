@@ -33,6 +33,7 @@ eyre.workspace = true
 alloy-signer-local.workspace = true
 alloy-signer.workspace = true
 hex.workspace = true
+zeroize.workspace = true
 
 # CLI
 base-cli-utils.workspace = true

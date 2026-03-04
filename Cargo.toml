@@ -382,6 +382,7 @@ k256 = "0.13"
 ciborium = "0.2"
 x509-cert = "0.2"
 rustls = "0.23.35"
+zeroize = "1"
 secp256k1 = "0.30"
 rustls-pki-types = "1.0"
 rsa = { version = "0.9.10", features = ["sha2"] }

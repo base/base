@@ -2659,6 +2659,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -4194,6 +4195,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "url",
+ "zeroize",
 ]
 
 [[package]]
