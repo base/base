@@ -14,11 +14,7 @@ workspace = true
 # General
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
-
-[dependencies.serde]
-workspace = true
-optional = true
-features = ["derive"]
+serde = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
 default = []

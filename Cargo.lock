@@ -3078,8 +3078,6 @@ dependencies = [
  "base-alloy-evm",
  "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
- "base-proof",
- "base-proof-driver",
  "base-proof-executor",
  "base-proof-mpt",
  "base-proof-preimage",

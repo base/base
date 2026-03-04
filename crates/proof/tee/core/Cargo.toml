@@ -25,9 +25,7 @@ base-alloy-consensus = { workspace = true, features = ["serde"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # Proof
-base-proof = { workspace = true, features = ["std"] }
 base-proof-mpt = { workspace = true, features = ["std"] }
-base-proof-driver = { workspace = true, features = ["std"] }
 base-proof-executor = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
