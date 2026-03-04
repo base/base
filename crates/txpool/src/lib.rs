@@ -19,6 +19,12 @@ pub use ordering::{BaseOrdering, TimestampOrdering};
 mod consumer;
 pub use consumer::{Consumer, ConsumerConfig, ConsumerHandle, ConsumerMetrics, RecentlySent};
 
+mod forwarder;
+pub use forwarder::{
+    BuilderApiClient, BuilderApiHandler, BuilderApiServer, Forwarder, ForwarderConfig,
+    ForwarderHandle, ForwarderMetrics, ValidTransaction,
+};
+
 pub mod estimated_da_size;
 
 use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};
