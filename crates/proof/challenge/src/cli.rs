@@ -16,7 +16,7 @@ base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
 
 /// Challenger - ZK-proof dispute game challenger for OP Stack chains.
-#[derive(Clone, Parser)]
+#[derive(Parser)]
 #[command(name = "challenger")]
 #[command(version, about, long_about = None)]
 #[command(styles = CliStyles::init())]
@@ -45,7 +45,7 @@ impl std::fmt::Debug for Cli {
 }
 
 /// Core challenger configuration arguments.
-#[derive(Clone, Parser)]
+#[derive(Parser)]
 #[command(next_help_heading = "Challenger")]
 pub struct ChallengerArgs {
     /// URL of the L1 Ethereum RPC endpoint.

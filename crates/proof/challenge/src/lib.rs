@@ -12,7 +12,7 @@ mod health;
 pub use health::HealthServer;
 
 mod metrics;
-pub use metrics::{ChallengerMetrics, INFO, LABEL_VERSION, UP};
+pub use metrics::ChallengerMetrics;
 
 mod service;
 pub use service::ChallengerService;
