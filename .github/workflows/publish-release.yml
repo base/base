@@ -74,6 +74,10 @@ jobs:
             echo "::error::Cargo.toml on releases/v${VERSION} is still 0.0.0 — merge the version sync PR first"
             exit 1
           fi
+          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match requested release version ($VERSION)"
+            exit 1
+          fi
 
           # Ensure no final git tag already exists
           if git rev-parse "v${VERSION}" > /dev/null 2>&1; then

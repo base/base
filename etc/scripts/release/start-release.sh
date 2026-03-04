@@ -24,9 +24,9 @@ fi
 main() {
     echo "=== Start Release (bump: $BUMP_TYPE) ==="
 
-    # Get latest FINAL tag (exclude RCs)
+    # Get latest FINAL tag (exact vX.Y.Z, exclude RCs and other suffixes)
     CURRENT_VERSION=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-        | grep -v -- '-rc\.' | sort -V | tail -1 | sed 's/^v//')
+        | grep -Px 'v\d+\.\d+\.\d+$' | sort -V | tail -1 | sed 's/^v//')
 
     if [[ -z "$CURRENT_VERSION" ]]; then
         echo "Error: No final release tags found. Cannot determine current version." >&2
