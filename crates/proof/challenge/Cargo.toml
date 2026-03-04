@@ -50,5 +50,6 @@ humantime.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true, features = ["json"] }

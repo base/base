@@ -275,8 +275,8 @@ fn build_signing_config(
 #[cfg(test)]
 mod tests {
     use base_cli_utils::LogFormat;
-
     use clap::Parser;
+    use rstest::rstest;
 
     use super::*;
     use crate::cli::{LogArgs, MetricsArgs};
@@ -327,18 +327,17 @@ mod tests {
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
     }
 
-    #[test]
-    fn test_metrics_port_zero_when_enabled() {
-        let cli = cli_from_args(&["--metrics.enabled", "--metrics.port", "0"]);
+    #[rstest]
+    #[case::enabled(&["--metrics.enabled", "--metrics.port", "0"], true)]
+    #[case::disabled(&["--metrics.port", "0"], false)]
+    fn test_metrics_port_zero(#[case] args: &[&str], #[case] expect_error: bool) {
+        let cli = cli_from_args(args);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Metrics(_))));
-    }
-
-    #[test]
-    fn test_metrics_port_zero_when_disabled() {
-        let cli = cli_from_args(&["--metrics.port", "0"]);
-        let result = ChallengerConfig::from_cli(cli);
-        assert!(result.is_ok());
+        if expect_error {
+            assert!(matches!(result, Err(ConfigError::Metrics(_))));
+        } else {
+            assert!(result.is_ok());
+        }
     }
 
     #[test]
@@ -386,60 +385,47 @@ mod tests {
         assert!(matches!(result, Err(UrlValidationError::MissingHost)));
     }
 
-    #[test]
-    fn test_config_error_display() {
-        let error =
-            ConfigError::InvalidUrl { field: "l1-eth-rpc", reason: "missing host".to_string() };
-        assert_eq!(error.to_string(), "invalid l1-eth-rpc URL: missing host");
-
-        let error = ConfigError::OutOfRange {
-            field: "poll-interval",
-            constraint: "greater than 0",
-            value: "0".to_string(),
-        };
-        assert_eq!(error.to_string(), "poll-interval must be greater than 0, got 0");
-
-        let error = ConfigError::Metrics("port must be non-zero".to_string());
-        assert_eq!(error.to_string(), "invalid metrics config: port must be non-zero");
-
-        let error = ConfigError::Signing("missing key".to_string());
-        assert_eq!(error.to_string(), "invalid signing config: missing key");
+    #[rstest]
+    #[case::invalid_url(
+        ConfigError::InvalidUrl { field: "l1-eth-rpc", reason: "missing host".to_string() },
+        "invalid l1-eth-rpc URL: missing host"
+    )]
+    #[case::out_of_range(
+        ConfigError::OutOfRange { field: "poll-interval", constraint: "greater than 0", value: "0".to_string() },
+        "poll-interval must be greater than 0, got 0"
+    )]
+    #[case::metrics(
+        ConfigError::Metrics("port must be non-zero".to_string()),
+        "invalid metrics config: port must be non-zero"
+    )]
+    #[case::signing(
+        ConfigError::Signing("missing key".to_string()),
+        "invalid signing config: missing key"
+    )]
+    fn test_config_error_display(#[case] error: ConfigError, #[case] expected: &str) {
+        assert_eq!(error.to_string(), expected);
     }
 
-    #[test]
-    fn test_signing_config_local() {
-        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let signing = build_signing_config(Some(pk), None, None).unwrap();
-        assert!(matches!(signing, SigningConfig::Local { .. }));
-    }
-
-    #[test]
-    fn test_signing_config_remote() {
-        let url = Url::parse("http://localhost:8546").unwrap();
-        let addr: Address = "0x1234567890123456789012345678901234567890".parse().unwrap();
-        let signing = build_signing_config(None, Some(url), Some(&addr)).unwrap();
-        assert!(matches!(signing, SigningConfig::Remote { .. }));
-    }
-
-    #[test]
-    fn test_signing_config_none_provided() {
-        let result = build_signing_config(None, None, None);
-        assert!(matches!(result, Err(ConfigError::Signing(_))));
-    }
-
-    #[test]
-    fn test_signing_config_both_provided() {
-        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let url = Url::parse("http://localhost:8546").unwrap();
-        let result = build_signing_config(Some(pk), Some(url), None);
-        assert!(matches!(result, Err(ConfigError::Signing(_))));
-    }
-
-    #[test]
-    fn test_signing_config_endpoint_without_address() {
-        let url = Url::parse("http://localhost:8546").unwrap();
-        let result = build_signing_config(None, Some(url), None);
-        assert!(matches!(result, Err(ConfigError::Signing(_))));
+    #[rstest]
+    #[case::local(Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"), None, None, true)]
+    #[case::remote(None, Some("http://localhost:8546"), Some("0x1234567890123456789012345678901234567890"), true)]
+    #[case::none_provided(None, None, None, false)]
+    #[case::both_provided(Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"), Some("http://localhost:8546"), None, false)]
+    #[case::endpoint_without_address(None, Some("http://localhost:8546"), None, false)]
+    fn test_signing_config(
+        #[case] pk: Option<&str>,
+        #[case] url_str: Option<&str>,
+        #[case] addr_str: Option<&str>,
+        #[case] should_succeed: bool,
+    ) {
+        let url = url_str.map(|s| Url::parse(s).unwrap());
+        let addr: Option<Address> = addr_str.map(|s| s.parse().unwrap());
+        let result = build_signing_config(pk, url, addr.as_ref());
+        if should_succeed {
+            assert!(result.is_ok(), "expected Ok, got {result:?}");
+        } else {
+            assert!(matches!(result, Err(ConfigError::Signing(_))));
+        }
     }
 
     #[test]
