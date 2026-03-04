@@ -1,5 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
+use base_alloy_consensus::{OpBlock, OpReceipt};
+use base_engine_tree::OnValidatedBlockHook;
 use base_execution_exex::OpProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
@@ -10,7 +12,10 @@ use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
+use reth_primitives_traits::SealedBlock;
+use reth_provider::BlockExecutionOutput;
 use reth_tasks::TaskExecutor;
+use reth_trie::updates::TrieUpdates;
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -31,6 +36,23 @@ impl ProofsHistoryExtension {
     }
 }
 
+/// No-op implementation of [`OnValidatedBlockHook`].
+#[derive(Debug, Clone)]
+struct SlowValidatedBlockHook;
+
+impl OnValidatedBlockHook for SlowValidatedBlockHook {
+    fn on_validated_block(
+        &self,
+        _block: &SealedBlock<OpBlock>,
+        _output: &BlockExecutionOutput<OpReceipt>,
+        _trie_updates: &TrieUpdates,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async {
+            sleep(Duration::from_secs(1)).await;
+        })
+    }
+}
+
 impl BaseNodeExtension for ProofsHistoryExtension {
     /// Applies the extension to the supplied hooks.
     fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
@@ -47,7 +69,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 use reth_node_builder::rpc::EngineValidatorAddOn;
                 let builder = add_ons
                     .engine_validator_builder()
-                    .with_on_validated_block(Arc::new(base_engine_tree::NoopOnValidatedBlockHook));
+                    .with_on_validated_block(Arc::new(SlowValidatedBlockHook));
                 add_ons.with_engine_validator(builder)
             });
             let path = args

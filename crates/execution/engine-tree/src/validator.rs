@@ -73,6 +73,7 @@ use reth_revm::{
 use reth_trie::{HashedPostState, StateRoot, updates::TrieUpdates};
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
 use revm_primitives::Address;
+use tokio::runtime::Handle;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 
 use crate::cached_execution::{
@@ -673,8 +674,9 @@ where
             .into());
         }
 
+        info!(hook_exists = self.on_validated_block.is_some(), "Calling on_validated_block hook");
         if let Some(hook) = &self.on_validated_block {
-            self.runtime.handle().block_on(hook.on_validated_block(&block, &output, &trie_output));
+            Handle::current().block_on(hook.on_validated_block(&block, &output, &trie_output));
         }
 
         if let Some(valid_block_tx) = valid_block_tx {
