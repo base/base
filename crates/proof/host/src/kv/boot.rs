@@ -48,6 +48,6 @@ impl KeyValueStore for BootKeyValueStore {
     }
 
     fn set(&mut self, _: B256, _: Vec<u8>) -> Result<()> {
-        unreachable!("BootKeyValueStore is read-only")
+        Err(crate::HostError::Custom("BootKeyValueStore is read-only".into()))
     }
 }
