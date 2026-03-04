@@ -52,7 +52,10 @@ fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_ge
     let configs: [(&str, &str); 3] = [
         ("base-mainnet", include_str!("../configs/base-mainnet.toml")),
         ("base-sepolia", include_str!("../configs/base-sepolia.toml")),
-        ("base-devnet-0", include_str!("../configs/base-devnet-0.toml")),
+        (
+            "base-devnet-0-sepolia-dev-0",
+            include_str!("../configs/base-devnet-0-sepolia-dev-0.toml"),
+        ),
     ];
 
     let mut rollup_configs = HashMap::default();

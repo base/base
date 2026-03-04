@@ -14,6 +14,6 @@ mod chain;
 // Re-export base-alloy-hardforks types.
 pub use base_alloy_hardforks::{OpHardfork, OpHardforks};
 pub use chain::{
-    BASE_DEVNET_0_HARDFORKS, BASE_MAINNET_HARDFORKS, BASE_SEPOLIA_HARDFORKS, DEV_HARDFORKS,
-    OpChainHardforksExt,
+    BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS, BASE_MAINNET_HARDFORKS, BASE_SEPOLIA_HARDFORKS,
+    DEV_HARDFORKS, OpChainHardforksExt,
 };
