@@ -323,7 +323,7 @@ pub enum DerivationError {
     Yield,
     /// An error originating from the broadcast sender.
     #[error("Failed to send event to broadcast sender: {0}")]
-    Sender(Box<dyn std::error::Error>),
+    Sender(Box<dyn std::error::Error + Send>),
     /// Failed to receive inbound request
     #[error("Failed to receive inbound request")]
     RequestReceiveFailed,

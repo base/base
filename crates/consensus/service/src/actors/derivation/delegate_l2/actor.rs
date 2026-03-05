@@ -1,10 +1,13 @@
+use std::sync::Arc;
+
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_alloy_network::Base;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
-use tokio::{select, sync::mpsc, time};
+use futures::future::OptionFuture;
+use tokio::{select, sync::mpsc, task::JoinHandle, time};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, error, info, warn};
 
@@ -13,8 +16,6 @@ use crate::{
     NodeActor,
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
-
-const MAX_BLOCKS_PER_SYNC: usize = 128;
 
 /// The [`NodeActor`] for the L2 delegate derivation sub-routine.
 ///
@@ -31,10 +32,10 @@ where
 {
     cancellation_token: CancellationToken,
     inbound_request_rx: mpsc::Receiver<DerivationActorRequest>,
-    engine_client: DerivationEngineClient_,
+    engine_client: Arc<DerivationEngineClient_>,
     engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     local_l2_provider: RootProvider<Base>,
-    l2_source: L2Source,
+    l2_source: Arc<L2Source>,
     sent_head: u64,
     engine_head: u64,
 }
@@ -56,7 +57,7 @@ where
     L2Source: L2SourceClient,
 {
     /// Creates a new [`DelegateL2DerivationActor`].
-    pub const fn new(
+    pub fn new(
         engine_client: DerivationEngineClient_,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
         cancellation_token: CancellationToken,
@@ -67,10 +68,10 @@ where
         Self {
             cancellation_token,
             inbound_request_rx,
-            engine_client,
+            engine_client: Arc::new(engine_client),
             engine_actor_request_tx,
             local_l2_provider,
-            l2_source,
+            l2_source: Arc::new(l2_source),
             sent_head: 0,
             engine_head: 0,
         }
@@ -114,6 +115,8 @@ where
         let mut ticker = time::interval(Self::POLL_INTERVAL);
         ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
+        let mut sync_task: Option<JoinHandle<Result<u64, DerivationError>>> = None;
+
         loop {
             select! {
                 biased;
@@ -130,15 +133,60 @@ where
                     };
                     self.handle_request(request_type).await?;
                 }
-                _ = ticker.tick() => {
-                    if let Err(e) = self.sync_from_source().await {
-                        warn!(target: "derivation", error = %e, "Failed to sync from L2 source");
+                // Poll the sync task for completion without blocking.
+                // `OptionFuture<&mut JoinHandle>` resolves immediately to
+                // `None` when no task is in flight, letting us fall through
+                // to spawn a new one.
+                Some(result) = OptionFuture::from(sync_task.as_mut()) => {
+                    sync_task = None;
+                    match result {
+                        Err(join_error) => {
+                            error!(target: "derivation", error = %join_error, "Sync task panicked or was cancelled");
+                        }
+                        Ok(Err(derivation_error)) => {
+                            warn!(target: "derivation", error = %derivation_error, "Sync from source failed");
+                        }
+                        Ok(Ok(new_sent_head)) => {
+                            self.sent_head = new_sent_head;
+                        }
                     }
+                }
+                _ = ticker.tick() => {
+                    if sync_task.is_some() {
+                        debug!(target: "derivation", "Sync already in progress, skipping tick");
+                        continue;
+                    }
+
+                    let cancellation_token = self.cancellation_token.clone();
+                    let l2_source = Arc::clone(&self.l2_source);
+                    let engine_client = Arc::clone(&self.engine_client);
+                    let engine_actor_request_tx = self.engine_actor_request_tx.clone();
+                    let engine_head = self.engine_head;
+                    let sent_head = self.sent_head;
+
+                    sync_task = Some(tokio::spawn(async move {
+                        SyncFromSourceTask::new(
+                            engine_client,
+                            engine_actor_request_tx,
+                            cancellation_token,
+                            engine_head,
+                            sent_head,
+                            l2_source,
+                        )
+                        .sync_from_source()
+                        .await
+                    }));
                 }
             }
         }
     }
+}
 
+impl<DerivationEngineClient_, L2Source> DelegateL2DerivationActor<DerivationEngineClient_, L2Source>
+where
+    DerivationEngineClient_: DerivationEngineClient,
+    L2Source: L2SourceClient,
+{
     async fn handle_request(
         &mut self,
         request_type: DerivationActorRequest,
@@ -160,9 +208,44 @@ where
         }
         Ok(())
     }
+}
+
+pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
+    engine_client: Arc<DerivationEngineClient_>,
+    engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
+    cancellation_token: CancellationToken,
+    engine_head: u64,
+    sent_head: u64,
+    l2_source: Arc<L2Source>,
+}
+
+impl<DerivationEngineClient_, L2Source> SyncFromSourceTask<DerivationEngineClient_, L2Source>
+where
+    DerivationEngineClient_: DerivationEngineClient,
+    L2Source: L2SourceClient,
+{
+    pub(super) const fn new(
+        engine_client: Arc<DerivationEngineClient_>,
+        engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
+        cancellation_token: CancellationToken,
+        engine_head: u64,
+        sent_head: u64,
+        l2_source: Arc<L2Source>,
+    ) -> Self {
+        Self {
+            engine_client,
+            engine_actor_request_tx,
+            cancellation_token,
+            engine_head,
+            sent_head,
+            l2_source,
+        }
+    }
 
     /// Polls the source L2 node for new blocks and inserts them into the local engine.
-    async fn sync_from_source(&mut self) -> Result<(), DerivationError> {
+    ///
+    /// Returns the updated `sent_head` on success.
+    async fn sync_from_source(&mut self) -> Result<u64, DerivationError> {
         let remote_head = self
             .l2_source
             .get_block_number(BlockNumberOrTag::Latest)
@@ -170,16 +253,13 @@ where
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
 
         if remote_head <= self.sent_head {
-            return Ok(());
+            return Ok(self.sent_head);
         }
-
-        // Sync a maximum of `MAX_BLOCKS_PER_SYNC` blocks at a time to continue processing safe head updates.
-        let remote_head = remote_head.min(self.sent_head + MAX_BLOCKS_PER_SYNC as u64);
 
         for block_num in (self.sent_head + 1)..=remote_head {
             if self.cancellation_token.is_cancelled() {
                 info!(target: "derivation", block = block_num, "Sync interrupted by shutdown");
-                return Ok(());
+                return Ok(self.sent_head);
             }
 
             let payload = self
@@ -209,7 +289,7 @@ where
 
         self.update_safe_and_finalized().await?;
 
-        Ok(())
+        Ok(self.sent_head)
     }
 
     async fn update_safe_and_finalized(&self) -> Result<(), DerivationError> {
@@ -321,6 +401,31 @@ mod tests {
         (actor, deriv_tx, engine_rx, cancel)
     }
 
+    fn make_sync_task(
+        engine_client: MockDerivationEngineClient,
+        l2_source: MockL2SourceClient,
+        engine_head: u64,
+        sent_head: u64,
+    ) -> (
+        SyncFromSourceTask<MockDerivationEngineClient, MockL2SourceClient>,
+        mpsc::Receiver<EngineActorRequest>,
+        CancellationToken,
+    ) {
+        let cancel = CancellationToken::new();
+        let (engine_tx, engine_rx) = mpsc::channel(16);
+
+        let task = SyncFromSourceTask::new(
+            Arc::new(engine_client),
+            engine_tx,
+            cancel.clone(),
+            engine_head,
+            sent_head,
+            Arc::new(l2_source),
+        );
+
+        (task, engine_rx, cancel)
+    }
+
     #[tokio::test]
     async fn handle_sync_completion_enables_sync() {
         let engine_client = MockDerivationEngineClient::new();
@@ -383,11 +488,10 @@ mod tests {
 
         l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(5));
 
-        let (mut actor, _, _, _) = make_actor(engine_client, l2_source);
-        actor.sent_head = 10;
+        let (mut task, _, _) = make_sync_task(engine_client, l2_source, 0, 10);
 
-        actor.sync_from_source().await.unwrap();
-        assert_eq!(actor.sent_head, 10);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 10);
     }
 
     #[tokio::test]
@@ -423,12 +527,10 @@ mod tests {
         engine_client.expect_send_safe_l2_signal().returning(|_| Ok(()));
         engine_client.expect_send_finalized_l2_block().returning(|_| Ok(()));
 
-        let (mut actor, _, mut engine_rx, _) = make_actor(engine_client, l2_source);
-        actor.sent_head = 0;
-        actor.engine_head = 2; // Allow safe/finalized updates up to block 2
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 2, 0);
 
-        actor.sync_from_source().await.unwrap();
-        assert_eq!(actor.sent_head, 3);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 3);
 
         for expected_num in 1..=3 {
             let req = engine_rx.try_recv().unwrap();
@@ -451,13 +553,12 @@ mod tests {
             .with(eq(BlockNumberOrTag::Latest))
             .returning(|_| Ok(100));
 
-        let (mut actor, _, engine_rx, cancel) = make_actor(engine_client, l2_source);
-        actor.sent_head = 0;
+        let (mut task, engine_rx, cancel) = make_sync_task(engine_client, l2_source, 0, 0);
 
         cancel.cancel();
-        actor.sync_from_source().await.unwrap();
+        let new_head = task.sync_from_source().await.unwrap();
 
-        assert_eq!(actor.sent_head, 0);
+        assert_eq!(new_head, 0);
         assert!(engine_rx.is_empty());
     }
 
