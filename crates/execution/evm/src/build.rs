@@ -131,6 +131,104 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Receipt;
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData, b256, hex};
+    use base_alloy_consensus::OpDepositReceipt;
+    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_consensus::calculate_receipt_root_no_memo_optimism;
+    use base_execution_primitives::OpReceipt;
+
+    fn parse_receipts(json: &[serde_json::Value]) -> Vec<OpReceipt> {
+        json.iter()
+            .map(|v| {
+                let tx_type = v["type"].as_str().unwrap();
+                let status = {
+                    let s = v["status"].as_str().unwrap();
+                    u64::from_str_radix(&s[2..], 16).unwrap() != 0
+                };
+                let cumulative_gas_used = {
+                    let s = v["cumulativeGasUsed"].as_str().unwrap();
+                    u64::from_str_radix(&s[2..], 16).unwrap()
+                };
+                let logs: Vec<Log> = v["logs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|log| {
+                        let address: Address =
+                            log["address"].as_str().unwrap().parse().unwrap();
+                        let topics: Vec<B256> = log["topics"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|t| t.as_str().unwrap().parse().unwrap())
+                            .collect();
+                        let data_hex = log["data"].as_str().unwrap_or("0x");
+                        let data = if data_hex == "0x" {
+                            Bytes::new()
+                        } else {
+                            Bytes::from(hex::decode(&data_hex[2..]).unwrap())
+                        };
+                        Log { address, data: LogData::new_unchecked(topics, data) }
+                    })
+                    .collect();
+
+                let receipt = Receipt { status: status.into(), cumulative_gas_used, logs };
+                match tx_type {
+                    "0x7e" => {
+                        let deposit_nonce = v["depositNonce"]
+                            .as_str()
+                            .map(|s| u64::from_str_radix(&s[2..], 16).unwrap());
+                        let deposit_receipt_version = v["depositReceiptVersion"]
+                            .as_str()
+                            .map(|s| u64::from_str_radix(&s[2..], 16).unwrap());
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: receipt,
+                            deposit_nonce,
+                            deposit_receipt_version,
+                        })
+                    }
+                    "0x2" => OpReceipt::Eip1559(receipt),
+                    "0x1" => OpReceipt::Eip2930(receipt),
+                    _ => OpReceipt::Legacy(receipt),
+                }
+            })
+            .collect()
+    }
+
+    /// Regression test for Base mainnet block 42969982.
+    ///
+    /// The node produced a wrong receipt root for this unsafe payload:
+    ///   got:      0xae38393be3eed10b594221c7f6668f40c98489cae98eda55447cf36074204bfb
+    ///   expected: 0x0381a86904da6c6fa3def4c47be5e63e3a88eff6eb96131995ad174426a20062
+    ///
+    /// This exercises `calculate_receipt_root_no_memo_optimism` at the exact call site used
+    /// during block assembly (`build.rs:61-62`) with the on-chain receipts for that block,
+    /// ensuring any regression in this path is caught immediately.
+    #[test]
+    fn receipt_root_base_mainnet_block_42969982() {
+        let json: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../consensus/src/testdata/base_mainnet_42969982_receipts.json"
+        ))
+        .unwrap();
+
+        let receipts = parse_receipts(&json);
+
+        // Block timestamp: 0x69a9b3df
+        let root = calculate_receipt_root_no_memo_optimism(
+            &receipts,
+            BASE_MAINNET.as_ref(),
+            0x69a9b3df_u64,
+        );
+        assert_eq!(
+            root,
+            b256!("0x0381a86904da6c6fa3def4c47be5e63e3a88eff6eb96131995ad174426a20062"),
+        );
+    }
+}
+
 impl<ChainSpec> Clone for OpBlockAssembler<ChainSpec> {
     fn clone(&self) -> Self {
         Self { chain_spec: Arc::clone(&self.chain_spec) }

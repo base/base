@@ -3225,6 +3225,7 @@ dependencies = [
  "reth-trie-parallel",
  "revm",
  "revm-primitives",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -3310,6 +3311,7 @@ dependencies = [
  "reth-trie",
  "reth-trie-common",
  "revm",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -3340,6 +3342,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-storage-errors",
  "revm",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

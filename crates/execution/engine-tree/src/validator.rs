@@ -1619,3 +1619,110 @@ where
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Receipt;
+    use alloy_primitives::{Address, B256, Bytes, Log, LogData, b256, hex};
+    use base_alloy_consensus::OpDepositReceipt;
+    use base_execution_primitives::OpReceipt;
+    use crossbeam_channel::bounded;
+    use reth_engine_tree::tree::receipt_root_task::{IndexedReceipt, ReceiptRootTaskHandle};
+
+    fn parse_receipts(json: &[serde_json::Value]) -> Vec<OpReceipt> {
+        json.iter()
+            .map(|v| {
+                let tx_type = v["type"].as_str().unwrap();
+                let status = {
+                    let s = v["status"].as_str().unwrap();
+                    u64::from_str_radix(&s[2..], 16).unwrap() != 0
+                };
+                let cumulative_gas_used = {
+                    let s = v["cumulativeGasUsed"].as_str().unwrap();
+                    u64::from_str_radix(&s[2..], 16).unwrap()
+                };
+                let logs: Vec<Log> = v["logs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|log| {
+                        let address: Address =
+                            log["address"].as_str().unwrap().parse().unwrap();
+                        let topics: Vec<B256> = log["topics"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|t| t.as_str().unwrap().parse().unwrap())
+                            .collect();
+                        let data_hex = log["data"].as_str().unwrap_or("0x");
+                        let data = if data_hex == "0x" {
+                            Bytes::new()
+                        } else {
+                            Bytes::from(hex::decode(&data_hex[2..]).unwrap())
+                        };
+                        Log { address, data: LogData::new_unchecked(topics, data) }
+                    })
+                    .collect();
+
+                let receipt = Receipt { status: status.into(), cumulative_gas_used, logs };
+                match tx_type {
+                    "0x7e" => {
+                        let deposit_nonce = v["depositNonce"]
+                            .as_str()
+                            .map(|s| u64::from_str_radix(&s[2..], 16).unwrap());
+                        let deposit_receipt_version = v["depositReceiptVersion"]
+                            .as_str()
+                            .map(|s| u64::from_str_radix(&s[2..], 16).unwrap());
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: receipt,
+                            deposit_nonce,
+                            deposit_receipt_version,
+                        })
+                    }
+                    "0x2" => OpReceipt::Eip1559(receipt),
+                    "0x1" => OpReceipt::Eip2930(receipt),
+                    _ => OpReceipt::Legacy(receipt),
+                }
+            })
+            .collect()
+    }
+
+    /// Regression test for Base mainnet block 42969982.
+    ///
+    /// Verifies that `ReceiptRootTaskHandle` — the background task that produces the
+    /// `ReceiptRootBloom` consumed by `validate_block_post_execution` — computes the
+    /// correct receipt root when given the on-chain `OpReceipt` objects for this block.
+    ///
+    /// This is the actual production path: the pre-computed root from this task is used
+    /// directly in validation (bypassing `verify_receipts_optimism`), so any divergence
+    /// here causes the "receipt root mismatch" error on new payload.
+    #[tokio::test]
+    async fn receipt_root_task_base_mainnet_block_42969982() {
+        let json: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../consensus/src/testdata/base_mainnet_42969982_receipts.json"
+        ))
+        .unwrap();
+
+        let receipts = parse_receipts(&json);
+        let receipts_len = receipts.len();
+
+        let (tx, rx) = bounded(receipts_len);
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+
+        let handle = ReceiptRootTaskHandle::new(rx, result_tx);
+        let join = tokio::task::spawn_blocking(move || handle.run(receipts_len));
+
+        for (i, receipt) in receipts.into_iter().enumerate() {
+            tx.send(IndexedReceipt::new(i, receipt)).unwrap();
+        }
+        drop(tx);
+
+        join.await.unwrap();
+        let (root, _bloom) = result_rx.await.unwrap();
+
+        assert_eq!(
+            root,
+            b256!("0x0381a86904da6c6fa3def4c47be5e63e3a88eff6eb96131995ad174426a20062"),
+        );
+    }
+}

@@ -50,6 +50,8 @@ alloy-chains.workspace = true
 
 base-alloy-consensus.workspace = true
 
+serde_json = { workspace = true, features = ["std"] }
+
 [features]
 default = [ "std" ]
 std = [

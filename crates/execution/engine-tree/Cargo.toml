@@ -52,3 +52,6 @@ tracing.workspace = true
 derive_more.workspace = true
 crossbeam-channel.workspace = true
 eyre.workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true, features = ["std"] }
