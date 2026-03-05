@@ -89,7 +89,15 @@ mod test {
         /// Test that converting from a [`DiskKeyValueStore`] to a [`MemoryKeyValueStore`] is lossless.
         #[test]
         fn convert_disk_kv_to_mem_kv(k_v in hash_map(any::<[u8; 32]>(), vec(any::<u8>(), 0..128), 1..128)) {
-            let tempdir = temp_dir();
+            // Use a unique subdirectory under the system temp directory so that dropping
+            // the store (which calls `DB::destroy`) never targets the temp root itself.
+            let mut tempdir = temp_dir();
+            tempdir.push(format!(
+                "disk_kv_test_{}_{}",
+                std::process::id(),
+                std::thread::current().id().as_u64().get()
+            ));
+
             let mut disk_kv = DiskKeyValueStore::new(tempdir);
             for (k, v) in &k_v {
                 disk_kv.set(k.into(), v.clone()).unwrap();
