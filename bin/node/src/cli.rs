@@ -27,6 +27,10 @@ pub struct Args {
     )]
     pub max_pending_blocks_depth: u64,
 
+    /// Enable cached execution via the flashblocks-aware engine validator.
+    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
+    pub flashblocks_cached_execution: bool,
+
     /// Enable transaction tracing for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
@@ -45,8 +49,10 @@ pub struct Args {
 
 impl From<&Args> for Option<FlashblocksConfig> {
     fn from(args: &Args) -> Self {
-        args.flashblocks_url
-            .clone()
-            .map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
+        args.flashblocks_url.clone().map(|url| {
+            let mut config = FlashblocksConfig::new(url, args.max_pending_blocks_depth);
+            config.cached_execution = args.flashblocks_cached_execution;
+            config
+        })
     }
 }
