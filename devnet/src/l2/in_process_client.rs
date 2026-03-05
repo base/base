@@ -104,12 +104,19 @@ impl InProcessClient {
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
-        let unique_ipc_path = format!(
-            "/tmp/reth_client_api_{}_{}_{:?}.ipc",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
-            std::process::id(),
-            std::thread::current().id()
-        );
+        let unique_ipc_path = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+                .as_nanos();
+
+            format!(
+                "/tmp/reth_client_api_{}_{}_{:?}.ipc",
+                now,
+                std::process::id(),
+                std::thread::current().id()
+            )
+        };
 
         let mut rpc_args =
             if config.http_port.is_some() || config.ws_port.is_some() || config.auth_port.is_some()
