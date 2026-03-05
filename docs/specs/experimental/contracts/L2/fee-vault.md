@@ -1,0 +1,257 @@
+# FeeVault
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [Vault Types](#vault-types)
+  - [L1FeeVault](#l1feevault)
+  - [BaseFeeVault](#basefeevault)
+  - [SequencerFeeVault](#sequencerfeevault)
+  - [OperatorFeeVault](#operatorfeevault)
+- [Definitions](#definitions)
+  - [Minimum Withdrawal Amount](#minimum-withdrawal-amount)
+  - [Withdrawal Network](#withdrawal-network)
+- [Assumptions](#assumptions)
+  - [a01-001: Recipient address is valid and can receive ETH](#a01-001-recipient-address-is-valid-and-can-receive-eth)
+    - [Mitigations](#mitigations)
+  - [a01-002: L2ToL1MessagePasser functions correctly for L1 withdrawals](#a01-002-l2tol1messagepasser-functions-correctly-for-l1-withdrawals)
+    - [Mitigations](#mitigations-1)
+  - [a01-003: Protocol correctly credits fees to vault contracts](#a01-003-protocol-correctly-credits-fees-to-vault-contracts)
+    - [Mitigations](#mitigations-2)
+- [Invariants](#invariants)
+  - [i01-001: Accumulated fees can always be withdrawn once threshold is met](#i01-001-accumulated-fees-can-always-be-withdrawn-once-threshold-is-met)
+    - [Impact](#impact)
+  - [i01-002: Withdrawals can only go to the authorized recipient](#i01-002-withdrawals-can-only-go-to-the-authorized-recipient)
+    - [Impact](#impact-1)
+- [Function Specification](#function-specification)
+  - [constructor](#constructor)
+  - [receive](#receive)
+  - [minWithdrawalAmount](#minwithdrawalamount)
+  - [recipient](#recipient)
+  - [withdrawalNetwork](#withdrawalnetwork)
+  - [withdraw](#withdraw)
+  - [l1FeeWallet (SequencerFeeVault only)](#l1feewallet-sequencerfeevault-only)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
+
+The FeeVault contract provides the base implementation for four specialized fee collection contracts on L2. Each
+vault accumulates a specific type of transaction fee and enables permissionless withdrawal to a designated
+recipient address once a minimum threshold is reached. The four vault types share identical core functionality
+but differ only in which fees they collect and their deployment configuration.
+
+## Vault Types
+
+### L1FeeVault
+
+**Predeploy Address:** `0x420000000000000000000000000000000000001A`
+
+**Contract:** `L1FeeVault.sol`
+
+Accumulates the L1 portion of transaction fees paid by users on the L2 network. These fees represent the cost of
+posting transaction data to L1 for data availability. The L1 fee is calculated based on the L1 gas price and the
+size of the transaction data.
+
+### BaseFeeVault
+
+**Predeploy Address:** `0x4200000000000000000000000000000000000019`
+
+**Contract:** `BaseFeeVault.sol`
+
+Accumulates the EIP-1559 base fees paid by transactions on the L2 network. Unlike Ethereum L1 where base fees are
+burned, on L2 these fees are collected in this vault. The base fee adjusts dynamically based on network congestion
+following the EIP-1559 mechanism.
+
+### SequencerFeeVault
+
+**Predeploy Address:** `0x4200000000000000000000000000000000000011`
+
+**Contract:** `SequencerFeeVault.sol`
+
+Accumulates the priority fees (tips) paid to the sequencer during transaction processing and block production.
+These fees incentivize the sequencer to include transactions in blocks. This vault includes a legacy
+`l1FeeWallet()` getter function for backwards compatibility.
+
+### OperatorFeeVault
+
+**Predeploy Address:** `0x420000000000000000000000000000000000001B`
+
+**Contract:** `OperatorFeeVault.sol`
+
+**Introduced:** Isthmus hardfork
+
+Accumulates the operator portion of transaction fees. Unlike the other vaults, OperatorFeeVault has a hardcoded
+constructor that always withdraws to the BaseFeeVault address (`0x4200000000000000000000000000000000000019`)
+on L2 with a [Minimum Withdrawal Amount](#minimum-withdrawal-amount) of 0. This design consolidates operator fees with
+base fees for
+simplified distribution.
+
+## Definitions
+
+### Minimum Withdrawal Amount
+
+The minimum balance of ETH that must accumulate in the vault before a withdrawal can be triggered. This
+threshold prevents excessive withdrawal transactions for small fee amounts.
+
+### Withdrawal Network
+
+The destination network where withdrawn fees are sent. Can be either L1 (cross-domain withdrawal via message
+passing) or L2 (direct transfer on the same chain).
+
+## Assumptions
+
+### a01-001: Recipient address is valid and can receive ETH
+
+The recipient address configured at deployment must be capable of receiving ETH on the specified withdrawal
+network. For L1 recipients, the address must be able to receive ETH from the OptimismPortal. For L2 recipients,
+the address must not be a contract that reverts on ETH receipt.
+
+#### Mitigations
+
+- Deployment configuration should validate recipient addresses before deployment
+- Recipient addresses should be tested with small transfers before production use
+
+### a01-002: L2ToL1MessagePasser functions correctly for L1 withdrawals
+
+When the [Withdrawal Network](#withdrawal-network) is L1, the contract depends on the L2ToL1MessagePasser predeploy to
+correctly
+initiate cross-domain withdrawals. The message passer must properly record withdrawal commitments and the L1
+OptimismPortal must honor these commitments.
+
+#### Mitigations
+
+- L2ToL1MessagePasser is a core protocol predeploy with extensive testing and auditing
+- Withdrawal proofs are validated on L1 through the fault proof system
+
+### a01-003: Protocol correctly credits fees to vault contracts
+
+The execution engine must correctly calculate transaction fees and credit them to the appropriate vault
+addresses. For L1FeeVault, this includes L1 data availability fees. For BaseFeeVault, this includes EIP-1559
+base fees. For SequencerFeeVault, this includes priority fees. For OperatorFeeVault, this includes operator
+fees (introduced in Isthmus). Incorrect fee calculation or routing would prevent vaults from accumulating the
+intended fees.
+
+#### Mitigations
+
+- Fee calculation and routing is part of the core protocol specification
+- Fee routing is handled by the execution engine's fee distribution mechanism
+
+## Invariants
+
+### i01-001: Accumulated fees can always be withdrawn once threshold is met
+
+Once the contract balance reaches or exceeds the [Minimum Withdrawal Amount](#minimum-withdrawal-amount), any
+address can successfully trigger a withdrawal. The contract must never enter a state where fees are trapped.
+
+#### Impact
+
+**Severity: High**
+
+If withdrawals become impossible, accumulated fees would be permanently locked in the contract, preventing the
+designated recipient from receiving funds that are rightfully theirs. This would break the fee distribution
+mechanism of the protocol.
+
+### i01-002: Withdrawals can only go to the authorized recipient
+
+All withdrawn funds must be sent to the recipient address configured at deployment. No mechanism should exist
+to redirect funds to any other address.
+
+#### Impact
+
+**Severity: Critical**
+
+If funds could be redirected to unauthorized addresses, attackers could steal accumulated fees that belong to
+the designated recipient. This would compromise the fundamental security of the fee distribution system.
+
+## Function Specification
+
+### constructor
+
+Initializes the FeeVault with immutable configuration parameters.
+
+**Parameters:**
+
+- `_recipient`: Address that will receive withdrawn fees (on L1 or L2 depending on `_withdrawalNetwork`)
+- `_minWithdrawalAmount`: Minimum balance in wei required before withdrawal can be triggered
+- `_withdrawalNetwork`: Enum value indicating whether withdrawals go to L1 or L2
+
+**Behavior:**
+
+- MUST set `RECIPIENT` to `_recipient`
+- MUST set `MIN_WITHDRAWAL_AMOUNT` to `_minWithdrawalAmount`
+- MUST set `WITHDRAWAL_NETWORK` to `_withdrawalNetwork`
+- MUST initialize `totalProcessed` to 0
+
+**OperatorFeeVault Special Case:**
+
+OperatorFeeVault has a constructor with no parameters that hardcodes the configuration:
+- `RECIPIENT` is set to `Predeploys.BASE_FEE_VAULT` (`0x4200000000000000000000000000000000000019`)
+- `MIN_WITHDRAWAL_AMOUNT` is set to `0`
+- `WITHDRAWAL_NETWORK` is set to `Types.WithdrawalNetwork.L2`
+
+### receive
+
+Allows the contract to accept ETH transfers representing fee payments.
+
+**Behavior:**
+
+- MUST accept any amount of ETH from any sender
+- MUST NOT revert under any circumstances
+
+### minWithdrawalAmount
+
+Returns the minimum balance required before withdrawal can be triggered.
+
+**Behavior:**
+
+- MUST return the value of `MIN_WITHDRAWAL_AMOUNT`
+
+### recipient
+
+Returns the address that will receive withdrawn fees.
+
+**Behavior:**
+
+- MUST return the value of `RECIPIENT`
+
+### withdrawalNetwork
+
+Returns the network where withdrawn fees will be sent.
+
+**Behavior:**
+
+- MUST return the value of `WITHDRAWAL_NETWORK`
+
+### withdraw
+
+Triggers withdrawal of all accumulated fees to the configured recipient.
+
+**Behavior:**
+
+- MUST revert if `address(this).balance < MIN_WITHDRAWAL_AMOUNT`
+- MUST capture the current balance in a local variable
+- MUST increment `totalProcessed` by the withdrawal amount
+- MUST emit `Withdrawal(value, RECIPIENT, msg.sender)` event (legacy format)
+- MUST emit `Withdrawal(value, RECIPIENT, msg.sender, WITHDRAWAL_NETWORK)` event (current format)
+- If `WITHDRAWAL_NETWORK == Types.WithdrawalNetwork.L2`:
+  - MUST call `SafeCall.send(RECIPIENT, value)` to transfer ETH on L2
+  - MUST revert if the transfer fails
+- If `WITHDRAWAL_NETWORK == Types.WithdrawalNetwork.L1`:
+  - MUST call `L2ToL1MessagePasser.initiateWithdrawal` with:
+    - `_target`: `RECIPIENT`
+    - `_gasLimit`: `WITHDRAWAL_MIN_GAS` (400,000)
+    - `_data`: empty bytes (`hex""`)
+    - `value`: entire contract balance
+  - MUST forward the entire balance as msg.value to the message passer
+
+### l1FeeWallet (SequencerFeeVault only)
+
+Legacy getter function that returns the recipient address. Only present in SequencerFeeVault for backwards
+compatibility.
+
+**Behavior:**
+
+- MUST return the value of `RECIPIENT`
