@@ -257,6 +257,17 @@ impl<L2: L2Provider> OutputValidator<L2> {
             });
         }
 
+        if intermediate_roots.is_empty() {
+            let elapsed = start.elapsed().as_secs_f64();
+            metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
+            return Ok(ValidationResult {
+                is_valid: true,
+                expected_root: claimed_root,
+                claimed_root,
+                invalid_intermediate_index: None,
+            });
+        }
+
         info!(
             game = %game_address,
             starting_block = starting_block_number,
@@ -592,7 +603,8 @@ mod tests {
         );
     }
 
-    /// Arithmetic overflow in checkpoint calculation returns error.
+    /// When zero intermediate checkpoints are expected, the function should
+    /// return a valid result even if the arithmetic would overflow.
     #[tokio::test]
     async fn test_arithmetic_overflow() {
         let (provider, roots) = mock_with_blocks(&[]);
@@ -607,17 +619,15 @@ mod tests {
                 game_address,
                 u64::MAX - 1,
                 u64::MAX,
-                u64::MAX, // This would overflow: (u64::MAX-1) + u64::MAX
+                u64::MAX, // Would overflow: (u64::MAX-1) + u64::MAX, but no checkpoints needed
                 B256::ZERO,
                 &roots,
             )
             .await;
 
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), ValidatorError::ArithmeticOverflow { .. }),
-            "expected ArithmeticOverflow"
-        );
+        let validation = result.expect("zero checkpoints should succeed without overflow");
+        assert!(validation.is_valid);
+        assert!(validation.invalid_intermediate_index.is_none());
     }
 
     /// Regression: when the final checkpoint equals `u64::MAX`, the loop should
