@@ -2,11 +2,15 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::{Address, B256, U256};
+use alloy_rpc_types_eth::Header as RpcHeader;
 use async_trait::async_trait;
+use base_enclave::AccountResult;
 use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
+use base_proof_rpc::{L2Provider, RpcError, RpcResult};
 
 use crate::scanner::{GameScanner, ScannerConfig};
 
@@ -155,6 +159,84 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
 
     async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
         self.inner.game_impls(game_type).await
+    }
+}
+
+/// Mock L2 provider with configurable block headers and storage proofs.
+///
+/// Returns pre-configured headers by block number and account proofs by
+/// block hash. Block numbers in `error_blocks` will return a
+/// [`RpcError::BlockNotFound`] to simulate missing blocks.
+#[derive(Debug)]
+pub struct MockL2Provider {
+    /// Headers keyed by block number.
+    pub headers: HashMap<u64, RpcHeader>,
+    /// Account proofs keyed by block hash.
+    pub proofs: HashMap<B256, AccountResult>,
+    /// Block numbers that should return an error (simulating missing blocks).
+    pub error_blocks: Vec<u64>,
+}
+
+impl MockL2Provider {
+    /// Creates a new empty mock L2 provider.
+    pub fn new() -> Self {
+        Self { headers: HashMap::new(), proofs: HashMap::new(), error_blocks: Vec::new() }
+    }
+
+    /// Inserts a block header and corresponding account proof.
+    ///
+    /// The consensus header is wrapped in an RPC header with the hash computed
+    /// from [`ConsensusHeader::hash_slow`].
+    pub fn insert_block(
+        &mut self,
+        block_number: u64,
+        consensus_header: ConsensusHeader,
+        account_result: AccountResult,
+    ) {
+        let block_hash = consensus_header.hash_slow();
+        let rpc_header =
+            RpcHeader { hash: block_hash, inner: consensus_header, ..Default::default() };
+        self.headers.insert(block_number, rpc_header);
+        self.proofs.insert(block_hash, account_result);
+    }
+}
+
+impl Default for MockL2Provider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl L2Provider for MockL2Provider {
+    async fn chain_config(&self) -> RpcResult<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
+
+    async fn get_proof(&self, _address: Address, block_hash: B256) -> RpcResult<AccountResult> {
+        self.proofs
+            .get(&block_hash)
+            .cloned()
+            .ok_or_else(|| RpcError::ProofNotFound(format!("no proof for hash {block_hash}")))
+    }
+
+    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<RpcHeader> {
+        let block_number = number.unwrap_or(0);
+        if self.error_blocks.contains(&block_number) {
+            return Err(RpcError::BlockNotFound(format!("block {block_number} not available")));
+        }
+        self.headers
+            .get(&block_number)
+            .cloned()
+            .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
+    }
+
+    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::OpBlock> {
+        Err(RpcError::BlockNotFound("not implemented in mock".into()))
+    }
+
+    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_rpc::OpBlock> {
+        Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 }
 

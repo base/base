@@ -2640,13 +2640,17 @@ dependencies = [
 name = "base-challenger"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
+ "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
  "async-trait",
  "axum",
  "base-cli-utils",
+ "base-enclave",
  "base-proof-contracts",
+ "base-proof-rpc",
  "clap",
  "eyre",
  "futures",
@@ -2657,6 +2661,7 @@ dependencies = [
  "rstest",
  "rustls 0.23.37",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

@@ -13,7 +13,9 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-rpc-types-eth.workspace = true
 alloy-primitives.workspace = true
+alloy-consensus.workspace = true
 
 # Async
 futures.workspace = true
@@ -42,6 +44,12 @@ clap.workspace = true
 # Contracts
 base-proof-contracts.workspace = true
 
+# RPC
+base-proof-rpc.workspace = true
+
+# Enclave
+base-enclave.workspace = true
+
 # Metrics
 metrics.workspace = true
 
@@ -55,6 +63,7 @@ url.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+serde_json.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true, features = ["json"] }

@@ -20,5 +20,10 @@ pub use scanner::{CandidateGame, GameScanner, ScannerConfig};
 mod service;
 pub use service::ChallengerService;
 
+mod validator;
+pub use validator::{
+    IntermediateValidationResult, OutputValidator, ValidationResult, ValidatorError,
+};
+
 #[cfg(test)]
 pub mod test_utils;
