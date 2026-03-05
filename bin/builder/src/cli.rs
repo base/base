@@ -81,7 +81,7 @@ impl Default for FlashblocksArgs {
 /// Parameters for the optional flashblock index transaction signer.
 ///
 /// When both `private_key` and `contract_address` are provided, the builder
-/// injects a signed `setIndex(uint256)` TX at the start of each flashblock.
+/// injects a signed `setIndex(uint256)` tx at the start of each flashblock.
 #[derive(Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct FlashblockIndexArgs {
     /// Hex-encoded private key for signing flashblock index transactions.
@@ -90,7 +90,7 @@ pub struct FlashblockIndexArgs {
 
     /// Address of the `FlashblockIndex` contract.
     #[arg(long = "flashblock-index.contract-address", env = "FLASHBLOCK_INDEX_CONTRACT_ADDRESS")]
-    pub contract_address: Option<String>,
+    pub contract_address: Option<Address>,
 }
 
 impl core::fmt::Debug for FlashblockIndexArgs {
@@ -162,7 +162,7 @@ pub struct Args {
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 
-    /// Flashblock index TX signer configuration
+    /// Flashblock index tx signer configuration
     #[command(flatten)]
     pub flashblock_index: FlashblockIndexArgs,
 }
@@ -203,14 +203,10 @@ impl FlashblockIndexArgs {
     /// Parses the CLI args into a [`FlashblockIndexConfig`], if both fields are provided.
     fn into_config(self) -> eyre::Result<Option<FlashblockIndexConfig>> {
         match (self.private_key, self.contract_address) {
-            (Some(key_hex), Some(addr_str)) => {
+            (Some(key_hex), Some(contract_address)) => {
                 let signer: PrivateKeySigner = key_hex
                     .parse()
                     .map_err(|e| eyre::eyre!("invalid flashblock-index private key: {e}"))?;
-
-                let contract_address: Address = addr_str
-                    .parse()
-                    .map_err(|e| eyre::eyre!("invalid flashblock-index contract address: {e}"))?;
 
                 Ok(Some(FlashblockIndexConfig { signer, contract_address }))
             }
@@ -397,19 +393,15 @@ mod tests {
 
     #[test]
     fn flashblock_index_both_provided() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
         let args = FlashblockIndexArgs {
             private_key: Some(
                 "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
             ),
-            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+            contract_address: Some(addr),
         };
-        let config = args.into_config().unwrap();
-        assert!(config.is_some());
-        let config = config.unwrap();
-        assert_eq!(
-            config.contract_address,
-            "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse::<Address>().unwrap(),
-        );
+        let config = args.into_config().unwrap().unwrap();
+        assert_eq!(config.contract_address, addr);
     }
 
     #[test]
@@ -432,29 +424,29 @@ mod tests {
 
     #[test]
     fn flashblock_index_only_address_provided() {
-        let args = FlashblockIndexArgs {
-            private_key: None,
-            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
-        };
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
+        let args = FlashblockIndexArgs { private_key: None, contract_address: Some(addr) };
         assert!(args.into_config().is_err());
     }
 
     #[test]
     fn flashblock_index_invalid_key_hex() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
         let args = FlashblockIndexArgs {
             private_key: Some("not_hex".to_string()),
-            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+            contract_address: Some(addr),
         };
         assert!(args.into_config().is_err());
     }
 
     #[test]
     fn flashblock_index_key_without_0x_prefix() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
         let args = FlashblockIndexArgs {
             private_key: Some(
                 "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
             ),
-            contract_address: Some("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".to_string()),
+            contract_address: Some(addr),
         };
         let config = args.into_config().unwrap();
         assert!(config.is_some());
