@@ -29,6 +29,39 @@ pub enum ValidatorError {
         block_number: u64,
     },
 
+    /// The RPC header hash does not match the computed consensus header hash.
+    #[error(
+        "header hash mismatch at block {block_number}: rpc={rpc_hash}, computed={computed_hash}"
+    )]
+    HeaderHashMismatch {
+        /// The block number where the mismatch occurred.
+        block_number: u64,
+        /// The hash returned by the RPC node.
+        rpc_hash: B256,
+        /// The hash computed from the consensus header.
+        computed_hash: B256,
+    },
+
+    /// The intermediate block interval is zero, which would cause an infinite loop.
+    #[error("intermediate block interval must be non-zero")]
+    InvalidInterval,
+
+    /// The number of intermediate roots does not match the expected checkpoint count.
+    #[error("checkpoint count mismatch: expected {expected}, got {actual}")]
+    CheckpointCountMismatch {
+        /// The expected number of checkpoints.
+        expected: usize,
+        /// The actual number of intermediate roots provided.
+        actual: usize,
+    },
+
+    /// Arithmetic overflow in checkpoint calculation (adversarial on-chain values).
+    #[error("arithmetic overflow in checkpoint calculation at block {block_number}")]
+    ArithmeticOverflow {
+        /// The block number where the overflow occurred.
+        block_number: u64,
+    },
+
     /// An RPC error occurred while fetching data from the L2 node.
     #[error("L2 RPC error: {0}")]
     Rpc(#[from] RpcError),
@@ -83,7 +116,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// Computes the expected output root for a given L2 block number.
     ///
     /// Fetches the block header and `L2ToL1MessagePasser` storage proof, then
-    /// passes them to [`output_root_v0`].
+    /// passes them to [`output_root_v0`]. Verifies that the RPC-provided header
+    /// hash matches the hash computed from the consensus header as a
+    /// defense-in-depth check against compromised or buggy RPC nodes.
     async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
         let rpc_header =
             self.l2_provider.header_by_number(Some(block_number)).await.map_err(|e| match &e {
@@ -93,11 +128,22 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 _ => ValidatorError::Rpc(e),
             })?;
 
-        let block_hash = rpc_header.hash;
+        let rpc_hash = rpc_header.hash;
         let consensus_header = rpc_header.inner;
 
-        let account_result =
-            self.l2_provider.get_proof(L2_TO_L1_MESSAGE_PASSER, block_hash).await?;
+        // Verify that the RPC-provided hash matches the actual consensus header
+        // hash. This guards against a compromised or buggy RPC node returning a
+        // header whose hash does not match the inner consensus data.
+        let computed_hash = consensus_header.hash_slow();
+        if rpc_hash != computed_hash {
+            return Err(ValidatorError::HeaderHashMismatch {
+                block_number,
+                rpc_hash,
+                computed_hash,
+            });
+        }
+
+        let account_result = self.l2_provider.get_proof(L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
         let storage_root = account_result.storage_hash;
 
@@ -157,6 +203,14 @@ impl<L2: L2Provider> OutputValidator<L2> {
     ///
     /// Returns a [`ValidationResult`] where `invalid_intermediate_index`
     /// contains the index of the first mismatched intermediate root, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidatorError::InvalidInterval`] if `intermediate_block_interval`
+    /// is zero, [`ValidatorError::CheckpointCountMismatch`] if the provided
+    /// `intermediate_roots` length does not match the expected checkpoint count,
+    /// or [`ValidatorError::ArithmeticOverflow`] if checkpoint arithmetic overflows
+    /// (possible with adversarial on-chain values).
     pub async fn validate_intermediate_roots(
         &self,
         game_address: Address,
@@ -167,6 +221,22 @@ impl<L2: L2Provider> OutputValidator<L2> {
         intermediate_roots: &[B256],
     ) -> Result<ValidationResult, ValidatorError> {
         let start = Instant::now();
+
+        if intermediate_block_interval == 0 {
+            return Err(ValidatorError::InvalidInterval);
+        }
+
+        // Compute expected checkpoint count so we can verify intermediate_roots
+        // covers every required block.
+        let span = l2_block_number.saturating_sub(starting_block_number);
+        let expected_count = (span / intermediate_block_interval) as usize;
+
+        if intermediate_roots.len() != expected_count {
+            return Err(ValidatorError::CheckpointCountMismatch {
+                expected: expected_count,
+                actual: intermediate_roots.len(),
+            });
+        }
 
         info!(
             game = %game_address,
@@ -179,7 +249,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
 
         let mut first_invalid: Option<usize> = None;
 
-        let mut checkpoint = starting_block_number + intermediate_block_interval;
+        let mut checkpoint = starting_block_number
+            .checked_add(intermediate_block_interval)
+            .ok_or(ValidatorError::ArithmeticOverflow { block_number: starting_block_number })?;
         let mut idx = 0;
 
         while checkpoint <= l2_block_number {
@@ -203,7 +275,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 break;
             }
 
-            checkpoint += intermediate_block_interval;
+            checkpoint = checkpoint
+                .checked_add(intermediate_block_interval)
+                .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
             idx += 1;
         }
 
@@ -413,5 +487,145 @@ mod tests {
             matches!(err, ValidatorError::BlockNotAvailable { block_number: 100 }),
             "expected BlockNotAvailable, got: {err:?}"
         );
+    }
+
+    /// Zero intermediate block interval returns `ValidatorError::InvalidInterval`.
+    #[tokio::test]
+    async fn test_zero_intermediate_interval() {
+        let provider = MockL2Provider::new();
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x07);
+
+        let result =
+            validator.validate_intermediate_roots(game_address, 90, 100, 0, B256::ZERO, &[]).await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), ValidatorError::InvalidInterval),
+            "expected InvalidInterval"
+        );
+    }
+
+    /// Checkpoint count mismatch: fewer intermediate roots than expected checkpoints.
+    #[tokio::test]
+    async fn test_checkpoint_count_mismatch_too_few() {
+        let provider = MockL2Provider::new();
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x08);
+
+        // starting=90, end=100, interval=5 -> expected 2 checkpoints (95, 100)
+        // but only provide 1 root
+        let result = validator
+            .validate_intermediate_roots(
+                game_address,
+                90,
+                100,
+                5,
+                B256::ZERO,
+                &[B256::ZERO], // only 1, need 2
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ValidatorError::CheckpointCountMismatch { expected: 2, actual: 1 }),
+            "expected CheckpointCountMismatch {{ expected: 2, actual: 1 }}, got: {err:?}"
+        );
+    }
+
+    /// Checkpoint count mismatch: more intermediate roots than expected checkpoints.
+    #[tokio::test]
+    async fn test_checkpoint_count_mismatch_too_many() {
+        let provider = MockL2Provider::new();
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x09);
+
+        // starting=90, end=100, interval=5 -> expected 2 checkpoints (95, 100)
+        // but provide 3 roots
+        let result = validator
+            .validate_intermediate_roots(
+                game_address,
+                90,
+                100,
+                5,
+                B256::ZERO,
+                &[B256::ZERO, B256::ZERO, B256::ZERO], // 3, need 2
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ValidatorError::CheckpointCountMismatch { expected: 2, actual: 3 }),
+            "expected CheckpointCountMismatch {{ expected: 2, actual: 3 }}, got: {err:?}"
+        );
+    }
+
+    /// Arithmetic overflow in checkpoint calculation returns error.
+    #[tokio::test]
+    async fn test_arithmetic_overflow() {
+        let (provider, roots) = mock_with_blocks(&[]);
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x0A);
+
+        // starting_block near u64::MAX with interval that causes overflow
+        // span = l2_block_number - starting_block_number = u64::MAX - (u64::MAX - 1) = 1
+        // expected_count = 1 / u64::MAX = 0, so pass empty roots
+        let result = validator
+            .validate_intermediate_roots(
+                game_address,
+                u64::MAX - 1,
+                u64::MAX,
+                u64::MAX, // This would overflow: (u64::MAX-1) + u64::MAX
+                B256::ZERO,
+                &roots,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), ValidatorError::ArithmeticOverflow { .. }),
+            "expected ArithmeticOverflow"
+        );
+    }
+
+    /// Header hash mismatch: RPC returns a header whose hash does not match the
+    /// consensus header, and the validator rejects it.
+    #[tokio::test]
+    async fn test_header_hash_mismatch() {
+        use alloy_rpc_types_eth::Header as RpcHeader;
+
+        let consensus_header = test_header(100);
+        let storage_hash = B256::repeat_byte(0xBB);
+        let account = test_account_result(storage_hash);
+        let correct_hash = consensus_header.hash_slow();
+
+        let mut provider = MockL2Provider::new();
+        // Insert block normally first, then tamper with the header hash
+        provider.insert_block(100, consensus_header.clone(), account);
+        // Overwrite the header with a mismatched hash
+        let tampered_header = RpcHeader {
+            hash: B256::repeat_byte(0xEE),
+            inner: consensus_header,
+            ..Default::default()
+        };
+        provider.headers.insert(100, tampered_header);
+
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x0B);
+
+        let result = validator.validate_final_root(game_address, 100, B256::ZERO).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ValidatorError::HeaderHashMismatch { block_number, rpc_hash, computed_hash } => {
+                assert_eq!(block_number, 100);
+                assert_eq!(rpc_hash, B256::repeat_byte(0xEE));
+                assert_eq!(computed_hash, correct_hash);
+            }
+            other => panic!("expected HeaderHashMismatch, got: {other:?}"),
+        }
     }
 }
