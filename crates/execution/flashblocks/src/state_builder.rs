@@ -4,10 +4,15 @@ use alloy_consensus::{
     Block, Header, TxReceipt,
     transaction::{Recovered, TransactionMeta},
 };
+use alloy_evm::{
+    Database as AlloyDatabase,
+    block::{StateDB, SystemCaller},
+};
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
+use base_alloy_evm::ensure_create2_deployer;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_execution_forks::OpHardforks;
 use base_execution_primitives::OpPrimitives;
@@ -128,6 +133,38 @@ where
         } else {
             self.execute_with_evm(transaction, idx, effective_gas_price)
         }
+    }
+
+    /// Applies EIP-4788, EIP-2935, and Canyon create2 deployer pre-execution changes to the EVM.
+    ///
+    /// Must be called once per block, before executing any transactions. This mirrors the
+    /// `apply_pre_execution_changes` behavior of [`base_alloy_evm::OpBlockExecutor`] to ensure
+    /// that the cached execution results match what the validator computes.
+    pub fn apply_pre_execution_changes(
+        &mut self,
+        parent_hash: B256,
+        parent_beacon_block_root: Option<B256>,
+    ) -> Result<(), StateProcessorError>
+    where
+        DB: AlloyDatabase + StateDB,
+        ChainSpec: Clone,
+    {
+        let spec = self.receipt_builder.chain_spec();
+        let state_clear_flag = spec.is_spurious_dragon_active_at_block(self.pending_block.number);
+        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
+
+        let mut system_caller = SystemCaller::new(spec.clone());
+        system_caller
+            .apply_blockhashes_contract_call(parent_hash, &mut self.evm)
+            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
+        system_caller
+            .apply_beacon_root_contract_call(parent_beacon_block_root, &mut self.evm)
+            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
+
+        ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
+            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Builds transaction result from cached receipt and state data.

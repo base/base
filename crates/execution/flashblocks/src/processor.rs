@@ -442,6 +442,9 @@ where
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();
 
+            let parent_hash = last_block_header.hash_slow();
+            let parent_beacon_block_root = Some(assembled.base.parent_beacon_block_root);
+
             let mut pending_state_builder = PendingStateBuilder::new(
                 self.client.chain_spec(),
                 evm,
@@ -450,6 +453,9 @@ where
                 l1_block_info,
                 state_overrides,
             );
+
+            pending_state_builder
+                .apply_pre_execution_changes(parent_hash, parent_beacon_block_root)?;
 
             for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
                 let tx_hash = transaction.tx_hash();
