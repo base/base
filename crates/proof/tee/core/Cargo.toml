@@ -37,6 +37,7 @@ base-protocol = { workspace = true, features = ["serde"] }
 hex = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 hex-literal.workspace = true
+parking_lot.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true

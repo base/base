@@ -3,7 +3,7 @@ use std::array::TryFromSliceError;
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
 use base_proof_client::FaultProofProgramError;
-use base_proof_preimage::errors::PreimageOracleError;
+use base_proof_preimage::errors::{PreimageOracleError, WitnessOracleError};
 use thiserror::Error;
 
 /// Result type for host operations.
@@ -109,6 +109,9 @@ pub enum HostError {
     /// Preimage server panicked during witness capture.
     #[error("preimage server panicked: {0}")]
     ServerPanicked(tokio::task::JoinError),
+    /// Witness oracle error.
+    #[error("Witness oracle error: {0}")]
+    WitnessOracle(#[from] WitnessOracleError),
     /// IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

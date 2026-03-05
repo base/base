@@ -12,6 +12,7 @@ extern crate alloc;
 extern crate tracing;
 
 pub mod errors;
+pub use errors::{WitnessOracleError, WitnessOracleResult};
 
 mod key;
 pub use key::{PreimageKey, PreimageKeyType};

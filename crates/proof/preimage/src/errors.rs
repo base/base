@@ -27,6 +27,9 @@ pub enum PreimageOracleError {
     /// Failed to parse hint.
     #[error("Failed to parse hint: {0}")]
     HintParseFailed(String),
+    /// Witness oracle error.
+    #[error(transparent)]
+    WitnessOracle(#[from] WitnessOracleError),
     /// Other errors.
     #[error("Error in preimage server: {0}")]
     Other(String),
@@ -51,3 +54,14 @@ pub enum ChannelError {
 
 /// A [Result] type for the [`ChannelError`] enum.
 pub type ChannelResult<T> = Result<T, ChannelError>;
+
+/// An error that can occur during witness oracle operations.
+#[derive(Error, Debug)]
+pub enum WitnessOracleError {
+    /// Other witness oracle errors.
+    #[error("Witness oracle error: {0}")]
+    Other(String),
+}
+
+/// A [Result] type for the [`WitnessOracleError`] enum.
+pub type WitnessOracleResult<T> = Result<T, WitnessOracleError>;

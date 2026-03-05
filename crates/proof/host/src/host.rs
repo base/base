@@ -123,8 +123,8 @@ impl Host {
 
         server_task.abort();
 
-        witness.finalize();
-        let preimage_count = witness.preimage_count();
+        witness.finalize()?;
+        let preimage_count = witness.preimage_count()?;
         info!(preimage_count, "witness capture complete");
 
         Ok(())

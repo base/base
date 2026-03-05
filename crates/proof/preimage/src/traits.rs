@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     PreimageKey,
-    errors::{ChannelResult, PreimageOracleResult},
+    errors::{ChannelResult, PreimageOracleResult, WitnessOracleResult},
 };
 
 /// A [`PreimageOracleClient`] is a high-level interface to read data from the host, keyed by a
@@ -126,13 +126,13 @@ pub trait FlushableCache {
 /// not on this trait.
 pub trait WitnessOracle: Send + Sync {
     /// Insert a preimage into the oracle under the given key.
-    fn insert_preimage(&self, key: PreimageKey, value: &[u8]);
+    fn insert_preimage(&self, key: PreimageKey, value: &[u8]) -> WitnessOracleResult<()>;
 
     /// Finalize the oracle, signaling that no more preimages will be inserted.
-    fn finalize(&self);
+    fn finalize(&self) -> WitnessOracleResult<()>;
 
     /// Return the number of preimages currently held by the oracle.
-    fn preimage_count(&self) -> usize;
+    fn preimage_count(&self) -> WitnessOracleResult<usize>;
 }
 
 /// A [`Channel`] is a high-level interface to read and write data to a counterparty.

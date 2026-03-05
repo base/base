@@ -3156,6 +3156,7 @@ dependencies = [
  "base-revm",
  "hex",
  "hex-literal 1.1.0",
+ "parking_lot",
  "revm",
  "serde",
  "serde_json",
