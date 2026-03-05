@@ -4,7 +4,7 @@
 //! for dispute games requiring validation. Each game is evaluated through a
 //! two-stage filter:
 //!
-//! 1. **Status** — must be `IN_PROGRESS` ([`STATUS_IN_PROGRESS`]).
+//! 1. **Status** — must be `IN_PROGRESS` ([`GameScanner::STATUS_IN_PROGRESS`]).
 //! 2. **Challenge state** — `zkProver` must be `Address::ZERO` (unchallenged).
 //!
 //! Games passing both filters are returned as [`CandidateGame`] structs.
@@ -20,12 +20,6 @@ use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
 use crate::ChallengerMetrics;
-
-/// Game status indicating the dispute is still in progress.
-pub const STATUS_IN_PROGRESS: u8 = 0;
-
-/// Maximum number of games to evaluate concurrently during a scan.
-pub const SCAN_CONCURRENCY: usize = 32;
 
 /// Configuration for the game scanner.
 #[derive(Debug, Clone)]
@@ -64,6 +58,12 @@ impl std::fmt::Debug for GameScanner {
 }
 
 impl GameScanner {
+    /// Game status indicating the dispute is still in progress.
+    pub const STATUS_IN_PROGRESS: u8 = 0;
+
+    /// Maximum number of games to evaluate concurrently during a scan.
+    pub const SCAN_CONCURRENCY: usize = 32;
+
     /// Creates a new game scanner.
     pub fn new(
         factory_client: Arc<dyn DisputeGameFactoryClient>,
@@ -115,7 +115,7 @@ impl GameScanner {
 
         let results: Vec<(u64, Result<Option<CandidateGame>>)> = stream::iter(start..=end)
             .map(|i| async move { (i, self.evaluate_game(i).await) })
-            .buffer_unordered(SCAN_CONCURRENCY)
+            .buffer_unordered(Self::SCAN_CONCURRENCY)
             .collect()
             .await;
 
@@ -166,7 +166,7 @@ impl GameScanner {
         let factory = self.factory_client.game_at_index(index).await?;
 
         let status = self.verifier_client.status(factory.proxy).await?;
-        if status != STATUS_IN_PROGRESS {
+        if status != Self::STATUS_IN_PROGRESS {
             debug!(index = index, status = status, "skipping game not in progress");
             return Ok(None);
         }

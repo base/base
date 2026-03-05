@@ -190,11 +190,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
@@ -220,11 +216,7 @@ mod tests {
         let challenger_addr = Address::repeat_byte(0xAA);
 
         let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![
-                factory_game(0, 1),
-                factory_game(1, 1),
-                factory_game(2, 1),
-            ],
+            games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
         });
 
         let mut verifier_games = HashMap::new();
@@ -235,11 +227,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         // Scan from the beginning (last_scanned=None, lookback covers all)
         // start = max(0, 3-1000) = 0, end = 2
@@ -257,11 +245,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
         let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
 
@@ -282,11 +266,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         // last_scanned = Some(1) (gameCount - 1), so start = 2 > end = 1
         let (candidates, new_last_scanned) = scanner.scan(Some(1)).await.unwrap();
@@ -310,11 +290,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory { games });
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 3 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 3 });
 
         // Fresh start: last_scanned = None
         // start = max(0, 100-3) = 97, end = 99
@@ -334,11 +310,7 @@ mod tests {
         // 3 games: index 1 will error, indices 0 and 2 are valid candidates
         let factory = Arc::new(ErrorOnIndexFactory {
             inner: MockDisputeGameFactory {
-                games: vec![
-                    factory_game(0, 1),
-                    factory_game(1, 1),
-                    factory_game(2, 1),
-                ],
+                games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
             },
             error_indices: vec![1],
         });
@@ -350,11 +322,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         // start = max(0, 3-1000) = 0, end = 2
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
@@ -373,11 +341,7 @@ mod tests {
         // Phase 1: index 1 errors, so new_last_scanned = Some(0)
         let factory = Arc::new(ErrorOnIndexFactory {
             inner: MockDisputeGameFactory {
-                games: vec![
-                    factory_game(0, 1),
-                    factory_game(1, 1),
-                    factory_game(2, 1),
-                ],
+                games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
             },
             error_indices: vec![1],
         });
@@ -389,31 +353,20 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games.clone() });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         let (_, new_last_scanned) = scanner.scan(None).await.unwrap();
         assert_eq!(new_last_scanned, Some(0));
 
         // Phase 2: no errors, pass last_scanned = Some(0) to retry from index 1
         let factory2 = Arc::new(MockDisputeGameFactory {
-            games: vec![
-                factory_game(0, 1),
-                factory_game(1, 1),
-                factory_game(2, 1),
-            ],
+            games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
         });
 
         let verifier2 = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner2 = GameScanner::new(
-            factory2,
-            verifier2,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner2 =
+            GameScanner::new(factory2, verifier2, ScannerConfig { lookback_games: 1000 });
 
         let (candidates, new_last_scanned) = scanner2.scan(Some(0)).await.unwrap();
 
@@ -428,9 +381,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_error_at_first_index() {
         let factory = Arc::new(ErrorOnIndexFactory {
-            inner: MockDisputeGameFactory {
-                games: vec![factory_game(0, 1), factory_game(1, 1)],
-            },
+            inner: MockDisputeGameFactory { games: vec![factory_game(0, 1), factory_game(1, 1)] },
             error_indices: vec![0],
         });
 
@@ -439,11 +390,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let scanner = GameScanner::new(
-            factory,
-            verifier,
-            ScannerConfig { lookback_games: 1000 },
-        );
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
 
         // last_scanned = None, lowest_error = 0 -> preserves None (fresh-start semantics)
         let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();

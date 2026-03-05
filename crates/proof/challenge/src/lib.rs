@@ -15,7 +15,7 @@ mod metrics;
 pub use metrics::ChallengerMetrics;
 
 mod scanner;
-pub use scanner::{CandidateGame, GameScanner, SCAN_CONCURRENCY, STATUS_IN_PROGRESS, ScannerConfig};
+pub use scanner::{CandidateGame, GameScanner, ScannerConfig};
 
 mod service;
 pub use service::ChallengerService;
