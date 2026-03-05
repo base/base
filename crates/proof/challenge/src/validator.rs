@@ -277,7 +277,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
         // Compute expected checkpoint count so we can verify intermediate_roots
         // covers every required block.
         let span = l2_block_number.saturating_sub(starting_block_number);
-        let expected_count = (span / intermediate_block_interval) as usize;
+        let expected_count = usize::try_from(span / intermediate_block_interval).map_err(|_| {
+            ValidatorError::ArithmeticOverflow { block_number: starting_block_number }
+        })?;
 
         if intermediate_roots.len() != expected_count {
             return Err(ValidatorError::CheckpointCountMismatch {
@@ -563,7 +565,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: roots[1],
-                intermediate_roots: intermediate_roots,
+                intermediate_roots,
             })
             .await
             .unwrap();
