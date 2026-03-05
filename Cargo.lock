@@ -2752,6 +2752,7 @@ dependencies = [
  "eyre",
  "metrics",
  "serde",
+ "serde_json",
  "strum 0.28.0",
  "tracing",
  "url",

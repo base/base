@@ -18,7 +18,7 @@ use crate::{
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
 
-const PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
+const DEFAULT_PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
 
 #[derive(Debug, Deserialize)]
 struct ProofsSyncStatus {
@@ -47,6 +47,7 @@ where
     sent_head: u64,
     engine_head: u64,
     proofs_enabled: bool,
+    proofs_max_blocks_ahead: u64,
 }
 
 impl<DerivationEngineClient_, L2Source> CancellableContext
@@ -84,13 +85,22 @@ where
             sent_head: 0,
             engine_head: 0,
             proofs_enabled: false,
+            proofs_max_blocks_ahead: DEFAULT_PROOFS_MAX_BLOCKS_AHEAD,
         }
     }
 
     /// Enables proofs sync gating. When enabled, sync will not advance beyond
-    /// `proofs_latest + 512` to prevent proofs from falling too far behind.
+    /// `proofs_latest + proofs_max_blocks_ahead` to prevent proofs from
+    /// falling too far behind.
     pub const fn with_proofs(mut self, enabled: bool) -> Self {
         self.proofs_enabled = enabled;
+        self
+    }
+
+    /// Sets the maximum number of blocks the node may advance beyond the
+    /// proofs ExEx head.
+    pub const fn with_proofs_max_blocks_ahead(mut self, max_blocks_ahead: u64) -> Self {
+        self.proofs_max_blocks_ahead = max_blocks_ahead;
         self
     }
 }
@@ -286,7 +296,7 @@ where
                 .await
             {
                 Ok(status) => {
-                    let cap = status.latest + PROOFS_MAX_BLOCKS_AHEAD;
+                    let cap = status.latest + self.proofs_max_blocks_ahead;
                     debug!(
                         target: "derivation",
                         proofs_latest = status.latest,
