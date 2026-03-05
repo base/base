@@ -2,6 +2,7 @@ use std::array::TryFromSliceError;
 
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
+use base_proof_client::FaultProofProgramError;
 use base_proof_preimage::errors::PreimageOracleError;
 use thiserror::Error;
 
@@ -99,6 +100,12 @@ pub enum HostError {
     /// Base executor error.
     #[error("Base executor error: {0}")]
     BaseExecutor(String),
+    /// Proof program error.
+    #[error(transparent)]
+    ProofProgram(Box<FaultProofProgramError>),
+    /// Preimage server panicked during witness capture.
+    #[error("preimage server panicked: {0}")]
+    ServerPanicked(tokio::task::JoinError),
     /// IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

@@ -5,7 +5,7 @@ use base_alloy_evm::OpEvmFactory;
 use base_alloy_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
-use base_proof_client::Prologue;
+use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
     WitnessOracle,
@@ -106,25 +106,38 @@ impl Host {
         // Both the oracle and hint arms share the same RecordingOracle, ensuring all
         // fetched preimages are captured into the witness regardless of which channel
         // triggers them.
-        let driver = Prologue::new(recording.clone(), recording, OpEvmFactory::default())
-            .load()
-            .await
-            .map_err(|e| HostError::Custom(format!("prologue failed: {e}")))?;
+        let client_task = Self::run_client(recording);
 
-        let epilogue =
-            driver.execute().await.map_err(|e| HostError::Custom(format!("driver failed: {e}")))?;
-
-        epilogue
-            .validate()
-            .map_err(|e| HostError::Custom(format!("epilogue validation failed: {e}")))?;
+        tokio::select! {
+            result = server_task => result.map_err(HostError::ServerPanicked)??,
+            result = client_task => result.map_err(|e| HostError::ProofProgram(Box::new(e)))?,
+        };
 
         witness.finalize();
-
         let preimage_count = witness.preimage_count();
         info!(preimage_count, "witness capture complete");
 
-        server_task.abort();
+        Ok(())
+    }
 
+    /// Runs the fault-proof program client: prologue → driver → epilogue.
+    async fn run_client<P, H, W>(
+        recording: RecordingOracle<P, H, W>,
+    ) -> std::result::Result<(), FaultProofProgramError>
+    where
+        P: base_proof_preimage::PreimageOracleClient
+            + Send
+            + Sync
+            + Clone
+            + std::fmt::Debug
+            + 'static,
+        H: base_proof_preimage::HintWriterClient + Send + Sync + Clone + std::fmt::Debug + 'static,
+        W: WitnessOracle + std::fmt::Debug + 'static,
+    {
+        let driver =
+            Prologue::new(recording.clone(), recording, OpEvmFactory::default()).load().await?;
+        let epilogue = driver.execute().await?;
+        epilogue.validate().map_err(|e| *e)?;
         Ok(())
     }
 

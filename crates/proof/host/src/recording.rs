@@ -124,6 +124,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     #[derive(Debug, Clone, Default)]
     struct MockWitness {
         preimages: Arc<Mutex<Vec<(PreimageKey, Vec<u8>)>>>,
