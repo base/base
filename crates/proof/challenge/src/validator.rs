@@ -4,7 +4,7 @@
 //! output roots for each [`CandidateGame`]. It fetches L2 block headers and
 //! `L2ToL1MessagePasser` storage proofs, recomputes expected output roots using
 //! [`output_root_v0`](base_enclave::output_root_v0), and compares them against
-//! the on-chain claims.
+//! the onchain claims.
 
 use std::{sync::Arc, time::Instant};
 
@@ -55,7 +55,7 @@ pub enum ValidatorError {
         actual: usize,
     },
 
-    /// Arithmetic overflow in checkpoint calculation (adversarial on-chain values).
+    /// Arithmetic overflow in checkpoint calculation (adversarial onchain values).
     #[error("arithmetic overflow in checkpoint calculation at block {block_number}")]
     ArithmeticOverflow {
         /// The block number where the overflow occurred.
@@ -83,7 +83,7 @@ pub struct ValidationResult {
     /// intermediate validation this is the computed root at the first invalid
     /// checkpoint, or `claimed_root` when all checkpoints are valid.
     pub expected_root: B256,
-    /// The root claim from the on-chain game.
+    /// The root claim from the onchain game.
     pub claimed_root: B256,
     /// The index of the first invalid intermediate root, if any.
     pub invalid_intermediate_index: Option<usize>,
@@ -92,7 +92,7 @@ pub struct ValidationResult {
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
-/// recompute expected output roots and compare them against on-chain claims.
+/// recompute expected output roots and compare them against onchain claims.
 pub struct OutputValidator<L2: L2Provider> {
     l2_provider: Arc<L2>,
 }
@@ -194,7 +194,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
     ///
     /// Iterates checkpoint blocks from `starting_block_number + interval` to
     /// `l2_block_number` stepping by `interval`, computes the expected output
-    /// root at each checkpoint, and compares them against the on-chain
+    /// root at each checkpoint, and compares them against the onchain
     /// intermediate roots.
     ///
     /// Returns a [`ValidationResult`] where `invalid_intermediate_index`
@@ -206,7 +206,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// is zero, [`ValidatorError::CheckpointCountMismatch`] if the provided
     /// `intermediate_roots` length does not match the expected checkpoint count,
     /// or [`ValidatorError::ArithmeticOverflow`] if checkpoint arithmetic overflows
-    /// (possible with adversarial on-chain values).
+    /// (possible with adversarial onchain values).
     pub async fn validate_intermediate_roots(
         &self,
         game_address: Address,
@@ -359,7 +359,7 @@ mod tests {
         (provider, roots)
     }
 
-    /// Valid final root: the on-chain root claim matches the expected output root.
+    /// Valid final root: the onchain root claim matches the expected output root.
     #[tokio::test]
     async fn test_validate_final_root_valid() {
         let (provider, expected_root) = mock_with_block(100);
@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(result.invalid_intermediate_index, None);
     }
 
-    /// Invalid final root: the on-chain root claim does NOT match the expected output root.
+    /// Invalid final root: the onchain root claim does NOT match the expected output root.
     #[tokio::test]
     async fn test_validate_final_root_invalid() {
         let (provider, expected_root) = mock_with_block(100);
