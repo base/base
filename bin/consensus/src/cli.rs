@@ -103,7 +103,7 @@ pub struct Follow {
     pub proofs: bool,
 
     /// Maximum number of blocks the follow node may advance beyond the proofs
-    /// ExEx head. Only effective when `--proofs` is enabled.
+    /// `ExEx` head. Only effective when `--proofs` is enabled.
     #[arg(
         long = "proofs.max-blocks-ahead",
         default_value_t = 512,
