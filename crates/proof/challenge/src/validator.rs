@@ -9,7 +9,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{Address, B256, address};
-use base_enclave::output_root_v0;
+use base_enclave::output_root_v0_with_hash;
 use base_proof_rpc::{L2Provider, RpcError};
 use thiserror::Error;
 use tracing::{info, warn};
@@ -143,7 +143,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
 
         let storage_root = account_result.storage_hash;
 
-        Ok(output_root_v0(&consensus_header, storage_root))
+        Ok(output_root_v0_with_hash(&consensus_header, storage_root, computed_hash))
     }
 
     /// Validates the final output root of a candidate dispute game.

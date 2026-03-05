@@ -13,7 +13,8 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
-    AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info, output_root_v0,
+    AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info,
+    output_root_v0_with_hash,
 };
 use base_enclave_client::ExecuteStatelessRequest;
 use base_proof_rpc::{L1BlockId, L1Provider, L2BlockRef, OpBlock};
@@ -250,7 +251,8 @@ where
         };
 
         // Verify output root matches local computation
-        let expected_output_root = output_root_v0(&block.header.inner, msg_storage_hash);
+        let expected_output_root =
+            output_root_v0_with_hash(&block.header.inner, msg_storage_hash, block_hash);
         if proposal.output_root != expected_output_root {
             return Err(ProposerError::OutputRootMismatch {
                 expected: expected_output_root,
