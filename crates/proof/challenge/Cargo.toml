@@ -16,6 +16,7 @@ workspace = true
 alloy-primitives.workspace = true
 
 # Async
+futures.workspace = true
 tokio.workspace = true
 
 # Tracing
@@ -38,6 +39,9 @@ zeroize.workspace = true
 base-cli-utils.workspace = true
 clap.workspace = true
 
+# Contracts
+base-proof-contracts.workspace = true
+
 # Metrics
 metrics.workspace = true
 
@@ -51,5 +55,6 @@ url.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+async-trait.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true, features = ["json"] }

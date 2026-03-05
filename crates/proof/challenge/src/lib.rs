@@ -14,5 +14,11 @@ pub use health::HealthServer;
 mod metrics;
 pub use metrics::ChallengerMetrics;
 
+mod scanner;
+pub use scanner::{CandidateGame, GameScanner, ScannerConfig};
+
 mod service;
 pub use service::ChallengerService;
+
+#[cfg(test)]
+pub mod test_utils;

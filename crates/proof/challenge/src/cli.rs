@@ -68,10 +68,6 @@ pub struct ChallengerArgs {
     #[arg(long = "anchor-state-registry-addr", env = "CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR")]
     pub anchor_state_registry_addr: Address,
 
-    /// Game type ID for dispute games to monitor.
-    #[arg(long = "game-type", env = "CHALLENGER_GAME_TYPE")]
-    pub game_type: u32,
-
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
@@ -116,7 +112,6 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("rollup_rpc", &self.rollup_rpc)
             .field("dispute_game_factory_addr", &self.dispute_game_factory_addr)
             .field("anchor_state_registry_addr", &self.anchor_state_registry_addr)
-            .field("game_type", &self.game_type)
             .field("poll_interval", &self.poll_interval)
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
             .field("signer_endpoint", &self.signer_endpoint)
