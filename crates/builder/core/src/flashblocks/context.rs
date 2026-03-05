@@ -549,11 +549,8 @@ impl OpPayloadBuilderCtx {
         info.executed_senders.push(tx.signer());
         info.executed_transactions.push(tx.into_inner());
 
-        // NOTE: execute_best_transactions overwrites access_list_builder with its own
-        // fresh FBALBuilderDb, so the index tx's accesses won't appear in the final list.
-        // This matches the existing pattern across all execute_* methods.
         match fbal_db.finish() {
-            Ok(fbal_builder) => info.extra.access_list_builder = fbal_builder,
+            Ok(fbal_builder) => info.extra.access_list_builder.merge(fbal_builder),
             Err(err) => {
                 error!(error = %err, "Failed to finalize FBALBuilder");
             }
