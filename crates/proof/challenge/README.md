@@ -8,6 +8,7 @@ ZK-proof dispute game challenger.
 ## Overview
 
 - **Scanner**: Reads the `DisputeGameFactory` for new dispute games, filtering by `IN_PROGRESS` status and unchallenged state (`zkProver == zero`) to produce `CandidateGame`s for downstream processing.
+- **Validator**: Verifies `CandidateGame` output roots against L2 state. Validates both the final `rootClaim` and intermediate checkpoint roots using the OP Stack v0 output root formula (`keccak256(version ‖ state_root ‖ storage_root ‖ block_hash)`).
 - **Service**: Lifecycle orchestration for the challenger (init, health, metrics, shutdown).
 - **Config**: Validated runtime configuration with CLI argument parsing.
 - **Health**: HTTP liveness (`/healthz`) and readiness (`/readyz`) probes.

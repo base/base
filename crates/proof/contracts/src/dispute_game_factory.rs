@@ -1,6 +1,7 @@
 //! `DisputeGameFactory` contract bindings.
 //!
-//! Used to create new dispute games and query existing ones.
+//! Used to create new dispute games and query existing ones. Also provides
+//! encoding/decoding helpers for game `extraData` and `create()` calldata.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;

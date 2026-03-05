@@ -13,8 +13,8 @@ Provides async client traits and concrete Alloy-backed implementations for:
 - **`AnchorStateRegistryClient`**: Reading the anchor state (latest finalized output root).
 - **`AggregateVerifierClient`**: Querying individual dispute game instances and reading onchain configuration (`BLOCK_INTERVAL`, `INTERMEDIATE_BLOCK_INTERVAL`).
 
-Also provides shared data types (`GameAtIndex`, `AnchorRoot`, `GameInfo`), pure encoding helpers
-(`encode_extra_data`, `encode_create_calldata`), and a `ContractError` type for error handling.
+Also provides shared data types (`GameAtIndex`, `AnchorRoot`, `GameInfo`), pure encoding/decoding helpers
+(`encode_extra_data`, `decode_extra_data`, `encode_create_calldata`), and a `ContractError` type for error handling.
 
 These bindings are used by both [`base-proposer`](../proposer/) and the challenger.
 

@@ -1,7 +1,9 @@
 //! `AggregateVerifier` contract bindings.
 //!
-//! Used to query individual dispute game instances and read the
-//! `BLOCK_INTERVAL` from the implementation contract at startup.
+//! Used to query individual dispute game instances and read onchain
+//! configuration (`BLOCK_INTERVAL`, `INTERMEDIATE_BLOCK_INTERVAL`) from
+//! the implementation contract. Also exposes `extraData()` for reading
+//! the intermediate checkpoint roots encoded in each game's creation data.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
