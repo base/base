@@ -39,5 +39,5 @@ mod types;
 pub use types::{
     AccountResult, AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis,
     GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, Proposal, ProposalParams,
-    RollupConfig, SIGNATURE_LENGTH, StorageProof, output_root_v0,
+    RollupConfig, SIGNATURE_LENGTH, StorageProof, output_root_v0, output_root_v0_with_hash,
 };

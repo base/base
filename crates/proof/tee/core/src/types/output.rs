@@ -29,7 +29,26 @@ use alloy_primitives::{B256, keccak256};
 /// The 32-byte output root hash.
 #[must_use]
 pub fn output_root_v0(header: &Header, storage_root: B256) -> B256 {
-    let block_hash = header.hash_slow();
+    output_root_v0_with_hash(header, storage_root, header.hash_slow())
+}
+
+/// Compute output root v0 using a precomputed block hash.
+///
+/// This is identical to [`output_root_v0`] but accepts an already-computed
+/// `block_hash`, avoiding a redundant `header.hash_slow()` call when the
+/// caller has already hashed the header (e.g. for RPC verification).
+///
+/// # Arguments
+///
+/// * `header` - The L2 block header (used for `state_root`)
+/// * `storage_root` - The storage root of the `L2ToL1MessagePasser` contract
+/// * `block_hash` - The precomputed hash of the block header
+///
+/// # Returns
+///
+/// The 32-byte output root hash.
+#[must_use]
+pub fn output_root_v0_with_hash(header: &Header, storage_root: B256, block_hash: B256) -> B256 {
     let state_root = header.state_root;
 
     // 128 bytes: version (32, all zeros) || state_root (32) || storage_root (32) || block_hash (32)
