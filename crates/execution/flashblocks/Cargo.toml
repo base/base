@@ -81,4 +81,6 @@ derive_more = { workspace = true, features = ["from"] }
 
 [dev-dependencies]
 rstest.workspace = true
+alloy-eips.workspace = true
+reth-revm.workspace = true
 base-execution-chainspec.workspace = true

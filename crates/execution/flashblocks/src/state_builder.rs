@@ -319,3 +319,136 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_consensus::{Block, BlockBody, Header};
+    use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
+    use alloy_primitives::{B256, U256};
+    use base_execution_chainspec::OpChainSpecBuilder;
+    use base_execution_evm::OpEvmConfig;
+    use reth_evm::ConfigureEvm;
+    use reth_revm::State;
+    use revm::{
+        database::InMemoryDB,
+        state::{AccountInfo, Bytecode},
+    };
+
+    use super::*;
+
+    // Base mainnet Ecotone activation timestamp, after which EIP-4788 is active.
+    const BASE_MAINNET_ECOTONE_TIMESTAMP: u64 = 1_710_374_401;
+    // A timestamp just after Ecotone activation.
+    const POST_ECOTONE_TIMESTAMP: u64 = BASE_MAINNET_ECOTONE_TIMESTAMP + 1;
+    // EIP-4788 ring buffer length (hardcoded in the contract bytecode).
+    const BEACON_ROOTS_HISTORY_BUFFER_LENGTH: u64 = 8191;
+
+    fn make_db_with_beacon_roots_contract() -> State<InMemoryDB> {
+        let mut db = State::builder().with_database(InMemoryDB::default()).build();
+        let code = Bytecode::new_raw(BEACON_ROOTS_CODE.clone());
+        let code_hash = code.hash_slow();
+        db.insert_account(
+            BEACON_ROOTS_ADDRESS,
+            AccountInfo { code: Some(code), code_hash, nonce: 1, ..Default::default() },
+        );
+        db
+    }
+
+    #[test]
+    fn apply_pre_execution_changes_stores_beacon_root_in_eip4788_contract() {
+        let db = make_db_with_beacon_roots_contract();
+
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let header = Header { timestamp: POST_ECOTONE_TIMESTAMP, number: 1, ..Default::default() };
+        let evm_env = evm_config.evm_env(&header).expect("failed to build evm env");
+        let evm = evm_config.evm_with_env(db, evm_env);
+        let pending_block = Block {
+            header: Header { timestamp: POST_ECOTONE_TIMESTAMP, number: 1, ..Default::default() },
+            body: BlockBody::<OpTxEnvelope>::default(),
+        };
+        let mut builder = PendingStateBuilder::new(
+            chain_spec,
+            evm,
+            pending_block,
+            None,
+            L1BlockInfo::default(),
+            Default::default(),
+        );
+
+        let parent_beacon_block_root = B256::from([0xab; 32]);
+        builder
+            .apply_pre_execution_changes(B256::ZERO, Some(parent_beacon_block_root))
+            .expect("apply_pre_execution_changes should succeed");
+
+        let (db, _) = builder.into_db_and_state_overrides();
+
+        // EIP-4788 stores parent_beacon_block_root at:
+        //   slot = timestamp % HISTORY_BUFFER_LENGTH + HISTORY_BUFFER_LENGTH
+        let timestamp_idx = POST_ECOTONE_TIMESTAMP % BEACON_ROOTS_HISTORY_BUFFER_LENGTH;
+        let root_slot = U256::from(timestamp_idx + BEACON_ROOTS_HISTORY_BUFFER_LENGTH);
+        let beacon_account = db
+            .cache
+            .accounts
+            .get(&BEACON_ROOTS_ADDRESS)
+            .expect("beacon roots contract should be in cache after commit");
+        let storage = &beacon_account
+            .account
+            .as_ref()
+            .expect("beacon roots account should be populated")
+            .storage;
+        let stored_root =
+            *storage.get(&root_slot).expect("beacon root slot should be written");
+
+        assert_eq!(
+            stored_root,
+            U256::from_be_bytes(parent_beacon_block_root.0),
+            "EIP-4788 should store parent_beacon_block_root at timestamp-indexed slot"
+        );
+    }
+
+    #[test]
+    fn apply_pre_execution_changes_pre_ecotone_with_no_beacon_root_is_noop_for_eip4788() {
+        let db = make_db_with_beacon_roots_contract();
+
+        // Use a timestamp before Ecotone activation so EIP-4788 is inactive.
+        // In this regime None is valid (no beacon root contract call is made).
+        let pre_ecotone_timestamp = BASE_MAINNET_ECOTONE_TIMESTAMP - 1;
+
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let header = Header { timestamp: pre_ecotone_timestamp, number: 1, ..Default::default() };
+        let evm_env = evm_config.evm_env(&header).expect("failed to build evm env");
+        let evm = evm_config.evm_with_env(db, evm_env);
+        let pending_block = Block {
+            header: Header { timestamp: pre_ecotone_timestamp, number: 1, ..Default::default() },
+            body: BlockBody::<OpTxEnvelope>::default(),
+        };
+        let mut builder = PendingStateBuilder::new(
+            chain_spec,
+            evm,
+            pending_block,
+            None,
+            L1BlockInfo::default(),
+            Default::default(),
+        );
+
+        builder
+            .apply_pre_execution_changes(B256::ZERO, None)
+            .expect("apply_pre_execution_changes should succeed pre-Ecotone with no beacon root");
+
+        let (db, _) = builder.into_db_and_state_overrides();
+
+        // EIP-4788 is inactive pre-Ecotone, so the contract should have no storage writes.
+        let beacon_account = db.cache.accounts.get(&BEACON_ROOTS_ADDRESS);
+        let has_storage_writes = beacon_account
+            .and_then(|a| a.account.as_ref())
+            .is_some_and(|a| !a.storage.is_empty());
+        assert!(
+            !has_storage_writes,
+            "EIP-4788 contract should not be called and have no storage writes pre-Ecotone"
+        );
+    }
+}
