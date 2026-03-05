@@ -46,6 +46,15 @@ pub enum ValidatorError {
     #[error("intermediate block interval must be non-zero")]
     InvalidInterval,
 
+    /// The block range is degenerate (`starting_block_number >= l2_block_number`).
+    #[error("invalid block range: starting block {starting_block_number} >= end block {l2_block_number}")]
+    InvalidBlockRange {
+        /// The starting block number.
+        starting_block_number: u64,
+        /// The end block (L2 block number).
+        l2_block_number: u64,
+    },
+
     /// The number of intermediate roots does not match the expected checkpoint count.
     #[error("checkpoint count mismatch: expected {expected}, got {actual}")]
     CheckpointCountMismatch {
@@ -203,8 +212,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// # Errors
     ///
     /// Returns [`ValidatorError::InvalidInterval`] if `intermediate_block_interval`
-    /// is zero or `starting_block_number >= l2_block_number` (degenerate block
-    /// range), [`ValidatorError::CheckpointCountMismatch`] if the provided
+    /// is zero, [`ValidatorError::InvalidBlockRange`] if
+    /// `starting_block_number >= l2_block_number` (degenerate block range),
+    /// [`ValidatorError::CheckpointCountMismatch`] if the provided
     /// `intermediate_roots` length does not match the expected checkpoint count,
     /// or [`ValidatorError::ArithmeticOverflow`] if checkpoint arithmetic overflows
     /// (possible with adversarial onchain values).
@@ -224,7 +234,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
         }
 
         if starting_block_number >= l2_block_number {
-            return Err(ValidatorError::InvalidInterval);
+            return Err(ValidatorError::InvalidBlockRange { starting_block_number, l2_block_number });
         }
 
         // Compute expected checkpoint count so we can verify intermediate_roots
@@ -593,7 +603,7 @@ mod tests {
     }
 
     /// Degenerate block range where `starting_block_number >= l2_block_number`
-    /// is rejected with `InvalidInterval`.
+    /// is rejected with `InvalidBlockRange`.
     #[tokio::test]
     async fn test_starting_block_gte_l2_block() {
         let (provider, _roots) = mock_with_blocks(&[]);
@@ -605,8 +615,8 @@ mod tests {
             .validate_intermediate_roots(game_address, 100, 100, 10, B256::ZERO, &[])
             .await;
         assert!(
-            matches!(result, Err(ValidatorError::InvalidInterval)),
-            "expected InvalidInterval when starting == l2, got: {result:?}"
+            matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
+            "expected InvalidBlockRange when starting == l2, got: {result:?}"
         );
 
         // starting > l2 (greater case)
@@ -614,8 +624,8 @@ mod tests {
             .validate_intermediate_roots(game_address, 200, 100, 10, B256::ZERO, &[])
             .await;
         assert!(
-            matches!(result, Err(ValidatorError::InvalidInterval)),
-            "expected InvalidInterval when starting > l2, got: {result:?}"
+            matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
+            "expected InvalidBlockRange when starting > l2, got: {result:?}"
         );
     }
 
