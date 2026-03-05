@@ -10,6 +10,14 @@ runs:
       shell: bash
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+    - name: Install Go 1.24
+      shell: bash
+      run: |
+        ARCH="$(dpkg --print-architecture)"
+        curl -LO "https://go.dev/dl/go1.24.0.linux-${ARCH}.tar.gz"
+        sudo tar -C /usr/local -xzf "go1.24.0.linux-${ARCH}.tar.gz"
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
       with:

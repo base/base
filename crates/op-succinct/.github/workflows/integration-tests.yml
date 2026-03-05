@@ -59,6 +59,13 @@ jobs:
     - name: Install protobuf compiler
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
+    - name: Install Go
+      run: |
+        GO_ARCH=$(dpkg --print-architecture)
+        curl -LO https://go.dev/dl/go1.24.0.linux-${GO_ARCH}.tar.gz
+        sudo tar -C /usr/local -xzf go1.24.0.linux-${GO_ARCH}.tar.gz
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+
     - name: Install Foundry
       uses: foundry-rs/foundry-toolchain@v1
       with:
@@ -124,6 +131,13 @@ jobs:
 
     - name: Install protobuf compiler
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    - name: Install Go
+      run: |
+        GO_ARCH=$(dpkg --print-architecture)
+        curl -LO https://go.dev/dl/go1.24.0.linux-${GO_ARCH}.tar.gz
+        sudo tar -C /usr/local -xzf go1.24.0.linux-${GO_ARCH}.tar.gz
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
 
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2

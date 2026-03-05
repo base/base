@@ -4,6 +4,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::ReceiptResponse, Provider};
 use anyhow::{anyhow, Context, Result};
+use chrono::Utc;
 use futures_util::{stream, StreamExt, TryStreamExt};
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_elfs::AGGREGATION_ELF;
@@ -15,7 +16,10 @@ use op_succinct_host_utils::{
     DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
 };
-use op_succinct_proof_utils::get_range_elf_embedded;
+use op_succinct_proof_utils::{
+    cluster_poll_proof, cluster_setup_keys, get_range_elf_embedded, is_cluster_mode,
+    reconstruct_proof_request, ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson,
+};
 use op_succinct_signer_utils::SignerLock;
 use sp1_sdk::{
     network::{
@@ -35,9 +39,12 @@ use crate::{
     ProgramConfig, RequestExecutionStatistics, RequesterConfig, ValidityGauge,
 };
 
+/// Number of consecutive poll failures before a cluster proof is marked as permanently failed.
+const MAX_CONSECUTIVE_POLL_FAILURES: u32 = 3;
+
 /// Configuration for the driver.
 pub struct DriverConfig {
-    pub network_prover: Arc<NetworkProver>,
+    pub network_prover: Option<Arc<NetworkProver>>,
     pub fetcher: Arc<OPSuccinctDataFetcher>,
     pub driver_db_client: Arc<DriverDBClient>,
     pub signer: SignerLock,
@@ -91,26 +98,38 @@ where
             .add_chain_lock(requester_config.l1_chain_id, requester_config.l2_chain_id)
             .await?;
 
-        // Set up the network prover.
-        let network_signer = get_network_signer(requester_config.use_kms_requester).await?;
-        let network_mode = determine_network_mode(
-            requester_config.range_proof_strategy,
-            requester_config.agg_proof_strategy,
-        )?;
-        let network_prover = Arc::new(
-            ProverClient::builder().network_for(network_mode).signer(network_signer).build().await,
-        );
+        let is_cluster = is_cluster_mode();
 
-        let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
-        let range_vk = range_pk.verifying_key().clone();
+        let cluster_config =
+            if is_cluster { Some(Arc::new(ClusterProofConfig::from_env().await?)) } else { None };
+        let cluster_handles: Arc<Mutex<HashMap<i64, ClusterProofHandle>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
-        let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
-        let agg_vk = agg_pk.verifying_key().clone();
-        let multi_block_vkey_u8 = u32_to_u8(range_vk.hash_u32());
-        let range_vkey_commitment = B256::from(multi_block_vkey_u8);
+        let (range_pk, range_vk, agg_pk, agg_vk, network_prover) = if is_cluster {
+            let (range_pk, range_vk, agg_pk, agg_vk) = cluster_setup_keys().await?;
+            (range_pk, range_vk, agg_pk, agg_vk, None)
+        } else {
+            let network_signer = get_network_signer(requester_config.use_kms_requester).await?;
+            let network_mode = determine_network_mode(
+                requester_config.range_proof_strategy,
+                requester_config.agg_proof_strategy,
+            )?;
+            let network_prover = Arc::new(
+                ProverClient::builder()
+                    .network_for(network_mode)
+                    .signer(network_signer)
+                    .build()
+                    .await,
+            );
+            let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+            let range_vk = range_pk.verifying_key().clone();
+            let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
+            let agg_vk = agg_pk.verifying_key().clone();
+            (range_pk, range_vk, agg_pk, agg_vk, Some(network_prover))
+        };
+
+        let range_vkey_commitment = B256::from(u32_to_u8(range_vk.vk.hash_u32()));
         let agg_vkey_hash = B256::from_str(&agg_vk.bytes32())?;
-
-        // Initialize fetcher
         let rollup_config_hash = hash_rollup_config(
             fetcher
                 .rollup_config
@@ -131,7 +150,6 @@ where
         };
         program_config.log();
 
-        // Initialize the proof requester.
         let proof_requester = Arc::new(OPSuccinctProofRequester::new(
             host,
             network_prover.clone(),
@@ -139,6 +157,9 @@ where
             db_client.clone(),
             program_config.clone(),
             requester_config.mock,
+            is_cluster,
+            cluster_config,
+            cluster_handles,
             requester_config.range_proof_strategy,
             requester_config.agg_proof_strategy,
             requester_config.agg_proof_mode,
@@ -152,7 +173,7 @@ where
             requester_config.whitelist.clone(),
             requester_config.min_auction_period,
             requester_config.auction_timeout,
-        ));
+        )?);
 
         let l2oo_contract =
             OPSuccinctL2OOContract::new(requester_config.l2oo_address, provider.clone());
@@ -316,9 +337,16 @@ where
     }
 
     /// Handle all proof requests in the Prove state.
+    ///
+    /// No-op in mock mode (proofs are generated synchronously).
+    /// In cluster mode, polls each request via `process_cluster_proof_status`.
+    /// In network mode, polls each request via `process_proof_request_status`.
     #[tracing::instrument(name = "proposer.handle_proving_requests", skip(self))]
     pub async fn handle_proving_requests(&self) -> Result<()> {
-        // Get all requests from the database.
+        if self.proof_requester.is_synchronous_proving() {
+            return Ok(());
+        }
+
         let prove_requests = self
             .driver_config
             .driver_db_client
@@ -330,9 +358,16 @@ where
             )
             .await?;
 
-        // Get the proof status of all of the requests.
         for request in prove_requests {
-            self.process_proof_request_status(request).await?;
+            if self.proof_requester.cluster {
+                // Cluster mode: catch errors per-request so a single failed poll doesn't
+                // abort processing of remaining Prove requests.
+                if let Err(e) = self.process_cluster_proof_status(request).await {
+                    warn!(error = ?e, "Error processing cluster proof status");
+                }
+            } else {
+                self.process_proof_request_status(request).await?;
+            }
         }
 
         Ok(())
@@ -341,11 +376,17 @@ where
     /// Process a single OP Succinct request's proof status.
     #[tracing::instrument(name = "proposer.process_proof_request_status", skip(self, request))]
     pub async fn process_proof_request_status(&self, request: OPSuccinctRequest) -> Result<()> {
+        let network_prover = self
+            .driver_config
+            .network_prover
+            .as_ref()
+            .context("network_prover required for proof status polling")?;
+
         if let Some(proof_request_id) = request.proof_request_id.as_ref() {
             let proof_request_id = B256::from_slice(proof_request_id);
             let (status, proof) = self
                 .network_call_with_timeout(
-                    self.driver_config.network_prover.get_proof_status(proof_request_id),
+                    network_prover.get_proof_status(proof_request_id),
                     "waiting for proof status",
                     &request,
                 )
@@ -353,7 +394,7 @@ where
 
             let request_details = self
                 .network_call_with_timeout(
-                    self.driver_config.network_prover.get_proof_request(proof_request_id),
+                    network_prover.get_proof_request(proof_request_id),
                     "waiting for proof request details",
                     &request,
                 )
@@ -367,13 +408,13 @@ where
             if let Some(request_details) = request_details {
                 let auction_deadline =
                     request_details.created_at + self.requester_config.auction_timeout;
-                if self.driver_config.network_prover.network_mode() == NetworkMode::Mainnet &&
+                if network_prover.network_mode() == NetworkMode::Mainnet &&
                     request_details.fulfillment_status == FulfillmentStatus::Requested as i32 &&
                     current_time > auction_deadline
                 {
                     // Cancel the request in the network.
                     self.network_call_with_timeout(
-                        self.driver_config.network_prover.cancel_request(proof_request_id),
+                        network_prover.cancel_request(proof_request_id),
                         "cancelling proof request",
                         &request,
                     )
@@ -390,28 +431,15 @@ where
 
                     ValidityGauge::ProofRequestTimeoutErrorCount.increment(1.0);
 
-                    match request.req_type {
-                        RequestType::Range => {
-                            warn!(
-                                proof_id = request.id,
-                                start_block = request.start_block,
-                                end_block = request.end_block,
-                                auction_deadline = auction_deadline,
-                                current_time = current_time,
-                                "Range proof request auction deadline exceeded"
-                            );
-                        }
-                        RequestType::Aggregation => {
-                            warn!(
-                                proof_id = request.id,
-                                start_block = request.start_block,
-                                end_block = request.end_block,
-                                auction_deadline = auction_deadline,
-                                current_time = current_time,
-                                "Aggregation proof request auction deadline exceeded"
-                            );
-                        }
-                    }
+                    warn!(
+                        proof_id = request.id,
+                        start_block = request.start_block,
+                        end_block = request.end_block,
+                        req_type = ?request.req_type,
+                        auction_deadline,
+                        current_time,
+                        "Proof request auction deadline exceeded"
+                    );
 
                     return Ok(());
                 }
@@ -432,28 +460,15 @@ where
 
                 ValidityGauge::ProofRequestTimeoutErrorCount.increment(1.0);
 
-                match request.req_type {
-                    RequestType::Range => {
-                        warn!(
-                            proof_id = request.id,
-                            start_block = request.start_block,
-                            end_block = request.end_block,
-                            deadline = status.deadline(),
-                            current_time = current_time,
-                            "Range proof request timed out"
-                        );
-                    }
-                    RequestType::Aggregation => {
-                        warn!(
-                            proof_id = request.id,
-                            start_block = request.start_block,
-                            end_block = request.end_block,
-                            deadline = status.deadline(),
-                            current_time = current_time,
-                            "Aggregation proof request timed out"
-                        );
-                    }
-                }
+                warn!(
+                    proof_id = request.id,
+                    start_block = request.start_block,
+                    end_block = request.end_block,
+                    req_type = ?request.req_type,
+                    deadline = status.deadline(),
+                    current_time,
+                    "Proof request timed out"
+                );
 
                 return Ok(());
             }
@@ -461,7 +476,12 @@ where
             // If the proof request has been fulfilled, update the request to status Complete and
             // add the proof bytes to the database.
             if status.fulfillment_status() == FulfillmentStatus::Fulfilled as i32 {
-                let proof: SP1ProofWithPublicValues = proof.unwrap();
+                let proof: SP1ProofWithPublicValues = proof.ok_or_else(|| {
+                    anyhow!(
+                        "Network reported Fulfilled but returned no proof for request {}",
+                        request.id
+                    )
+                })?;
 
                 let proof_bytes = match proof.proof {
                     // If it's a compressed proof, serialize with bincode.
@@ -481,7 +501,7 @@ where
 
                 if let Some(proof_request) = self
                     .network_call_with_timeout(
-                        self.driver_config.network_prover.get_proof_request(proof_request_id),
+                        network_prover.get_proof_request(proof_request_id),
                         "fetching execution statistics",
                         &request,
                     )
@@ -566,6 +586,230 @@ where
         } else {
             // There should never be a proof request in Prove status without a proof request id.
             tracing::warn!(id = request.id, start_block = request.start_block, end_block = request.end_block, req_type = ?request.req_type, "Request has no proof request id");
+        }
+
+        Ok(())
+    }
+
+    /// Fail a cluster proof request: increment the appropriate error gauge, mark
+    /// the request as failed (with potential split-retry), and remove the in-memory handle.
+    async fn fail_cluster_request(&self, request: &OPSuccinctRequest) -> Result<()> {
+        // Remove the in-memory handle first so it doesn't leak if the DB update below fails.
+        self.proof_requester.cluster_handles.lock().await.remove(&request.id);
+
+        match request.req_type {
+            RequestType::Range => ValidityGauge::RangeProofRequestErrorCount.increment(1.0),
+            RequestType::Aggregation => ValidityGauge::AggProofRequestErrorCount.increment(1.0),
+        }
+
+        match self
+            .proof_requester
+            .handle_failed_request(
+                request.clone(),
+                ExecutionStatus::UnspecifiedExecutionStatus as i32,
+            )
+            .await
+        {
+            Ok(_) => ValidityGauge::ProofRequestRetryCount.increment(1.0),
+            Err(e) => {
+                ValidityGauge::RetryErrorCount.increment(1.0);
+                return Err(e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a single cluster proof request's status by polling the cluster.
+    ///
+    /// Handles:
+    /// - Handle lookup from in-memory map, or reconstruction from DB on restart
+    /// - Wall-clock timeout via `proof_request_time`
+    /// - Proof completion (serialize and store)
+    /// - Transient vs permanent poll errors (3 consecutive failures = permanent)
+    #[tracing::instrument(name = "proposer.process_cluster_proof_status", skip(self, request))]
+    async fn process_cluster_proof_status(&self, request: OPSuccinctRequest) -> Result<()> {
+        let cluster_config = self
+            .proof_requester
+            .cluster_config
+            .as_ref()
+            .context("cluster_config required for cluster proof polling")?;
+
+        // 1. Wall-clock timeout check — runs before handle lookup/reconstruction so we skip
+        //    unnecessary deserialization and lock acquisition for already-timed-out proofs.
+        if let Some(proof_request_time) = request.proof_request_time {
+            let elapsed = Utc::now().naive_utc() - proof_request_time;
+            if elapsed.num_seconds().max(0) > self.proof_requester.proving_timeout as i64 {
+                warn!(
+                    request_id = request.id,
+                    start_block = request.start_block,
+                    end_block = request.end_block,
+                    req_type = ?request.req_type,
+                    elapsed_secs = elapsed.num_seconds(),
+                    proving_timeout = self.proof_requester.proving_timeout,
+                    "Cluster proof exceeded wall-clock timeout"
+                );
+
+                self.fail_cluster_request(&request).await?;
+                ValidityGauge::ProofRequestTimeoutErrorCount.increment(1.0);
+
+                return Ok(());
+            }
+        }
+
+        // 2. Look up or reconstruct the proof handle. Lock is acquired narrowly: once for the
+        //    lookup, and (on miss) once more for insert.
+        let proof_request = {
+            let cached = self
+                .proof_requester
+                .cluster_handles
+                .lock()
+                .await
+                .get(&request.id)
+                .map(|h| h.proof_request.clone());
+
+            if let Some(pr) = cached {
+                pr
+            } else {
+                // Reconstruct from DB (restart recovery).
+                let handle_json_value = request.cluster_proof_handle.as_ref().ok_or_else(|| {
+                    anyhow!(
+                        "Cluster proof request {} in Prove status has no cluster_proof_handle",
+                        request.id
+                    )
+                })?;
+                let handle_json: ClusterProofHandleJson =
+                    serde_json::from_value(handle_json_value.clone())?;
+
+                let proof_request_time = request.proof_request_time.ok_or_else(|| {
+                    anyhow!(
+                        "Cluster proof request {} in Prove status has no proof_request_time",
+                        request.id
+                    )
+                })?;
+
+                let elapsed = Utc::now().naive_utc() - proof_request_time;
+                let total_timeout = Duration::from_secs(self.proof_requester.proving_timeout);
+                let remaining = total_timeout
+                    .checked_sub(Duration::from_secs(elapsed.num_seconds().max(0) as u64))
+                    .unwrap_or(Duration::ZERO);
+
+                let proof_request = reconstruct_proof_request(&handle_json, remaining);
+
+                self.proof_requester.cluster_handles.lock().await.insert(
+                    request.id,
+                    ClusterProofHandle {
+                        proof_request: proof_request.clone(),
+                        consecutive_poll_failures: 0,
+                    },
+                );
+
+                info!(
+                    request_id = request.id,
+                    start_block = request.start_block,
+                    end_block = request.end_block,
+                    remaining_timeout_secs = remaining.as_secs(),
+                    "Reconstructed cluster proof handle from DB"
+                );
+
+                proof_request
+            }
+        };
+
+        // 3. Poll the cluster for proof status.
+        match cluster_poll_proof(cluster_config, proof_request).await {
+            Ok(Some(results)) => {
+                // Proof complete — convert and store.
+                let proof = SP1ProofWithPublicValues::from(results.proof);
+
+                let proof_bytes = match proof.proof {
+                    SP1Proof::Compressed(_) => bincode::serialize(&proof)?,
+                    SP1Proof::Groth16(_) | SP1Proof::Plonk(_) => proof.bytes(),
+                    SP1Proof::Core(_) => return Err(anyhow!("Core proofs are not supported.")),
+                };
+
+                self.driver_config
+                    .driver_db_client
+                    .update_proof_to_complete(request.id, &proof_bytes)
+                    .await?;
+                self.driver_config.driver_db_client.update_prove_duration(request.id).await?;
+
+                let prove_duration_s = request
+                    .proof_request_time
+                    .map(|t| (Utc::now().naive_utc() - t).num_seconds())
+                    .unwrap_or(0);
+
+                match request.req_type {
+                    RequestType::Range => {
+                        info!(
+                            request_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            prove_duration_s,
+                            total_tx_fees = %request.total_tx_fees,
+                            total_transactions = request.total_nb_transactions,
+                            witnessgen_duration_s = request.witnessgen_duration,
+                            total_eth_gas_used = request.total_eth_gas_used,
+                            total_l1_fees = %request.total_l1_fees,
+                            "Range proof completed via cluster"
+                        );
+                    }
+                    RequestType::Aggregation => {
+                        info!(
+                            request_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            prove_duration_s,
+                            witnessgen_duration_s = request.witnessgen_duration,
+                            "Aggregation proof completed via cluster"
+                        );
+                    }
+                }
+
+                self.proof_requester.cluster_handles.lock().await.remove(&request.id);
+            }
+            Ok(None) => {
+                // Still pending — reset failure counter.
+                let mut handles = self.proof_requester.cluster_handles.lock().await;
+                if let Some(handle) = handles.get_mut(&request.id) {
+                    handle.consecutive_poll_failures = 0;
+                }
+            }
+            Err(e) => {
+                // Poll error — distinguish transient vs permanent.
+                // Acquire the lock once and both increment + optionally remove in the same scope.
+                let should_fail = {
+                    let mut handles = self.proof_requester.cluster_handles.lock().await;
+                    if let Some(handle) = handles.get_mut(&request.id) {
+                        handle.consecutive_poll_failures += 1;
+                        handle.consecutive_poll_failures >= MAX_CONSECUTIVE_POLL_FAILURES
+                    } else {
+                        true
+                    }
+                };
+
+                if should_fail {
+                    warn!(
+                        request_id = request.id,
+                        start_block = request.start_block,
+                        end_block = request.end_block,
+                        req_type = ?request.req_type,
+                        error = %e,
+                        "Cluster proof poll failed permanently"
+                    );
+
+                    self.fail_cluster_request(&request).await?;
+                } else {
+                    warn!(
+                        request_id = request.id,
+                        start_block = request.start_block,
+                        end_block = request.end_block,
+                        req_type = ?request.req_type,
+                        error = %e,
+                        "Cluster proof poll failed transiently, will retry next iteration"
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -1570,13 +1814,7 @@ where
         Ok(Some(current_end))
     }
 
-    /// Helper method to wrap network prover calls with timeout and proper error handling.
-    ///
-    /// This method:
-    /// - Wraps the network call in a timeout to prevent indefinite hangs
-    /// - Preserves the original network error context when operations fail
-    /// - Logs timeout events with request context for debugging
-    /// - Increments timeout metrics for monitoring
+    /// Wrap a network prover call with timeout, logging, and metrics.
     async fn network_call_with_timeout<F, T>(
         &self,
         future: F,

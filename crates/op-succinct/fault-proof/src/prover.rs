@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use anyhow::{bail, Context, Result};
 use op_succinct_host_utils::metrics::MetricsGauge;
+use op_succinct_proof_utils::{cluster_agg_proof, cluster_range_proof, get_range_elf_embedded};
 use sp1_sdk::{
     network::{proto::types::FulfillmentStatus, NetworkMode},
     Elf, NetworkProver, ProveRequest, Prover, SP1ProofMode, SP1ProofWithPublicValues,
@@ -11,7 +12,6 @@ use sp1_sdk::{
 use tokio::time::sleep;
 
 use crate::{config::ProofProviderConfig, prometheus::ProposerGauge};
-use op_succinct_proof_utils::get_range_elf_embedded;
 
 /// Polling interval (in seconds) for checking proof status.
 /// Matches the SP1 SDK's internal polling interval:
@@ -50,6 +50,8 @@ pub enum ProofProvider {
     Network(NetworkProofProvider),
     /// Local mock execution (creates mock proofs, no real proving).
     Mock(MockProofProvider),
+    /// Self-hosted cluster proving via sp1-cluster API.
+    Cluster(ClusterProofProvider),
 }
 
 impl ProofProvider {
@@ -66,6 +68,7 @@ impl ProofProvider {
         match self {
             ProofProvider::Network(p) => p.generate_range_proof(stdin).await,
             ProofProvider::Mock(p) => p.generate_range_proof(stdin).await,
+            ProofProvider::Cluster(p) => p.generate_range_proof(stdin).await,
         }
     }
 
@@ -73,10 +76,12 @@ impl ProofProvider {
     ///
     /// In mock mode: executes locally and creates mock proof.
     /// In network mode: submits to network, waits for completion.
+    /// In cluster mode: submits to self-hosted cluster, waits for completion.
     pub async fn generate_agg_proof(&self, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues> {
         match self {
             ProofProvider::Network(p) => p.generate_agg_proof(stdin).await,
             ProofProvider::Mock(p) => p.generate_agg_proof(stdin).await,
+            ProofProvider::Cluster(p) => p.generate_agg_proof(stdin).await,
         }
     }
 
@@ -85,6 +90,7 @@ impl ProofProvider {
         match self {
             ProofProvider::Network(p) => &p.keys,
             ProofProvider::Mock(p) => &p.keys,
+            ProofProvider::Cluster(p) => &p.keys,
         }
     }
 
@@ -93,6 +99,7 @@ impl ProofProvider {
         match self {
             ProofProvider::Network(p) => &p.config,
             ProofProvider::Mock(p) => &p.config,
+            ProofProvider::Cluster(p) => &p.config,
         }
     }
 }
@@ -436,6 +443,33 @@ impl MockProofProvider {
         ))
     }
 }
+
+/// Cluster-based proof provider using a self-hosted sp1-cluster.
+#[derive(Clone)]
+pub struct ClusterProofProvider {
+    keys: ProofKeys,
+    config: ProofProviderConfig,
+}
+
+impl ClusterProofProvider {
+    pub fn new(keys: ProofKeys, config: ProofProviderConfig) -> Self {
+        Self { keys, config }
+    }
+
+    pub async fn generate_range_proof(
+        &self,
+        stdin: SP1Stdin,
+    ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
+        let proof = cluster_range_proof(self.config.timeout, stdin).await?;
+        // Cluster API does not report execution cycle or gas metrics.
+        Ok((proof, 0, 0))
+    }
+
+    pub async fn generate_agg_proof(&self, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues> {
+        cluster_agg_proof(self.config.timeout, self.config.agg_proof_mode, stdin).await
+    }
+}
+
 /// Result of checking if proving has timed out.
 #[derive(Debug, PartialEq)]
 pub enum ProvingTimeout {

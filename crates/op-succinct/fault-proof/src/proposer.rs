@@ -26,7 +26,7 @@ use op_succinct_host_utils::{
     network::{determine_network_mode, get_network_signer},
     witness_generation::WitnessGenerator,
 };
-use op_succinct_proof_utils::get_range_elf_embedded;
+use op_succinct_proof_utils::{cluster_setup_keys, get_range_elf_embedded, is_cluster_mode};
 use op_succinct_signer_utils::SignerLock;
 use sp1_sdk::{
     Elf, HashableKey, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
@@ -46,7 +46,9 @@ use crate::{
     },
     is_parent_resolved,
     prometheus::ProposerGauge,
-    prover::{MockProofProvider, NetworkProofProvider, ProofKeys, ProofProvider},
+    prover::{
+        ClusterProofProvider, MockProofProvider, NetworkProofProvider, ProofKeys, ProofProvider,
+    },
     FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, TxErrorExt, TX_REVERTED_PREFIX,
 };
 
@@ -285,31 +287,38 @@ where
         fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
     ) -> Result<Self> {
-        // Set up the network prover.
-        let network_signer = get_network_signer(config.use_kms_requester).await?;
-        let network_mode = determine_network_mode(
-            config.proof_provider.range_proof_strategy,
-            config.proof_provider.agg_proof_strategy,
-        )?;
-        let network_prover = Arc::new(
-            ProverClient::builder().network_for(network_mode).signer(network_signer).build().await,
-        );
-        let range_pk = network_prover.setup(Elf::Static(get_range_elf_embedded())).await?;
-        let range_vk = range_pk.verifying_key().clone();
-        let agg_pk = network_prover.setup(Elf::Static(AGGREGATION_ELF)).await?;
-        let agg_vk = agg_pk.verifying_key().clone();
+        let is_cluster = is_cluster_mode();
 
-        // Compute vkey hashes for on-chain compatibility checks.
-        // These are compared against game contract immutable values to ensure proof compatibility.
+        anyhow::ensure!(
+            !(is_cluster && config.mock_mode),
+            "mock and cluster modes are mutually exclusive — set only one of SP1_PROVER=cluster or mock_mode=true"
+        );
+
+        let (range_pk, range_vk, agg_pk, agg_vk, network_prover, network_mode) = if is_cluster {
+            let (range_pk, range_vk, agg_pk, agg_vk) = cluster_setup_keys().await?;
+            (range_pk, range_vk, agg_pk, agg_vk, None, None)
+        } else {
+            let network_signer = get_network_signer(config.use_kms_requester).await?;
+            let nm = determine_network_mode(
+                config.proof_provider.range_proof_strategy,
+                config.proof_provider.agg_proof_strategy,
+            )?;
+            let np = Arc::new(
+                ProverClient::builder().network_for(nm).signer(network_signer).build().await,
+            );
+            let range_pk = np.setup(Elf::Static(get_range_elf_embedded())).await?;
+            let range_vk = range_pk.verifying_key().clone();
+            let agg_pk = np.setup(Elf::Static(AGGREGATION_ELF)).await?;
+            let agg_vk = agg_pk.verifying_key().clone();
+            (range_pk, range_vk, agg_pk, agg_vk, Some(np), Some(nm))
+        };
+
         let aggregation_vkey = B256::from(agg_vk.bytes32_raw());
         let range_vkey_commitment = B256::from(range_vk.hash_bytes());
-
-        // Compute rollup config hash from the fetcher's chain config.
         let rollup_config_hash = hash_rollup_config(
             fetcher.rollup_config.as_ref().context("rollup_config required for identity")?,
         );
 
-        // Create proposer identity for monitoring and version tracking.
         let identity =
             ProposerIdentity::new(aggregation_vkey, range_vkey_commitment, rollup_config_hash);
         identity.log_startup_info();
@@ -321,19 +330,27 @@ where
             agg_vk: Arc::new(agg_vk),
         };
 
-        let prover = if config.mock_mode {
+        let prover = if is_cluster {
+            ProofProvider::Cluster(ClusterProofProvider::new(
+                keys.clone(),
+                config.proof_provider.clone(),
+            ))
+        } else if config.mock_mode {
             ProofProvider::Mock(MockProofProvider::new(
-                network_prover,
-                keys,
+                network_prover
+                    .ok_or_else(|| anyhow::anyhow!("network_prover must be set in mock mode"))?,
+                keys.clone(),
                 config.proof_provider.clone(),
                 AGGREGATION_ELF,
             ))
         } else {
             ProofProvider::Network(NetworkProofProvider::new(
-                network_prover,
-                keys,
+                network_prover
+                    .ok_or_else(|| anyhow::anyhow!("network_prover must be set in network mode"))?,
+                keys.clone(),
                 config.proof_provider.clone(),
-                network_mode,
+                network_mode
+                    .ok_or_else(|| anyhow::anyhow!("network_mode must be set in network mode"))?,
             ))
         };
 
