@@ -66,6 +66,8 @@ axum = { workspace = true, features = ["http1", "tokio"] }
 
 [dev-dependencies]
 rstest.workspace = true
+alloy-rlp.workspace = true
+alloy-trie.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 reqwest = { workspace = true, features = ["json"] }

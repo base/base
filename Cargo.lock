@@ -2642,9 +2642,11 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-trie",
  "async-trait",
  "axum",
  "base-cli-utils",

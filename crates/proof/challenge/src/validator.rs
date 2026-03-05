@@ -72,6 +72,15 @@ pub enum ValidatorError {
         block_number: u64,
     },
 
+    /// Account proof verification against the header state root failed.
+    #[error("account proof verification failed at block {block_number}: {reason}")]
+    AccountProofFailed {
+        /// The block number where the proof verification failed.
+        block_number: u64,
+        /// The reason the proof verification failed.
+        reason: String,
+    },
+
     /// An RPC error occurred while fetching data from the L2 node.
     #[error("L2 RPC error: {0}")]
     Rpc(#[from] RpcError),
@@ -179,6 +188,10 @@ impl<L2: L2Provider> OutputValidator<L2> {
 
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
+
+        account_result.verify(consensus_header.state_root).map_err(|e| {
+            ValidatorError::AccountProofFailed { block_number, reason: e.to_string() }
+        })?;
 
         let storage_root = account_result.storage_hash;
 
@@ -392,42 +405,99 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::Header as ConsensusHeader;
-    use alloy_primitives::{Address, B256, Bytes, U256, address};
+    use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+    use alloy_rlp::Encodable;
     use alloy_rpc_types_eth::Header as RpcHeader;
+    use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
     use base_enclave::{AccountResult, output_root_v0};
+    use base_protocol::Predeploys;
     use rstest::rstest;
 
     use super::*;
     use crate::test_utils::MockL2Provider;
 
-    /// Creates a test consensus header for a given block number.
-    fn test_header(block_number: u64) -> ConsensusHeader {
-        ConsensusHeader {
-            number: block_number,
-            state_root: B256::repeat_byte(block_number as u8),
-            ..Default::default()
-        }
-    }
+    /// Builds a consensus header and account result pair with a valid Merkle
+    /// proof. The returned header's `state_root` is the trie root that the
+    /// account proof verifies against.
+    fn test_header_and_account(
+        block_number: u64,
+        storage_hash: B256,
+    ) -> (ConsensusHeader, AccountResult) {
+        // RLP-encode the account (nonce=0, balance=0, storage_hash, code_hash=ZERO)
+        let account = TrieAccount {
+            nonce: 0,
+            balance: U256::ZERO,
+            storage_root: storage_hash,
+            code_hash: B256::ZERO,
+        };
+        let mut encoded = Vec::with_capacity(account.length());
+        account.encode(&mut encoded);
 
-    /// Creates a test account result with a given storage hash.
-    fn test_account_result(storage_hash: B256) -> AccountResult {
-        AccountResult {
-            address: address!("4200000000000000000000000000000000000016"),
-            account_proof: vec![Bytes::from(vec![0xab])],
+        // Build a single-entry state trie with the L2ToL1MessagePasser account
+        let account_key = Nibbles::unpack(keccak256(Predeploys::L2_TO_L1_MESSAGE_PASSER));
+        let mut hb = HashBuilder::default()
+            .with_proof_retainer(ProofRetainer::new(vec![account_key]));
+        hb.add_leaf(account_key, &encoded);
+
+        let state_root = hb.root();
+        let proof_nodes = hb.take_proof_nodes();
+        let account_proof: Vec<Bytes> =
+            proof_nodes.into_nodes_sorted().into_iter().map(|(_, v)| v).collect();
+
+        let header = ConsensusHeader { number: block_number, state_root, ..Default::default() };
+
+        let account_result = AccountResult {
+            address: Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            account_proof,
             balance: U256::ZERO,
             code_hash: B256::ZERO,
             nonce: U256::ZERO,
             storage_hash,
             storage_proof: vec![],
+        };
+
+        (header, account_result)
+    }
+
+    /// Account structure for RLP encoding in tests.
+    #[derive(Debug)]
+    struct TrieAccount {
+        nonce: u64,
+        balance: U256,
+        storage_root: B256,
+        code_hash: B256,
+    }
+
+    impl Encodable for TrieAccount {
+        fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+            let header = alloy_rlp::Header {
+                list: true,
+                payload_length: self.nonce.length()
+                    + self.balance.length()
+                    + self.storage_root.length()
+                    + self.code_hash.length(),
+            };
+            header.encode(out);
+            self.nonce.encode(out);
+            self.balance.encode(out);
+            self.storage_root.encode(out);
+            self.code_hash.encode(out);
+        }
+
+        fn length(&self) -> usize {
+            let payload_length = self.nonce.length()
+                + self.balance.length()
+                + self.storage_root.length()
+                + self.code_hash.length();
+            alloy_rlp::length_of_length(payload_length) + payload_length
         }
     }
 
     /// Creates a mock L2 provider with a single block and returns the expected
     /// output root for that block.
     fn mock_with_block(block_number: u64) -> (MockL2Provider, B256) {
-        let header = test_header(block_number);
         let storage_hash = B256::repeat_byte(0xBB);
-        let account = test_account_result(storage_hash);
+        let (header, account) = test_header_and_account(block_number, storage_hash);
         let expected_root = output_root_v0(&header, storage_hash);
 
         let mut provider = MockL2Provider::new();
@@ -443,9 +513,8 @@ mod tests {
         let mut roots = Vec::new();
 
         for &block_number in block_numbers {
-            let header = test_header(block_number);
             let storage_hash = B256::repeat_byte(0xBB);
-            let account = test_account_result(storage_hash);
+            let (header, account) = test_header_and_account(block_number, storage_hash);
             let expected_root = output_root_v0(&header, storage_hash);
 
             provider.insert_block(block_number, header, account);
@@ -741,12 +810,11 @@ mod tests {
         // Checkpoint blocks: 95, 100
         // Block 95: fully configured (header + proof) -> succeeds
         // Block 100: header only, no proof -> RPC error
-        let header_95 = test_header(95);
         let storage_hash = B256::repeat_byte(0xBB);
-        let account_95 = test_account_result(storage_hash);
+        let (header_95, account_95) = test_header_and_account(95, storage_hash);
         let root_95 = base_enclave::output_root_v0(&header_95, storage_hash);
 
-        let header_100 = test_header(100);
+        let (header_100, _) = test_header_and_account(100, storage_hash);
         let hash_100 = header_100.hash_slow();
 
         let mut provider = MockL2Provider::new();
@@ -780,9 +848,8 @@ mod tests {
     /// consensus header, and the validator rejects it.
     #[tokio::test]
     async fn test_header_hash_mismatch() {
-        let consensus_header = test_header(100);
         let storage_hash = B256::repeat_byte(0xBB);
-        let account = test_account_result(storage_hash);
+        let (consensus_header, account) = test_header_and_account(100, storage_hash);
         let correct_hash = consensus_header.hash_slow();
 
         let mut provider = MockL2Provider::new();
@@ -811,5 +878,41 @@ mod tests {
             }
             other => panic!("expected HeaderHashMismatch, got: {other:?}"),
         }
+    }
+
+    /// Account proof verification failure: the header has one state root but the
+    /// account proof is valid for a different state root.
+    #[tokio::test]
+    async fn test_account_proof_verification_failure() {
+        let storage_hash = B256::repeat_byte(0xBB);
+        let (_, account) = test_header_and_account(100, storage_hash);
+
+        // Create a header with a different state root that won't match the proof
+        let header_wrong_root = ConsensusHeader {
+            number: 100,
+            state_root: B256::repeat_byte(0xFF),
+            ..Default::default()
+        };
+
+        let mut provider = MockL2Provider::new();
+        // Insert the wrong-root header but the account proof built for a
+        // different state root.
+        let block_hash = header_wrong_root.hash_slow();
+        let rpc_header =
+            RpcHeader { hash: block_hash, inner: header_wrong_root, ..Default::default() };
+        provider.headers.insert(100, rpc_header);
+        provider.proofs.insert(block_hash, account);
+
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x0F);
+
+        let result = validator.validate_final_root(game_address, 100, B256::ZERO).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ValidatorError::AccountProofFailed { block_number: 100, .. }),
+            "expected AccountProofFailed, got: {err:?}"
+        );
     }
 }
