@@ -3,7 +3,7 @@ use ambassador::delegatable_trait;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub(crate) struct L1BlockInfoBedrockBase {
+pub(super) struct L1BlockInfoBedrockBase {
     /// The current L1 origin block number
     pub number: u64,
     /// The current L1 origin block's timestamp
@@ -69,7 +69,7 @@ impl L1BlockInfoBedrockBaseFields for L1BlockInfoBedrockBase {
 impl L1BlockInfoBedrockBase {
     /// Construct from all values.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn new(
+    pub(super) const fn new(
         number: u64,
         time: u64,
         base_fee: u64,
@@ -80,23 +80,23 @@ impl L1BlockInfoBedrockBase {
         Self { number, time, base_fee, block_hash, sequence_number, batcher_address }
     }
     /// Construct from default values and `base_fee`.
-    pub(crate) fn new_from_base_fee(base_fee: u64) -> Self {
+    pub(super) fn new_from_base_fee(base_fee: u64) -> Self {
         Self { base_fee, ..Default::default() }
     }
     /// Construct from default values and `block_hash`.
-    pub(crate) fn new_from_block_hash(block_hash: B256) -> Self {
+    pub(super) fn new_from_block_hash(block_hash: B256) -> Self {
         Self { block_hash, ..Default::default() }
     }
     /// Construct from default values and `sequence_number`.
-    pub(crate) fn new_from_sequence_number(sequence_number: u64) -> Self {
+    pub(super) fn new_from_sequence_number(sequence_number: u64) -> Self {
         Self { sequence_number, ..Default::default() }
     }
     /// Construct from default values and `batcher_address`.
-    pub(crate) fn new_from_batcher_address(batcher_address: Address) -> Self {
+    pub(super) fn new_from_batcher_address(batcher_address: Address) -> Self {
         Self { batcher_address, ..Default::default() }
     }
     /// Construct from default values, `number` and `block_hash`.
-    pub(crate) fn new_from_number_and_block_hash(number: u64, block_hash: B256) -> Self {
+    pub(super) fn new_from_number_and_block_hash(number: u64, block_hash: B256) -> Self {
         Self { number, block_hash, ..Default::default() }
     }
 }
