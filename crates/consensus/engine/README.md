@@ -42,6 +42,35 @@ Version selection follows Optimism hardfork activation times (Bedrock, Canyon, D
 
 - `metrics` - Enable Prometheus metrics collection (optional)
 
+## Architecture
+
+The engine operates as a task-driven system where operations are queued and executed atomically:
+
+```text
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   Engine    │◄───┤  Task Queue  │◄───┤  Engine     │
+│   Client    │    │   (Priority) │    │  Tasks      │
+└─────────────┘    └──────────────┘    └─────────────┘
+       │                   │                   │
+       ▼                   ▼                   ▼
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│ Engine API  │    │ Engine State │    │  Rollup     │
+│ (HTTP/JWT)  │    │   Updates    │    │  Config     │
+└─────────────┘    └──────────────┘    └─────────────┘
+```
+
+## Module Organization
+
+- **Task Queue** - Core engine task queue and execution logic via [`Engine`](crate::Engine)
+- **Client** - HTTP client for Engine API communication via [`EngineClient`](crate::EngineClient)
+- **State** - Engine state management and synchronization via [`EngineState`](crate::EngineState)
+- **Versions** - Engine API version selection via [`EngineForkchoiceVersion`](crate::EngineForkchoiceVersion),
+  [`EngineNewPayloadVersion`](crate::EngineNewPayloadVersion), [`EngineGetPayloadVersion`](crate::EngineGetPayloadVersion)
+- **Attributes** - Payload attribute validation via [`AttributesMatch`](crate::AttributesMatch)
+- **Kinds** - Engine client type identification via [`EngineKind`](crate::EngineKind)
+- **Query** - Engine query interface via [`EngineQueries`](crate::EngineQueries)
+- **Metrics** - Optional Prometheus metrics collection via [`Metrics`](crate::Metrics)
+
 <!-- Hyper Links -->
 
 [op-stack]: https://specs.optimism.io
