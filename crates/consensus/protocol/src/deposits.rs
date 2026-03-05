@@ -208,7 +208,7 @@ pub fn decode_deposit(block_hash: B256, index: usize, log: &Log) -> Result<Bytes
 }
 
 /// Unmarshals a deposit transaction from the opaque data.
-pub(crate) fn unmarshal_deposit_version0(
+fn unmarshal_deposit_version0(
     tx: &mut TxDeposit,
     to: Address,
     data: &[u8],
