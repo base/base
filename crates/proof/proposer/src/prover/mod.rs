@@ -527,10 +527,23 @@ mod tests {
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
     use async_trait::async_trait;
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use rstest::rstest;
     use types::test_helpers::test_proposal;
 
     use super::*;
     use crate::{enclave::EnclaveClientTrait, test_utils::test_prover};
+
+    fn zero_proposal() -> Proposal {
+        Proposal {
+            output_root: B256::ZERO,
+            signature: Bytes::new(),
+            l1_origin_hash: B256::ZERO,
+            l1_origin_number: U256::ZERO,
+            l2_block_number: U256::ZERO,
+            prev_output_root: B256::ZERO,
+            config_hash: B256::ZERO,
+        }
+    }
 
     #[test]
     fn test_check_withdrawals_empty_bloom() {
@@ -547,38 +560,24 @@ mod tests {
 
     // --- extract_missing_trie_hash tests ---
 
-    #[test]
-    fn test_extract_missing_trie_hash_valid() {
-        let hash_hex = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-        let err = format!("execution failed: trie node not found for hash: {hash_hex}");
-        let result = extract_missing_trie_hash(&err);
-        assert_eq!(result, Some(hash_hex.parse::<B256>().unwrap()));
-    }
-
-    #[test]
-    fn test_extract_missing_trie_hash_no_match() {
-        let err = "execution failed: something completely different";
-        assert_eq!(extract_missing_trie_hash(err), None);
-    }
-
-    #[test]
-    fn test_extract_missing_trie_hash_truncated() {
-        let err = "trie node not found for hash: 0xabcd";
-        assert_eq!(extract_missing_trie_hash(err), None);
-    }
-
-    #[test]
-    fn test_extract_missing_trie_hash_trailing_chars() {
-        let hash_hex = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-        let err = format!("trie node not found for hash: {hash_hex}\",");
-        let result = extract_missing_trie_hash(&err);
-        assert_eq!(result, Some(hash_hex.parse::<B256>().unwrap()));
-    }
-
-    #[test]
-    fn test_extract_missing_trie_hash_no_0x_prefix() {
-        let err = "trie node not found for hash: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-        assert_eq!(extract_missing_trie_hash(err), None);
+    #[rstest]
+    #[case::valid(
+        "execution failed: trie node not found for hash: 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        Some("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+    )]
+    #[case::no_match("execution failed: something completely different", None)]
+    #[case::truncated("trie node not found for hash: 0xabcd", None)]
+    #[case::trailing_chars(
+        "trie node not found for hash: 0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890\",",
+        Some("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890")
+    )]
+    #[case::no_0x_prefix(
+        "trie node not found for hash: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+        None
+    )]
+    fn test_extract_missing_trie_hash(#[case] err: &str, #[case] expected: Option<&str>) {
+        let expected = expected.map(|h| h.parse::<B256>().unwrap());
+        assert_eq!(extract_missing_trie_hash(err), expected);
     }
 
     // --- check_withdrawals tests ---
@@ -655,17 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_aggregate_empty_proposals() {
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: Proposal {
-                output_root: B256::ZERO,
-                signature: Bytes::new(),
-                l1_origin_hash: B256::ZERO,
-                l1_origin_number: U256::ZERO,
-                l2_block_number: U256::ZERO,
-                prev_output_root: B256::ZERO,
-                config_hash: B256::ZERO,
-            },
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: zero_proposal() });
 
         let result = prover.aggregate(B256::ZERO, 0, vec![], vec![]).await;
         assert!(result.is_err());
@@ -674,17 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_aggregate_single_proposal() {
-        let prover = test_prover(MockEnclaveClient {
-            aggregate_result: Proposal {
-                output_root: B256::ZERO,
-                signature: Bytes::new(),
-                l1_origin_hash: B256::ZERO,
-                l1_origin_number: U256::ZERO,
-                l2_block_number: U256::ZERO,
-                prev_output_root: B256::ZERO,
-                config_hash: B256::ZERO,
-            },
-        });
+        let prover = test_prover(MockEnclaveClient { aggregate_result: zero_proposal() });
 
         let single = test_proposal(5, 5, true);
         let result = prover.aggregate(B256::ZERO, 0, vec![single.clone()], vec![]).await;
@@ -723,8 +702,19 @@ mod tests {
         assert_eq!(result.output.output_root, agg_output.output_root);
     }
 
+    #[rstest]
+    #[case::none_have_withdrawals(false, false, false, false)]
+    #[case::first_has_withdrawal(true, false, false, true)]
+    #[case::middle_has_withdrawal(false, true, false, true)]
+    #[case::last_has_withdrawal(false, false, true, true)]
+    #[case::all_have_withdrawals(true, true, true, true)]
     #[tokio::test]
-    async fn test_aggregate_withdrawal_combinations() {
+    async fn test_aggregate_withdrawal_combinations(
+        #[case] w1: bool,
+        #[case] w2: bool,
+        #[case] w3: bool,
+        #[case] expected: bool,
+    ) {
         let agg_output = Proposal {
             output_root: B256::repeat_byte(0xAA),
             signature: Bytes::from(vec![0xBB; 65]),
@@ -735,90 +725,17 @@ mod tests {
             config_hash: B256::ZERO,
         };
 
-        // [F, F, F] → F
-        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
-        let result = prover
-            .aggregate(
-                B256::ZERO,
-                0,
-                vec![
-                    test_proposal(1, 1, false),
-                    test_proposal(2, 2, false),
-                    test_proposal(3, 3, false),
-                ],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert!(!result.has_withdrawals);
-
-        // [T, F, F] → T
-        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
-        let result = prover
-            .aggregate(
-                B256::ZERO,
-                0,
-                vec![
-                    test_proposal(1, 1, true),
-                    test_proposal(2, 2, false),
-                    test_proposal(3, 3, false),
-                ],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert!(result.has_withdrawals);
-
-        // [F, T, F] → T
-        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
-        let result = prover
-            .aggregate(
-                B256::ZERO,
-                0,
-                vec![
-                    test_proposal(1, 1, false),
-                    test_proposal(2, 2, true),
-                    test_proposal(3, 3, false),
-                ],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert!(result.has_withdrawals);
-
-        // [F, F, T] → T
-        let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output.clone() });
-        let result = prover
-            .aggregate(
-                B256::ZERO,
-                0,
-                vec![
-                    test_proposal(1, 1, false),
-                    test_proposal(2, 2, false),
-                    test_proposal(3, 3, true),
-                ],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert!(result.has_withdrawals);
-
-        // [T, T, T] → T
         let prover = test_prover(MockEnclaveClient { aggregate_result: agg_output });
         let result = prover
             .aggregate(
                 B256::ZERO,
                 0,
-                vec![
-                    test_proposal(1, 1, true),
-                    test_proposal(2, 2, true),
-                    test_proposal(3, 3, true),
-                ],
+                vec![test_proposal(1, 1, w1), test_proposal(2, 2, w2), test_proposal(3, 3, w3)],
                 vec![],
             )
             .await
             .unwrap();
-        assert!(result.has_withdrawals);
+        assert_eq!(result.has_withdrawals, expected);
     }
 
     // --- enclave error / timeout tests ---
@@ -873,15 +790,7 @@ mod tests {
         }
         async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
-            Ok(Proposal {
-                output_root: B256::ZERO,
-                signature: Bytes::new(),
-                l1_origin_hash: B256::ZERO,
-                l1_origin_number: U256::ZERO,
-                l2_block_number: U256::ZERO,
-                prev_output_root: B256::ZERO,
-                config_hash: B256::ZERO,
-            })
+            Ok(zero_proposal())
         }
     }
 
