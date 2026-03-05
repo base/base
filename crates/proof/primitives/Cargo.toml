@@ -18,5 +18,9 @@ serde = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
 default = []
-std = [ "alloy-primitives/std", "base-proof-preimage/std" ]
+std = [
+	"alloy-primitives/std",
+	"base-proof-preimage/std",
+	"serde?/std"
+]
 serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
