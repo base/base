@@ -7,7 +7,7 @@ use ratatui::prelude::*;
 use super::{Action, Resources, Router, View, ViewId};
 use crate::{
     commands::common::EVENT_POLL_TIMEOUT,
-    tui::{AppFrame, restore_terminal, setup_terminal},
+    tui::{AppFrame, TerminalSession},
 };
 
 /// Main TUI application that manages views, routing, and the event loop.
@@ -29,9 +29,9 @@ impl App {
     where
         F: FnMut(ViewId) -> Box<dyn View>,
     {
-        let mut terminal = setup_terminal()?;
-        let result = self.run_loop(&mut terminal, &mut view_factory).await;
-        restore_terminal(&mut terminal)?;
+        let mut session = TerminalSession::new()?;
+        let result = self.run_loop(session.terminal_mut(), &mut view_factory).await;
+        session.close()?;
         result
     }
 

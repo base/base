@@ -6,9 +6,9 @@ pub(crate) use app_frame::AppFrame;
 mod keybinding;
 pub(crate) use keybinding::Keybinding;
 
-/// Terminal setup and teardown utilities.
+/// Terminal lifecycle utilities.
 mod terminal;
-pub(crate) use terminal::{restore_terminal, setup_terminal};
+pub(crate) use terminal::TerminalSession;
 
 /// Toast notification system.
 mod toast;
