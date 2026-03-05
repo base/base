@@ -133,6 +133,16 @@ struct Checkpoint {
     claimed_root: B256,
 }
 
+/// RAII guard that records the validation latency histogram on drop.
+struct RecordOnDrop(Instant);
+
+impl Drop for RecordOnDrop {
+    fn drop(&mut self) {
+        metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS)
+            .record(self.0.elapsed().as_secs_f64());
+    }
+}
+
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
@@ -208,37 +218,23 @@ impl<L2: L2Provider> OutputValidator<L2> {
         game_address: Address,
         checkpoints: &[Checkpoint],
     ) -> Result<Option<(usize, B256)>, ValidatorError> {
-        let start = Instant::now();
-
-        if checkpoints.is_empty() {
-            let elapsed = start.elapsed().as_secs_f64();
-            metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
-            return Ok(None);
-        }
+        let _latency = RecordOnDrop(Instant::now());
 
         let mut stream = stream::iter(checkpoints.iter().enumerate())
             .map(|(idx, cp)| async move { (idx, cp, self.compute_output_root(cp.block).await) })
             .buffered(Self::VALIDATION_CONCURRENCY);
 
-        let mut first_invalid: Option<(usize, B256)> = None;
         while let Some((idx, cp, result)) = stream.next().await {
-            let expected_root = match result {
-                Ok(root) => root,
-                Err(e) => {
-                    let elapsed = start.elapsed().as_secs_f64();
-                    metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS)
-                        .record(elapsed);
-                    metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
-                    warn!(
-                        game = %game_address,
-                        block = cp.block,
-                        index = idx,
-                        error = %e,
-                        "output root computation failed"
-                    );
-                    return Err(e);
-                }
-            };
+            let expected_root = result.inspect_err(|e| {
+                metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
+                warn!(
+                    game = %game_address,
+                    block = cp.block,
+                    index = idx,
+                    error = %e,
+                    "output root computation failed"
+                );
+            })?;
 
             if expected_root != cp.claimed_root {
                 warn!(
@@ -249,19 +245,12 @@ impl<L2: L2Provider> OutputValidator<L2> {
                     claimed = %cp.claimed_root,
                     "invalid output root detected"
                 );
-                first_invalid = Some((idx, expected_root));
-                break;
+                metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
+                return Ok(Some((idx, expected_root)));
             }
         }
 
-        let elapsed = start.elapsed().as_secs_f64();
-        metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
-
-        if first_invalid.is_some() {
-            metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
-        }
-
-        Ok(first_invalid)
+        Ok(None)
     }
 
     /// Validates the final output root of a candidate dispute game.
@@ -375,11 +364,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 let multiplier = u64::try_from(i + 1).map_err(|_| {
                     ValidatorError::ArithmeticOverflow { block_number: starting_block_number }
                 })?;
-                let offset = intermediate_block_interval
-                    .checked_mul(multiplier)
-                    .ok_or(ValidatorError::ArithmeticOverflow {
-                        block_number: starting_block_number,
-                    })?;
+                let offset = intermediate_block_interval.checked_mul(multiplier).ok_or(
+                    ValidatorError::ArithmeticOverflow { block_number: starting_block_number },
+                )?;
                 let block = starting_block_number.checked_add(offset).ok_or(
                     ValidatorError::ArithmeticOverflow { block_number: starting_block_number },
                 )?;
