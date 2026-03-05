@@ -27,6 +27,7 @@ members = [
   "crates/proof/tee/core",
   "crates/proof/tee/client",
   "crates/proof/tee/server",
+  "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
@@ -225,6 +226,7 @@ base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-challenger = { path = "crates/proof/challenge" }
+base-proof-transport = { path = "crates/proof/transport" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }

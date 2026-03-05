@@ -1,0 +1,26 @@
+[package]
+name = "base-proof-transport"
+description = "Witness transport abstraction for proof backends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Proof
+base-proof-primitives = { workspace = true, features = ["std"] }
+
+# Async
+tokio = { workspace = true, features = ["sync"] }
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+alloy-primitives = { workspace = true }

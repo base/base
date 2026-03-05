@@ -49,6 +49,7 @@ pub fn output_root_v0(header: &Header, storage_root: B256) -> B256 {
 /// The 32-byte output root hash.
 #[must_use]
 pub fn output_root_v0_with_hash(header: &Header, storage_root: B256, block_hash: B256) -> B256 {
+    debug_assert_eq!(block_hash, header.hash_slow(), "block_hash does not match header");
     let state_root = header.state_root;
 
     // 128 bytes: version (32, all zeros) || state_root (32) || storage_root (32) || block_hash (32)
@@ -127,6 +128,38 @@ mod tests {
 
         // Different storage roots should produce different output roots
         assert_ne!(output_root_1, output_root_2);
+    }
+
+    #[test]
+    fn test_output_root_v0_with_hash_correct_hash() {
+        let header = test_header_for_output();
+        let storage_root =
+            b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let block_hash = header.hash_slow();
+
+        let root_via_with_hash = output_root_v0_with_hash(&header, storage_root, block_hash);
+        let root_via_convenience = output_root_v0(&header, storage_root);
+
+        assert_eq!(root_via_with_hash, root_via_convenience);
+    }
+
+    /// Passing an incorrect hash produces a different (wrong) output root.
+    /// Only `debug_assert` guards this, so callers bear responsibility for
+    /// hash correctness. This test only runs without debug assertions since
+    /// the `debug_assert_eq!` in the function would panic otherwise.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_output_root_v0_with_hash_incorrect_hash() {
+        let header = test_header_for_output();
+        let storage_root =
+            b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let bogus_hash = b256!("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+        let root_bogus = output_root_v0_with_hash(&header, storage_root, bogus_hash);
+        let root_correct = output_root_v0(&header, storage_root);
+
+        // A wrong block_hash feeds into the keccak input, so the result diverges.
+        assert_ne!(root_bogus, root_correct);
     }
 
     #[test]
