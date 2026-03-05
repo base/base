@@ -7,7 +7,7 @@ use std::{
 use async_trait::async_trait;
 use base_proof_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, WitnessOracle,
-    errors::{PreimageOracleError, PreimageOracleResult},
+    errors::{PreimageOracleError, PreimageOracleResult, WitnessOracleError, WitnessOracleResult},
 };
 
 /// HashMap-backed preimage oracle for in-enclave stateless execution.
@@ -37,12 +37,16 @@ impl Oracle {
 
 impl fmt::Debug for Oracle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let preimages = self.preimages.read().expect("oracle lock poisoned");
-        let total_bytes: usize = preimages.values().map(Vec::len).sum();
-        f.debug_struct("Oracle")
-            .field("keys", &preimages.len())
-            .field("total_bytes", &total_bytes)
-            .finish()
+        match self.preimages.read() {
+            Ok(preimages) => {
+                let total_bytes: usize = preimages.values().map(Vec::len).sum();
+                f.debug_struct("Oracle")
+                    .field("keys", &preimages.len())
+                    .field("total_bytes", &total_bytes)
+                    .finish()
+            }
+            Err(_) => f.debug_struct("Oracle").field("status", &"poisoned").finish(),
+        }
     }
 }
 
@@ -51,14 +55,15 @@ impl PreimageOracleClient for Oracle {
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
         self.preimages
             .read()
-            .expect("oracle lock poisoned")
+            .map_err(|e| PreimageOracleError::Other(e.to_string()))?
             .get(&key)
             .cloned()
             .ok_or(PreimageOracleError::KeyNotFound)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
-        let preimages = self.preimages.read().expect("oracle lock poisoned");
+        let preimages =
+            self.preimages.read().map_err(|e| PreimageOracleError::Other(e.to_string()))?;
         let value = preimages.get(&key).ok_or(PreimageOracleError::KeyNotFound)?;
         if value.len() != buf.len() {
             return Err(PreimageOracleError::BufferLengthMismatch(buf.len(), value.len()));
@@ -80,13 +85,23 @@ impl FlushableCache for Oracle {
 }
 
 impl WitnessOracle for Oracle {
-    fn insert_preimage(&self, key: PreimageKey, value: &[u8]) {
-        self.preimages.write().expect("oracle lock poisoned").insert(key, value.to_vec());
+    fn insert_preimage(&self, key: PreimageKey, value: &[u8]) -> WitnessOracleResult<()> {
+        self.preimages
+            .write()
+            .map_err(|e| WitnessOracleError::LockPoisoned(e.to_string()))?
+            .insert(key, value.to_vec());
+        Ok(())
     }
 
-    fn finalize(&self) {}
+    fn finalize(&self) -> WitnessOracleResult<()> {
+        Ok(())
+    }
 
-    fn preimage_count(&self) -> usize {
-        self.preimages.read().expect("oracle lock poisoned").len()
+    fn preimage_count(&self) -> WitnessOracleResult<usize> {
+        Ok(self
+            .preimages
+            .read()
+            .map_err(|e| WitnessOracleError::LockPoisoned(e.to_string()))?
+            .len())
     }
 }

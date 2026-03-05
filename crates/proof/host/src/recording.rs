@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_proof_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, WitnessOracle,
-    errors::PreimageOracleResult,
+    errors::{PreimageOracleError, PreimageOracleResult},
 };
 
 /// A transparent oracle wrapper that records every preimage fetched into a [`WitnessOracle`].
@@ -51,13 +51,17 @@ where
 {
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
         let value = self.oracle.get(key).await?;
-        self.witness.insert_preimage(key, &value);
+        self.witness
+            .insert_preimage(key, &value)
+            .map_err(|e| PreimageOracleError::Other(e.to_string()))?;
         Ok(value)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
         self.oracle.get_exact(key, buf).await?;
-        self.witness.insert_preimage(key, buf);
+        self.witness
+            .insert_preimage(key, buf)
+            .map_err(|e| PreimageOracleError::Other(e.to_string()))?;
         Ok(())
     }
 }
@@ -87,7 +91,7 @@ where
 mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
-    use base_proof_preimage::{PreimageKeyType, errors::PreimageOracleError};
+    use base_proof_preimage::{PreimageKeyType, WitnessOracleResult, errors::PreimageOracleError};
 
     use super::*;
 
@@ -131,14 +135,17 @@ mod tests {
     }
 
     impl WitnessOracle for MockWitness {
-        fn insert_preimage(&self, key: PreimageKey, value: &[u8]) {
+        fn insert_preimage(&self, key: PreimageKey, value: &[u8]) -> WitnessOracleResult<()> {
             self.preimages.lock().unwrap().push((key, value.to_vec()));
+            Ok(())
         }
 
-        fn finalize(&self) {}
+        fn finalize(&self) -> WitnessOracleResult<()> {
+            Ok(())
+        }
 
-        fn preimage_count(&self) -> usize {
-            self.preimages.lock().unwrap().len()
+        fn preimage_count(&self) -> WitnessOracleResult<usize> {
+            Ok(self.preimages.lock().unwrap().len())
         }
     }
 
@@ -195,7 +202,7 @@ mod tests {
         assert_eq!(hints.len(), 1);
         assert_eq!(hints[0], "test-hint");
 
-        assert_eq!(witness.preimage_count(), 0);
+        assert_eq!(witness.preimage_count().unwrap(), 0);
     }
 
     #[tokio::test]
@@ -266,11 +273,15 @@ mod tests {
         let recording = RecordingOracle::new(oracle, hint, Arc::clone(&witness));
 
         assert!(recording.get(key).await.is_err());
-        assert_eq!(witness.preimage_count(), 0, "get error should not record into witness");
+        assert_eq!(witness.preimage_count().unwrap(), 0, "get error should not record into witness");
 
         let mut buf = vec![0u8; 4];
         assert!(recording.get_exact(key, &mut buf).await.is_err());
-        assert_eq!(witness.preimage_count(), 0, "get_exact error should not record into witness");
+        assert_eq!(
+            witness.preimage_count().unwrap(),
+            0,
+            "get_exact error should not record into witness"
+        );
     }
 
     #[tokio::test]
@@ -288,6 +299,6 @@ mod tests {
         recording.get(key).await.unwrap();
         cloned.get(key).await.unwrap();
 
-        assert_eq!(witness.preimage_count(), 2);
+        assert_eq!(witness.preimage_count().unwrap(), 2);
     }
 }

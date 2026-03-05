@@ -28,6 +28,7 @@ pub use traits::{
     PreimageFetcher, PreimageOracleClient, PreimageOracleServer, PreimageServerBackend,
     WitnessOracle,
 };
+pub use errors::{WitnessOracleError, WitnessOracleResult};
 
 #[cfg(feature = "std")]
 mod native_channel;
