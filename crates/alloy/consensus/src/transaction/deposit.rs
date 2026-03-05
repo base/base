@@ -133,7 +133,7 @@ impl TxDeposit {
         self.to.size() + // to
         mem::size_of::<u128>() + // mint
         mem::size_of::<U256>() + // value
-        mem::size_of::<u128>() + // gas_limit
+        mem::size_of::<u64>() + // gas_limit
         mem::size_of::<bool>() + // is_system_transaction
         self.input.len() // input
     }
