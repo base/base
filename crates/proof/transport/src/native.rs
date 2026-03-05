@@ -54,8 +54,8 @@ impl NativeBackend {
 
 #[async_trait]
 impl WitnessTransport for NativeTransport {
-    async fn send_witness(&self, bundle: WitnessBundle) -> TransportResult<()> {
-        self.witness_tx.send(bundle).await.map_err(|e| TransportError::Send(e.to_string()))
+    async fn send_witness(&self, bundle: &WitnessBundle) -> TransportResult<()> {
+        self.witness_tx.send(bundle.clone()).await.map_err(|e| TransportError::Send(e.to_string()))
     }
 
     async fn recv_result(&self) -> TransportResult<ProofResult> {

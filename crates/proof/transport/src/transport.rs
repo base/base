@@ -11,10 +11,16 @@ pub type TransportResult<T> = Result<T, TransportError>;
 ///
 /// Implementations handle the underlying channel — in-process, `AF_VSOCK`, or
 /// ZK guest stdin — so callers remain transport-agnostic.
+///
+/// Both ends are single-consumer: a transport should be owned by one sender
+/// task and one receiver task. Concurrent calls to [`recv_result`] may
+/// serialize depending on the implementation.
+///
+/// [`recv_result`]: WitnessTransport::recv_result
 #[async_trait]
 pub trait WitnessTransport: Send + Sync {
     /// Send a witness bundle to the proof backend.
-    async fn send_witness(&self, bundle: WitnessBundle) -> TransportResult<()>;
+    async fn send_witness(&self, bundle: &WitnessBundle) -> TransportResult<()>;
 
     /// Receive a proof result from the backend.
     async fn recv_result(&self) -> TransportResult<ProofResult>;

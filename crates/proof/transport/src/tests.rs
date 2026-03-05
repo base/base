@@ -20,7 +20,7 @@ async fn roundtrip() {
     let bundle = test_bundle();
     let result = test_result();
 
-    transport.send_witness(bundle.clone()).await.unwrap();
+    transport.send_witness(&bundle).await.unwrap();
 
     let received_bundle = backend.recv_witness().await.unwrap();
     assert_eq!(received_bundle, bundle);
@@ -48,7 +48,7 @@ async fn send_after_receiver_dropped() {
 
     drop(backend);
 
-    let err = transport.send_witness(bundle).await.unwrap_err();
+    let err = transport.send_witness(&bundle).await.unwrap_err();
     assert!(matches!(err, TransportError::Send(_)));
 }
 
@@ -79,7 +79,7 @@ async fn multiple_bundles() {
 
     for i in 0..5u64 {
         let bundle = WitnessBundle { preimages: vec![] };
-        transport.send_witness(bundle).await.unwrap();
+        transport.send_witness(&bundle).await.unwrap();
 
         let _ = backend.recv_witness().await.unwrap();
 
