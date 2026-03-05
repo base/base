@@ -6,7 +6,6 @@
 
 - [About Optimism](#about-optimism)
 - [About the OP Stack](#about-the-op-stack)
-- [Site Navigation](#site-navigation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -27,7 +26,5 @@ The OP Stack is a decentralized software stack maintained by the OP Stack that f
 [OP Mainnet](https://explorer.optimism.io/) and [Base](https://base.org). The OP Stack is designed to be aggressively
 open-source — you are welcome to explore, modify, and extend the OP Stack to your heart's content.
 
-## Site Navigation
-
-Navigate this site using the sidebar on the left, the search icon found at the top of this page, or the left/right
-navigation buttons found to the sides of each page.
+This specification set now focuses on core OP Stack and fault proof content. Governance, interop, and experimental
+sections are no longer included in this book.

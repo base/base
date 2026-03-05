@@ -134,10 +134,7 @@ Where:
 
 - `rollupDataGas` is determined from the _full_ encoded transaction
   (standard EIP-2718 transaction encoding, including signature fields):
-  - Before Regolith fork: `rollupDataGas = zeroes * 4 + (ones + 68) * 16`
-    - The addition of `68` non-zero bytes is a remnant of a pre-Bedrock L1-cost accounting function,
-      which accounted for the worst-case non-zero bytes addition to complement unsigned transactions, unlike Bedrock.
-  - With Regolith fork: `rollupDataGas = zeroes * 4 + ones * 16`
+  - `rollupDataGas = zeroes * 4 + ones * 16`
 - `l1FeeOverhead` is the Gas Price Oracle `overhead` value.
 - `l1FeeScalar` is the Gas Price Oracle `scalar` value.
 - `l1BaseFee` is the L1 base fee of the latest L1 origin registered in the L2 chain.

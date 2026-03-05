@@ -247,7 +247,7 @@ but the matching L1-origin information may not be present at the time of activat
 - `v2.1.0`: 2022 May 31st - Optimism Collective.
   ([announcement](https://optimism.mirror.xyz/gQWKlrDqHzdKPsB1iUnI-cVN3v0NvsWnazK7ajlt1fI)).
 - `v3.0.0-1`: 2023 Jan 13th - Bedrock pre-release, deployed on OP-Goerli, and later Base-Goerli.
-- `v3.0.0`: 2023 Jun 6th - Bedrock, including the Regolith hardfork improvements, first deployed on OP-Mainnet.
+- `v3.0.0`: 2023 Jun 6th - Bedrock, first deployed on OP-Mainnet.
 - `v4.0.0`: 2024 Jan 11th - Canyon network upgrade (Shapella).
   [Governance Proposal](https://gov.optimism.io/t/final-upgrade-proposal-2-canyon-network-upgrade/7088).
 - `v5.0.0`: 2024 Feb 22nd - Delta network upgrade (Span Batches).

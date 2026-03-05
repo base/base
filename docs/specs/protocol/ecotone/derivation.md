@@ -324,7 +324,7 @@ A Deposit transaction is derived with the following attributes:
 - `isCreation`: `true`
 - `data`:
   `0x60618060095f395ff33373fffffffffffffffffffffffffffffffffffffffe14604d57602036146024575f5ffd5b5f35801560495762001fff810690815414603c575f5ffd5b62001fff01545f5260205ff35b5f5ffd5b62001fff42064281555f359062001fff015500`
-- `isSystemTx`: `false`, as per the Regolith upgrade, even the system-generated transactions spend gas.
+- `isSystemTx`: `false`, even the system-generated transactions spend gas.
 - `sourceHash`: `0x69b763c48478b9dc2f65ada09b3d92133ec592ea715ec65ad6e7f3dc519dc00c`,
   computed with the "Upgrade-deposited" type, with `intent = "Ecotone: beacon block roots contract deployment"`
 

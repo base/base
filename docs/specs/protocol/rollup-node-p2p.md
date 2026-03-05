@@ -426,7 +426,7 @@ Implementations may opt for a different limit, since this sync method is optiona
 `<version>` list:
 
 - `0`: SSZ-encoded `ExecutionPayload`, with Snappy framing compression,
-  matching the `ExecutionPayload` SSZ definition of the L1 Merge, L2 Bedrock and L2 Regolith, L2 Canyon versions.
+  matching the `ExecutionPayload` SSZ definition of the L1 Merge, L2 Bedrock, and L2 Canyon versions.
 - `1`: SSZ-encoded `ExecutionPayloadEnvelope` with Snappy framing compression,
   matching the `ExecutionPayloadEnvelope` SSZ definition of the L2 Ecotone version.
 - `2`: SSZ-encoded `ExecutionPayload` with Snappy framing compression,
