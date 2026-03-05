@@ -390,6 +390,8 @@ mod tests {
     use alloy_rpc_types_eth::Header as RpcHeader;
     use base_enclave::{AccountResult, output_root_v0};
 
+    use rstest::rstest;
+
     use super::*;
     use crate::test_utils::MockL2Provider;
 
@@ -448,36 +450,21 @@ mod tests {
         (provider, roots)
     }
 
-    /// Valid final root: the onchain root claim matches the expected output root.
+    #[rstest]
+    #[case::valid(None, true)]
+    #[case::invalid(Some(B256::repeat_byte(0xFF)), false)]
     #[tokio::test]
-    async fn test_validate_final_root_valid() {
+    async fn test_validate_final_root(#[case] wrong_root: Option<B256>, #[case] expect_valid: bool) {
         let (provider, expected_root) = mock_with_block(100);
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x01);
+        let claimed_root = wrong_root.unwrap_or(expected_root);
 
-        let result = validator.validate_final_root(game_address, 100, expected_root).await.unwrap();
+        let result = validator.validate_final_root(game_address, 100, claimed_root).await.unwrap();
 
-        assert!(result.is_valid);
+        assert_eq!(result.is_valid, expect_valid);
         assert_eq!(result.expected_root, expected_root);
-        assert_eq!(result.claimed_root, expected_root);
-        assert_eq!(result.invalid_intermediate_index, None);
-    }
-
-    /// Invalid final root: the onchain root claim does NOT match the expected output root.
-    #[tokio::test]
-    async fn test_validate_final_root_invalid() {
-        let (provider, expected_root) = mock_with_block(100);
-        let validator = OutputValidator::new(Arc::new(provider));
-        let game_address = Address::repeat_byte(0x02);
-
-        // Provide a wrong root claim
-        let wrong_root = B256::repeat_byte(0xFF);
-
-        let result = validator.validate_final_root(game_address, 100, wrong_root).await.unwrap();
-
-        assert!(!result.is_valid);
-        assert_eq!(result.expected_root, expected_root);
-        assert_eq!(result.claimed_root, wrong_root);
+        assert_eq!(result.claimed_root, claimed_root);
         assert_eq!(result.invalid_intermediate_index, None);
     }
 
@@ -621,15 +608,19 @@ mod tests {
         );
     }
 
-    /// Checkpoint count mismatch: fewer intermediate roots than expected checkpoints.
+    #[rstest]
+    #[case::too_few(vec![B256::ZERO], 2, 1)]
+    #[case::too_many(vec![B256::ZERO; 3], 2, 3)]
     #[tokio::test]
-    async fn test_checkpoint_count_mismatch_too_few() {
+    async fn test_checkpoint_count_mismatch(
+        #[case] intermediate_roots: Vec<B256>,
+        #[case] expected: usize,
+        #[case] actual: usize,
+    ) {
         let provider = MockL2Provider::new();
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x08);
 
-        // starting=90, end=100, interval=5 -> expected 2 checkpoints (95, 100)
-        // but only provide 1 root
         let result = validator
             .validate_intermediate_roots(IntermediateValidationParams {
                 game_address,
@@ -637,43 +628,15 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: B256::ZERO,
-                intermediate_roots: vec![B256::ZERO], // only 1, need 2
+                intermediate_roots,
             })
             .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, ValidatorError::CheckpointCountMismatch { expected: 2, actual: 1 }),
-            "expected CheckpointCountMismatch {{ expected: 2, actual: 1 }}, got: {err:?}"
-        );
-    }
-
-    /// Checkpoint count mismatch: more intermediate roots than expected checkpoints.
-    #[tokio::test]
-    async fn test_checkpoint_count_mismatch_too_many() {
-        let provider = MockL2Provider::new();
-        let validator = OutputValidator::new(Arc::new(provider));
-        let game_address = Address::repeat_byte(0x09);
-
-        // starting=90, end=100, interval=5 -> expected 2 checkpoints (95, 100)
-        // but provide 3 roots
-        let result = validator
-            .validate_intermediate_roots(IntermediateValidationParams {
-                game_address,
-                starting_block_number: 90,
-                l2_block_number: 100,
-                intermediate_block_interval: 5,
-                claimed_root: B256::ZERO,
-                intermediate_roots: vec![B256::ZERO, B256::ZERO, B256::ZERO], // 3, need 2
-            })
-            .await;
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            matches!(err, ValidatorError::CheckpointCountMismatch { expected: 2, actual: 3 }),
-            "expected CheckpointCountMismatch {{ expected: 2, actual: 3 }}, got: {err:?}"
+            matches!(err, ValidatorError::CheckpointCountMismatch { expected: e, actual: a } if e == expected && a == actual),
+            "expected CheckpointCountMismatch {{ expected: {expected}, actual: {actual} }}, got: {err:?}"
         );
     }
 
@@ -733,44 +696,32 @@ mod tests {
         assert!(validation.is_valid, "all roots should match");
     }
 
-    /// Degenerate block range where `starting_block_number >= l2_block_number`
-    /// is rejected with `InvalidBlockRange`.
+    #[rstest]
+    #[case::equal(100, 100)]
+    #[case::greater(200, 100)]
     #[tokio::test]
-    async fn test_starting_block_gte_l2_block() {
+    async fn test_starting_block_gte_l2_block(
+        #[case] starting_block_number: u64,
+        #[case] l2_block_number: u64,
+    ) {
         let (provider, _roots) = mock_with_blocks(&[]);
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x0C);
 
-        // starting == l2 (equal case)
         let result = validator
             .validate_intermediate_roots(IntermediateValidationParams {
                 game_address,
-                starting_block_number: 100,
-                l2_block_number: 100,
+                starting_block_number,
+                l2_block_number,
                 intermediate_block_interval: 10,
                 claimed_root: B256::ZERO,
                 intermediate_roots: vec![],
             })
             .await;
-        assert!(
-            matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
-            "expected InvalidBlockRange when starting == l2, got: {result:?}"
-        );
 
-        // starting > l2 (greater case)
-        let result = validator
-            .validate_intermediate_roots(IntermediateValidationParams {
-                game_address,
-                starting_block_number: 200,
-                l2_block_number: 100,
-                intermediate_block_interval: 10,
-                claimed_root: B256::ZERO,
-                intermediate_roots: vec![],
-            })
-            .await;
         assert!(
             matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
-            "expected InvalidBlockRange when starting > l2, got: {result:?}"
+            "expected InvalidBlockRange for starting={starting_block_number}, l2={l2_block_number}, got: {result:?}"
         );
     }
 
