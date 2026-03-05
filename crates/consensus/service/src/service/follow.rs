@@ -53,7 +53,7 @@ impl FollowNode {
     }
 
     /// Sets the maximum number of blocks the node may advance beyond the
-    /// proofs ExEx head.
+    /// proofs `ExEx` head.
     pub const fn with_proofs_max_blocks_ahead(mut self, max_blocks_ahead: u64) -> Self {
         self.proofs_max_blocks_ahead = max_blocks_ahead;
         self
