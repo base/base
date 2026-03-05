@@ -551,6 +551,29 @@ mod tests {
     }
 
     #[test]
+    fn test_size_field_sizes_match_types() {
+        let tx = TxDeposit {
+            source_hash: B256::default(),
+            from: Address::default(),
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 0,
+            is_system_transaction: false,
+            input: Bytes::default(),
+        };
+
+        let expected = mem::size_of::<B256>()      // source_hash
+            + mem::size_of::<Address>()             // from
+            + tx.to.size()                          // to
+            + mem::size_of::<u128>()                // mint
+            + mem::size_of::<U256>()                // value
+            + mem::size_of::<u64>()                 // gas_limit
+            + mem::size_of::<bool>();               // is_system_transaction
+        assert_eq!(tx.size(), expected);
+    }
+
+    #[test]
     fn test_encode_inner_with_and_without_header() {
         let tx_deposit = TxDeposit {
             source_hash: B256::default(),
