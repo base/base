@@ -119,9 +119,12 @@ pub trait FlushableCache {
 
 /// A witness oracle that supports preimage insertion and finalization.
 ///
-/// Extends [`CommsClient`] and [`FlushableCache`] to provide a unified
-/// interface for oracle implementations across TEE, ZK, and FPVM backends.
-pub trait WitnessOracle: CommsClient + FlushableCache + Send + Sync {
+/// Covers the capture path: recording preimages during witness generation.
+/// Backend oracle types that also serve as replay oracles implement
+/// [`CommsClient`] and [`FlushableCache`] independently — those bounds
+/// belong on the consumer that needs replay capabilities (e.g. `ProverBackend::Oracle`),
+/// not on this trait.
+pub trait WitnessOracle: Send + Sync {
     /// Insert a preimage into the oracle under the given key.
     fn insert_preimage(&self, key: PreimageKey, value: &[u8]);
 

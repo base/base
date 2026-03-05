@@ -1,21 +1,26 @@
 use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
+use base_alloy_evm::OpEvmFactory;
 use base_alloy_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
-use base_proof_preimage::{Channel, HintReader, OracleServer};
+use base_proof_client::Prologue;
+use base_proof_preimage::{
+    BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer, WitnessOracle,
+};
 use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
 };
+use tracing::info;
 
 #[cfg(feature = "disk")]
 use crate::DiskKeyValueStore;
 use crate::{
     BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore,
-    OfflineHostBackend, OnlineHostBackend, PreimageServer, Result, SharedKeyValueStore,
-    SplitKeyValueStore,
+    OfflineHostBackend, OnlineHostBackend, PreimageServer, RecordingOracle, Result,
+    SharedKeyValueStore, SplitKeyValueStore,
 };
 
 /// The proof host orchestrator.
@@ -66,6 +71,62 @@ impl Host {
         };
 
         Ok(task_handle)
+    }
+
+    /// Runs the fault-proof program in-process, capturing all fetched preimages into the
+    /// provided [`WitnessOracle`].
+    pub async fn build_witness<W>(&self, witness: Arc<W>) -> Result<()>
+    where
+        W: WitnessOracle + std::fmt::Debug + 'static,
+    {
+        let kv_store = self.create_key_value_store()?;
+        let providers = self.create_providers().await?;
+        let backend = Arc::new(
+            OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
+                .with_proactive_hint(HintType::L2PayloadWitness),
+        );
+
+        let preimage_chan = BidirectionalChannel::new().map_err(HostError::Io)?;
+        let hint_chan = BidirectionalChannel::new().map_err(HostError::Io)?;
+
+        let server = PreimageServer::new(
+            OracleServer::new(preimage_chan.host),
+            HintReader::new(hint_chan.host),
+            Arc::clone(&backend),
+        );
+        let server_task = task::spawn(async move { server.start().await });
+
+        let recording = RecordingOracle::new(
+            OracleReader::new(preimage_chan.client),
+            HintWriter::new(hint_chan.client),
+            Arc::clone(&witness),
+        );
+
+        // Both the oracle and hint arms share the same RecordingOracle, ensuring all
+        // fetched preimages are captured into the witness regardless of which channel
+        // triggers them.
+        let driver = Prologue::new(recording.clone(), recording, OpEvmFactory::default())
+            .load()
+            .await
+            .map_err(|e| HostError::Custom(format!("prologue failed: {e}")))?;
+
+        let epilogue = driver
+            .execute()
+            .await
+            .map_err(|e| HostError::Custom(format!("driver failed: {e}")))?;
+
+        epilogue
+            .validate()
+            .map_err(|e| HostError::Custom(format!("epilogue validation failed: {e}")))?;
+
+        witness.finalize();
+
+        let preimage_count = witness.preimage_count();
+        info!(preimage_count, "witness capture complete");
+
+        server_task.abort();
+
+        Ok(())
     }
 
     /// Creates the key-value store for the host backend.

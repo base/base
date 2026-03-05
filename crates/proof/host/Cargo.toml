@@ -14,9 +14,11 @@ workspace = true
 # base
 base-proof-mpt.workspace = true
 base-protocol.workspace = true
+base-alloy-evm.workspace = true
 base-alloy-network.workspace = true
 base-consensus-providers.workspace = true
 base-proof = { workspace = true, features = ["std"] }
+base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
