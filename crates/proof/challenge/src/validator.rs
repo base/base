@@ -275,6 +275,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
 
         while checkpoint <= l2_block_number && checkpoints.len() < intermediate_roots.len() {
             checkpoints.push(checkpoint);
+            if checkpoints.len() >= intermediate_roots.len() {
+                break;
+            }
             checkpoint = checkpoint
                 .checked_add(intermediate_block_interval)
                 .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
@@ -615,6 +618,28 @@ mod tests {
             matches!(result.unwrap_err(), ValidatorError::ArithmeticOverflow { .. }),
             "expected ArithmeticOverflow"
         );
+    }
+
+    /// Regression: when the final checkpoint equals `u64::MAX`, the loop should
+    /// exit without attempting `checked_add` on the already-collected result.
+    #[tokio::test]
+    async fn test_no_overflow_when_all_checkpoints_collected() {
+        let starting = u64::MAX - 20;
+        let l2 = u64::MAX;
+        let interval = 10;
+        // Checkpoints: (u64::MAX - 20) + 10 = u64::MAX - 10, then u64::MAX - 10 + 10 = u64::MAX
+        let checkpoint_blocks = [u64::MAX - 10, u64::MAX];
+
+        let (provider, roots) = mock_with_blocks(&checkpoint_blocks);
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x0D);
+
+        let result = validator
+            .validate_intermediate_roots(game_address, starting, l2, interval, B256::ZERO, &roots)
+            .await;
+
+        let validation = result.expect("should not overflow");
+        assert!(validation.is_valid, "all roots should match");
     }
 
     /// Degenerate block range where `starting_block_number >= l2_block_number`
