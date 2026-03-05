@@ -3,6 +3,7 @@ name = "base-enclave-client"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 base-enclave.workspace = true

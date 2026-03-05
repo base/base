@@ -12,6 +12,19 @@ ignore = [
     # paste is unmaintained but widely used in ecosystem (alloy, reth, etc.)
     # No safe upgrade available
     "RUSTSEC-2024-0436",
+
+    # backoff is unmaintained, comes from upstream dependencies we cannot control
+    "RUSTSEC-2025-0012",
+
+    # instant is unmaintained, comes from mini-moka -> reth-engine-tree (upstream)
+    "RUSTSEC-2024-0384",
+
+    # Marvin Attack: rsa crate timing sidechannel, comes from base-enclave-server
+    # No upstream fix available for the version we depend on
+    "RUSTSEC-2023-0071",
+
+    # serde_cbor is unmaintained, comes from aws-nitro-enclaves-cose (upstream)
+    "RUSTSEC-2021-0127",
 ]
 
 [licenses]
@@ -183,6 +196,33 @@ skip = [
     # base-enclave-server upstream dep mismatches (aws-nitro-enclaves, vsock, ciborium)
     "half",
     "memoffset",
+
+    # reth-mdbx-sys uses bindgen 0.71.x; other deps use 0.72.x
+    "bindgen",
+
+    # skeptic -> mini-moka -> reth-engine-tree uses old cargo-platform/cargo_metadata
+    "cargo-platform",
+    "cargo_metadata",
+
+    # ratatui 0.29.x (from reth-cli-commands) vs 0.30.x version mismatch
+    "ratatui",
+    "compact_str",
+    "unicode-truncate",
+    "unicode-width",
+
+    # mini-moka -> reth-engine-tree uses dashmap 5.x; other deps use dashmap 6.x
+    "dashmap",
+
+    # reth-node-metrics uses procfs 0.17.x; other deps use 0.18.x
+    "procfs",
+    "procfs-core",
+
+    # windows-implement/windows-interface version mismatch from windows crate dep chain
+    "windows-implement",
+    "windows-interface",
+
+    # r-efi version mismatch from upstream platform crates
+    "r-efi",
 ]
 
 [sources]
