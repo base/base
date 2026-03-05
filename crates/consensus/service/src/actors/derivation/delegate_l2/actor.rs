@@ -14,6 +14,8 @@ use crate::{
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
 
+const MAX_BLOCKS_PER_SYNC: usize = 128;
+
 /// The [`NodeActor`] for the L2 delegate derivation sub-routine.
 ///
 /// Polls a source L2 execution layer node for new blocks and drives the local
@@ -170,6 +172,9 @@ where
         if remote_head <= self.sent_head {
             return Ok(());
         }
+
+        // Sync a maximum of `MAX_BLOCKS_PER_SYNC` blocks at a time to continue processing safe head updates.
+        let remote_head = remote_head.min(self.sent_head + MAX_BLOCKS_PER_SYNC as u64);
 
         for block_num in (self.sent_head + 1)..=remote_head {
             if self.cancellation_token.is_cancelled() {
