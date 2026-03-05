@@ -81,7 +81,7 @@ impl Default for FlashblocksArgs {
 /// Parameters for the optional flashblock index transaction signer.
 ///
 /// When both `private_key` and `contract_address` are provided, the builder
-/// injects a signed `setIndex(uint256)` tx at the start of each flashblock.
+/// injects a flashblock index tx at the start of each flashblock.
 #[derive(Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct FlashblockIndexArgs {
     /// Hex-encoded private key for signing flashblock index transactions.

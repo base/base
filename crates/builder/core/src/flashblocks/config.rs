@@ -124,8 +124,9 @@ impl FlashBlocksConfigExt for BuilderConfig {
 
 /// Configuration for the flashblock index transaction signer.
 ///
-/// When present, the builder injects a signed EIP-1559 transaction calling
-/// `setIndex(uint256)` on the target contract at the start of each flashblock.
+/// When present, the builder injects a signed EIP-1559 transaction with 1-byte
+/// calldata (the flashblock index as `uint8`) to the target contract's `fallback()`
+/// at the start of each flashblock.
 #[derive(Debug, Clone)]
 pub struct FlashblockIndexConfig {
     /// The private key signer used to sign flashblock index transactions.

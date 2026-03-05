@@ -35,7 +35,7 @@ pub struct BuilderConfig {
     pub flashblocks: FlashblocksConfig,
 
     /// Optional configuration for the flashblock index transaction signer.
-    /// When set, the builder signs and injects a `setIndex` tx at the start of each flashblock.
+    /// When set, the builder injects a flashblock index tx at the start of each flashblock.
     pub flashblock_index: Option<FlashblockIndexConfig>,
 
     /// Maximum gas a transaction can use before being excluded.

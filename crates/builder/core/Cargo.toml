@@ -59,7 +59,6 @@ base-node-runner.workspace = true
 base-alloy-flashblocks.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true
-base-contracts-bindings.workspace = true
 
 # reth
 reth-cli.workspace = true
@@ -212,6 +211,9 @@ base-execution-rpc = { workspace = true, features = ["client"] }
 
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
+
+# contracts
+base-contracts-bindings.workspace = true
 
 # misc
 ctor.workspace = true
