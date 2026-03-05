@@ -34,7 +34,11 @@ impl<P, H, W> RecordingOracle<P, H, W> {
 
 impl<P: Clone, H: Clone, W> Clone for RecordingOracle<P, H, W> {
     fn clone(&self) -> Self {
-        Self { oracle: self.oracle.clone(), hint: self.hint.clone(), witness: Arc::clone(&self.witness) }
+        Self {
+            oracle: self.oracle.clone(),
+            hint: self.hint.clone(),
+            witness: Arc::clone(&self.witness),
+        }
     }
 }
 
@@ -81,11 +85,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::{collections::HashMap, sync::Mutex};
 
-    use base_proof_preimage::PreimageKeyType;
-    use base_proof_preimage::errors::PreimageOracleError;
+    use base_proof_preimage::{PreimageKeyType, errors::PreimageOracleError};
 
     use super::*;
 

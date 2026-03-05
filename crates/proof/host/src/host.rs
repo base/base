@@ -7,7 +7,8 @@ use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
 use base_proof_client::Prologue;
 use base_proof_preimage::{
-    BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer, WitnessOracle,
+    BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
+    WitnessOracle,
 };
 use tokio::{
     sync::RwLock,
@@ -110,10 +111,8 @@ impl Host {
             .await
             .map_err(|e| HostError::Custom(format!("prologue failed: {e}")))?;
 
-        let epilogue = driver
-            .execute()
-            .await
-            .map_err(|e| HostError::Custom(format!("driver failed: {e}")))?;
+        let epilogue =
+            driver.execute().await.map_err(|e| HostError::Custom(format!("driver failed: {e}")))?;
 
         epilogue
             .validate()
