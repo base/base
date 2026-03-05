@@ -10,29 +10,31 @@ extern crate tracing;
 
 mod service;
 pub use service::{
-    DerivationDelegateConfig, L1Config, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    DerivationDelegateConfig, FollowNode, L1Config, L1ConfigBuilder, NodeMode, RollupNode,
+    RollupNodeBuilder,
 };
 
 mod actors;
 pub use actors::{
     BlockStream, BuildRequest, CancellableContext, Conductor, ConductorClient, ConductorError,
-    DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
-    DerivationActorRequest, DerivationClientError, DerivationClientResult,
-    DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
-    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
-    DerivationStateUpdate, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
-    EngineConfig, EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
+    DelayedL1OriginSelectorProvider, DelegateDerivationActor, DelegateL2Client,
+    DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor, DerivationActorRequest,
+    DerivationClientError, DerivationClientResult, DerivationDelegateClient,
+    DerivationDelegateClientError, DerivationEngineClient, DerivationError, DerivationState,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, EngineActor,
+    EngineActorRequest, EngineClientError, EngineClientResult, EngineConfig,
+    EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
     EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, EngineRpcRequestReceiver,
     L1OriginSelector, L1OriginSelectorError, L1OriginSelectorProvider, L1WatcherActor,
-    L1WatcherActorError, L1WatcherDerivationClient, NetworkActor, NetworkActorError,
-    NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
-    NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, OriginSelector,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ResetRequest, RpcActor,
-    RpcActorError, RpcContext, SealRequest, SequencerActor, SequencerActorError,
-    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UnsafePayloadGossipClient,
-    UnsafePayloadGossipClientError,
+    L1WatcherActorError, L1WatcherDerivationClient, L2SourceClient, NetworkActor,
+    NetworkActorError, NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver,
+    NetworkDriverError, NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor,
+    OriginSelector, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
+    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient,
+    ResetRequest, RpcActor, RpcActorError, RpcContext, SealRequest, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
 mod metrics;

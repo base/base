@@ -8,11 +8,14 @@ use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
-use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNodeBuilder};
+use base_consensus_node::{
+    DelegateL2Client, EngineConfig, FollowNode, L1ConfigBuilder, NodeMode, RollupNodeBuilder,
+};
 use base_consensus_registry::Registry;
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use strum::IntoEnumIterator;
 use tracing::{error, info};
+use url::Url;
 
 use crate::metrics::{init_p2p_metrics, init_rollup_config_metrics};
 
@@ -29,6 +32,128 @@ base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
     long_about = None
 )]
 pub struct Cli {
+    /// The command to run.
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+impl Cli {
+    /// Run the CLI.
+    pub fn run(self) -> eyre::Result<()> {
+        match self.command {
+            Commands::Node(node) => node.run(),
+            Commands::Follow(follow) => follow.run(),
+        }
+    }
+}
+
+/// Commands for the Base Consensus CLI.
+#[derive(Subcommand, Clone, Debug)]
+#[expect(clippy::large_enum_variant)]
+pub enum Commands {
+    /// Start the node
+    #[command(name = "node")]
+    Node(Node),
+
+    /// Follows another node.
+    #[command(name = "follow")]
+    Follow(Follow),
+}
+
+/// Follow CLI arguments.
+#[derive(Args, Clone, Debug)]
+pub struct Follow {
+    /// The URL of the node to follow.
+    #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
+    pub source_l2_rpc: Url,
+
+    /// Local L2 execution RPC URL (non-engine, e.g. port 8545).
+    #[arg(
+        long = "l2-rpc-url",
+        default_value = "http://localhost:8545",
+        env = "BASE_NODE_L2_RPC_URL"
+    )]
+    pub l2_rpc_url: Url,
+
+    /// L1 execution layer RPC URL.
+    #[arg(long = "l1-eth-rpc", env = "BASE_NODE_L1_ETH_RPC")]
+    pub l1_eth_rpc: Url,
+
+    /// L2 engine CLI arguments.
+    #[clap(flatten)]
+    pub l2_client_args: L2ClientArgs,
+
+    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
+    #[arg(
+        long = "chain",
+        short = 'n',
+        global = true,
+        default_value = "8453",
+        env = "BASE_NODE_NETWORK"
+    )]
+    pub l2_chain_id: Chain,
+
+    /// Logging configuration.
+    #[command(flatten)]
+    pub logging: LogArgs,
+
+    /// L2 configuration file.
+    #[clap(flatten)]
+    pub l2_config: L2ConfigFile,
+}
+
+impl Follow {
+    /// Runs the CLI.
+    pub fn run(self) -> eyre::Result<()> {
+        // Initialize logging from global arguments.
+        LogConfig::from(self.logging.clone()).init_tracing_subscriber()?;
+
+        // Run the subcommand.
+        RuntimeManager::run_until_ctrl_c(self.exec())
+    }
+
+    /// Run the Follow subcommand.
+    pub async fn exec(&self) -> eyre::Result<()> {
+        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+
+        info!(
+            target: "rollup_node",
+            chain_id = cfg.l2_chain_id.id(),
+            source = %self.source_l2_rpc,
+            "Starting follow node"
+        );
+
+        let jwt_secret = self.l2_client_args.validate_jwt().await?;
+        let rollup_config = Arc::new(cfg);
+
+        let engine_config = EngineConfig {
+            config: Arc::clone(&rollup_config),
+            l2_url: self.l2_client_args.l2_engine_rpc.clone(),
+            l2_jwt_secret: jwt_secret,
+            l1_url: self.l1_eth_rpc.clone(),
+            mode: NodeMode::Validator,
+        };
+
+        let local_l2_provider = alloy_provider::RootProvider::<base_alloy_network::Base>::new_http(
+            self.l2_rpc_url.clone(),
+        );
+        let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
+
+        FollowNode::new(rollup_config, engine_config, local_l2_provider, l2_source)
+            .start()
+            .await
+            .map_err(|e| {
+            error!(target: "rollup_node", error = %e, "Failed to start follow node");
+            eyre::eyre!("{e}")
+        })?;
+
+        Ok(())
+    }
+}
+
+/// Node CLI arguments.
+#[derive(Args, Clone, Debug)]
+pub struct Node {
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
     #[arg(
         long = "chain",
@@ -85,7 +210,7 @@ pub struct Cli {
     pub sequencer_flags: SequencerArgs,
 }
 
-impl Cli {
+impl Node {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
         // Initialize logging from global arguments.
