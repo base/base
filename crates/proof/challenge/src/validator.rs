@@ -67,30 +67,26 @@ pub enum ValidatorError {
     Rpc(#[from] RpcError),
 }
 
-/// Result of validating a dispute game's final output root.
+/// Result of validating a dispute game's output roots.
+///
+/// For final root validation, `expected_root` is the output root computed from
+/// the L2 state. For intermediate root validation, `expected_root` is the
+/// computed root at the first failing checkpoint when `is_valid` is `false`, or
+/// equal to `claimed_root` when all checkpoints pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationResult {
-    /// Whether the final output root matches the expected value.
+    /// Whether all validated output roots match their expected values.
     pub is_valid: bool,
     /// The expected output root computed from the L2 state.
+    ///
+    /// For final root validation this is the root at the game's L2 block. For
+    /// intermediate validation this is the computed root at the first invalid
+    /// checkpoint, or `claimed_root` when all checkpoints are valid.
     pub expected_root: B256,
     /// The root claim from the on-chain game.
     pub claimed_root: B256,
     /// The index of the first invalid intermediate root, if any.
     pub invalid_intermediate_index: Option<usize>,
-}
-
-/// Result of validating a single intermediate output root checkpoint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IntermediateValidationResult {
-    /// The L2 block number of this checkpoint.
-    pub block_number: u64,
-    /// The expected output root computed from the L2 state.
-    pub expected_root: B256,
-    /// The root claim from the on-chain intermediate roots.
-    pub claimed_root: B256,
-    /// Whether the intermediate root matches.
-    pub is_valid: bool,
 }
 
 /// Validates output roots for candidate dispute games.
@@ -247,7 +243,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
             "validating intermediate output roots"
         );
 
-        let mut first_invalid: Option<usize> = None;
+        let mut first_invalid: Option<(usize, B256)> = None;
 
         let mut checkpoint = starting_block_number
             .checked_add(intermediate_block_interval)
@@ -271,7 +267,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
                     claimed = %claimed_intermediate,
                     "invalid intermediate output root detected"
                 );
-                first_invalid = Some(idx);
+                first_invalid = Some((idx, expected_root));
                 break;
             }
 
@@ -289,12 +285,10 @@ impl<L2: L2Provider> OutputValidator<L2> {
             metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
         }
 
-        Ok(ValidationResult {
-            is_valid,
-            expected_root: B256::ZERO,
-            claimed_root,
-            invalid_intermediate_index: first_invalid,
-        })
+        let expected_root = first_invalid.map_or(claimed_root, |(_, root)| root);
+        let invalid_intermediate_index = first_invalid.map(|(idx, _)| idx);
+
+        Ok(ValidationResult { is_valid, expected_root, claimed_root, invalid_intermediate_index })
     }
 }
 
@@ -304,6 +298,7 @@ mod tests {
 
     use alloy_consensus::Header as ConsensusHeader;
     use alloy_primitives::{Address, B256, Bytes, U256, address};
+    use alloy_rpc_types_eth::Header as RpcHeader;
     use base_enclave::{AccountResult, output_root_v0};
 
     use super::*;
@@ -402,24 +397,20 @@ mod tests {
     async fn test_validate_intermediate_roots_valid() {
         // starting_block = 90, l2_block = 100, interval = 5
         // Checkpoint blocks: 95, 100
+        let final_claimed = B256::repeat_byte(0xAA);
         let (provider, roots) = mock_with_blocks(&[95, 100]);
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x03);
 
         let result = validator
-            .validate_intermediate_roots(
-                game_address,
-                90,
-                100,
-                5,
-                B256::ZERO, // claimed_root (final)
-                &roots,
-            )
+            .validate_intermediate_roots(game_address, 90, 100, 5, final_claimed, &roots)
             .await
             .unwrap();
 
         assert!(result.is_valid);
         assert_eq!(result.invalid_intermediate_index, None);
+        // When all intermediates are valid, expected_root equals claimed_root
+        assert_eq!(result.expected_root, final_claimed);
     }
 
     /// Invalid intermediate root: the second checkpoint does not match.
@@ -428,6 +419,8 @@ mod tests {
         // starting_block = 90, l2_block = 100, interval = 5
         // Checkpoint blocks: 95, 100
         let (provider, mut roots) = mock_with_blocks(&[95, 100]);
+        // Save the correct root at block 100 before corrupting
+        let correct_root_at_100 = roots[1];
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x04);
 
@@ -441,6 +434,8 @@ mod tests {
 
         assert!(!result.is_valid);
         assert_eq!(result.invalid_intermediate_index, Some(1));
+        // expected_root is the computed root at the first failing checkpoint
+        assert_eq!(result.expected_root, correct_root_at_100);
     }
 
     /// Final root is valid but intermediate root is invalid.
@@ -467,6 +462,8 @@ mod tests {
 
         assert!(!intermediate_result.is_valid);
         assert_eq!(intermediate_result.invalid_intermediate_index, Some(0));
+        // expected_root is the computed root at checkpoint block 95 (the first failing index)
+        assert_eq!(intermediate_result.expected_root, roots[0]);
     }
 
     /// Missing L2 block: returns `ValidatorError::BlockNotAvailable` instead of panicking.
@@ -594,8 +591,6 @@ mod tests {
     /// consensus header, and the validator rejects it.
     #[tokio::test]
     async fn test_header_hash_mismatch() {
-        use alloy_rpc_types_eth::Header as RpcHeader;
-
         let consensus_header = test_header(100);
         let storage_hash = B256::repeat_byte(0xBB);
         let account = test_account_result(storage_hash);

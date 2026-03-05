@@ -21,9 +21,7 @@ mod service;
 pub use service::ChallengerService;
 
 mod validator;
-pub use validator::{
-    IntermediateValidationResult, OutputValidator, ValidationResult, ValidatorError,
-};
+pub use validator::{OutputValidator, ValidationResult, ValidatorError};
 
 #[cfg(test)]
 pub mod test_utils;
