@@ -135,6 +135,148 @@ mod tests {
         Bytes::from(compressed)
     }
 
+    /// Hardcoded JSON representing the v0.4.1 wire format (metadata has only `block_number`).
+    /// If deserialization of this string ever breaks, we have introduced a backwards-incompatible
+    /// change to the flashblocks websocket schema.
+    const V0_4_1_PAYLOAD_JSON: &str = r#"{
+        "payload_id": "0x0000000000000000",
+        "index": 0,
+        "base": {
+            "parent_beacon_block_root": "0x0101010101010101010101010101010101010101010101010101010101010101",
+            "parent_hash": "0x0202020202020202020202020202020202020202020202020202020202020202",
+            "fee_recipient": "0x0000000000000000000000000000000000000000",
+            "prev_randao": "0x0303030303030303030303030303030303030303030303030303030303030303",
+            "block_number": "0x9",
+            "gas_limit": "0xf4240",
+            "timestamp": "0x6553f100",
+            "extra_data": "0xaabb",
+            "base_fee_per_gas": "0xa"
+        },
+        "diff": {
+            "state_root": "0x0404040404040404040404040404040404040404040404040404040404040404",
+            "receipts_root": "0x0505050505050505050505050505050505050505050505050505050505050505",
+            "logs_bloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "gas_used": "0x7a120",
+            "block_hash": "0x0606060606060606060606060606060606060606060606060606060606060606",
+            "transactions": ["0x0102"],
+            "withdrawals": [],
+            "withdrawals_root": "0x0707070707070707070707070707070707070707070707070707070707070707",
+            "blob_gas_used": "0x2c"
+        },
+        "metadata": {
+            "block_number": 1234
+        }
+    }"#;
+
+    /// Hardcoded JSON representing the v0.5.0-rc.3 wire format (metadata includes receipts,
+    /// balances, and `access_list`). If deserialization of this string ever breaks, we have
+    /// introduced a backwards-incompatible change.
+    const V0_5_0_PAYLOAD_JSON: &str = r#"{
+        "payload_id": "0x0000000000000000",
+        "index": 0,
+        "base": {
+            "parent_beacon_block_root": "0x0101010101010101010101010101010101010101010101010101010101010101",
+            "parent_hash": "0x0202020202020202020202020202020202020202020202020202020202020202",
+            "fee_recipient": "0x0000000000000000000000000000000000000000",
+            "prev_randao": "0x0303030303030303030303030303030303030303030303030303030303030303",
+            "block_number": "0x9",
+            "gas_limit": "0xf4240",
+            "timestamp": "0x6553f100",
+            "extra_data": "0xaabb",
+            "base_fee_per_gas": "0xa"
+        },
+        "diff": {
+            "state_root": "0x0404040404040404040404040404040404040404040404040404040404040404",
+            "receipts_root": "0x0505050505050505050505050505050505050505050505050505050505050505",
+            "logs_bloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "gas_used": "0x7a120",
+            "block_hash": "0x0606060606060606060606060606060606060606060606060606060606060606",
+            "transactions": ["0x0102"],
+            "withdrawals": [],
+            "withdrawals_root": "0x0707070707070707070707070707070707070707070707070707070707070707",
+            "blob_gas_used": "0x2c"
+        },
+        "metadata": {
+            "receipts": {
+                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+                    "type": "0x2",
+                    "status": true,
+                    "cumulativeGasUsed": "0x5208",
+                    "logs": []
+                }
+            },
+            "new_account_balances": {
+                "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0xde0b6b3a7640000"
+            },
+            "block_number": 1234,
+            "access_list": null
+        }
+    }"#;
+
+    /// The v0.4.1 wire format must deserialize successfully into current types.
+    #[test]
+    fn v0_4_1_wire_format_is_backwards_compatible() {
+        let payload: FlashblocksPayloadV1 =
+            serde_json::from_str(V0_4_1_PAYLOAD_JSON).expect("v0.4.1 JSON must deserialize");
+
+        assert_eq!(payload.index, 0);
+        assert!(payload.base.is_some());
+        assert_eq!(payload.base.as_ref().unwrap().block_number, 9);
+        assert_eq!(payload.diff.gas_used, 500_000);
+        assert_eq!(payload.metadata["block_number"], 1234);
+
+        // Client-side Metadata must also parse (ignoring unknown fields)
+        let metadata: Metadata =
+            serde_json::from_value(payload.metadata).expect("metadata must parse");
+        assert_eq!(metadata.block_number, 1234);
+    }
+
+    /// The v0.5.0-rc.3 wire format must deserialize successfully into current types.
+    #[test]
+    fn v0_5_0_wire_format_is_backwards_compatible() {
+        let payload: FlashblocksPayloadV1 =
+            serde_json::from_str(V0_5_0_PAYLOAD_JSON).expect("v0.5.0 JSON must deserialize");
+
+        assert_eq!(payload.index, 0);
+        assert!(payload.base.is_some());
+        assert_eq!(payload.diff.gas_used, 500_000);
+        assert_eq!(payload.metadata["block_number"], 1234);
+        assert!(payload.metadata.get("receipts").is_some());
+        assert!(payload.metadata.get("new_account_balances").is_some());
+        assert!(payload.metadata.get("access_list").is_some());
+
+        let metadata: Metadata =
+            serde_json::from_value(payload.metadata).expect("metadata must parse");
+        assert_eq!(metadata.block_number, 1234);
+    }
+
+    /// A subsequent flashblock (index > 0) omits `base`. This format must round-trip.
+    #[test]
+    fn subsequent_flashblock_without_base_deserializes() {
+        let json = r#"{
+            "payload_id": "0x0000000000000000",
+            "index": 3,
+            "diff": {
+                "state_root": "0x0404040404040404040404040404040404040404040404040404040404040404",
+                "receipts_root": "0x0505050505050505050505050505050505050505050505050505050505050505",
+                "logs_bloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+                "gas_used": "0x5208",
+                "block_hash": "0x0606060606060606060606060606060606060606060606060606060606060606",
+                "transactions": [],
+                "withdrawals": [],
+                "withdrawals_root": "0x0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "metadata": {
+                "block_number": 99
+            }
+        }"#;
+
+        let payload: FlashblocksPayloadV1 =
+            serde_json::from_str(json).expect("payload without base must deserialize");
+        assert!(payload.base.is_none());
+        assert_eq!(payload.index, 3);
+    }
+
     fn sample_payload(metadata: serde_json::Value) -> FlashblocksPayloadV1 {
         FlashblocksPayloadV1 {
             payload_id: PayloadId::default(),

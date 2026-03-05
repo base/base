@@ -1113,3 +1113,101 @@ where
         fb_payload,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Receipt;
+    use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
+    use base_alloy_flashblocks::Metadata;
+    use base_execution_primitives::OpReceipt;
+
+    use super::FlashblocksMetadata;
+
+    /// Pin the JSON field names and structure of [`FlashblocksMetadata`].
+    ///
+    /// This struct is serialized into the `metadata` field of the flashblocks
+    /// websocket payload. Changing field names, types, or serde attributes
+    /// without updating downstream consumers is a breaking change.
+    #[test]
+    fn flashblocks_metadata_json_format_is_stable() {
+        let tx_hash = B256::from([0xAA; 32]);
+        let address = Address::from([0xBB; 20]);
+
+        let receipt = OpReceipt::Eip1559(Receipt {
+            status: true.into(),
+            cumulative_gas_used: 21_000,
+            logs: Vec::<Log>::new(),
+        });
+
+        let mut receipts = HashMap::default();
+        receipts.insert(tx_hash, receipt);
+
+        let mut balances = HashMap::default();
+        balances.insert(address, U256::from(1_000_000_000_000_000_000u128));
+
+        let metadata = FlashblocksMetadata {
+            receipts,
+            new_account_balances: balances,
+            block_number: 42,
+            access_list: None,
+        };
+
+        let json = serde_json::to_value(&metadata).unwrap();
+        let obj = json.as_object().unwrap();
+
+        // Verify exact field set
+        let mut keys: Vec<&String> = obj.keys().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["access_list", "block_number", "new_account_balances", "receipts"],
+            "metadata field names changed"
+        );
+
+        // block_number is a plain integer, not hex-encoded
+        assert_eq!(obj["block_number"], serde_json::json!(42));
+
+        // receipts is a map keyed by tx hash
+        let receipts_obj = obj["receipts"].as_object().unwrap();
+        let tx_key = format!("{tx_hash:#x}");
+        assert!(receipts_obj.contains_key(&tx_key), "receipt should be keyed by tx hash");
+
+        // receipt has internally-tagged type field
+        let receipt_json = &receipts_obj[&tx_key];
+        assert_eq!(receipt_json["type"], "0x2", "EIP-1559 receipt type tag must be 0x2");
+
+        // new_account_balances is a map keyed by address
+        let balances_obj = obj["new_account_balances"].as_object().unwrap();
+        let addr_key = format!("{address:#x}");
+        assert!(balances_obj.contains_key(&addr_key), "balance should be keyed by address");
+
+        // access_list is null when None
+        assert!(obj["access_list"].is_null());
+    }
+
+    /// The client-side [`Metadata`] type must be able to deserialize from
+    /// `FlashblocksMetadata` JSON, ignoring the extra fields.
+    #[test]
+    fn client_metadata_deserializes_from_builder_metadata() {
+        let metadata = FlashblocksMetadata {
+            receipts: HashMap::default(),
+            new_account_balances: HashMap::default(),
+            block_number: 99,
+            access_list: None,
+        };
+
+        let json = serde_json::to_value(&metadata).unwrap();
+        let client_metadata: Metadata =
+            serde_json::from_value(json).expect("client Metadata must parse builder metadata");
+        assert_eq!(client_metadata.block_number, 99);
+    }
+
+    /// The v0.4.1 metadata format (only `block_number`) must still deserialize
+    /// into the client-side [`Metadata`] type.
+    #[test]
+    fn client_metadata_deserializes_from_v0_4_1_format() {
+        let json = serde_json::json!({"block_number": 123});
+        let metadata: Metadata = serde_json::from_value(json).expect("v0.4.1 metadata must parse");
+        assert_eq!(metadata.block_number, 123);
+    }
+}
