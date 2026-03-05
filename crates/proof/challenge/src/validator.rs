@@ -389,7 +389,6 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_rpc_types_eth::Header as RpcHeader;
     use base_enclave::{AccountResult, output_root_v0};
-
     use rstest::rstest;
 
     use super::*;
@@ -454,7 +453,10 @@ mod tests {
     #[case::valid(None, true)]
     #[case::invalid(Some(B256::repeat_byte(0xFF)), false)]
     #[tokio::test]
-    async fn test_validate_final_root(#[case] wrong_root: Option<B256>, #[case] expect_valid: bool) {
+    async fn test_validate_final_root(
+        #[case] wrong_root: Option<B256>,
+        #[case] expect_valid: bool,
+    ) {
         let (provider, expected_root) = mock_with_block(100);
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x01);
