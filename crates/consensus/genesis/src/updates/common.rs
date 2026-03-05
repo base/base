@@ -6,19 +6,19 @@
 use alloy_sol_types::{SolType, sol};
 
 /// The expected data length for a standard `SystemConfigLog` update.
-pub(crate) const STANDARD_UPDATE_DATA_LEN: usize = 96;
+pub(super) const STANDARD_UPDATE_DATA_LEN: usize = 96;
 
 /// The expected pointer value for a standard `SystemConfigLog` update.
-pub(crate) const EXPECTED_POINTER: u64 = 32;
+pub(super) const EXPECTED_POINTER: u64 = 32;
 
 /// The expected data length value for a standard `SystemConfigLog` update.
-pub(crate) const EXPECTED_DATA_LENGTH: u64 = 32;
+pub(super) const EXPECTED_DATA_LENGTH: u64 = 32;
 
 /// Validated `SystemConfig` update data.
 ///
 /// After validation, this struct provides access to the validated pointer, length,
 /// and the payload data starting at byte offset 64.
-pub(crate) struct ValidatedUpdateData<'a> {
+pub(super) struct ValidatedUpdateData<'a> {
     /// The full data bytes.
     data: &'a alloy_primitives::Bytes,
 }
@@ -26,14 +26,14 @@ pub(crate) struct ValidatedUpdateData<'a> {
 impl<'a> ValidatedUpdateData<'a> {
     /// Returns the payload slice (data starting from byte 64).
     #[inline]
-    pub(crate) fn payload(&self) -> &[u8] {
+    pub(super) fn payload(&self) -> &[u8] {
         &self.data[64..]
     }
 }
 
 /// Common validation errors for `SystemConfig` updates.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ValidationError {
+pub(super) enum ValidationError {
     /// Invalid data length. Contains (expected, actual).
     InvalidDataLen(usize, usize),
     /// Failed to decode the pointer.
@@ -57,7 +57,7 @@ pub(crate) enum ValidationError {
 ///
 /// Returns a `ValidatedUpdateData` containing the validated fields and original data,
 /// or a `ValidationError` if any validation fails.
-pub(crate) fn validate_update_data(
+pub(super) fn validate_update_data(
     data: &alloy_primitives::Bytes,
 ) -> Result<ValidatedUpdateData<'_>, ValidationError> {
     // Validate total data length
