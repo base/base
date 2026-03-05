@@ -99,6 +99,23 @@ pub struct ValidationResult {
     pub invalid_intermediate_index: Option<usize>,
 }
 
+/// Parameters for validating intermediate output roots of a dispute game.
+#[derive(Debug, Clone)]
+pub struct IntermediateValidationParams {
+    /// The onchain address of the dispute game proxy contract.
+    pub game_address: Address,
+    /// The L2 block number at the start of this game's range.
+    pub starting_block_number: u64,
+    /// The L2 block number at the end of this game's range.
+    pub l2_block_number: u64,
+    /// The block interval between intermediate output root checkpoints.
+    pub intermediate_block_interval: u64,
+    /// The final output root claimed by this dispute game.
+    pub claimed_root: B256,
+    /// The intermediate output roots to validate, one per checkpoint.
+    pub intermediate_roots: Vec<B256>,
+}
+
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
@@ -234,13 +251,16 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// (possible with adversarial onchain values).
     pub async fn validate_intermediate_roots(
         &self,
-        game_address: Address,
-        starting_block_number: u64,
-        l2_block_number: u64,
-        intermediate_block_interval: u64,
-        claimed_root: B256,
-        intermediate_roots: &[B256],
+        params: IntermediateValidationParams,
     ) -> Result<ValidationResult, ValidatorError> {
+        let IntermediateValidationParams {
+            game_address,
+            starting_block_number,
+            l2_block_number,
+            intermediate_block_interval,
+            claimed_root,
+            intermediate_roots,
+        } = params;
         let start = Instant::now();
 
         if intermediate_block_interval == 0 {
@@ -470,7 +490,14 @@ mod tests {
         let game_address = Address::repeat_byte(0x03);
 
         let result = validator
-            .validate_intermediate_roots(game_address, 90, 100, 5, final_claimed, &roots)
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 5,
+                claimed_root: final_claimed,
+                intermediate_roots: roots,
+            })
             .await
             .unwrap();
 
@@ -495,7 +522,14 @@ mod tests {
         roots[1] = B256::repeat_byte(0xFF);
 
         let result = validator
-            .validate_intermediate_roots(game_address, 90, 100, 5, B256::ZERO, &roots)
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 5,
+                claimed_root: B256::ZERO,
+                intermediate_roots: roots,
+            })
             .await
             .unwrap();
 
@@ -523,7 +557,14 @@ mod tests {
         intermediate_roots[0] = B256::repeat_byte(0xDD);
 
         let intermediate_result = validator
-            .validate_intermediate_roots(game_address, 90, 100, 5, roots[1], &intermediate_roots)
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 5,
+                claimed_root: roots[1],
+                intermediate_roots: intermediate_roots,
+            })
             .await
             .unwrap();
 
@@ -560,8 +601,16 @@ mod tests {
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x07);
 
-        let result =
-            validator.validate_intermediate_roots(game_address, 90, 100, 0, B256::ZERO, &[]).await;
+        let result = validator
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 0,
+                claimed_root: B256::ZERO,
+                intermediate_roots: vec![],
+            })
+            .await;
 
         assert!(result.is_err());
         assert!(
@@ -580,14 +629,14 @@ mod tests {
         // starting=90, end=100, interval=5 -> expected 2 checkpoints (95, 100)
         // but only provide 1 root
         let result = validator
-            .validate_intermediate_roots(
+            .validate_intermediate_roots(IntermediateValidationParams {
                 game_address,
-                90,
-                100,
-                5,
-                B256::ZERO,
-                &[B256::ZERO], // only 1, need 2
-            )
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 5,
+                claimed_root: B256::ZERO,
+                intermediate_roots: vec![B256::ZERO], // only 1, need 2
+            })
             .await;
 
         assert!(result.is_err());
@@ -608,14 +657,14 @@ mod tests {
         // starting=90, end=100, interval=5 -> expected 2 checkpoints (95, 100)
         // but provide 3 roots
         let result = validator
-            .validate_intermediate_roots(
+            .validate_intermediate_roots(IntermediateValidationParams {
                 game_address,
-                90,
-                100,
-                5,
-                B256::ZERO,
-                &[B256::ZERO, B256::ZERO, B256::ZERO], // 3, need 2
-            )
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 5,
+                claimed_root: B256::ZERO,
+                intermediate_roots: vec![B256::ZERO, B256::ZERO, B256::ZERO], // 3, need 2
+            })
             .await;
 
         assert!(result.is_err());
@@ -638,14 +687,14 @@ mod tests {
         // span = l2_block_number - starting_block_number = u64::MAX - (u64::MAX - 1) = 1
         // expected_count = 1 / u64::MAX = 0, so pass empty roots
         let result = validator
-            .validate_intermediate_roots(
+            .validate_intermediate_roots(IntermediateValidationParams {
                 game_address,
-                u64::MAX - 1,
-                u64::MAX,
-                u64::MAX, // Would overflow: (u64::MAX-1) + u64::MAX, but no checkpoints needed
-                B256::ZERO,
-                &roots,
-            )
+                starting_block_number: u64::MAX - 1,
+                l2_block_number: u64::MAX,
+                intermediate_block_interval: u64::MAX, // Would overflow: (u64::MAX-1) + u64::MAX, but no checkpoints needed
+                claimed_root: B256::ZERO,
+                intermediate_roots: roots,
+            })
             .await;
 
         let validation = result.expect("zero checkpoints should succeed without overflow");
@@ -668,7 +717,14 @@ mod tests {
         let game_address = Address::repeat_byte(0x0D);
 
         let result = validator
-            .validate_intermediate_roots(game_address, starting, l2, interval, B256::ZERO, &roots)
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: starting,
+                l2_block_number: l2,
+                intermediate_block_interval: interval,
+                claimed_root: B256::ZERO,
+                intermediate_roots: roots,
+            })
             .await;
 
         let validation = result.expect("should not overflow");
@@ -685,7 +741,14 @@ mod tests {
 
         // starting == l2 (equal case)
         let result = validator
-            .validate_intermediate_roots(game_address, 100, 100, 10, B256::ZERO, &[])
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: 100,
+                l2_block_number: 100,
+                intermediate_block_interval: 10,
+                claimed_root: B256::ZERO,
+                intermediate_roots: vec![],
+            })
             .await;
         assert!(
             matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
@@ -694,7 +757,14 @@ mod tests {
 
         // starting > l2 (greater case)
         let result = validator
-            .validate_intermediate_roots(game_address, 200, 100, 10, B256::ZERO, &[])
+            .validate_intermediate_roots(IntermediateValidationParams {
+                game_address,
+                starting_block_number: 200,
+                l2_block_number: 100,
+                intermediate_block_interval: 10,
+                claimed_root: B256::ZERO,
+                intermediate_roots: vec![],
+            })
             .await;
         assert!(
             matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
@@ -728,14 +798,14 @@ mod tests {
         let game_address = Address::repeat_byte(0x0E);
 
         let result = validator
-            .validate_intermediate_roots(
+            .validate_intermediate_roots(IntermediateValidationParams {
                 game_address,
-                90,
-                100,
-                5,
-                B256::ZERO,
-                &[root_95, B256::ZERO],
-            )
+                starting_block_number: 90,
+                l2_block_number: 100,
+                intermediate_block_interval: 5,
+                claimed_root: B256::ZERO,
+                intermediate_roots: vec![root_95, B256::ZERO],
+            })
             .await;
 
         assert!(result.is_err());
