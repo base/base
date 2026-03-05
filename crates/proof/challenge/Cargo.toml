@@ -13,9 +13,9 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-rpc-types-eth.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
 
 # Async
 futures.workspace = true
