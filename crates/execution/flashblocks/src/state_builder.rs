@@ -399,8 +399,7 @@ mod tests {
             .as_ref()
             .expect("beacon roots account should be populated")
             .storage;
-        let stored_root =
-            *storage.get(&root_slot).expect("beacon root slot should be written");
+        let stored_root = *storage.get(&root_slot).expect("beacon root slot should be written");
 
         assert_eq!(
             stored_root,
@@ -443,9 +442,8 @@ mod tests {
 
         // EIP-4788 is inactive pre-Ecotone, so the contract should have no storage writes.
         let beacon_account = db.cache.accounts.get(&BEACON_ROOTS_ADDRESS);
-        let has_storage_writes = beacon_account
-            .and_then(|a| a.account.as_ref())
-            .is_some_and(|a| !a.storage.is_empty());
+        let has_storage_writes =
+            beacon_account.and_then(|a| a.account.as_ref()).is_some_and(|a| !a.storage.is_empty());
         assert!(
             !has_storage_writes,
             "EIP-4788 contract should not be called and have no storage writes pre-Ecotone"
