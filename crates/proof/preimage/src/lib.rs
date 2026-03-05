@@ -23,12 +23,12 @@ mod hint;
 pub use hint::{HintReader, HintWriter};
 
 mod traits;
+pub use errors::{WitnessOracleError, WitnessOracleResult};
 pub use traits::{
     Channel, CommsClient, FlushableCache, HintReaderServer, HintRouter, HintWriterClient,
     PreimageFetcher, PreimageOracleClient, PreimageOracleServer, PreimageServerBackend,
     WitnessOracle,
 };
-pub use errors::{WitnessOracleError, WitnessOracleResult};
 
 #[cfg(feature = "std")]
 mod native_channel;

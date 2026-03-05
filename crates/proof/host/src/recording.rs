@@ -269,7 +269,11 @@ mod tests {
         let recording = RecordingOracle::new(oracle, hint, Arc::clone(&witness));
 
         assert!(recording.get(key).await.is_err());
-        assert_eq!(witness.preimage_count().unwrap(), 0, "get error should not record into witness");
+        assert_eq!(
+            witness.preimage_count().unwrap(),
+            0,
+            "get error should not record into witness"
+        );
 
         let mut buf = vec![0u8; 4];
         assert!(recording.get_exact(key, &mut buf).await.is_err());
