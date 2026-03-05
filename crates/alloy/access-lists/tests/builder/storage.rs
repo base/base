@@ -1,6 +1,6 @@
 //! Tests for SLOAD/SSTORE tracking in the access list
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::{
     AccessListContract, AccountInfo, Bytecode, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
@@ -222,5 +222,96 @@ fn test_multi_sstore() {
     assert!(
         contract_changes.storage_changes.len() >= 2,
         "Contract should have at least 2 storage changes for the mapping writes"
+    );
+}
+
+#[test]
+/// Ensures reverted transactions do not leak reverted contract storage changes into the access list
+fn test_reverted_tx_does_not_record_contract_storage_changes() {
+    let sender = U256::from(0xDEAD).into_address();
+    let contract = U256::from(0xCAFE).into_address();
+
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+    overrides.insert(
+        contract,
+        AccountInfo::default()
+            .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
+    );
+
+    let txs = vec![
+        // Successful write.
+        OpTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(sender)
+                    .chain_id(Some(DEVNET_CHAIN_ID))
+                    .kind(TxKind::Call(contract))
+                    .data(
+                        AccessListContract::insertMultipleCall {
+                            keys: vec![U256::from(0)],
+                            values: vec![U256::from(84)],
+                        }
+                        .abi_encode()
+                        .into(),
+                    )
+                    .nonce(0)
+                    .gas_price(0)
+                    .gas_priority_fee(None)
+                    .max_fee_per_gas(0)
+                    .gas_limit(100_000),
+            )
+            .build_fill(),
+        // Reverted write (`keys.length != values.length`).
+        OpTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(sender)
+                    .chain_id(Some(DEVNET_CHAIN_ID))
+                    .kind(TxKind::Call(contract))
+                    .data(
+                        AccessListContract::insertMultipleCall {
+                            keys: vec![U256::from(1)],
+                            values: vec![],
+                        }
+                        .abi_encode()
+                        .into(),
+                    )
+                    .nonce(1)
+                    .gas_price(0)
+                    .gas_priority_fee(None)
+                    .max_fee_per_gas(0)
+                    .gas_limit(100_000),
+            )
+            .build_fill(),
+    ];
+
+    let access_list = execute_txns_build_access_list(txs, Some(overrides), None)
+        .expect("access list build should succeed even when a tx reverts");
+
+    let contract_changes = access_list
+        .account_changes
+        .iter()
+        .find(|ac| ac.address == contract)
+        .expect("Contract should be in access list");
+
+    let block_access_indices = contract_changes
+        .storage_changes
+        .iter()
+        .flat_map(|slot| slot.changes.iter())
+        .map(|change| change.block_access_index)
+        .collect::<BTreeSet<_>>();
+    assert!(
+        block_access_indices.contains(&0),
+        "Expected successful tx (index 0) storage writes to be present"
+    );
+    assert!(
+        !block_access_indices.contains(&1),
+        "Reverted tx (index 1) must not contribute contract storage writes"
+    );
+    assert_eq!(
+        block_access_indices,
+        BTreeSet::from([0]),
+        "Only successful tx writes should be recorded"
     );
 }
