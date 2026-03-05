@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
@@ -35,16 +35,10 @@ pub struct ScannerConfig {
 pub struct CandidateGame {
     /// The factory index of this game.
     pub index: u64,
-    /// The game type ID from the factory.
-    pub game_type: u32,
-    /// The proxy address of the game contract.
-    pub proxy: Address,
-    /// The output root claimed by this game.
-    pub root_claim: B256,
-    /// The L2 block number of this game.
-    pub l2_block_number: u64,
-    /// The parent game's factory index.
-    pub parent_index: u32,
+    /// Game data from the factory contract.
+    pub factory: GameAtIndex,
+    /// Game info from the verifier contract.
+    pub info: GameInfo,
     /// The starting block number for this game.
     pub starting_block_number: u64,
 }
@@ -156,15 +150,15 @@ impl GameScanner {
     /// been challenged (`zkProver` == zero). Returns `None` if the game should
     /// be skipped.
     async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
-        let GameAtIndex { game_type, proxy, .. } = self.factory_client.game_at_index(index).await?;
+        let factory = self.factory_client.game_at_index(index).await?;
 
-        let status = self.verifier_client.status(proxy).await?;
+        let status = self.verifier_client.status(factory.proxy).await?;
         if status != STATUS_IN_PROGRESS {
             debug!(index = index, status = status, "skipping game not in progress");
             return Ok(None);
         }
 
-        let zk_prover = self.verifier_client.zk_prover(proxy).await?;
+        let zk_prover = self.verifier_client.zk_prover(factory.proxy).await?;
         if zk_prover != Address::ZERO {
             debug!(
                 index = index,
@@ -174,19 +168,11 @@ impl GameScanner {
             return Ok(None);
         }
 
-        let (GameInfo { root_claim, l2_block_number, parent_index }, starting_block_number) = tokio::try_join!(
-            self.verifier_client.game_info(proxy),
-            self.verifier_client.starting_block_number(proxy),
+        let (info, starting_block_number) = tokio::try_join!(
+            self.verifier_client.game_info(factory.proxy),
+            self.verifier_client.starting_block_number(factory.proxy),
         )?;
 
-        Ok(Some(CandidateGame {
-            index,
-            game_type,
-            proxy,
-            root_claim,
-            l2_block_number,
-            parent_index,
-            starting_block_number,
-        }))
+        Ok(Some(CandidateGame { index, factory, info, starting_block_number }))
     }
 }

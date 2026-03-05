@@ -200,14 +200,14 @@ mod tests {
         // Game 3: challenged. Game 4: candidate.
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].index, 0);
-        assert_eq!(candidates[0].game_type, 1);
-        assert_eq!(candidates[0].l2_block_number, 100);
+        assert_eq!(candidates[0].factory.game_type, 1);
+        assert_eq!(candidates[0].info.l2_block_number, 100);
         assert_eq!(candidates[1].index, 1);
-        assert_eq!(candidates[1].game_type, 99);
-        assert_eq!(candidates[1].l2_block_number, 150);
+        assert_eq!(candidates[1].factory.game_type, 99);
+        assert_eq!(candidates[1].info.l2_block_number, 150);
         assert_eq!(candidates[2].index, 4);
-        assert_eq!(candidates[2].game_type, 1);
-        assert_eq!(candidates[2].l2_block_number, 400);
+        assert_eq!(candidates[2].factory.game_type, 1);
+        assert_eq!(candidates[2].info.l2_block_number, 400);
         assert_eq!(new_last_scanned, Some(4));
     }
 
