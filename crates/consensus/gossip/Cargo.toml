@@ -20,7 +20,6 @@ base-consensus-genesis.workspace = true
 base-consensus-disc.workspace = true
 
 # Alloy
-alloy-rlp = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
@@ -55,6 +54,7 @@ metrics = { workspace = true, optional = true }
 tempfile.workspace = true
 multihash.workspace = true
 serde_json = { workspace = true, features = ["std"] }
+alloy-rlp = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-chains = { workspace = true, features = ["std"] }
 

@@ -6,9 +6,6 @@
 
 #[macro_use]
 extern crate tracing;
-// Used in tests
-#[allow(unused_extern_crates)]
-extern crate alloy_rlp;
 
 mod metrics;
 pub use metrics::Metrics;
