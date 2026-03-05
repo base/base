@@ -49,6 +49,7 @@ pub fn output_root_v0(header: &Header, storage_root: B256) -> B256 {
 /// The 32-byte output root hash.
 #[must_use]
 pub fn output_root_v0_with_hash(header: &Header, storage_root: B256, block_hash: B256) -> B256 {
+    debug_assert_eq!(block_hash, header.hash_slow(), "block_hash does not match header");
     let state_root = header.state_root;
 
     // 128 bytes: version (32, all zeros) || state_root (32) || storage_root (32) || block_hash (32)
