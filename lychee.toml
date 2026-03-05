@@ -12,4 +12,5 @@ exclude = [
     'https://img.shields.io/github/issues-pr-raw/base/base',
     'https://rustup.rs/',
     'https://base.mirror.xyz/',
+    'https://www.man7.org/',
 ]
