@@ -47,7 +47,9 @@ pub enum ValidatorError {
     InvalidInterval,
 
     /// The block range is degenerate (`starting_block_number >= l2_block_number`).
-    #[error("invalid block range: starting block {starting_block_number} >= end block {l2_block_number}")]
+    #[error(
+        "invalid block range: starting block {starting_block_number} >= end block {l2_block_number}"
+    )]
     InvalidBlockRange {
         /// The starting block number.
         starting_block_number: u64,
@@ -234,7 +236,10 @@ impl<L2: L2Provider> OutputValidator<L2> {
         }
 
         if starting_block_number >= l2_block_number {
-            return Err(ValidatorError::InvalidBlockRange { starting_block_number, l2_block_number });
+            return Err(ValidatorError::InvalidBlockRange {
+                starting_block_number,
+                l2_block_number,
+            });
         }
 
         // Compute expected checkpoint count so we can verify intermediate_roots
