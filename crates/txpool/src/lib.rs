@@ -20,10 +20,13 @@ mod consumer;
 pub use consumer::{Consumer, ConsumerConfig, ConsumerHandle, ConsumerMetrics, RecentlySent};
 
 mod forwarder;
-pub use forwarder::{
-    BuilderApiClient, BuilderApiHandler, BuilderApiServer, Forwarder, ForwarderConfig,
-    ForwarderHandle, ForwarderMetrics, ValidTransaction,
-};
+pub use forwarder::{Forwarder, ForwarderConfig, ForwarderHandle, ForwarderMetrics};
+
+mod builder;
+pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
+
+mod wire;
+pub use wire::ValidatedTransaction;
 
 pub mod estimated_da_size;
 

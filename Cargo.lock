@@ -4349,6 +4349,7 @@ dependencies = [
  "futures",
  "jsonrpsee",
  "metrics",
+ "metrics-derive",
  "parking_lot",
  "reth-chainspec",
  "reth-evm",

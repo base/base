@@ -41,6 +41,7 @@ url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
 metrics.workspace = true
+metrics-derive.workspace = true
 futures.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
