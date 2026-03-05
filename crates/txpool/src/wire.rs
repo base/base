@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Carries the recovered sender address so the builder can skip signer
 /// recovery, and the EIP-2718 encoded transaction envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidTransaction {
+pub struct ValidatedTransaction {
     /// Recovered signer address.
     pub sender: Address,
     /// EIP-2718 encoded transaction bytes.

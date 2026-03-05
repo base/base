@@ -26,7 +26,7 @@ mod builder;
 pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
 
 mod wire;
-pub use wire::ValidTransaction;
+pub use wire::ValidatedTransaction;
 
 pub mod estimated_da_size;
 

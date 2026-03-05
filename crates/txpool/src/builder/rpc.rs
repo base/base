@@ -11,7 +11,7 @@ use jsonrpsee::{
 use reth_transaction_pool::TransactionPool;
 use tracing::debug;
 
-use crate::{BasePooledTransaction, BuilderApiMetrics, ValidTransaction};
+use crate::{BasePooledTransaction, BuilderApiMetrics, ValidatedTransaction};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
 #[rpc(server, namespace = "base")]
@@ -24,7 +24,7 @@ pub trait BuilderApi {
     /// Returns an error if decoding or pool insertion fails.
     /// Use JSON-RPC batch requests for efficient bulk submission.
     #[method(name = "insertValidatedTransaction")]
-    async fn insert_validated_transaction(&self, tx: ValidTransaction) -> RpcResult<()>;
+    async fn insert_validated_transaction(&self, tx: ValidatedTransaction) -> RpcResult<()>;
 }
 
 /// Server implementation of [`BuilderApi`] backed by a transaction pool.
@@ -50,7 +50,7 @@ impl<P> BuilderApiServer for BuilderApiImpl<P>
 where
     P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
 {
-    async fn insert_validated_transaction(&self, tx: ValidTransaction) -> RpcResult<()> {
+    async fn insert_validated_transaction(&self, tx: ValidatedTransaction) -> RpcResult<()> {
         debug!(
             sender = %tx.sender,
             "rpc::insert_validated_transaction"
@@ -85,7 +85,7 @@ where
             }
             Err(e) => {
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
-                self.metrics.pool_rejections.increment(1);
+                self.metrics.txs_rejected.increment(1);
                 Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("pool rejected transaction: {e}"),
@@ -106,7 +106,7 @@ mod tests {
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
-    use crate::{BasePooledTransaction, ValidTransaction};
+    use crate::{BasePooledTransaction, ValidatedTransaction};
 
     // ==========================================================================
     // Helper functions for creating test transactions
@@ -162,7 +162,7 @@ mod tests {
     async fn decode_invalid_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidTransaction {
+        let tx = ValidatedTransaction {
             sender: Address::repeat_byte(0x01),
             raw: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
         };
@@ -187,7 +187,7 @@ mod tests {
     async fn decode_empty_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidTransaction { sender: Address::ZERO, raw: Bytes::new() };
+        let tx = ValidatedTransaction { sender: Address::ZERO, raw: Bytes::new() };
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for empty bytes");
@@ -208,7 +208,7 @@ mod tests {
         let (sender, full_raw) = create_deposit_tx();
         let truncated = Bytes::from(full_raw[..full_raw.len() / 2].to_vec());
 
-        let tx = ValidTransaction { sender, raw: truncated };
+        let tx = ValidatedTransaction { sender, raw: truncated };
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for truncated tx");
@@ -226,7 +226,7 @@ mod tests {
         let handler = handler();
 
         // Type byte 0xFF is not a valid EIP-2718 tx type
-        let tx = ValidTransaction {
+        let tx = ValidatedTransaction {
             sender: Address::repeat_byte(0x01),
             raw: Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
         };
@@ -242,7 +242,7 @@ mod tests {
     async fn decode_single_byte_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidTransaction {
+        let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::from_static(&[0x02]), // Just type byte, no payload
         };
@@ -259,7 +259,7 @@ mod tests {
         let handler = handler();
 
         // Legacy tx (type 0x00) followed by invalid RLP
-        let tx = ValidTransaction {
+        let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::from_static(&[0x00, 0x01, 0x02]),
         };
@@ -274,7 +274,7 @@ mod tests {
         let handler = handler();
 
         let (sender, raw) = create_eip1559_tx();
-        let tx = ValidTransaction { sender, raw };
+        let tx = ValidatedTransaction { sender, raw };
 
         let result = handler.insert_validated_transaction(tx).await;
         let err = result.unwrap_err();

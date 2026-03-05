@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
-use crate::ValidTransaction;
+use crate::ValidatedTransaction;
 
 /// Sliding window rate limiter that tracks request timestamps.
 ///
@@ -88,7 +88,7 @@ pub struct Forwarder<T: PoolTransaction> {
     metrics: ForwarderMetrics,
     cancel: CancellationToken,
     limiter: RateLimiter,
-    buffer: Vec<ValidTransaction>,
+    buffer: Vec<ValidatedTransaction>,
 }
 
 impl<T> Forwarder<T>
@@ -173,7 +173,7 @@ where
                 let sender = *tx.sender_ref();
                 let consensus = tx.transaction.clone_into_consensus();
                 let raw = Bytes::from(consensus.inner().encoded_2718());
-                self.buffer.push(ValidTransaction { sender, raw });
+                self.buffer.push(ValidatedTransaction { sender, raw });
                 self.metrics.buffer_size.set(self.buffer.len() as f64);
                 false
             }
@@ -210,7 +210,7 @@ where
         } else {
             self.buffer.len().min(self.config.max_batch_size)
         };
-        let batch: Vec<ValidTransaction> = self.buffer.drain(..batch_size).collect();
+        let batch: Vec<ValidatedTransaction> = self.buffer.drain(..batch_size).collect();
         self.metrics.buffer_size.set(self.buffer.len() as f64);
 
         if batch.is_empty() {
@@ -228,7 +228,7 @@ where
         self.limiter.record_send();
     }
 
-    async fn send_with_retries(&self, batch: Vec<ValidTransaction>) {
+    async fn send_with_retries(&self, batch: Vec<ValidatedTransaction>) {
         let tx_count = batch.len() as u64;
         let overall_start = Instant::now();
         for attempt in 0..=self.config.max_retries {
@@ -257,7 +257,7 @@ where
 
                     self.metrics.txs_forwarded.increment(ok_count);
                     if err_count > 0 {
-                        self.metrics.tx_batch_rejections.increment(err_count);
+                        self.metrics.num_tx_rejected_in_batch.increment(err_count);
                     }
                     return;
                 }
@@ -294,7 +294,7 @@ where
 
     async fn send_batch(
         &self,
-        batch: &[ValidTransaction],
+        batch: &[ValidatedTransaction],
     ) -> Result<BatchResponse<'_, ()>, ClientError> {
         let mut request = BatchRequestBuilder::new();
         for tx in batch {

@@ -13,8 +13,8 @@ pub struct BuilderApiMetrics {
     pub decode_errors: Counter,
     /// Transactions rejected by the pool.
     #[metric(describe = "Transactions rejected by the pool")]
-    pub pool_rejections: Counter,
-    /// Insert duration.
-    #[metric(describe = "Insert duration")]
+    pub txs_rejected: Counter,
+    /// Time to insert a transaction in the local txpool.
+    #[metric(describe = "Time to insert a transaction in the local txpool")]
     pub insert_duration: Histogram,
 }
