@@ -16,12 +16,16 @@ use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
 use eyre::Result;
+use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
 use crate::ChallengerMetrics;
 
 /// Game status indicating the dispute is still in progress.
 pub const STATUS_IN_PROGRESS: u8 = 0;
+
+/// Maximum number of games to evaluate concurrently during a scan.
+pub const SCAN_CONCURRENCY: usize = 32;
 
 /// Configuration for the game scanner.
 #[derive(Debug, Clone)]
@@ -108,11 +112,18 @@ impl GameScanner {
         }
 
         let games_to_scan = end - start + 1;
+
+        let results: Vec<(u64, Result<Option<CandidateGame>>)> = stream::iter(start..=end)
+            .map(|i| async move { (i, self.evaluate_game(i).await) })
+            .buffer_unordered(SCAN_CONCURRENCY)
+            .collect()
+            .await;
+
         let mut candidates = Vec::new();
         let mut lowest_error: Option<u64> = None;
 
-        for i in start..=end {
-            match self.evaluate_game(i).await {
+        for (i, result) in results {
+            match result {
                 Ok(Some(candidate)) => candidates.push(candidate),
                 Ok(None) => {}
                 Err(e) => {
@@ -121,6 +132,8 @@ impl GameScanner {
                 }
             }
         }
+
+        candidates.sort_by_key(|c| c.index);
 
         metrics::counter!(ChallengerMetrics::GAMES_SCANNED_TOTAL).increment(games_to_scan);
 
@@ -149,7 +162,7 @@ impl GameScanner {
     /// Returns `Some(CandidateGame)` if the game is `IN_PROGRESS` and has not
     /// been challenged (`zkProver` == zero). Returns `None` if the game should
     /// be skipped.
-    async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
+    pub async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
         let factory = self.factory_client.game_at_index(index).await?;
 
         let status = self.verifier_client.status(factory.proxy).await?;

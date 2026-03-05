@@ -2649,6 +2649,7 @@ dependencies = [
  "base-proof-contracts",
  "clap",
  "eyre",
+ "futures",
  "hex",
  "humantime",
  "metrics",
