@@ -284,7 +284,7 @@ devnet-load:
 
 # Stops the contender load generator
 devnet-load-down:
-    docker compose -f etc/docker/docker-compose.yml down contender
+    docker compose -f etc/docker/docker-compose.yml stop contender
 
 # Stream FB's from the builder via websocket
 devnet-flashblocks:
