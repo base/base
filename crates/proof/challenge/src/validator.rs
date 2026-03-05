@@ -368,28 +368,24 @@ impl<L2: L2Provider> OutputValidator<L2> {
             "validating intermediate output roots"
         );
 
-        // Pre-compute checkpoint block numbers with overflow checks before any
-        // RPC work.
-        let mut checkpoint_blocks = Vec::with_capacity(intermediate_roots.len());
-        let mut checkpoint = starting_block_number
-            .checked_add(intermediate_block_interval)
-            .ok_or(ValidatorError::ArithmeticOverflow { block_number: starting_block_number })?;
-
-        while checkpoint <= l2_block_number && checkpoint_blocks.len() < intermediate_roots.len() {
-            checkpoint_blocks.push(checkpoint);
-            if checkpoint_blocks.len() >= intermediate_roots.len() {
-                break;
-            }
-            checkpoint = checkpoint
-                .checked_add(intermediate_block_interval)
-                .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
-        }
-
-        let checkpoints: Vec<Checkpoint> = checkpoint_blocks
+        let checkpoints = intermediate_roots
             .iter()
-            .zip(intermediate_roots.iter())
-            .map(|(&block, &root)| Checkpoint { block, claimed_root: root })
-            .collect();
+            .enumerate()
+            .map(|(i, &root)| {
+                let multiplier = u64::try_from(i + 1).map_err(|_| {
+                    ValidatorError::ArithmeticOverflow { block_number: starting_block_number }
+                })?;
+                let offset = intermediate_block_interval
+                    .checked_mul(multiplier)
+                    .ok_or(ValidatorError::ArithmeticOverflow {
+                        block_number: starting_block_number,
+                    })?;
+                let block = starting_block_number.checked_add(offset).ok_or(
+                    ValidatorError::ArithmeticOverflow { block_number: starting_block_number },
+                )?;
+                Ok(Checkpoint { block, claimed_root: root })
+            })
+            .collect::<Result<Vec<_>, ValidatorError>>()?;
 
         let mismatch = self.validate_output_roots(game_address, &checkpoints).await?;
         let is_valid = mismatch.is_none();
