@@ -578,6 +578,49 @@ mod tests {
     }
 
     #[test]
+    fn flashblock_tx_has_zero_blob_gas_used_when_jovian_inactive() {
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let mut db = InMemoryDB::default();
+
+        let sender_info = AccountInfo {
+            balance: U256::from(1_000_000_000_000_000_000u128),
+            ..Default::default()
+        };
+        db.insert_account_info(Address::ZERO, sender_info);
+
+        let header = Header {
+            timestamp: 100,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        let evm = evm_config.evm_with_env(db, evm_env);
+
+        let pending_block = Block { header, body: Default::default() };
+
+        let mut builder = PendingStateBuilder::new(
+            (*chain_spec).clone(),
+            evm,
+            pending_block,
+            None,
+            L1BlockInfo::default(),
+            StateOverride::default(),
+        );
+
+        let tx = create_legacy_tx();
+        let result = builder.execute_transaction(0, tx).expect("transaction execution failed");
+
+        let blob_gas_used =
+            result.receipt.inner.blob_gas_used.expect("blob_gas_used should be set");
+        assert_eq!(
+            blob_gas_used, 0,
+            "blob_gas_used should be 0 when Jovian is inactive, got {blob_gas_used}"
+        );
+    }
+
+    #[test]
     fn flashblock_deposit_tx_has_zero_blob_gas_used_when_jovian_active() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().jovian_activated().build());
         let mut db = InMemoryDB::default();
