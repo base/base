@@ -294,16 +294,14 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
         }
 
-        // Validate all checkpoints concurrently, yielding results in order.
-        let results: Vec<Result<B256, ValidatorError>> = stream::iter(checkpoints.iter().copied())
+        // Validate checkpoints concurrently, short-circuiting on first mismatch.
+        let mut stream = stream::iter(checkpoints.iter().copied())
             .map(|block| self.compute_output_root(block))
-            .buffered(Self::VALIDATION_CONCURRENCY)
-            .collect()
-            .await;
+            .buffered(Self::VALIDATION_CONCURRENCY);
 
-        // Find the first error or mismatch in index order.
         let mut first_invalid: Option<(usize, B256)> = None;
-        for (idx, result) in results.into_iter().enumerate() {
+        let mut idx = 0;
+        while let Some(result) = stream.next().await {
             let expected_root = result?;
             let claimed_intermediate = intermediate_roots[idx];
 
@@ -319,6 +317,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 first_invalid = Some((idx, expected_root));
                 break;
             }
+            idx += 1;
         }
 
         let elapsed = start.elapsed().as_secs_f64();
