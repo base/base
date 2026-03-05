@@ -31,14 +31,10 @@ pub use config::{
 };
 
 mod gate;
-pub use gate::ConnectionGate; // trait
+pub use gate::ConnectionGate;
 
 mod gater;
-pub use gater::{
-    ConnectionGater, // implementation
-    DialInfo,
-    GaterConfig,
-};
+pub use gater::{ConnectionGater, DialInfo, GaterConfig};
 
 mod builder;
 pub use builder::GossipDriverBuilder;
