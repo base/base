@@ -335,7 +335,7 @@ withdrawn to an immutable address on L1.
 
 ## SchemaRegistry
 
-[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/EAS/SchemaRegistry.sol)
+[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/vendor/eas/SchemaRegistry.sol)
 
 Address: `0x4200000000000000000000000000000000000020`
 

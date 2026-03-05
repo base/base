@@ -40,7 +40,7 @@ of off-chain computation by proving correct execution of MIPS64 instructions wit
 A hash onion structure representing a stack of thread states. Each thread is committed by computing
 `Keccak256(previous_root ++ thread_hash)`, where the empty stack is represented by
 `Keccak256(bytes32(0) ++ bytes32(0))`. This construction allows succinct commitment to all threads using a single
-bytes32 value. See the [Cannon Fault Proof VM specification](../../fault-proof/cannon-fault-proof-vm.md#thread-stack-hashing)
+bytes32 value. See the [Cannon Fault Proof VM specification](../../../fault-proof/cannon-fault-proof-vm.md#thread-stack-hashing)
 for detailed hashing mechanics.
 
 ### Memory Reservation

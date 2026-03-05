@@ -45,7 +45,7 @@ Each field element is a number in a prime field of
 `BLS_MODULUS = 52435875175126190479447740508185965837690552500527637822603658699938581184513`.
 This number does not represent a full `uint256`: `math.log2(BLS_MODULUS) = 254.8570894...`
 
-The [L1 consensus-specs](https://github.com/ethereum/consensus-specs/blob/dev/specs/deneb/polynomial-commitments.md)
+The [L1 consensus-specs](https://github.com/ethereum/consensus-specs/blob/master/specs/deneb/polynomial-commitments.md)
 describe the encoding of this polynomial.
 The field elements are encoded as big-endian integers (`KZG_ENDIANNESS = big`).
 

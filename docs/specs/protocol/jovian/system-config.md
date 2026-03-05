@@ -91,7 +91,7 @@ function setDAFootprintGasScalar(uint16 daFootprintGasScalar) external onlyOwner
 
 ### `ConfigUpdate`
 
-When the configuration is updated, a [`ConfigUpdate`](../system-config.html#system-config-updates) event
+When the configuration is updated, a [`ConfigUpdate`](../system-config.md#system-config-updates) event
 MUST be emitted with the following parameters:
 
 | `version` | `updateType` | `data` | Usage |

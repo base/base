@@ -503,7 +503,7 @@ For the Ecotone upgrade, this entails that:
 - The "Beacon roots contract" is deployed at Ecotone upgrade-time, or embedded at genesis if activated at genesis.
 - The block state-transition process now includes the same special beacon-block-root EVM processing as L1 ethereum.
 
-[SSZ hash-tree-root]: https://github.com/ethereum/consensus-specs/blob/dev/ssz/simple-serialize.md#merkleization
+[SSZ hash-tree-root]: https://github.com/ethereum/consensus-specs/blob/master/ssz/simple-serialize.md#merkleization
 [EIP-4399]: https://eips.ethereum.org/EIPS/eip-4399
 [EIP-4788]: https://eips.ethereum.org/EIPS/eip-4788
 [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844

@@ -58,7 +58,7 @@ that finalization through this contract is no longer supported.
 ## Dependencies
 
 This specification depends on:
-- [L2ToL1MessagePasser](../../protocol/predeploys.md#l2tol1messagepasser) - The successor contract that replaced this functionality
+- [L2ToL1MessagePasser](../../../protocol/predeploys.md#l2tol1messagepasser) - The successor contract that replaced this functionality
 
 ## Invariants
 
