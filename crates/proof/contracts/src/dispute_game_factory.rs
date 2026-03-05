@@ -151,6 +151,30 @@ pub fn encode_extra_data(
     Bytes::from(data)
 }
 
+/// Decodes the `extraData` produced by [`encode_extra_data`].
+///
+/// Returns `(l2_block_number, parent_index, intermediate_roots)`, or `None` if `data` is
+/// shorter than the 36-byte fixed header or contains a trailing partial root.
+pub fn decode_extra_data(data: &[u8]) -> Option<(u64, u32, Vec<B256>)> {
+    if data.len() < 36 {
+        return None;
+    }
+
+    let l2_block_number: u64 =
+        U256::from_be_bytes::<32>(data[..32].try_into().ok()?).try_into().ok()?;
+
+    let parent_index = u32::from_be_bytes(data[32..36].try_into().ok()?);
+
+    let roots_data = &data[36..];
+    if !roots_data.len().is_multiple_of(32) {
+        return None;
+    }
+
+    let roots = roots_data.chunks_exact(32).map(|c| B256::from_slice(c)).collect();
+
+    Some((l2_block_number, parent_index, roots))
+}
+
 /// Encodes the calldata for `DisputeGameFactory.create()`.
 pub fn encode_create_calldata(
     game_type: u32,
@@ -216,5 +240,39 @@ mod tests {
         assert_eq!(selector.len(), 4);
         // Just verify we get a non-zero selector
         assert_ne!(selector, [0u8; 4]);
+    }
+
+    #[test]
+    fn test_decode_extra_data_roundtrip() {
+        let roots = vec![B256::repeat_byte(0xAA), B256::repeat_byte(0xBB)];
+        let encoded = encode_extra_data(1000, 42, &roots);
+        let (block, parent, decoded_roots) = decode_extra_data(&encoded).unwrap();
+
+        assert_eq!(block, 1000);
+        assert_eq!(parent, 42);
+        assert_eq!(decoded_roots, roots);
+    }
+
+    #[test]
+    fn test_decode_extra_data_no_roots() {
+        let encoded = encode_extra_data(500, 7, &[]);
+        let (block, parent, decoded_roots) = decode_extra_data(&encoded).unwrap();
+
+        assert_eq!(block, 500);
+        assert_eq!(parent, 7);
+        assert!(decoded_roots.is_empty());
+    }
+
+    #[test]
+    fn test_decode_extra_data_too_short() {
+        assert!(decode_extra_data(&[0u8; 35]).is_none());
+    }
+
+    #[test]
+    fn test_decode_extra_data_partial_root() {
+        // 36-byte header + 16 bytes (not a full 32-byte root)
+        let mut data = vec![0u8; 52];
+        data[..32].copy_from_slice(&U256::from(100u64).to_be_bytes::<32>());
+        assert!(decode_extra_data(&data).is_none());
     }
 }

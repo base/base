@@ -13,7 +13,7 @@ pub use anchor_state_registry::{
 mod dispute_game_factory;
 pub use dispute_game_factory::{
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, GameAtIndex,
-    encode_create_calldata, encode_extra_data, game_already_exists_selector,
+    decode_extra_data, encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
 
 mod error;

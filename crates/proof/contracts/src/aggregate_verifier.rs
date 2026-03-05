@@ -3,7 +3,7 @@
 //! Used to query individual dispute game instances and read the
 //! `BLOCK_INTERVAL` from the implementation contract at startup.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
 use async_trait::async_trait;
@@ -45,6 +45,9 @@ sol! {
 
         /// Returns the starting block number.
         function startingBlockNumber() external view returns (uint256);
+
+        /// Returns the creation extra data for this game.
+        function extraData() external pure returns (bytes memory);
     }
 }
 
@@ -82,6 +85,9 @@ pub trait AggregateVerifierClient: Send + Sync {
         &self,
         impl_address: Address,
     ) -> Result<u64, ContractError>;
+
+    /// Returns the creation extra data for the given game proxy.
+    async fn extra_data(&self, game_address: Address) -> Result<Bytes, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -209,5 +215,16 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
 
         Ok(interval)
+    }
+
+    async fn extra_data(&self, game_address: Address) -> Result<Bytes, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .extraData()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "extraData failed".into(), source: e })
     }
 }

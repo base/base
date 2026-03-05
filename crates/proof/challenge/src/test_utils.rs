@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
@@ -21,6 +21,8 @@ pub struct MockGameState {
     pub game_info: GameInfo,
     /// Starting block number for this game.
     pub starting_block_number: u64,
+    /// Encoded extra data for this game.
+    pub extra_data: Bytes,
 }
 
 /// Mock dispute game factory with configurable per-index game data.
@@ -99,6 +101,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     ) -> Result<u64, ContractError> {
         Ok(5)
     }
+
+    async fn extra_data(&self, game_address: Address) -> Result<Bytes, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(|s| s.extra_data.clone())
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
 }
 
 /// Helper to create an address from a `u64` index.
@@ -124,6 +133,7 @@ fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameStat
             parent_index: 0,
         },
         starting_block_number: block_number.saturating_sub(10),
+        extra_data: Bytes::new(),
     }
 }
 
