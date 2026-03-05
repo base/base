@@ -28,7 +28,7 @@ pub struct Args {
     pub max_pending_blocks_depth: u64,
 
     /// Enable cached execution via the flashblocks-aware engine validator.
-    #[arg(long = "flashblocks.cached-execution", requires = "websocket-url")]
+    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
     pub flashblocks_cached_execution: bool,
 
     /// Enable transaction tracing for mempool-to-block timing analysis
