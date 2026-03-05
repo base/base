@@ -10,7 +10,7 @@ use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_revm::L1BlockInfo;
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_primitives_traits::{Account, Bytecode, SealedHeader};
+use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
 use revm_database::states::{BundleState, bundle_state::BundleRetention};
@@ -152,12 +152,11 @@ where
     };
 
     // Pre-fetch account information for transaction validation
-    let mut account_infos: HashMap<Address, (Option<Account>, Option<Bytecode>)> = HashMap::new();
+    let mut account_infos: HashMap<Address, Option<Account>> = HashMap::new();
     for tx in bundle.transactions() {
         let from = tx.signer();
         let account = db.database.basic_account(&from)?;
-        let code = db.database.account_code(&from)?;
-        account_infos.insert(from, (account, code));
+        account_infos.insert(from, account);
     }
 
     // Execute transactions
@@ -179,13 +178,13 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
-            let (account, sender_code) = account_infos
+            let account = account_infos
                 .get(&from)
-                .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?;
-            let account = account.ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
+                .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?
+                .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
 
             // Don't waste resources metering invalid transactions
-            validate_tx(account, sender_code.as_ref(), tx, &mut l1_block_info)
+            validate_tx(account, tx, &mut l1_block_info)
                 .map_err(|e| eyre!("Transaction {} validation failed: {}", tx_hash, e))?;
 
             let gas_used = builder
