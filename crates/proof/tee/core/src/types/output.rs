@@ -131,6 +131,38 @@ mod tests {
     }
 
     #[test]
+    fn test_output_root_v0_with_hash_correct_hash() {
+        let header = test_header_for_output();
+        let storage_root =
+            b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let block_hash = header.hash_slow();
+
+        let root_via_with_hash = output_root_v0_with_hash(&header, storage_root, block_hash);
+        let root_via_convenience = output_root_v0(&header, storage_root);
+
+        assert_eq!(root_via_with_hash, root_via_convenience);
+    }
+
+    /// Passing an incorrect hash produces a different (wrong) output root.
+    /// Only `debug_assert` guards this, so callers bear responsibility for
+    /// hash correctness. This test only runs without debug assertions since
+    /// the `debug_assert_eq!` in the function would panic otherwise.
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_output_root_v0_with_hash_incorrect_hash() {
+        let header = test_header_for_output();
+        let storage_root =
+            b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let bogus_hash = b256!("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+        let root_bogus = output_root_v0_with_hash(&header, storage_root, bogus_hash);
+        let root_correct = output_root_v0(&header, storage_root);
+
+        // A wrong block_hash feeds into the keccak input, so the result diverges.
+        assert_ne!(root_bogus, root_correct);
+    }
+
+    #[test]
     fn test_output_root_v0_different_state_roots() {
         let header_1 = test_header_for_output();
         let mut header_2 = test_header_for_output();
