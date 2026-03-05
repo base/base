@@ -3205,6 +3205,7 @@ dependencies = [
  "crossbeam-channel",
  "derive_more",
  "eyre",
+ "metrics",
  "reth-chain-state",
  "reth-consensus",
  "reth-engine-primitives",

@@ -8,6 +8,7 @@ use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use base_revm::{OpHaltReason, OpTransaction};
+use metrics::counter;
 use reth_errors::BlockExecutionError;
 use reth_evm::{
     Evm, RecoveredTx,
@@ -35,6 +36,39 @@ impl<P> FlashblocksCachedExecutionProvider<P> {
     }
 }
 
+const CACHE_MISALIGNMENT_TOTAL: &str = "reth_base_engine_tree_cache_misalignment_total";
+
+#[inline]
+fn cache_alignment_miss_reason(
+    this_block_number: u64,
+    tx_block_number: u64,
+    tx_index: u64,
+    prev_position: Option<(u64, u64)>,
+) -> Option<&'static str> {
+    if tx_block_number != this_block_number {
+        return Some("tx_block_number_mismatch");
+    }
+
+    match prev_position {
+        Some((prev_block_number, prev_index)) => {
+            if prev_block_number != this_block_number {
+                Some("prev_block_number_mismatch")
+            } else if prev_index.checked_add(1) != Some(tx_index) {
+                Some("non_adjacent_prev_tx")
+            } else {
+                None
+            }
+        }
+        None => {
+            if tx_index != 0 {
+                Some("non_zero_first_tx_index")
+            } else {
+                None
+            }
+        }
+    }
+}
+
 impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
     for FlashblocksCachedExecutionProvider<P>
 where
@@ -56,26 +90,65 @@ where
 
         let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
 
-        if let Some(prev_cached_hash) = prev_cached_hash {
-            // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
-            if !pending_blocks.has_transaction_hash(prev_cached_hash) {
+        let Some(tx) = pending_blocks.get_transaction_by_hash(*tx_hash) else {
+            warn!(tx_hash = ?tx_hash, "Not using cached results - transaction not cached");
+            return None;
+        };
+
+        let Some(tx_block_number) = tx.inner.block_number else {
+            warn!(tx_hash = ?tx_hash, "Not using cached results - cached tx missing block number");
+            return None;
+        };
+
+        let Some(tx_index) = tx.inner.transaction_index else {
+            warn!(tx_hash = ?tx_hash, "Not using cached results - cached tx missing transaction index");
+            return None;
+        };
+
+        let prev_position = if let Some(prev_cached_hash) = prev_cached_hash {
+            // Enforce strict adjacency in the same block to avoid cross-block / out-of-order cache hits.
+            let Some(prev_tx) = pending_blocks.get_transaction_by_hash(*prev_cached_hash) else {
                 warn!(
                     prev_cached_hash = ?prev_cached_hash,
                     "Not using cached results - previous transaction not cached",
                 );
                 return None;
-            }
-        } else {
-            // must be the first tx in the block
-            if pending_blocks
-                .get_transactions_for_block(this_block_number)
-                .next()
-                .map(|tx| tx.inner.inner.tx_hash())
-                != Some(*tx_hash)
-            {
-                warn!(tx_hash = ?tx_hash, "Not using cached results - first transaction not cached");
+            };
+
+            let Some(prev_block_number) = prev_tx.inner.block_number else {
+                warn!(
+                    prev_cached_hash = ?prev_cached_hash,
+                    "Not using cached results - previous cached tx missing block number",
+                );
                 return None;
-            }
+            };
+
+            let Some(prev_index) = prev_tx.inner.transaction_index else {
+                warn!(
+                    prev_cached_hash = ?prev_cached_hash,
+                    "Not using cached results - previous cached tx missing transaction index",
+                );
+                return None;
+            };
+            Some((prev_block_number, prev_index))
+        } else {
+            None
+        };
+
+        if let Some(reason) =
+            cache_alignment_miss_reason(this_block_number, tx_block_number, tx_index, prev_position)
+        {
+            counter!(CACHE_MISALIGNMENT_TOTAL, "reason" => reason).increment(1);
+            warn!(
+                tx_hash = ?tx_hash,
+                tx_block_number,
+                tx_index,
+                ?prev_position,
+                this_block_number,
+                reason,
+                "Not using cached results - tx not aligned with expected block/position",
+            );
+            return None;
         }
 
         trace!(tx_hash = ?tx_hash, "cache hit for transaction");
@@ -230,5 +303,42 @@ where
 
     fn evm(&self) -> &Self::Evm {
         self.executor.evm()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_alignment_requires_same_block() {
+        assert_eq!(
+            cache_alignment_miss_reason(100, 101, 0, None),
+            Some("tx_block_number_mismatch")
+        );
+        assert_eq!(cache_alignment_miss_reason(100, 99, 0, None), Some("tx_block_number_mismatch"));
+    }
+
+    #[test]
+    fn cache_alignment_requires_zero_index_for_first_tx() {
+        assert_eq!(cache_alignment_miss_reason(100, 100, 0, None), None);
+        assert_eq!(cache_alignment_miss_reason(100, 100, 1, None), Some("non_zero_first_tx_index"));
+    }
+
+    #[test]
+    fn cache_alignment_requires_adjacent_previous_tx() {
+        assert_eq!(cache_alignment_miss_reason(100, 100, 1, Some((100, 0))), None);
+        assert_eq!(
+            cache_alignment_miss_reason(100, 100, 2, Some((100, 0))),
+            Some("non_adjacent_prev_tx")
+        );
+        assert_eq!(
+            cache_alignment_miss_reason(100, 100, 1, Some((101, 0))),
+            Some("prev_block_number_mismatch")
+        );
+        assert_eq!(
+            cache_alignment_miss_reason(100, 100, 0, Some((100, 0))),
+            Some("non_adjacent_prev_tx")
+        );
     }
 }

@@ -118,12 +118,32 @@ pub fn validate_block_post_execution<R: DepositReceipt>(
     // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
     if chain_spec.is_byzantium_active_at_block(header.number()) {
         let result = if let Some((receipts_root, logs_bloom)) = receipt_root_bloom {
-            compare_receipts_root_and_logs_bloom(
+            // Fast path: trust precomputed root/bloom from the background receipt task.
+            //
+            // If this mismatches, fall back to recomputing from the full receipts slice before
+            // rejecting the block. This preserves safety for true execution divergences while
+            // avoiding false invalid payloads from precompute-path anomalies.
+            match compare_receipts_root_and_logs_bloom(
                 receipts_root,
                 logs_bloom,
                 header.receipts_root(),
                 header.logs_bloom(),
-            )
+            ) {
+                Ok(()) => Ok(()),
+                Err(precomputed_error) => {
+                    debug!(
+                        %precomputed_error,
+                        "precomputed receipt root/logs bloom mismatch, recomputing from receipts"
+                    );
+                    verify_receipts_optimism(
+                        header.receipts_root(),
+                        header.logs_bloom(),
+                        receipts,
+                        chain_spec,
+                        header.timestamp(),
+                    )
+                }
+            }
         } else {
             verify_receipts_optimism(
                 header.receipts_root(),
@@ -210,7 +230,7 @@ fn compare_receipts_root_and_logs_bloom(
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::Header;
+    use alloy_consensus::{Header, Receipt, TxReceipt};
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, U256, b256, hex};
     use base_alloy_consensus::OpTxEnvelope;
@@ -563,6 +583,50 @@ mod tests {
             gas_used: GAS_USED,
         };
         validate_block_post_execution(&header, &chainspec, &result, None).unwrap();
+    }
+
+    #[test]
+    fn test_receipt_root_bloom_mismatch_falls_back_to_recompute() {
+        let chainspec = BASE_SEPOLIA.clone();
+        let timestamp = HOLOCENE_TIMESTAMP + 1;
+        let receipts = vec![OpReceipt::Legacy(Receipt {
+            status: true.into(),
+            cumulative_gas_used: 21_000,
+            logs: vec![],
+        })];
+
+        let receipts_with_bloom =
+            receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+        let expected_receipts_root =
+            calculate_receipt_root_optimism(&receipts_with_bloom, &*chainspec, timestamp);
+        let expected_logs_bloom =
+            receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | r.bloom_ref());
+
+        let header = Header {
+            number: 1,
+            timestamp,
+            receipts_root: expected_receipts_root,
+            logs_bloom: expected_logs_bloom,
+            gas_used: 21_000,
+            ..Default::default()
+        };
+
+        let result = BlockExecutionResult::<OpReceipt> {
+            receipts,
+            requests: Requests::default(),
+            gas_used: 21_000,
+            blob_gas_used: 0,
+        };
+
+        let wrong_precomputed_root =
+            b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
+        validate_block_post_execution(
+            &header,
+            &*chainspec,
+            &result,
+            Some((wrong_precomputed_root, expected_logs_bloom)),
+        )
+        .unwrap();
     }
 
     #[test]
