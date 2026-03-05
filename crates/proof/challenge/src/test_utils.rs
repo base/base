@@ -12,7 +12,7 @@ use crate::scanner::{GameScanner, ScannerConfig};
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
-pub(crate) struct MockGameState {
+pub struct MockGameState {
     /// Game status (`0=IN_PROGRESS`, `1=CHALLENGER_WINS`, `2=DEFENDER_WINS`).
     pub status: u8,
     /// Address of the ZK prover (`Address::ZERO` if unchallenged).
@@ -24,7 +24,8 @@ pub(crate) struct MockGameState {
 }
 
 /// Mock dispute game factory with configurable per-index game data.
-pub(crate) struct MockDisputeGameFactory {
+#[derive(Debug)]
+pub struct MockDisputeGameFactory {
     /// Ordered list of games in the factory.
     pub games: Vec<GameAtIndex>,
 }
@@ -52,7 +53,8 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 }
 
 /// Mock aggregate verifier with configurable per-address game state.
-pub(crate) struct MockAggregateVerifier {
+#[derive(Debug)]
+pub struct MockAggregateVerifier {
     /// Per-address game state lookup.
     pub games: HashMap<Address, MockGameState>,
 }
@@ -126,7 +128,8 @@ fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameStat
 }
 
 /// Mock factory that returns an error for specific indices.
-pub(crate) struct ErrorOnIndexFactory {
+#[derive(Debug)]
+pub struct ErrorOnIndexFactory {
     /// The inner factory providing normal game data.
     pub inner: MockDisputeGameFactory,
     /// Indices that should return an error when queried.
