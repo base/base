@@ -13,7 +13,7 @@ mod metrics;
 pub use metrics::ForwarderMetrics;
 
 mod task;
-pub use task::{Forwarder, ValidTransaction};
+pub use task::Forwarder;
 
 /// Handle for the set of forwarder tasks (one per builder URL).
 ///

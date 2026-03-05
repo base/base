@@ -1,5 +1,5 @@
 mod rpc;
-pub use rpc::{BuilderApiHandler, BuilderApiServer};
+pub use rpc::{BuilderApiImpl, BuilderApiServer};
 
 mod metrics;
 pub use metrics::BuilderApiMetrics;

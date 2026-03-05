@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Bytes;
 use jsonrpsee::{
     core::{
         ClientError,
@@ -11,24 +11,12 @@ use jsonrpsee::{
     http_client::HttpClient,
 };
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
-use serde::{Deserialize, Serialize};
 use tokio::{sync::broadcast, time};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
-
-/// Pre-validated transaction for the builder RPC wire format.
-///
-/// Carries the recovered sender address so the builder can skip signer
-/// recovery, and the EIP-2718 encoded transaction envelope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidTransaction {
-    /// Recovered signer address.
-    pub sender: Address,
-    /// EIP-2718 encoded transaction bytes.
-    pub raw: Bytes,
-}
+use crate::ValidTransaction;
 
 /// Sliding window rate limiter that tracks request timestamps.
 ///

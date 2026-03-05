@@ -11,7 +11,7 @@ use jsonrpsee::{
 use reth_transaction_pool::TransactionPool;
 use tracing::debug;
 
-use crate::{BasePooledTransaction, BuilderApiMetrics, forwarder::ValidTransaction};
+use crate::{BasePooledTransaction, BuilderApiMetrics, ValidTransaction};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
 #[rpc(server, namespace = "base")]
@@ -33,12 +33,12 @@ pub trait BuilderApi {
 /// directly into the pool without re-validating signatures, since the sender
 /// addresses are trusted from the forwarding mempool node.
 #[derive(Debug)]
-pub struct BuilderApiHandler<P> {
+pub struct BuilderApiImpl<P> {
     pool: P,
     metrics: BuilderApiMetrics,
 }
 
-impl<P> BuilderApiHandler<P> {
+impl<P> BuilderApiImpl<P> {
     /// Creates a new handler backed by the given transaction pool.
     pub fn new(pool: P) -> Self {
         Self { pool, metrics: BuilderApiMetrics::default() }
@@ -46,11 +46,15 @@ impl<P> BuilderApiHandler<P> {
 }
 
 #[async_trait::async_trait]
-impl<P> BuilderApiServer for BuilderApiHandler<P>
+impl<P> BuilderApiServer for BuilderApiImpl<P>
 where
     P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + 'static,
 {
     async fn insert_validated_transaction(&self, tx: ValidTransaction) -> RpcResult<()> {
+        debug!(
+            sender = %tx.sender,
+            "rpc::insert_validated_transaction"
+        );
         let sender = tx.sender;
 
         // Decode the EIP-2718 transaction bytes
@@ -83,7 +87,7 @@ where
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
                 self.metrics.pool_rejections.increment(1);
                 Err(ErrorObjectOwned::owned(
-                    ErrorCode::ServerError(1).code(),
+                    ErrorCode::InternalError.code(),
                     format!("pool rejected transaction: {e}"),
                     None::<()>,
                 ))

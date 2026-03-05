@@ -12,7 +12,7 @@ to builder nodes via a custom RPC, replacing P2P propagation.
 └──────────────────┘               └──────────────────┘              └──────────────────┘
         │                                   │                                │
         │ reads from                        │ batches txs                    │ receives via
-        │ best_transactions()               │ sends via RPC                  │ base_insertValidatedTransactions
+        │ best_transactions()               │ sends via RPC                  │ base_insertValidatedTransaction
         ▼                                   ▼                                ▼
 ┌──────────────────┐               ┌──────────────────┐              ┌──────────────────┐
 │ Transaction Pool │               │ Builder RPC URL  │              │ Builder Mempool  │
@@ -120,23 +120,18 @@ RPC endpoint on builder nodes to receive forwarded transactions.
 ```rust
 #[rpc(server, namespace = "base")]
 pub trait BaseTxApi {
-    #[method(name = "insertValidatedTransactions")]
-    async fn insert_validated_transactions(
+    #[method(name = "insertValidatedTransaction")]
+    async fn insert_validated_transaction(
         &self,
-        txs: Vec<Bytes>,
-    ) -> RpcResult<ReceiveTxsResponse>;
+        txs: Bytes,
+    ) -> RpcResult<()>;
 }
 ```
 
 ### Response
 
-```rust
-pub struct ReceiveTxsResponse {
-    pub accepted: u64,
-    pub rejected: u64,
-    pub errors: Vec<TxRejection>,
-}
-```
+- Returns Ok(()) if it was able to successfully decode the tx bytes and insert to its local txpool
+- Returns Err(ErrorObjectOwned) if the tx was rejected by the txpool if it's no longer valid.
 
 ### Dependencies
 
