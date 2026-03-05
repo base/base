@@ -117,7 +117,7 @@ test-affected base="main": install-nextest build-contracts
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build-contracts
-    cargo nextest run --workspace --all-features --exclude devnet --cargo-profile ci
+    cargo nextest run --locked --workspace --all-features --exclude devnet --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
 test-affected-ci base="main": install-nextest build-contracts
@@ -133,7 +133,7 @@ test-affected-ci base="main": install-nextest build-contracts
         pkg_args="$pkg_args -p $crate"
     done <<< "$affected"
     echo "Testing affected crates:$pkg_args"
-    cargo nextest run --all-features --cargo-profile ci $pkg_args || {
+    cargo nextest run --locked --all-features --cargo-profile ci $pkg_args || {
         code=$?
         if [ $code -eq 4 ]; then
             echo "No tests to run."
@@ -148,7 +148,7 @@ devnet-tests: install-nextest build-contracts
 
 # Runs devnet tests with ci profile for minimal disk usage
 devnet-tests-ci: install-nextest build-contracts
-    cargo nextest run -p devnet --cargo-profile ci
+    cargo nextest run --locked -p devnet --cargo-profile ci
 
 # Pre-pulls Docker images needed for devnet tests
 devnet-pull-images:
@@ -186,7 +186,7 @@ check-clippy: build-contracts
 
 # Checks clippy with ci profile for minimal disk usage
 check-clippy-ci: build-contracts
-    cargo clippy --workspace --all-targets --profile ci -- -D warnings
+    cargo clippy --locked --workspace --all-targets --profile ci -- -D warnings
 
 # Fixes any clippy issues
 clippy-fix:
@@ -202,7 +202,7 @@ build-all-targets: build-contracts
 
 # Builds all targets with ci profile (minimal disk usage for CI)
 build-ci: build-contracts
-    cargo build --workspace --all-targets --profile ci
+    cargo build --locked --workspace --all-targets --profile ci
 
 # Builds the workspace with maxperf
 build-maxperf:
@@ -223,7 +223,7 @@ clean:
 # Checks if there are any unused dependencies
 check-udeps: build-contracts
     @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
-    cargo +nightly udeps --workspace --all-features --all-targets
+    cargo +nightly udeps --locked --workspace --all-features --all-targets
 
 # Checks crate dependency boundary rules
 check-crate-deps:

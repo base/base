@@ -17,6 +17,21 @@ permissions:
   contents: read
 
 jobs:
+  lockfile:
+    name: Lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./.github/actions/setup
+        with:
+          rust-cache-shared-key: "stable"
+      - name: Validate Cargo.lock is up to date
+        run: cargo metadata --format-version 1 --no-deps --locked >/dev/null
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -177,7 +192,7 @@ jobs:
           native-deps: "true"
           mold: "true"
           rust-cache-shared-key: "stable"
-      - run: cargo bench -p base-proof-mpt --bench trie_node -- --test
+      - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
 
   udeps:
     name: udeps
