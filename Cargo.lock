@@ -2651,6 +2651,7 @@ dependencies = [
  "base-enclave",
  "base-proof-contracts",
  "base-proof-rpc",
+ "base-protocol",
  "clap",
  "eyre",
  "futures",

@@ -8,16 +8,14 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_primitives::{Address, B256, address};
+use alloy_primitives::{Address, B256};
 use base_enclave::output_root_v0_with_hash;
 use base_proof_rpc::{L2Provider, RpcError};
+use base_protocol::Predeploys;
 use thiserror::Error;
 use tracing::{info, warn};
 
 use crate::ChallengerMetrics;
-
-/// Well-known address of the `L2ToL1MessagePasser` predeploy.
-const L2_TO_L1_MESSAGE_PASSER: Address = address!("4200000000000000000000000000000000000016");
 
 /// Errors that can occur during output root validation.
 #[derive(Debug, Error)]
@@ -150,7 +148,8 @@ impl<L2: L2Provider> OutputValidator<L2> {
             });
         }
 
-        let account_result = self.l2_provider.get_proof(L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
+        let account_result =
+            self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
         let storage_root = account_result.storage_hash;
 

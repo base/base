@@ -47,6 +47,9 @@ base-proof-contracts.workspace = true
 # RPC
 base-proof-rpc.workspace = true
 
+# Protocol
+base-protocol.workspace = true
+
 # Enclave
 base-enclave.workspace = true
 
