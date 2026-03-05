@@ -30,14 +30,14 @@ serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 
 # reth
+revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 base-revm = { workspace = true, optional = true }
-revm = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
-alloy-network = { workspace = true, optional = true }
 alloy-signer = { workspace = true, optional = true }
+alloy-network = { workspace = true, optional = true }
 
 
 # arbitrary
@@ -48,11 +48,11 @@ derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"]
 
 [dev-dependencies]
 rand.workspace = true
+similar-asserts.workspace = true
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
-similar-asserts.workspace = true
 
 [features]
 default = [ "std" ]

@@ -18,11 +18,11 @@ workspace = true
 base-alloy-consensus.workspace = true
 
 # Alloy
-alloy-primitives.workspace = true
-alloy-eips.workspace = true
-alloy-rpc-types-engine.workspace = true
 alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-rpc-types-engine.workspace = true
 
 # Encoding
 snap = { workspace = true, optional = true }

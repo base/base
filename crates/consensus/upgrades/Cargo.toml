@@ -25,9 +25,9 @@ alloy-primitives = { workspace = true, features = ["rlp"] }
 base-alloy-consensus.workspace = true
 
 [dev-dependencies]
-alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 revm.workspace = true
 base-revm.workspace = true
+alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = []

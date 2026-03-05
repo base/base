@@ -21,19 +21,19 @@ base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
 # alloy
+alloy-provider.workspace = true
 alloy-chains.workspace = true
 alloy-primitives.workspace = true
-alloy-provider.workspace = true
 base-alloy-network.workspace = true
 
 # consensus
 base-consensus-genesis.workspace = true
 base-consensus-registry.workspace = true
-base-consensus-derive = { workspace = true, features = ["metrics"] }
 base-consensus-disc = { workspace = true, features = ["metrics"] }
-base-consensus-gossip = { workspace = true, features = ["metrics"] }
-base-consensus-engine = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }
+base-consensus-derive = { workspace = true, features = ["metrics"] }
+base-consensus-engine = { workspace = true, features = ["metrics"] }
+base-consensus-gossip = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
 
 # cli
@@ -48,5 +48,5 @@ metrics.workspace = true
 
 # misc
 url.workspace = true
-eyre.workspace = true
 serde.workspace = true
+eyre.workspace = true

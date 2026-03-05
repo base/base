@@ -17,9 +17,9 @@ base-flashblocks.workspace = true
 base-node-runner.workspace = true
 
 # reth
-reth-node-api.workspace = true
-reth-provider.workspace = true
 reth-tracing.workspace = true
+reth-provider.workspace = true
+reth-node-api.workspace = true
 reth-primitives-traits.workspace = true
 reth-transaction-pool.workspace = true
 
@@ -28,16 +28,16 @@ alloy-primitives.workspace = true
 
 # async
 tokio.workspace = true
-tokio-stream.workspace = true
 futures.workspace = true
+tokio-stream.workspace = true
 
 # misc
 lru.workspace = true
 chrono.workspace = true
 metrics.workspace = true
-derive_more = { workspace = true, features = ["display"] }
-tracing = { workspace = true, features = ["std"] }
 metrics-derive.workspace = true
+tracing = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
 # workspace

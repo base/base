@@ -26,18 +26,18 @@ tracing.workspace = true
 serde.workspace = true
 
 # Error handling
-thiserror.workspace = true
 eyre.workspace = true
+thiserror.workspace = true
 
 # Crypto
-alloy-signer-local.workspace = true
-alloy-signer.workspace = true
 hex.workspace = true
 zeroize.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 
 # CLI
-base-cli-utils.workspace = true
 clap.workspace = true
+base-cli-utils.workspace = true
 
 # Contracts
 base-proof-contracts.workspace = true
@@ -49,12 +49,12 @@ metrics.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 
 # Misc
-axum = { workspace = true, features = ["http1", "tokio"] }
-humantime.workspace = true
 url.workspace = true
+humantime.workspace = true
+axum = { workspace = true, features = ["http1", "tokio"] }
 
 [dev-dependencies]
 rstest.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["test-util"] }

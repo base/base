@@ -40,24 +40,24 @@ test-utils = [
 
 [dependencies]
 # workspace
+base-node-core.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
-base-node-core.workspace = true
 base-engine-tree.workspace = true
 
 # reth
 reth-chain-state.workspace = true
-reth-provider = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
+reth-provider = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true, optional = true }
 base-execution-primitives = { workspace = true, optional = true }
 reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
 
 # alloy
+alloy-primitives = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-consensus = { workspace = true, features = ["std"], optional = true }
-alloy-primitives = { workspace = true, optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 
 # base-alloy
@@ -77,32 +77,32 @@ derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]
 # workspace
-base-node-runner = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
 reth-evm.workspace = true
+reth-db.workspace = true
 reth-revm.workspace = true
-reth-db-common.workspace = true
 reth-tracing.workspace = true
 reth-primitives.workspace = true
+reth-db-common.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-testing-utils.workspace = true
 base-node-core = { workspace = true, features = ["test-utils"] }
-reth-db.workspace = true
 
 # revm
 revm = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-genesis = { workspace = true, features = ["std"] }
 alloy-contract.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
-alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-rpc-client.workspace = true
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-genesis = { workspace = true, features = ["std"] }
 alloy-sol-macro = { workspace = true, features = ["json"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base-alloy
 base-alloy-network.workspace = true

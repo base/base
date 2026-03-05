@@ -13,8 +13,8 @@ workspace = true
 [dependencies]
 # General
 tracing.workspace = true
-thiserror.workspace = true
 async-trait.workspace = true
+thiserror.workspace = true
 alloy-primitives.workspace = true
 
 # `std` feature dependencies

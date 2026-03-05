@@ -21,15 +21,15 @@ base-alloy-evm = { workspace = true, features = ["std"] }
 reth-rpc.workspace = true
 reth-evm.workspace = true
 reth-revm.workspace = true
-reth-chainspec.workspace = true
 reth-provider.workspace = true
+reth-chainspec.workspace = true
 reth-primitives.workspace = true
 reth-rpc-convert.workspace = true
 reth-rpc-eth-api.workspace = true
-reth-rpc-eth-types.workspace = true
 base-execution-evm.workspace = true
 base-execution-rpc.workspace = true
 base-execution-forks.workspace = true
+reth-rpc-eth-types.workspace = true
 base-execution-primitives.workspace = true
 
 # revm
@@ -38,11 +38,11 @@ base-revm.workspace = true
 revm-database.workspace = true
 
 # alloy
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
@@ -50,8 +50,8 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-alloy-rpc-types-engine.workspace = true
 
 # base-alloy
-base-alloy-consensus.workspace = true
 base-alloy-network.workspace = true
+base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true
 
 # tokio
@@ -63,9 +63,9 @@ tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 futures.workspace = true
 
 # rpc
-serde = { workspace = true, features = ["std"] }
 jsonrpsee.workspace = true
 jsonrpsee-types.workspace = true
+serde = { workspace = true, features = ["std"] }
 
 # metrics
 metrics.workspace = true
@@ -74,8 +74,8 @@ metrics-derive.workspace = true
 # misc
 url.workspace = true
 rayon.workspace = true
-tracing = { workspace = true, features = ["std"] }
 arc-swap.workspace = true
+tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["from"] }
 

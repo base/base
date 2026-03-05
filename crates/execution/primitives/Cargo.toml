@@ -29,20 +29,20 @@ serde_with = { workspace = true, optional = true }
 [dev-dependencies]
 reth-codecs = { workspace = true, features = ["test-utils"] }
 
-alloy-eips.workspace = true
-alloy-rlp.workspace = true
 bytes.workspace = true
+rand.workspace = true
+rstest.workspace = true
+alloy-rlp.workspace = true
+serde_json.workspace = true
+alloy-eips.workspace = true
+arbitrary.workspace = true
 modular-bitfield.workspace = true
 reth-zstd-compressors.workspace = true
-rand.workspace = true
-arbitrary.workspace = true
-rstest.workspace = true
-serde_json.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 
-proptest-arbitrary-interop.workspace = true
-proptest.workspace = true
 rand_08.workspace = true
+proptest.workspace = true
+proptest-arbitrary-interop.workspace = true
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [features]

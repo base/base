@@ -14,40 +14,40 @@ workspace = true
 [dependencies]
 # workspace
 base-txpool-rpc.workspace = true
-base-txpool-tracing.workspace = true
 base-flashblocks.workspace = true
+base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-builder-core = { workspace = true, features = ["test-utils"] }
-base-node-runner = { workspace = true, features = ["test-utils"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
+base-node-runner = { workspace = true, features = ["test-utils"] }
+base-builder-core = { workspace = true, features = ["test-utils"] }
 
 # consensus
-base-consensus-node.workspace = true
 base-consensus-disc.workspace = true
-base-consensus-gossip.workspace = true
+base-consensus-node.workspace = true
 base-consensus-peers.workspace = true
+base-consensus-gossip.workspace = true
 base-consensus-sources.workspace = true
 base-consensus-genesis.workspace = true
 
 # reth
+reth-db.workspace = true
 reth-tasks.workspace = true
+base-txpool.workspace = true
 reth-provider.workspace = true
 reth-node-core.workspace = true
-base-execution-rpc.workspace = true
 base-node-core.workspace = true
-base-txpool.workspace = true
+base-execution-rpc.workspace = true
 base-execution-chainspec.workspace = true
-reth-db.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # alloy
-alloy-genesis = { workspace = true, features = ["std"] }
 alloy-network.workspace = true
-alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+alloy-primitives.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base-alloy
@@ -66,20 +66,20 @@ libp2p.workspace = true
 # misc
 hex.workspace = true
 url.workspace = true
-eyre.workspace = true
 rand.workspace = true
+eyre.workspace = true
 nanoid.workspace = true
 reqwest.workspace = true
-tracing = { workspace = true, features = ["std"] }
 tempfile.workspace = true
+tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 
 [dev-dependencies]
 # alloy
-alloy-eips = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 
 # base-alloy

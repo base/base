@@ -13,8 +13,8 @@ workspace = true
 
 [dependencies]
 # ethereum
-alloy-consensus.workspace = true
 alloy-eips.workspace = true
+alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # reth
@@ -31,31 +31,31 @@ base-revm.workspace = true
 
 # optimism
 base-alloy-flz.workspace = true
-base-alloy-consensus.workspace = true
 base-execution-evm.workspace = true
 base-execution-forks.workspace = true
+base-alloy-consensus.workspace = true
 base-execution-primitives.workspace = true
 
 # misc
 url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
-metrics.workspace = true
-metrics-derive.workspace = true
 futures.workspace = true
+metrics.workspace = true
 tracing.workspace = true
-async-trait.workspace = true
 tokio-util.workspace = true
+async-trait.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
+metrics-derive.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 alloy-eips.workspace = true
 base-test-utils.workspace = true
 base-execution-chainspec.workspace = true
 reth-primitives-traits.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }

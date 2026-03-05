@@ -15,14 +15,14 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-sol-types.workspace = true
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true
 alloy-eips.workspace = true
-alloy-hardforks.workspace = true
-base-alloy-hardforks.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
+alloy-sol-types.workspace = true
+alloy-consensus.workspace = true
+alloy-hardforks.workspace = true
+alloy-primitives.workspace = true
+base-alloy-hardforks.workspace = true
 
 # Misc
 thiserror.workspace = true
@@ -38,10 +38,10 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-toml = { workspace = true, features = ["parse", "serde"] }
-rand = { workspace = true, features = ["thread_rng"] }
 serde_json.workspace = true
+rand = { workspace = true, features = ["thread_rng"] }
 arbitrary = { workspace = true, features = ["derive"] }
+toml = { workspace = true, features = ["parse", "serde"] }
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]

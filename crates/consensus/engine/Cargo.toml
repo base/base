@@ -12,51 +12,51 @@ workspace = true
 
 [dependencies]
 # workspace
-base-consensus-genesis.workspace = true
 base-macros.workspace = true
+base-consensus-genesis.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
 # alloy
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-network.workspace = true
 alloy-transport.workspace = true
 alloy-primitives.workspace = true
-alloy-provider = { workspace = true, features = ["ipc", "reqwest", "reqwest-rustls-tls", "engine-api"] }
 alloy-rpc-client.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 alloy-transport-http = { workspace = true, features = ["reqwest", "hyper", "jwt-auth"] }
+alloy-provider = { workspace = true, features = ["ipc", "reqwest", "reqwest-rustls-tls", "engine-api"] }
 
 # base-alloy
 base-alloy-network.workspace = true
-base-alloy-consensus = { workspace = true, features = ["std"] }
 base-alloy-provider.workspace = true
 base-alloy-rpc-types.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
 # general
-serde = { workspace = true, features = ["std"] }
-tokio.workspace = true
-tracing = { workspace = true, features = ["std"] }
-async-trait.workspace = true
-thiserror = { workspace = true, features = ["std"] }
 url.workspace = true
+tokio.workspace = true
 tower.workspace = true
+async-trait.workspace = true
 http-body-util.workspace = true
-derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
+serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 
 # metrics
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-base-consensus-registry.workspace = true
-rand = {workspace = true, features = ["thread_rng"]}
-arbitrary.workspace = true
-base-alloy-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
-metrics-exporter-prometheus.workspace = true
 rstest.workspace = true
+arbitrary.workspace = true
+base-consensus-registry.workspace = true
+metrics-exporter-prometheus.workspace = true
+rand = {workspace = true, features = ["thread_rng"]}
+base-alloy-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
 
 [features]
 metrics = [ "dep:metrics" ]

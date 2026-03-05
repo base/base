@@ -13,15 +13,15 @@ workspace = true
 
 [dependencies]
 # reth
-reth-db = { workspace = true, features = ["mdbx"] }
 reth-evm.workspace = true
+reth-revm.workspace = true
+reth-tasks.workspace = true
+reth-provider.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
-reth-provider.workspace = true
-reth-revm.workspace = true
+reth-db = { workspace = true, features = ["mdbx"] }
 reth-trie = { workspace = true, features = ["serde"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
-reth-tasks.workspace = true
 
 # workaround: reth-trie/serde-bincode-compat activates serde-bincode-compat on
 # reth-ethereum-primitives (a transitive dep) without also activating its serde feature,
@@ -33,48 +33,48 @@ metrics = { workspace = true, optional = true }
 reth-metrics = { workspace = true, features = ["common"], optional = true }
 
 # ethereum
-alloy-primitives.workspace = true
 alloy-eips.workspace = true
+alloy-primitives.workspace = true
 
 # async
 tokio = { workspace = true, features = ["sync"] }
 
 # codec
-bytes.workspace = true
 serde.workspace = true
+bytes.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 
 # misc
-parking_lot.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
 auto_impl.workspace = true
+parking_lot.workspace = true
+derive_more.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
-tracing.workspace = true
-derive_more.workspace = true
 
 [dev-dependencies]
-reth-codecs = { workspace = true, features = ["test-utils"] }
+eyre.workspace = true
+rand_08.workspace = true
+mockall.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
 test-case.workspace = true
-reth-db = { workspace = true, features = ["test-utils"] }
-# workaround for failing doc test <https://github.com/op-rs/op-reth/pull/234>
-reth-db-api = { workspace = true, features = ["test-utils"] }
-reth-trie = { workspace = true, features = ["test-utils"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
 reth-node-api.workspace = true
-alloy-consensus.workspace = true
 alloy-genesis.workspace = true
 reth-chainspec.workspace = true
 reth-db-common.workspace = true
-reth-ethereum-primitives.workspace = true
+alloy-consensus.workspace = true
 reth-evm-ethereum.workspace = true
 reth-storage-errors.workspace = true
+reth-ethereum-primitives.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-trie = { workspace = true, features = ["test-utils"] }
 secp256k1 = { workspace = true, features = ["rand", "std"] }
-rand_08.workspace = true
-mockall.workspace = true
-eyre.workspace = true
+reth-codecs = { workspace = true, features = ["test-utils"] }
+# workaround for failing doc test <https://github.com/op-rs/op-reth/pull/234>
+reth-db-api = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
 
 # misc
 serial_test.workspace = true

@@ -30,7 +30,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
+tokio.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

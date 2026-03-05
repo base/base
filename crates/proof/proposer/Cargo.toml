@@ -13,25 +13,25 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-transport-http.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-signer-local.workspace = true
-alloy-rpc-client.workspace = true
-alloy-primitives.workspace = true
-alloy-sol-types.workspace = true
-alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
-alloy-transport.workspace = true
 alloy-contract.workspace = true
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-signer.workspace = true
-alloy-eips.workspace = true
+alloy-transport.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-client.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-transport-http.workspace = true
 
 # Base Alloy
-base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
-base-alloy-rpc-types.workspace = true
 base-alloy-network.workspace = true
+base-alloy-rpc-types.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
 
 # Proof
 base-proof-contracts.workspace = true
@@ -45,45 +45,45 @@ base-enclave-client.workspace = true
 base-enclave.workspace = true
 
 # Async
-async-trait.workspace = true
-tokio-util.workspace = true
-futures.workspace = true
 tokio.workspace = true
+futures.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
 
 # Tracing
-tracing-subscriber.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # Serialization
-serde_json.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 # Error handling
-thiserror.workspace = true
 eyre.workspace = true
+thiserror.workspace = true
 
 # CLI
-base-cli-utils.workspace = true
 clap.workspace = true
+base-cli-utils.workspace = true
 
 # Metrics
-metrics-exporter-prometheus.workspace = true
 metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 
 # TLS
 rustls = { workspace = true, features = ["ring"] }
 
 # Misc
-axum = { workspace = true, features = ["http1", "json", "tokio"] }
-moka = { workspace = true, features = ["future"] }
-jsonrpsee.workspace = true
-humantime.workspace = true
-backon.workspace = true
-bytes.workspace = true
 hex.workspace = true
 url.workspace = true
+bytes.workspace = true
+backon.workspace = true
+jsonrpsee.workspace = true
+humantime.workspace = true
+moka = { workspace = true, features = ["future"] }
+axum = { workspace = true, features = ["http1", "json", "tokio"] }
 
 [dev-dependencies]
 rstest.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
 reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["test-util"] }
