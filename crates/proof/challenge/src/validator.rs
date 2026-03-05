@@ -203,7 +203,8 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// # Errors
     ///
     /// Returns [`ValidatorError::InvalidInterval`] if `intermediate_block_interval`
-    /// is zero, [`ValidatorError::CheckpointCountMismatch`] if the provided
+    /// is zero or `starting_block_number >= l2_block_number` (degenerate block
+    /// range), [`ValidatorError::CheckpointCountMismatch`] if the provided
     /// `intermediate_roots` length does not match the expected checkpoint count,
     /// or [`ValidatorError::ArithmeticOverflow`] if checkpoint arithmetic overflows
     /// (possible with adversarial onchain values).
@@ -219,6 +220,10 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let start = Instant::now();
 
         if intermediate_block_interval == 0 {
+            return Err(ValidatorError::InvalidInterval);
+        }
+
+        if starting_block_number >= l2_block_number {
             return Err(ValidatorError::InvalidInterval);
         }
 
@@ -584,6 +589,33 @@ mod tests {
         assert!(
             matches!(result.unwrap_err(), ValidatorError::ArithmeticOverflow { .. }),
             "expected ArithmeticOverflow"
+        );
+    }
+
+    /// Degenerate block range where `starting_block_number >= l2_block_number`
+    /// is rejected with `InvalidInterval`.
+    #[tokio::test]
+    async fn test_starting_block_gte_l2_block() {
+        let (provider, _roots) = mock_with_blocks(&[]);
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x0C);
+
+        // starting == l2 (equal case)
+        let result = validator
+            .validate_intermediate_roots(game_address, 100, 100, 10, B256::ZERO, &[])
+            .await;
+        assert!(
+            matches!(result, Err(ValidatorError::InvalidInterval)),
+            "expected InvalidInterval when starting == l2, got: {result:?}"
+        );
+
+        // starting > l2 (greater case)
+        let result = validator
+            .validate_intermediate_roots(game_address, 200, 100, 10, B256::ZERO, &[])
+            .await;
+        assert!(
+            matches!(result, Err(ValidatorError::InvalidInterval)),
+            "expected InvalidInterval when starting > l2, got: {result:?}"
         );
     }
 
