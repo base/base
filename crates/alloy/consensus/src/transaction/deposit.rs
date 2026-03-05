@@ -422,6 +422,7 @@ pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
 mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::BytesMut;
+    use rstest::rstest;
 
     use super::*;
 
@@ -550,26 +551,86 @@ mod tests {
         assert!(tx_deposit.size() > tx_deposit.rlp_encoded_fields_length());
     }
 
-    #[test]
-    fn test_size_field_sizes_match_types() {
+    #[rstest]
+    #[case::empty_create(
+        B256::default(),
+        Address::default(),
+        TxKind::Create,
+        0u128,
+        U256::ZERO,
+        0u64,
+        false,
+        Bytes::default()
+    )]
+    #[case::call_with_value(
+        B256::with_last_byte(0xff),
+        Address::with_last_byte(0xaa),
+        TxKind::Call(Address::with_last_byte(0xbb)),
+        500u128,
+        U256::from(1_000_000u64),
+        21000u64,
+        false,
+        Bytes::default()
+    )]
+    #[case::system_tx_with_calldata(
+        B256::with_last_byte(42),
+        Address::with_last_byte(1),
+        TxKind::Call(Address::ZERO),
+        0u128,
+        U256::ZERO,
+        100_000u64,
+        true,
+        Bytes::from_static(&[1, 2, 3, 4, 5]),
+    )]
+    #[case::large_mint_and_value(
+        B256::repeat_byte(0xde),
+        Address::repeat_byte(0xad),
+        TxKind::Create,
+        u128::MAX,
+        U256::MAX,
+        u64::MAX,
+        false,
+        Bytes::from_static(&[0xab; 128]),
+    )]
+    #[case::zero_gas_create_with_calldata(
+        B256::ZERO,
+        Address::ZERO,
+        TxKind::Create,
+        1u128,
+        U256::from(1u64),
+        0u64,
+        true,
+        Bytes::from_static(&[0xff; 32]),
+    )]
+    fn test_size_accounts_for_all_fields(
+        #[case] source_hash: B256,
+        #[case] from: Address,
+        #[case] to: TxKind,
+        #[case] mint: u128,
+        #[case] value: U256,
+        #[case] gas_limit: u64,
+        #[case] is_system_transaction: bool,
+        #[case] input: Bytes,
+    ) {
         let tx = TxDeposit {
-            source_hash: B256::default(),
-            from: Address::default(),
-            to: TxKind::Create,
-            mint: 0,
-            value: U256::ZERO,
-            gas_limit: 0,
-            is_system_transaction: false,
-            input: Bytes::default(),
+            source_hash,
+            from,
+            to,
+            mint,
+            value,
+            gas_limit,
+            is_system_transaction,
+            input: input.clone(),
         };
 
-        let expected = mem::size_of::<B256>()      // source_hash
-            + mem::size_of::<Address>()             // from
-            + tx.to.size()                          // to
-            + mem::size_of::<u128>()                // mint
-            + mem::size_of::<U256>()                // value
-            + mem::size_of::<u64>()                 // gas_limit
-            + mem::size_of::<bool>();               // is_system_transaction
+        let expected = mem::size_of::<B256>()       // source_hash
+            + mem::size_of::<Address>()              // from
+            + tx.to.size()                           // to
+            + mem::size_of::<u128>()                 // mint
+            + mem::size_of::<U256>()                 // value
+            + mem::size_of::<u64>()                  // gas_limit
+            + mem::size_of::<bool>()                 // is_system_transaction
+            + input.len(); // input
         assert_eq!(tx.size(), expected);
     }
 
