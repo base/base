@@ -179,7 +179,16 @@ impl<L2: L2Provider> OutputValidator<L2> {
             "validating final output root"
         );
 
-        let expected_root = self.compute_output_root(l2_block_number).await?;
+        let expected_root = match self.compute_output_root(l2_block_number).await {
+            Ok(root) => root,
+            Err(e) => {
+                let elapsed = start.elapsed().as_secs_f64();
+                metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
+                metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
+                warn!(game = %game_address, block = l2_block_number, error = %e, "validation failed");
+                return Err(e);
+            }
+        };
         let is_valid = expected_root == claimed_root;
 
         let elapsed = start.elapsed().as_secs_f64();
@@ -302,7 +311,22 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let mut first_invalid: Option<(usize, B256)> = None;
         let mut idx = 0;
         while let Some(result) = stream.next().await {
-            let expected_root = result?;
+            let expected_root = match result {
+                Ok(root) => root,
+                Err(e) => {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS)
+                        .record(elapsed);
+                    metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
+                    warn!(
+                        game = %game_address,
+                        block = checkpoints[idx],
+                        error = %e,
+                        "intermediate validation failed"
+                    );
+                    return Err(e);
+                }
+            };
             let claimed_intermediate = intermediate_roots[idx];
 
             if expected_root != claimed_intermediate {
@@ -675,6 +699,49 @@ mod tests {
         assert!(
             matches!(result, Err(ValidatorError::InvalidBlockRange { .. })),
             "expected InvalidBlockRange when starting > l2, got: {result:?}"
+        );
+    }
+
+    /// RPC error mid-stream during intermediate root validation propagates
+    /// the error instead of silently succeeding.
+    #[tokio::test]
+    async fn test_validate_intermediate_roots_rpc_error() {
+        // starting_block = 90, l2_block = 100, interval = 5
+        // Checkpoint blocks: 95, 100
+        // Block 95: fully configured (header + proof) -> succeeds
+        // Block 100: header only, no proof -> RPC error
+        let header_95 = test_header(95);
+        let storage_hash = B256::repeat_byte(0xBB);
+        let account_95 = test_account_result(storage_hash);
+        let root_95 = base_enclave::output_root_v0(&header_95, storage_hash);
+
+        let header_100 = test_header(100);
+        let hash_100 = header_100.hash_slow();
+
+        let mut provider = MockL2Provider::new();
+        provider.insert_block(95, header_95, account_95);
+        // Insert header for block 100 but omit the proof so get_proof fails.
+        let rpc_header_100 = RpcHeader { hash: hash_100, inner: header_100, ..Default::default() };
+        provider.headers.insert(100, rpc_header_100);
+
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x0E);
+
+        let result = validator
+            .validate_intermediate_roots(
+                game_address,
+                90,
+                100,
+                5,
+                B256::ZERO,
+                &[root_95, B256::ZERO],
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), ValidatorError::Rpc(_)),
+            "expected Rpc error variant"
         );
     }
 

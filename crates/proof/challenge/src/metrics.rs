@@ -18,6 +18,9 @@ impl ChallengerMetrics {
     /// Counter: total number of games found to be invalid during validation.
     pub const GAMES_INVALID_TOTAL: &str = "base_challenger_games_invalid_total";
 
+    /// Counter: total number of validation errors (RPC failures, header mismatches, etc.).
+    pub const VALIDATION_ERRORS_TOTAL: &str = "base_challenger_validation_errors_total";
+
     /// Histogram: latency in seconds for output root validation.
     pub const VALIDATION_LATENCY_SECONDS: &str = "base_challenger_validation_latency_seconds";
 
