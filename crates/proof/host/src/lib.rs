@@ -23,6 +23,9 @@ pub use kv::{
     store_ordered_trie,
 };
 
+mod recording;
+pub use recording::RecordingOracle;
+
 mod backend;
 pub use backend::{OfflineHostBackend, OnlineHostBackend};
 
