@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig};
 use base_builder_metering::MeteringStore;
+use base_execution_payload_builder::config::OpDAConfig;
 use base_node_core::args::RollupArgs;
 
 /// Parameters for Flashblocks configuration.
@@ -122,6 +123,14 @@ pub struct Args {
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
 
+    /// Maximum data availability size per transaction in bytes (0 or unset means no limit)
+    #[arg(long = "builder.max-da-tx-size")]
+    pub max_da_tx_size: Option<u64>,
+
+    /// Maximum total data availability size per block in bytes (0 or unset means no limit)
+    #[arg(long = "builder.max-da-block-size")]
+    pub max_da_block_size: Option<u64>,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -159,6 +168,8 @@ impl Default for Args {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
+            max_da_tx_size: None,
+            max_da_block_size: None,
             tx_data_store_buffer_size: 10000,
             sampling_ratio: 100,
             flashblocks: FlashblocksArgs::default(),
@@ -175,7 +186,10 @@ impl TryFrom<Args> for BuilderConfig {
         Ok(Self {
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
-            da_config: Default::default(),
+            da_config: OpDAConfig::new(
+                args.max_da_tx_size.unwrap_or(0),
+                args.max_da_block_size.unwrap_or(0),
+            ),
             gas_limit_config: Default::default(),
             sampling_ratio: args.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
@@ -311,6 +325,25 @@ mod tests {
         let config = convert(args);
         assert_eq!(config.flashblocks.disable_state_root, disable_expected);
         assert_eq!(config.flashblocks.compute_state_root_on_finalize, finalize_expected);
+    }
+
+    #[test]
+    fn da_config_defaults_to_no_limit() {
+        let config = convert(Args::default());
+        assert!(config.da_config.max_da_tx_size().is_none());
+        assert!(config.da_config.max_da_block_size().is_none());
+    }
+
+    #[test]
+    fn da_config_maps_from_cli_args() {
+        let args = Args {
+            max_da_tx_size: Some(100_000),
+            max_da_block_size: Some(500_000),
+            ..Default::default()
+        };
+        let config = convert(args);
+        assert_eq!(config.da_config.max_da_tx_size(), Some(100_000));
+        assert_eq!(config.da_config.max_da_block_size(), Some(500_000));
     }
 
     #[test]

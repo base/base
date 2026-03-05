@@ -2452,6 +2452,7 @@ dependencies = [
  "base-builder-metering",
  "base-cli-utils",
  "base-execution-cli",
+ "base-execution-payload-builder",
  "base-node-core",
  "base-node-runner",
  "base-txpool-rpc",

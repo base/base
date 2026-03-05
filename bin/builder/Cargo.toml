@@ -21,6 +21,7 @@ base-cli-utils.workspace = true
 base-node-runner.workspace = true
 base-builder-core.workspace = true
 base-builder-metering.workspace = true
+base-execution-payload-builder.workspace = true
 base-txpool-rpc.workspace = true
 
 # reth
