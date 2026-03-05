@@ -34,6 +34,9 @@ pub struct HostExecutorArgs {
     /// activated for op-node.
     #[clap(long)]
     pub safe_db_fallback: bool,
+    /// Cluster proving timeout in seconds (only used when SP1_PROVER=cluster).
+    #[arg(long, default_value = "21600")]
+    pub cluster_timeout: u64,
 }
 
 #[derive(Debug, Clone, Parser)]

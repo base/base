@@ -107,6 +107,10 @@ pub struct OPSuccinctRequest {
     pub contract_address: Option<Vec<u8>>, //Address
     pub prover_address: Option<Vec<u8>>,   //Address
     pub l1_head_block_number: Option<i64>, // L1 head block number used for request
+    /// Cluster proof handle JSON for self-hosted cluster mode.
+    /// Contains {"proof_id": "...", "proof_output_id": "..."} for handle reconstruction.
+    /// NULL for network mode requests (which use `proof_request_id` BYTEA for B256 instead).
+    pub cluster_proof_handle: Option<Value>,
 }
 
 impl OPSuccinctRequest {

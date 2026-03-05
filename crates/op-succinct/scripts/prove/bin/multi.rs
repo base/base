@@ -8,7 +8,9 @@ use op_succinct_host_utils::{
     witness_cache::{load_stdin_from_cache, save_stdin_to_cache},
     witness_generation::WitnessGenerator,
 };
-use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
+use op_succinct_proof_utils::{
+    cluster_range_proof, get_range_elf_embedded, initialize_host, is_cluster_mode,
+};
 use op_succinct_prove::execute_multi;
 use op_succinct_scripts::HostExecutorArgs;
 use sp1_sdk::{utils, Elf, ProveRequest, Prover, ProverClient};
@@ -85,23 +87,25 @@ async fn main() -> Result<()> {
         generate_stdin().await?
     };
 
-    let prover = ProverClient::from_env().await;
-
     if args.prove {
-        // If the prove flag is set, generate a proof.
-        let pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
-        // Generate proofs in compressed mode for aggregation verification.
-        let proof = prover.prove(&pk, sp1_stdin).compressed().await.unwrap();
-
-        // Create a proof directory for the chain ID if it doesn't exist.
         let proof_dir = format!("data/{}/proofs", l2_chain_id);
         if !std::path::Path::new(&proof_dir).exists() {
             fs::create_dir_all(&proof_dir).unwrap();
         }
-        // Save the proof to the proof directory corresponding to the chain ID.
-        proof
-            .save(format!("{proof_dir}/{l2_start_block}-{l2_end_block}.bin"))
-            .expect("saving proof failed");
+
+        if is_cluster_mode() {
+            let proof = cluster_range_proof(args.cluster_timeout, sp1_stdin).await?;
+            proof
+                .save(format!("{proof_dir}/{l2_start_block}-{l2_end_block}.bin"))
+                .context("saving proof failed")?;
+        } else {
+            let prover = ProverClient::from_env().await;
+            let pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
+            let proof = prover.prove(&pk, sp1_stdin).compressed().await.unwrap();
+            proof
+                .save(format!("{proof_dir}/{l2_start_block}-{l2_end_block}.bin"))
+                .context("saving proof failed")?;
+        }
     } else {
         let (block_data, report, execution_duration) =
             execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;

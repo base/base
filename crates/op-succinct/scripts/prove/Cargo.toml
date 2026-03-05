@@ -52,6 +52,7 @@ alloy-transport-http = { workspace = true, features = [
 
 # sp1
 sp1-sdk.workspace = true
+sp1-cluster-utils.workspace = true
 
 [dev-dependencies]
 reqwest = { version = "0.12.4", features = ["json"] }

@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
+use op_succinct_proof_utils::ClusterProofHandleJson;
 use serde_json::Value;
 use sqlx::{
     postgres::{types::PgInterval, PgQueryResult},
@@ -544,6 +545,32 @@ impl DriverDBClient {
         .await
     }
 
+    /// Update the status of a request to Prove for cluster mode.
+    ///
+    /// Sets `proof_request_time = NOW()` for `prove_duration` tracking and stores the cluster
+    /// proof handle as JSONB. The `proof_request_id` column is left NULL — it's exclusively
+    /// for network mode B256 proof IDs.
+    pub async fn update_request_to_prove_cluster(
+        &self,
+        id: i64,
+        cluster_handle: &ClusterProofHandleJson,
+    ) -> Result<PgQueryResult, Error> {
+        let handle_value =
+            serde_json::to_value(cluster_handle).map_err(|e| Error::Protocol(e.to_string()))?;
+        sqlx::query!(
+            r#"
+            UPDATE requests
+            SET status = $1, cluster_proof_handle = $2, proof_request_time = NOW(), updated_at = NOW()
+            WHERE id = $3
+            "#,
+            RequestStatus::Prove as i16,
+            handle_value,
+            id,
+        )
+        .execute(&self.pool)
+        .await
+    }
+
     /// Update status of a request to RELAYED.
     pub async fn update_request_to_relayed(
         &self,
@@ -896,6 +923,7 @@ mod tests {
                 contract_address: None,
                 prover_address: None,
                 l1_head_block_number: None,
+                cluster_proof_handle: None,
             }
         }
     }
