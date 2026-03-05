@@ -1,16 +1,16 @@
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
-use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
+use alloy_consensus::{Eip658Value, Header, Transaction, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
         ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
-        SystemCaller, TxResult,
+        SystemCaller,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
-    eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
+    eth::receipt_builder::ReceiptBuilderCtx,
 };
 use alloy_primitives::Address;
 use base_alloy_consensus::OpDepositReceipt;
@@ -29,20 +29,16 @@ use crate::{OpBlockExecutionCtx, OpBlockExecutionError, OpReceiptBuilder, OpTxEn
 /// The result of executing an OP transaction.
 #[derive(Debug)]
 pub struct OpTxResult<H, T> {
-    /// The inner result of the transaction execution.
-    pub inner: EthTxResult<H, T>,
+    /// The result and state from the EVM execution.
+    pub result: ResultAndState<H>,
+    /// The transaction type.
+    pub tx_type: T,
+    /// DA footprint used by this transaction.
+    pub da_footprint: u64,
     /// Whether the transaction is a deposit transaction.
     pub is_deposit: bool,
     /// The sender of the transaction.
     pub sender: Address,
-}
-
-impl<H, T> TxResult for OpTxResult<H, T> {
-    type HaltReason = H;
-
-    fn result(&self) -> &ResultAndState<Self::HaltReason> {
-        &self.inner.result
-    }
 }
 
 /// Block executor for Optimism.
@@ -65,6 +61,11 @@ pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     /// This is only set for blocks post-Jovian activation.
     /// See [DA footprint block limit spec](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#da-footprint-block-limit)
     pub da_footprint_used: u64,
+    /// Pending DA footprint for the current transaction being executed.
+    ///
+    /// Carries the per-transaction DA footprint from `execute_transaction_without_commit` to
+    /// `commit_transaction` since the v0.26.x `BlockExecutor` trait splits these into two calls.
+    pub pending_da_footprint: u64,
     /// Whether Regolith hardfork is active.
     pub is_regolith: bool,
     /// Utility to call system smart contracts.
@@ -89,6 +90,7 @@ where
             receipts: Vec::new(),
             gas_used: 0,
             da_footprint_used: 0,
+            pending_da_footprint: 0,
             ctx,
         }
     }
@@ -141,7 +143,6 @@ where
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
     type Evm = E;
-    type Result = OpTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
@@ -170,9 +171,9 @@ where
     fn execute_transaction_without_commit(
         &mut self,
         tx: impl ExecutableTx<Self>,
-    ) -> Result<Self::Result, BlockExecutionError> {
-        let (tx_env, tx) = tx.into_parts();
+    ) -> Result<ResultAndState<E::HaltReason>, BlockExecutionError> {
         let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
+        let tx_env = tx.to_tx_env();
 
         // The sum of the transaction's gas limit, Tg, and the gas utilized in this block prior,
         // must be no greater than the block's gasLimit.
@@ -185,7 +186,7 @@ where
             .into());
         }
 
-        let da_footprint_used = if self
+        self.pending_da_footprint = if self
             .spec
             .is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
             && !is_deposit
@@ -210,28 +211,21 @@ where
         };
 
         // Execute transaction and return the result
-        let result = self.evm.transact(tx_env).map_err(|err| {
+        self.evm.transact(tx_env).map_err(|err| {
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
-        })?;
-
-        Ok(OpTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: da_footprint_used,
-                tx_type: tx.tx().tx_type(),
-            },
-            is_deposit,
-            sender: *tx.signer(),
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
-        let OpTxResult {
-            inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            is_deposit,
-            sender,
-        } = output;
+    fn commit_transaction(
+        &mut self,
+        output: ResultAndState<E::HaltReason>,
+        tx: impl ExecutableTx<Self>,
+    ) -> Result<u64, BlockExecutionError> {
+        let ResultAndState { result, state } = output;
+        let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
+        let sender = *tx.signer();
+        let blob_gas_used = self.pending_da_footprint;
 
         // Fetch the depositor account from the database for the deposit nonce.
         // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
@@ -258,7 +252,7 @@ where
 
         self.receipts.push(
             match self.receipt_builder.build_receipt(ReceiptBuilderCtx {
-                tx_type,
+                tx: tx.tx(),
                 result,
                 cumulative_gas_used: self.gas_used,
                 evm: &self.evm,
@@ -266,6 +260,7 @@ where
             }) {
                 Ok(receipt) => receipt,
                 Err(ctx) => {
+                    let ctx = *ctx;
                     let receipt = alloy_consensus::Receipt {
                         // Success flag was added in `EIP-658: Embedding transaction status code
                         // in receipts`.

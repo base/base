@@ -30,5 +30,5 @@ pub mod estimated_da_size;
 use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};
 
 /// Type alias for default optimism transaction pool
-pub type OpTransactionPool<Client, S, Evm, T = BasePooledTransaction, O = BaseOrdering<T>> =
-    Pool<TransactionValidationTaskExecutor<OpTransactionValidator<Client, T, Evm>>, O, S>;
+pub type OpTransactionPool<Client, S, T = BasePooledTransaction, O = BaseOrdering<T>> =
+    Pool<TransactionValidationTaskExecutor<OpTransactionValidator<Client, T>>, O, S>;

@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 # workspace
 base-alloy-flashblocks.workspace = true
-base-alloy-evm = { workspace = true, features = ["std"] }
 
 # reth
 reth-rpc.workspace = true
@@ -49,6 +48,7 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-alloy-rpc-types-engine.workspace = true
 
 # base-alloy
+base-alloy-evm.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-network.workspace = true
 base-alloy-rpc-types.workspace = true

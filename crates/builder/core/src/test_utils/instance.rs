@@ -4,7 +4,6 @@ use core::{
     net::Ipv4Addr,
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 use std::sync::{Arc, LazyLock};
 
@@ -25,7 +24,7 @@ use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::TaskManager;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -62,7 +61,7 @@ pub fn clear_otel_env_vars() {
 pub struct LocalInstance {
     node_config: NodeConfig<OpChainSpec>,
     builder_config: BuilderConfig,
-    runtime: Option<Runtime>,
+    _task_manager: Option<TaskManager>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
@@ -89,7 +88,7 @@ impl LocalInstance {
         node_config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let task_manager = TaskManager::current();
         let base_node = BaseNode::new(RollupArgs::default());
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
@@ -109,7 +108,7 @@ impl LocalInstance {
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(node_config.clone())
             .with_database(create_test_db(node_config.clone()))
-            .with_launch_context(runtime.clone())
+            .with_launch_context(task_manager.executor())
             .with_types::<BaseNode>()
             .with_components(
                 base_node
@@ -144,7 +143,7 @@ impl LocalInstance {
             node_config,
             exit_future,
             _node_handle: node_handle,
-            runtime: Some(runtime),
+            _task_manager: Some(task_manager),
             pool_observer: TransactionPoolObserver::new(pool_monitor),
             metering_provider,
         })
@@ -214,14 +213,12 @@ impl LocalInstance {
 
 impl Drop for LocalInstance {
     fn drop(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            runtime.graceful_shutdown_with_timeout(Duration::from_secs(10));
-            if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
-                eprintln!(
-                    "Warning: failed to remove temporary data directory {}: {e}",
-                    self.node_config().datadir()
-                );
-            }
+        drop(self._task_manager.take());
+        if let Err(e) = std::fs::remove_dir_all(self.node_config().datadir().to_string()) {
+            eprintln!(
+                "Warning: failed to remove temporary data directory {}: {e}",
+                self.node_config().datadir()
+            );
         }
     }
 }

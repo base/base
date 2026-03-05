@@ -29,7 +29,7 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::TaskManager;
 use tracing::warn;
 use url::Url;
 
@@ -67,7 +67,7 @@ pub struct InProcessBuilder {
     data_dir: PathBuf,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
-    _runtime: Runtime,
+    _task_manager: TaskManager,
 }
 
 impl Drop for InProcessBuilder {
@@ -104,7 +104,7 @@ impl InProcessBuilder {
         std::fs::write(&jwt_path, config.jwt_secret.as_bytes().encode_hex().as_bytes())
             .wrap_err("Failed to write JWT secret")?;
 
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let task_manager = TaskManager::current();
 
         let chain_spec = parse_genesis(&config.genesis_json)?;
 
@@ -148,7 +148,7 @@ impl InProcessBuilder {
 
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
-            .with_launch_context(runtime.clone())
+            .with_launch_context(task_manager.executor())
             .with_types::<BaseNode>()
             .with_components(
                 base_node
@@ -186,7 +186,7 @@ impl InProcessBuilder {
             data_dir: data_path,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
-            _runtime: runtime,
+            _task_manager: task_manager,
         })
     }
 

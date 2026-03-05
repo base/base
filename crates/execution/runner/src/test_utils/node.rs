@@ -18,7 +18,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::Runtime;
+use reth_tasks::TaskManager;
 
 use crate::{
     BaseNodeExtension, NodeHooks, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
@@ -35,7 +35,7 @@ pub struct LocalNode {
     provider: LocalNodeProvider,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
-    _runtime: Runtime,
+    _task_manager: TaskManager,
     _db_path: PathBuf,
 }
 
@@ -62,7 +62,8 @@ impl LocalNode {
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<OpChainSpec>,
     ) -> Result<Self> {
-        let exec = Runtime::test();
+        let task_manager = TaskManager::current();
+        let exec = task_manager.executor();
 
         let network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -94,8 +95,8 @@ impl LocalNode {
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
         let builder = NodeBuilder::new(node_config.clone())
-            .with_database(db)
-            .with_launch_context(exec.clone())
+            .with_database(Arc::new(db))
+            .with_launch_context(exec)
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
             .with_components(op_node.components())
             .with_add_ons(op_node.add_ons())
@@ -128,7 +129,7 @@ impl LocalNode {
             provider,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
-            _runtime: exec,
+            _task_manager: task_manager,
             _db_path: db_path,
         })
     }

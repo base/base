@@ -2,21 +2,23 @@
 
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
-use base_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType};
-use base_alloy_evm::{OpBlockExecutor, OpTxResult};
+use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
+use base_alloy_evm::OpBlockExecutor;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use base_revm::{OpHaltReason, OpTransaction};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
-    Evm, RecoveredTx,
-    block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
+    Evm,
+    block::{BlockExecutor, CommitChanges, ExecutableTx, InternalBlockExecutionError},
 };
-use reth_primitives_traits::Recovered;
 use reth_provider::BlockNumReader;
 use reth_revm::State;
-use revm::{Database, context::TxEnv};
+use revm::{
+    Database,
+    context::{TxEnv, result::ResultAndState},
+};
 use revm_primitives::B256;
 use tracing::{instrument, trace, warn};
 
@@ -35,7 +37,7 @@ impl<P> FlashblocksCachedExecutionProvider<P> {
     }
 }
 
-impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
+impl<P> CachedExecutionProvider<ResultAndState<OpHaltReason>>
     for FlashblocksCachedExecutionProvider<P>
 where
     P: BlockNumReader,
@@ -46,7 +48,7 @@ where
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+    ) -> Option<ResultAndState<OpHaltReason>> {
         let flashblocks_state = self.flashblocks_state.as_ref()?;
 
         // if block_number is not found, we can't use cached execution
@@ -79,7 +81,7 @@ where
         }
 
         trace!(tx_hash = ?tx_hash, "cache hit for transaction");
-        pending_blocks.get_op_tx_result(tx_hash)
+        pending_blocks.get_result_and_state(tx_hash)
     }
 }
 
@@ -146,28 +148,51 @@ impl<'a, DB, E, C> BlockExecutor for CachedExecutor<E, C>
 where
     DB: Database + alloy_evm::Database + 'a,
     E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>>,
-    C: CachedExecutionProvider<OpTxResult<E::HaltReason, OpTxType>>,
+    C: CachedExecutionProvider<ResultAndState<E::HaltReason>>,
 {
     type Transaction = OpTxEnvelope;
     type Receipt = OpReceipt;
     type Evm = E;
-    type Result = OpTxResult<E::HaltReason, OpTxType>;
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.executor.receipts()
     }
 
-    #[instrument(level = "debug", skip_all)]
     fn execute_transaction_without_commit(
         &mut self,
         executing_tx: impl ExecutableTx<Self>,
-    ) -> Result<Self::Result, BlockExecutionError> {
+    ) -> Result<ResultAndState<E::HaltReason>, BlockExecutionError> {
+        self.executor.execute_transaction_without_commit(executing_tx)
+    }
+
+    fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+        self.executor.apply_pre_execution_changes()
+    }
+
+    fn commit_transaction(
+        &mut self,
+        output: ResultAndState<E::HaltReason>,
+        tx: impl ExecutableTx<Self>,
+    ) -> Result<u64, BlockExecutionError> {
+        self.executor.commit_transaction(output, tx)
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    fn execute_transaction_with_commit_condition(
+        &mut self,
+        tx: impl ExecutableTx<Self>,
+        f: impl FnOnce(&revm::context::result::ExecutionResult<E::HaltReason>) -> CommitChanges,
+    ) -> Result<Option<u64>, BlockExecutionError> {
         if !self.all_txs_cached {
-            return self.executor.execute_transaction_without_commit(executing_tx);
+            let output = self.execute_transaction_without_commit(&tx)?;
+            if !f(&output.result).should_commit() {
+                return Ok(None);
+            }
+            let gas_used = self.commit_transaction(output, tx)?;
+            return Ok(Some(gas_used));
         }
 
-        let executing_tx_recovered = executing_tx.into_parts().1;
-        let tx_hash = executing_tx_recovered.tx().tx_hash();
+        let tx_hash = tx.tx().tx_hash();
 
         // find tx just before this one
         let tx_position = self.position_by_hash.get(&tx_hash);
@@ -175,10 +200,12 @@ where
         // not found, we need to execute the transaction
         let Some(tx_position) = tx_position else {
             self.all_txs_cached = false;
-            return self.executor.execute_transaction_without_commit(Recovered::new_unchecked(
-                executing_tx_recovered.tx(),
-                *executing_tx_recovered.signer(),
-            ));
+            let output = self.execute_transaction_without_commit(&tx)?;
+            if !f(&output.result).should_commit() {
+                return Ok(None);
+            }
+            let gas_used = self.commit_transaction(output, tx)?;
+            return Ok(Some(gas_used));
         };
 
         let prev_tx_hash = tx_position.checked_sub(1).and_then(|pos| self.txs.get(pos));
@@ -190,27 +217,25 @@ where
         );
         if let Some(cached_execution) = cached_execution {
             // load accounts into cache
-            for address in cached_execution.result().state.keys() {
+            for address in cached_execution.state.keys() {
                 // ignore the result since we don't care if the account exists or not
                 self.executor.evm_mut().db_mut().load_cache_account(*address).map_err(|err| {
                     BlockExecutionError::Internal(InternalBlockExecutionError::Other(Box::new(err)))
                 })?;
             }
-            return Ok(cached_execution);
+            if !f(&cached_execution.result).should_commit() {
+                return Ok(None);
+            }
+            let gas_used = self.commit_transaction(cached_execution, tx)?;
+            return Ok(Some(gas_used));
         }
         self.all_txs_cached = false;
-        self.executor.execute_transaction_without_commit(Recovered::new_unchecked(
-            executing_tx_recovered.tx(),
-            *executing_tx_recovered.signer(),
-        ))
-    }
-
-    fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        self.executor.apply_pre_execution_changes()
-    }
-
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
-        self.executor.commit_transaction(output)
+        let output = self.executor.execute_transaction_without_commit(&tx)?;
+        if !f(&output.result).should_commit() {
+            return Ok(None);
+        }
+        let gas_used = self.executor.commit_transaction(output, tx)?;
+        Ok(Some(gas_used))
     }
 
     fn finish(

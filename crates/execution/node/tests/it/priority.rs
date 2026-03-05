@@ -34,7 +34,7 @@ use reth_payload_util::{
     PayloadTransactionsFixed,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::Runtime;
+use reth_tasks::TaskManager;
 use reth_transaction_pool::PoolTransaction;
 use tokio::sync::Mutex;
 
@@ -135,7 +135,7 @@ async fn test_custom_block_priority_config() {
             .unwrap_or_chain_default(config.chain.chain(), config.datadir.clone())
             .db(),
     );
-    let runtime = Runtime::test();
+    let tasks = TaskManager::current();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
@@ -143,7 +143,7 @@ async fn test_custom_block_priority_config() {
         .with_add_ons(OpNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
-                runtime.clone(),
+                tasks.executor(),
                 builder.config.datadir(),
                 Default::default(),
             );

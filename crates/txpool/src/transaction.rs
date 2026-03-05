@@ -320,7 +320,6 @@ mod tests {
     use alloy_primitives::{TxKind, U256};
     use base_alloy_consensus::TxDeposit;
     use base_execution_chainspec::BASE_MAINNET;
-    use base_execution_evm::OpEvmConfig;
     use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
@@ -331,11 +330,8 @@ mod tests {
     use crate::{BasePooledTransaction, OpTransactionValidator};
     #[tokio::test]
     async fn validate_optimism_transaction() {
-        let client = MockEthProvider::<OpPrimitives>::new()
-            .with_chain_spec(BASE_MAINNET.clone())
-            .with_genesis_block();
-        let evm_config = OpEvmConfig::optimism(BASE_MAINNET.clone());
-        let validator = EthTransactionValidatorBuilder::new(client, evm_config)
+        let client = MockEthProvider::<OpPrimitives>::new().with_chain_spec(BASE_MAINNET.clone());
+        let validator = EthTransactionValidatorBuilder::new(client)
             .no_shanghai()
             .no_cancun()
             .build(InMemoryBlobStore::default());

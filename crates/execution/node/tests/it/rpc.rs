@@ -9,14 +9,15 @@ use reth_node_core::{
     node_config::NodeConfig,
 };
 use reth_rpc_api::servers::AdminApiServer;
-use reth_tasks::Runtime;
+use reth_tasks::TaskManager;
 
 // <https://github.com/paradigmxyz/reth/issues/19765>
 #[tokio::test]
 async fn test_admin_external_ip() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
-    let exec = Runtime::test();
+    let task_manager = TaskManager::current();
+    let exec = task_manager.executor();
 
     let external_ip = "10.64.128.71".parse().unwrap();
     // Node setup

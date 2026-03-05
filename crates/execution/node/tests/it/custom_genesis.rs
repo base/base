@@ -48,7 +48,7 @@ async fn test_op_node_custom_genesis_number() {
             .unwrap_or_chain_default(config.chain.chain(), config.datadir.clone())
             .db(),
     );
-    let runtime = reth_tasks::Runtime::test();
+    let tasks = reth_tasks::TaskManager::current();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
         .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
@@ -56,7 +56,7 @@ async fn test_op_node_custom_genesis_number() {
         .with_add_ons(OpNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
-                runtime.clone(),
+                tasks.executor(),
                 builder.config.datadir(),
                 Default::default(),
             );

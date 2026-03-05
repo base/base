@@ -1,13 +1,13 @@
 use core::fmt::Debug;
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{Eip658Value, Transaction};
+use alloy_consensus::{Eip658Value, Transaction, transaction::Recovered};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
-use base_alloy_consensus::{OpDepositReceipt, OpTxType};
+use base_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -331,13 +331,21 @@ impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
+        ctx: ReceiptBuilderCtx<'_, Recovered<OpTxEnvelope>, E>,
         deposit_nonce: Option<u64>,
     ) -> OpReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
-        match receipt_builder.build_receipt(ctx) {
+        let inner_ctx = ReceiptBuilderCtx {
+            tx: ctx.tx.inner(),
+            evm: ctx.evm,
+            result: ctx.result,
+            state: ctx.state,
+            cumulative_gas_used: ctx.cumulative_gas_used,
+        };
+        match receipt_builder.build_receipt(inner_ctx) {
             Ok(receipt) => receipt,
             Err(ctx) => {
+                let ctx = *ctx;
                 let receipt = alloy_consensus::Receipt {
                     // Success flag was added in `EIP-658: Embedding transaction status code
                     // in receipts`.
@@ -431,7 +439,7 @@ impl OpPayloadBuilderCtx {
             }
 
             let ctx = ReceiptBuilderCtx {
-                tx_type: sequencer_tx.tx_type(),
+                tx: &sequencer_tx,
                 evm: &evm,
                 result,
                 state: &state,
@@ -704,7 +712,7 @@ impl OpPayloadBuilderCtx {
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
-                tx_type: tx.tx_type(),
+                tx: &tx,
                 evm: &evm,
                 result,
                 state: &state,

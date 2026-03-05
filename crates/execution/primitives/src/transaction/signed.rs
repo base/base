@@ -137,10 +137,6 @@ impl IsTyped2718 for OpTransactionSigned {
 }
 
 impl SignedTransaction for OpTransactionSigned {
-    fn is_system_tx(&self) -> bool {
-        self.is_deposit()
-    }
-
     fn recalculate_hash(&self) -> B256 {
         keccak256(self.encoded_2718())
     }
@@ -413,11 +409,19 @@ impl reth_codecs::Compact for OpTransactionSigned {
 
         let tx_bits = if zstd_bit {
             let mut tmp = Vec::with_capacity(256);
-            reth_zstd_compressors::with_tx_compressor(|compressor| {
+            if cfg!(feature = "std") {
+                reth_zstd_compressors::TRANSACTION_COMPRESSOR.with(|compressor| {
+                    let mut compressor = compressor.borrow_mut();
+                    let tx_bits = self.transaction.to_compact(&mut tmp);
+                    buf.put_slice(&compressor.compress(&tmp).expect("Failed to compress"));
+                    tx_bits as u8
+                })
+            } else {
+                let mut compressor = reth_zstd_compressors::create_tx_compressor();
                 let tx_bits = self.transaction.to_compact(&mut tmp);
                 buf.put_slice(&compressor.compress(&tmp).expect("Failed to compress"));
                 tx_bits as u8
-            })
+            }
         } else {
             self.transaction.to_compact(buf) as u8
         };
@@ -439,15 +443,26 @@ impl reth_codecs::Compact for OpTransactionSigned {
 
         let zstd_bit = bitflags >> 3;
         let (transaction, buf) = if zstd_bit != 0 {
-            reth_zstd_compressors::with_tx_decompressor(|decompressor| {
-                // TODO: enforce that zstd is only present at a "top" level type
+            if cfg!(feature = "std") {
+                reth_zstd_compressors::TRANSACTION_DECOMPRESSOR.with(|decompressor| {
+                    let mut decompressor = decompressor.borrow_mut();
+                    // TODO: enforce that zstd is only present at a "top" level type
+                    let transaction_type = (bitflags & 0b110) >> 1;
+                    let (transaction, _) = OpTypedTransaction::from_compact(
+                        decompressor.decompress(buf),
+                        transaction_type,
+                    );
+                    (transaction, buf)
+                })
+            } else {
+                let mut decompressor = reth_zstd_compressors::create_tx_decompressor();
                 let transaction_type = (bitflags & 0b110) >> 1;
                 let (transaction, _) = OpTypedTransaction::from_compact(
                     decompressor.decompress(buf),
                     transaction_type,
                 );
                 (transaction, buf)
-            })
+            }
         } else {
             let transaction_type = bitflags >> 1;
             OpTypedTransaction::from_compact(buf, transaction_type)

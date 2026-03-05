@@ -1,4 +1,5 @@
 use alloy_consensus::{Eip658Value, Receipt};
+use alloy_eips::Typed2718;
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use base_alloy_consensus::OpTxType;
 use base_alloy_evm::OpReceiptBuilder;
@@ -17,11 +18,12 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
 
     fn build_receipt<'a, E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
-        match ctx.tx_type {
-            OpTxType::Deposit => Err(ctx),
-            ty => {
+        ctx: ReceiptBuilderCtx<'a, OpTransactionSigned, E>,
+    ) -> Result<Self::Receipt, Box<ReceiptBuilderCtx<'a, OpTransactionSigned, E>>> {
+        let ty = OpTxType::try_from(ctx.tx.ty()).unwrap_or(OpTxType::Legacy);
+        match ty {
+            OpTxType::Deposit => Err(Box::new(ctx)),
+            _ => {
                 let receipt = Receipt {
                     // Success flag was added in `EIP-658: Embedding transaction status code in
                     // receipts`.

@@ -88,7 +88,6 @@ serde-bincode-compat = [
 	"reth-ethereum-primitives?/serde-bincode-compat",
 	"reth-primitives-traits/serde-bincode-compat",
 	"reth-trie-common/serde-bincode-compat",
-	"reth-trie/serde-bincode-compat",
 ]
 metrics = [
 	"dep:eyre",

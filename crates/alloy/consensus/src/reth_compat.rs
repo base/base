@@ -391,8 +391,8 @@ impl Compact for OpTxEnvelope {
 #[derive(CompactZstd)]
 #[reth_codecs(crate = "reth_codecs")]
 #[reth_zstd(
-    compressor = reth_zstd_compressors::with_receipt_compressor,
-    decompressor = reth_zstd_compressors::with_receipt_decompressor
+    compressor = reth_zstd_compressors::RECEIPT_COMPRESSOR,
+    decompressor = reth_zstd_compressors::RECEIPT_DECOMPRESSOR
 )]
 struct CompactOpReceipt<'a> {
     tx_type: OpTxType,

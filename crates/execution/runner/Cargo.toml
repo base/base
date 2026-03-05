@@ -42,7 +42,6 @@ test-utils = [
 	"reth-node-builder/test-utils",
 	"reth-primitives-traits?/test-utils",
 	"reth-provider/test-utils",
-	"reth-tasks?/test-utils",
 	"reth-transaction-pool/test-utils",
 ]
 
