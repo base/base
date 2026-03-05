@@ -93,6 +93,11 @@ pub struct Args {
     #[arg(long = "builder.max-uncompressed-block-size")]
     pub max_uncompressed_block_size: Option<u64>,
 
+    /// Duration in milliseconds to wait for metering data before including a transaction.
+    /// Transactions younger than this without metering data will be skipped.
+    #[arg(long = "builder.metering-wait-duration-ms")]
+    pub metering_wait_duration_ms: Option<u64>,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -130,6 +135,7 @@ impl Default for Args {
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
+            metering_wait_duration_ms: None,
             tx_data_store_buffer_size: 10000,
             sampling_ratio: 100,
             flashblocks: FlashblocksArgs::default(),
@@ -168,6 +174,7 @@ impl Args {
             block_state_root_time_budget_us: self.block_state_root_time_budget_us,
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
+            metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             metering_provider,
         })
     }
@@ -270,6 +277,19 @@ mod tests {
 
         let result = config.metering_provider.get(&tx_hash);
         assert_eq!(result.unwrap().total_execution_time_us, 500);
+    }
+
+    #[rstest]
+    #[case::some_duration(Some(500), Some(Duration::from_millis(500)))]
+    #[case::none(None, None)]
+    #[case::zero(Some(0), Some(Duration::from_millis(0)))]
+    fn metering_wait_duration_maps_correctly(
+        #[case] input: Option<u64>,
+        #[case] expected: Option<Duration>,
+    ) {
+        let args = Args { metering_wait_duration_ms: input, ..Default::default() };
+        let config = convert(args);
+        assert_eq!(config.metering_wait_duration, expected);
     }
 
     #[test]

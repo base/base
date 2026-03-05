@@ -98,6 +98,8 @@ base_metrics::define_metrics! {
     metering_unknown_transaction: counter,
     #[describe("Number of LRU evictions from MeteringStore")]
     metering_store_lru_evictions: counter,
+    #[describe("Transactions skipped because metering data has not yet arrived")]
+    metering_data_pending_skip: counter,
     #[describe("Transactions rejected by per-tx DA size limit")]
     tx_da_size_exceeded_total: counter,
     #[describe("Transactions rejected by block DA size limit")]
