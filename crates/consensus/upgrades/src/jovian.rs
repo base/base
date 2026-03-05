@@ -11,7 +11,8 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, keccak256};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
-use crate::{Hardfork, upgrade_to_calldata};
+use crate::Hardfork;
+use crate::utils::upgrade_to_calldata;
 
 /// The Jovian network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]

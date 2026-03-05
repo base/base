@@ -8,6 +8,7 @@ use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::Hardfork;
+use crate::utils::upgrade_to_calldata;
 
 /// The Fjord network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -82,7 +83,7 @@ impl Fjord {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: super::upgrade_to_calldata(Self::FJORD_GAS_PRICE_ORACLE),
+                input: upgrade_to_calldata(Self::FJORD_GAS_PRICE_ORACLE),
             },
             // Enables the Fjord Gas Price Oracle.
             // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-enable-fjord>

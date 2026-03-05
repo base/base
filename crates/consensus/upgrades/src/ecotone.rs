@@ -8,6 +8,7 @@ use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::Hardfork;
+use crate::utils::upgrade_to_calldata;
 
 /// The Ecotone network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -136,7 +137,7 @@ impl Ecotone {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: super::upgrade_to_calldata(Self::NEW_L1_BLOCK),
+                input: upgrade_to_calldata(Self::NEW_L1_BLOCK),
             },
             // Updates the gas price oracle proxy to point to the new Gas Price Oracle contract.
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-proxy-update>
@@ -148,7 +149,7 @@ impl Ecotone {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: super::upgrade_to_calldata(Self::GAS_PRICE_ORACLE),
+                input: upgrade_to_calldata(Self::GAS_PRICE_ORACLE),
             },
             // Enables the Ecotone Gas Price Oracle.
             // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
