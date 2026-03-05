@@ -58,14 +58,14 @@ jobs:
       - name: Build base-reth-node
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --bin base-reth-node --profile maxperf
+          cargo build --locked --bin base-reth-node --profile maxperf
           mkdir -p ~/bin
           cp target/maxperf/base-reth-node ~/bin/
 
       - name: Build base-builder
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --bin base-builder --profile maxperf
+          cargo build --locked --bin base-builder --profile maxperf
           cp target/maxperf/base-builder ~/bin/base-builder
 
       - name: Verify binaries exist

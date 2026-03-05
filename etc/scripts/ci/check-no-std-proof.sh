@@ -31,7 +31,7 @@ proof_packages=(
 )
 
 for package in "${proof_packages[@]}"; do
-  cmd="cargo +nightly build -p $package -Zbuild-std=core,alloc --target riscv32imac-unknown-none-elf --no-default-features"
+  cmd="cargo +nightly build --locked -p $package -Zbuild-std=core,alloc --target riscv32imac-unknown-none-elf --no-default-features"
   if [ -n "$CI" ]; then
     echo "::group::$cmd"
   else
