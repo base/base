@@ -170,6 +170,10 @@ pub enum TxnExecutionError {
     /// Transaction gas usage exceeds configured maximum.
     #[error("max gas usage exceeded")]
     MaxGasUsageExceeded,
+
+    /// Metering data has not yet arrived for this transaction.
+    #[error("metering data pending")]
+    MeteringDataPending,
 }
 
 impl From<ExecutionMeteringLimitExceeded> for TxnExecutionError {

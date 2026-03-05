@@ -79,7 +79,7 @@ where
         // Reth sorts descending (higher value = picked first).
         // We want older transactions (lower timestamp) first,
         // so invert: MAX - timestamp.
-        Priority::Value(u128::MAX - transaction.timestamp())
+        Priority::Value(u128::MAX - transaction.received_at())
     }
 }
 
@@ -209,7 +209,7 @@ mod tests {
         let priority = ordering.priority(&tx, 0);
         match priority {
             Priority::Value(val) => {
-                assert_eq!(val, u128::MAX - tx.timestamp());
+                assert_eq!(val, u128::MAX - tx.received_at());
             }
             Priority::None => panic!("Expected Priority::Value"),
         }
