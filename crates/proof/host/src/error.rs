@@ -103,6 +103,9 @@ pub enum HostError {
     /// Proof program error.
     #[error(transparent)]
     ProofProgram(Box<FaultProofProgramError>),
+    /// Preimage server exited unexpectedly during witness capture.
+    #[error("preimage server exited unexpectedly")]
+    ServerExitedUnexpectedly,
     /// Preimage server panicked during witness capture.
     #[error("preimage server panicked: {0}")]
     ServerPanicked(tokio::task::JoinError),
