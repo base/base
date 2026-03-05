@@ -41,12 +41,60 @@ pub struct Args {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
+
+    /// Enable flashblocks cached execution in the engine validator.
+    ///
+    /// This is disabled by default until cached execution has been further validated in
+    /// production conditions.
+    #[arg(
+        long = "enable-flashblocks-cached-execution",
+        env = "BASE_NODE_ENABLE_FLASHBLOCKS_CACHED_EXECUTION",
+        default_value = "false",
+        value_name = "ENABLE_FLASHBLOCKS_CACHED_EXECUTION"
+    )]
+    pub enable_flashblocks_cached_execution: bool,
 }
 
 impl From<&Args> for Option<FlashblocksConfig> {
     fn from(args: &Args) -> Self {
-        args.flashblocks_url
-            .clone()
-            .map(|url| FlashblocksConfig::new(url, args.max_pending_blocks_depth))
+        args.flashblocks_url.clone().map(|url| {
+            FlashblocksConfig::new(url, args.max_pending_blocks_depth)
+                .with_cached_execution_enabled(args.enable_flashblocks_cached_execution)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_with_flashblocks_url() -> Args {
+        Args {
+            rollup_args: RollupArgs::default(),
+            flashblocks_url: Some(Url::parse("ws://localhost:12345").unwrap()),
+            max_pending_blocks_depth: 3,
+            enable_transaction_tracing: false,
+            enable_transaction_tracing_logs: false,
+            enable_metering: false,
+            enable_flashblocks_cached_execution: false,
+        }
+    }
+
+    #[test]
+    fn cached_execution_flag_defaults_to_disabled() {
+        let args = args_with_flashblocks_url();
+        let config: Option<FlashblocksConfig> = (&args).into();
+        let config = config.expect("flashblocks config should be created");
+        assert!(!config.cached_execution_enabled);
+    }
+
+    #[test]
+    fn cached_execution_flag_maps_to_flashblocks_config() {
+        let mut args = args_with_flashblocks_url();
+        args.enable_flashblocks_cached_execution = true;
+
+        let config: Option<FlashblocksConfig> = (&args).into();
+        let config = config.expect("flashblocks config should be created");
+        assert!(config.cached_execution_enabled);
     }
 }
