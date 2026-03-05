@@ -12,6 +12,7 @@ use alloy_primitives::{Address, B256};
 use base_enclave::output_root_v0_with_hash;
 use base_proof_rpc::{L2Provider, RpcError};
 use base_protocol::Predeploys;
+use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -113,6 +114,9 @@ impl<L2: L2Provider> std::fmt::Debug for OutputValidator<L2> {
 }
 
 impl<L2: L2Provider> OutputValidator<L2> {
+    /// Maximum number of intermediate output roots to validate concurrently.
+    pub const VALIDATION_CONCURRENCY: usize = 32;
+
     /// Creates a new output validator.
     pub const fn new(l2_provider: Arc<L2>) -> Self {
         Self { l2_provider }
@@ -262,26 +266,38 @@ impl<L2: L2Provider> OutputValidator<L2> {
             "validating intermediate output roots"
         );
 
-        let mut first_invalid: Option<(usize, B256)> = None;
-
+        // Pre-compute checkpoint block numbers with overflow checks before any
+        // RPC work.
+        let mut checkpoints = Vec::with_capacity(intermediate_roots.len());
         let mut checkpoint = starting_block_number
             .checked_add(intermediate_block_interval)
             .ok_or(ValidatorError::ArithmeticOverflow { block_number: starting_block_number })?;
-        let mut idx = 0;
 
-        while checkpoint <= l2_block_number {
-            if idx >= intermediate_roots.len() {
-                break;
-            }
+        while checkpoint <= l2_block_number && checkpoints.len() < intermediate_roots.len() {
+            checkpoints.push(checkpoint);
+            checkpoint = checkpoint
+                .checked_add(intermediate_block_interval)
+                .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
+        }
 
-            let expected_root = self.compute_output_root(checkpoint).await?;
+        // Validate all checkpoints concurrently, yielding results in order.
+        let results: Vec<Result<B256, ValidatorError>> = stream::iter(checkpoints.iter().copied())
+            .map(|block| self.compute_output_root(block))
+            .buffered(Self::VALIDATION_CONCURRENCY)
+            .collect()
+            .await;
+
+        // Find the first error or mismatch in index order.
+        let mut first_invalid: Option<(usize, B256)> = None;
+        for (idx, result) in results.into_iter().enumerate() {
+            let expected_root = result?;
             let claimed_intermediate = intermediate_roots[idx];
 
             if expected_root != claimed_intermediate {
                 warn!(
                     game = %game_address,
                     index = idx,
-                    block = checkpoint,
+                    block = checkpoints[idx],
                     expected = %expected_root,
                     claimed = %claimed_intermediate,
                     "invalid intermediate output root detected"
@@ -289,11 +305,6 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 first_invalid = Some((idx, expected_root));
                 break;
             }
-
-            checkpoint = checkpoint
-                .checked_add(intermediate_block_interval)
-                .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
-            idx += 1;
         }
 
         let elapsed = start.elapsed().as_secs_f64();
