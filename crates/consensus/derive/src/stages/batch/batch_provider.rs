@@ -59,7 +59,7 @@ where
     }
 
     /// Attempts to update the active stage of the mux.
-    pub(crate) fn attempt_update(&mut self) -> PipelineResult<()> {
+    fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to

@@ -8,13 +8,13 @@ use alloy_primitives::Bytes;
 use crate::{BlobDecodingError, BlobProviderError};
 
 /// The blob encoding version
-pub(crate) const BLOB_ENCODING_VERSION: u8 = 0;
+const BLOB_ENCODING_VERSION: u8 = 0;
 
 /// Maximum blob data size
-pub(crate) const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130044
+const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130044
 
 /// Blob Encoding/Decoding Rounds
-pub(crate) const BLOB_ENCODING_ROUNDS: usize = 1024;
+const BLOB_ENCODING_ROUNDS: usize = 1024;
 
 /// The Blob Data
 #[derive(Default, Clone, Debug)]

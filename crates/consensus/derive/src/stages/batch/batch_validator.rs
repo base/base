@@ -67,7 +67,7 @@ where
     /// ## Returns
     /// - `Ok(())` if the update was successful.
     /// - `Err(PipelineError)` if the update failed.
-    pub(crate) fn update_origins(&mut self, parent: &L2BlockInfo) -> PipelineResult<()> {
+    fn update_origins(&mut self, parent: &L2BlockInfo) -> PipelineResult<()> {
         // NOTE: The origin is used to determine if it's behind.
         // It is the future origin that gets saved into the l1 blocks array.
         // We always update the origin of this stage if it's not the same so
@@ -141,7 +141,7 @@ where
     /// ## Returns
     /// - `Ok(SingleBatch)` if an empty batch was derived.
     /// - `Err(PipelineError)` if an empty batch could not be derived.
-    pub(crate) fn try_derive_empty_batch(
+    fn try_derive_empty_batch(
         &mut self,
         parent: &L2BlockInfo,
     ) -> PipelineResult<SingleBatch> {
