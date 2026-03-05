@@ -217,7 +217,7 @@ pub fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        info!("Generated genesis file at: {output}");
+        info!(%output, "Generated genesis file");
     } else {
         println!("{}", serde_json::to_string_pretty(&genesis)?);
     }
