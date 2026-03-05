@@ -4136,6 +4136,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-transport"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "base-proof-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
