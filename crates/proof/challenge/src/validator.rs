@@ -435,8 +435,8 @@ mod tests {
 
         // Build a single-entry state trie with the L2ToL1MessagePasser account
         let account_key = Nibbles::unpack(keccak256(Predeploys::L2_TO_L1_MESSAGE_PASSER));
-        let mut hb = HashBuilder::default()
-            .with_proof_retainer(ProofRetainer::new(vec![account_key]));
+        let mut hb =
+            HashBuilder::default().with_proof_retainer(ProofRetainer::new(vec![account_key]));
         hb.add_leaf(account_key, &encoded);
 
         let state_root = hb.root();
