@@ -41,15 +41,21 @@ impl BaseNodeExtension for FlashblocksExtension {
 
         let state_for_canonical = Arc::clone(&state);
         let state_for_rpc = Arc::clone(&state);
-        let state_for_engine = Arc::clone(&state);
         let state_for_start = state;
 
-        let hooks = hooks.add_add_ons_hook(move |add_ons| {
-            add_ons.with_engine_validator(
-                BaseEngineValidatorBuilder::new(OpEngineValidatorBuilder::default())
-                    .with_flashblocks_state(state_for_engine),
-            )
-        });
+        let hooks = if cfg.cached_execution {
+            info!(message = "Cached execution is enabled");
+            let state_for_engine = Arc::clone(&state_for_start);
+            hooks.add_add_ons_hook(move |add_ons| {
+                add_ons.with_engine_validator(
+                    BaseEngineValidatorBuilder::new(OpEngineValidatorBuilder::default())
+                        .with_flashblocks_state(state_for_engine),
+                )
+            })
+        } else {
+            info!(message = "Cached execution is disabled");
+            hooks
+        };
 
         // Start state processor, subscriber, and canonical subscription after node is started
         let hooks = hooks.add_node_started_hook(move |ctx| {
