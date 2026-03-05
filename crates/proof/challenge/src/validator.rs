@@ -116,6 +116,14 @@ pub struct IntermediateValidationParams {
     pub intermediate_roots: Vec<B256>,
 }
 
+/// A single output root checkpoint to validate.
+struct Checkpoint {
+    /// The L2 block number at this checkpoint.
+    block: u64,
+    /// The onchain-claimed output root at this block.
+    claimed_root: B256,
+}
+
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
@@ -177,6 +185,72 @@ impl<L2: L2Provider> OutputValidator<L2> {
         Ok(output_root_v0_with_hash(&consensus_header, storage_root, computed_hash))
     }
 
+    /// Validates output roots at the given checkpoints.
+    ///
+    /// Returns `Ok(None)` when every checkpoint matches. Returns
+    /// `Ok(Some((index, expected_root)))` for the first mismatch.
+    /// Records latency, error, and invalid-game metrics internally.
+    async fn validate_output_roots(
+        &self,
+        game_address: Address,
+        checkpoints: &[Checkpoint],
+    ) -> Result<Option<(usize, B256)>, ValidatorError> {
+        let start = Instant::now();
+
+        if checkpoints.is_empty() {
+            let elapsed = start.elapsed().as_secs_f64();
+            metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
+            return Ok(None);
+        }
+
+        let mut stream = stream::iter(checkpoints.iter().enumerate())
+            .map(|(idx, cp)| async move { (idx, cp, self.compute_output_root(cp.block).await) })
+            .buffered(Self::VALIDATION_CONCURRENCY);
+
+        let mut first_invalid: Option<(usize, B256)> = None;
+        while let Some((idx, cp, result)) = stream.next().await {
+            let expected_root = match result {
+                Ok(root) => root,
+                Err(e) => {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS)
+                        .record(elapsed);
+                    metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
+                    warn!(
+                        game = %game_address,
+                        block = cp.block,
+                        index = idx,
+                        error = %e,
+                        "output root computation failed"
+                    );
+                    return Err(e);
+                }
+            };
+
+            if expected_root != cp.claimed_root {
+                warn!(
+                    game = %game_address,
+                    block = cp.block,
+                    index = idx,
+                    expected = %expected_root,
+                    claimed = %cp.claimed_root,
+                    "invalid output root detected"
+                );
+                first_invalid = Some((idx, expected_root));
+                break;
+            }
+        }
+
+        let elapsed = start.elapsed().as_secs_f64();
+        metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
+
+        if first_invalid.is_some() {
+            metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
+        }
+
+        Ok(first_invalid)
+    }
+
     /// Validates the final output root of a candidate dispute game.
     ///
     /// Fetches the L2 header and `L2ToL1MessagePasser` storage proof at the
@@ -188,39 +262,14 @@ impl<L2: L2Provider> OutputValidator<L2> {
         l2_block_number: u64,
         claimed_root: B256,
     ) -> Result<ValidationResult, ValidatorError> {
-        let start = Instant::now();
+        info!(game = %game_address, block = l2_block_number, "validating final output root");
 
-        info!(
-            game = %game_address,
-            block = l2_block_number,
-            "validating final output root"
-        );
-
-        let expected_root = match self.compute_output_root(l2_block_number).await {
-            Ok(root) => root,
-            Err(e) => {
-                let elapsed = start.elapsed().as_secs_f64();
-                metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
-                metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
-                warn!(game = %game_address, block = l2_block_number, error = %e, "validation failed");
-                return Err(e);
-            }
+        let checkpoint = Checkpoint { block: l2_block_number, claimed_root };
+        let mismatch = self.validate_output_roots(game_address, &[checkpoint]).await?;
+        let (is_valid, expected_root) = match mismatch {
+            Some((_, expected)) => (false, expected),
+            None => (true, claimed_root),
         };
-        let is_valid = expected_root == claimed_root;
-
-        let elapsed = start.elapsed().as_secs_f64();
-        metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
-
-        if !is_valid {
-            warn!(
-                game = %game_address,
-                expected = %expected_root,
-                claimed = %claimed_root,
-                block = l2_block_number,
-                "invalid final output root detected"
-            );
-            metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
-        }
 
         Ok(ValidationResult {
             is_valid,
@@ -261,7 +310,6 @@ impl<L2: L2Provider> OutputValidator<L2> {
             claimed_root,
             intermediate_roots,
         } = params;
-        let start = Instant::now();
 
         if intermediate_block_interval == 0 {
             return Err(ValidatorError::InvalidInterval);
@@ -289,10 +337,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
         }
 
         if intermediate_roots.is_empty() {
-            let elapsed = start.elapsed().as_secs_f64();
-            metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
+            let mismatch = self.validate_output_roots(game_address, &[]).await?;
             return Ok(ValidationResult {
-                is_valid: true,
+                is_valid: mismatch.is_none(),
                 expected_root: claimed_root,
                 claimed_root,
                 invalid_intermediate_index: None,
@@ -310,14 +357,14 @@ impl<L2: L2Provider> OutputValidator<L2> {
 
         // Pre-compute checkpoint block numbers with overflow checks before any
         // RPC work.
-        let mut checkpoints = Vec::with_capacity(intermediate_roots.len());
+        let mut checkpoint_blocks = Vec::with_capacity(intermediate_roots.len());
         let mut checkpoint = starting_block_number
             .checked_add(intermediate_block_interval)
             .ok_or(ValidatorError::ArithmeticOverflow { block_number: starting_block_number })?;
 
-        while checkpoint <= l2_block_number && checkpoints.len() < intermediate_roots.len() {
-            checkpoints.push(checkpoint);
-            if checkpoints.len() >= intermediate_roots.len() {
+        while checkpoint <= l2_block_number && checkpoint_blocks.len() < intermediate_roots.len() {
+            checkpoint_blocks.push(checkpoint);
+            if checkpoint_blocks.len() >= intermediate_roots.len() {
                 break;
             }
             checkpoint = checkpoint
@@ -325,57 +372,16 @@ impl<L2: L2Provider> OutputValidator<L2> {
                 .ok_or(ValidatorError::ArithmeticOverflow { block_number: checkpoint })?;
         }
 
-        // Validate checkpoints concurrently, short-circuiting on first mismatch.
-        let mut stream = stream::iter(checkpoints.iter().copied())
-            .map(|block| self.compute_output_root(block))
-            .buffered(Self::VALIDATION_CONCURRENCY);
+        let checkpoints: Vec<Checkpoint> = checkpoint_blocks
+            .iter()
+            .zip(intermediate_roots.iter())
+            .map(|(&block, &root)| Checkpoint { block, claimed_root: root })
+            .collect();
 
-        let mut first_invalid: Option<(usize, B256)> = None;
-        let mut idx = 0;
-        while let Some(result) = stream.next().await {
-            let expected_root = match result {
-                Ok(root) => root,
-                Err(e) => {
-                    let elapsed = start.elapsed().as_secs_f64();
-                    metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS)
-                        .record(elapsed);
-                    metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
-                    warn!(
-                        game = %game_address,
-                        block = checkpoints[idx],
-                        error = %e,
-                        "intermediate validation failed"
-                    );
-                    return Err(e);
-                }
-            };
-            let claimed_intermediate = intermediate_roots[idx];
-
-            if expected_root != claimed_intermediate {
-                warn!(
-                    game = %game_address,
-                    index = idx,
-                    block = checkpoints[idx],
-                    expected = %expected_root,
-                    claimed = %claimed_intermediate,
-                    "invalid intermediate output root detected"
-                );
-                first_invalid = Some((idx, expected_root));
-                break;
-            }
-            idx += 1;
-        }
-
-        let elapsed = start.elapsed().as_secs_f64();
-        metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS).record(elapsed);
-
-        let is_valid = first_invalid.is_none();
-        if !is_valid {
-            metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
-        }
-
-        let expected_root = first_invalid.map_or(claimed_root, |(_, root)| root);
-        let invalid_intermediate_index = first_invalid.map(|(idx, _)| idx);
+        let mismatch = self.validate_output_roots(game_address, &checkpoints).await?;
+        let is_valid = mismatch.is_none();
+        let expected_root = mismatch.as_ref().map_or(claimed_root, |(_, root)| *root);
+        let invalid_intermediate_index = mismatch.map(|(idx, _)| idx);
 
         Ok(ValidationResult { is_valid, expected_root, claimed_root, invalid_intermediate_index })
     }
