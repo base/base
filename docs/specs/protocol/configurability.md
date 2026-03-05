@@ -78,8 +78,8 @@ Standard configuration is the set of requirements for an OP Stack chain to be co
 Standard Chain within the superchain.
 These requirements are currently a draft, pending governance approval.
 
-The recommended way to deploy L1 contracts for an OP chain that meet the standard configuration will be with the
-[OP Contracts Manager](../experimental/op-contracts-manager.md).
+The recommended way to deploy L1 contracts for an OP chain that meet the standard configuration is with an OP Contracts
+Manager-based deployment flow.
 
 ## Consensus Parameters
 
@@ -243,7 +243,7 @@ See [Predeploy](../glossary.md#l2-genesis-block).<br/>
 **Description:** Frequency with which blocks are produced as a result of derivation.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** 1 or 2 seconds<br/>
-**Notes:** High security & [interoperability](../interop/overview.md) compatibility requirement, until de-risked/solved
+**Notes:** High security & interoperability compatibility requirement, until de-risked/solved
 at app layer.<br/>
 
 ### [Resource config](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L338-L340)
