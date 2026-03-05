@@ -4,7 +4,10 @@ use alloy_consensus::{
     Block, Header, TxReceipt,
     transaction::{Recovered, TransactionMeta},
 };
-use alloy_evm::{Database as AlloyDatabase, block::{StateDB, SystemCaller}};
+use alloy_evm::{
+    Database as AlloyDatabase,
+    block::{StateDB, SystemCaller},
+};
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
@@ -147,8 +150,7 @@ where
         ChainSpec: Clone,
     {
         let spec = self.receipt_builder.chain_spec();
-        let state_clear_flag =
-            spec.is_spurious_dragon_active_at_block(self.pending_block.number);
+        let state_clear_flag = spec.is_spurious_dragon_active_at_block(self.pending_block.number);
         self.evm.db_mut().set_state_clear_flag(state_clear_flag);
 
         let mut system_caller = SystemCaller::new(spec.clone());
