@@ -82,6 +82,10 @@ pub enum ExecutionError {
     /// Failed to build RPC receipt.
     #[error("failed to build RPC receipt: {0}")]
     RpcReceiptBuild(String),
+
+    /// Failed to estimate DA footprint.
+    #[error("failed to estimate DA footprint: {0}")]
+    DaFootprintEstimation(String),
 }
 
 impl From<RecoveryError> for ExecutionError {
