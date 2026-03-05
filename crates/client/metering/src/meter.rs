@@ -8,8 +8,6 @@ use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult}
 use eyre::{Result as EyreResult, eyre};
 use op_revm::l1block::L1BlockInfo;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_trie_common::TrieInput;
@@ -151,13 +149,12 @@ where
         extra_data: header.extra_data().clone(),
     };
 
-    // Pre-fetch account information for all transactions before creating builder. The
-    // account information is used to validate the transaction.
-    let mut accounts: HashMap<Address, Option<Account>> = HashMap::new();
+    // Pre-fetch account information for transaction validation
+    let mut account_infos: HashMap<Address, Option<Account>> = HashMap::new();
     for tx in bundle.transactions() {
         let from = tx.recover_signer()?;
         let account = db.database.basic_account(&from)?;
-        accounts.insert(from, account);
+        account_infos.insert(from, account);
     }
 
     // Execute transactions
@@ -179,7 +176,7 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
-            let account = accounts
+            let account = account_infos
                 .get(&from)
                 .ok_or_else(|| eyre!("Account not found in HashMap for address: {}", from))?
                 .ok_or_else(|| eyre!("Account is none for tx: {}", tx_hash))?;
