@@ -2,7 +2,7 @@ use std::{
     io::{Read, Write},
     time::Duration,
 };
-
+use std::ops::Sub;
 use async_trait::async_trait;
 use base_proof_primitives::{ProofBundle, ProofResult};
 use vsock::{VsockAddr, VsockStream};
@@ -64,6 +64,8 @@ impl ProofTransport for VsockTransport {
         let addr = VsockAddr::new(self.cid, self.port);
         let task = tokio::task::spawn_blocking(move || {
             let mut stream = VsockStream::connect(&addr)?;
+            stream.set_read_timeout(Some(PROVE_TIMEOUT.sub(Duration::from_secs(5))))?;
+            stream.set_write_timeout(Some(Duration::from_secs(5)))?;
             write_frame(&mut stream, &bundle)?;
             read_frame(&mut stream)
         });
