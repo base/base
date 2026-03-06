@@ -275,7 +275,7 @@ different implementations.
 Before Steady Block Derivation, invalid payloads got second chances to be replaced by valid future
 payloads. Because they will now be immediately replaced by as deposit-only payloads, there is a
 theoretical heightened risk for unsafe chain reorgs. To the best of our knowledge, we haven't
-experienced this on OP Mainnet or other mainnet Base yet.
+experienced this on Base yet.
 
 The only conceivable scenarios in which a _valid_ batch leads to an _invalid_ payload are
 

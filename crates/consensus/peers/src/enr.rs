@@ -1,4 +1,4 @@
-//! Contains the Optimism consensus-layer ENR Type.
+//! Contains the Base consensus-layer ENR Type.
 
 use alloy_rlp::{Decodable, Encodable};
 use discv5::Enr;

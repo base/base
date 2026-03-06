@@ -2,7 +2,7 @@
 
 <a href="https://crates.io/crates/base-consensus-engine"><img src="https://img.shields.io/crates/v/base-consensus-engine.svg?label=base-consensus-engine&labelColor=2a2f35" alt="base-consensus-engine"></a>
 
-An extensible implementation of the [Base][op-stack] rollup node engine client.
+An extensible implementation of the [Base][base-specs] rollup node engine client.
 
 ## Overview
 
@@ -69,4 +69,4 @@ Version selection follows Optimism hardfork activation times (Bedrock, Canyon, D
 
 <!-- Hyper Links -->
 
-[op-stack]: https://specs.optimism.io
+[base-specs]: https://specs.base.org

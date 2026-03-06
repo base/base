@@ -94,7 +94,7 @@ impl L1BlockInfoTx {
                 }
                 None if l1_config
                     .prague_time.is_some_and(|time| time <= l1_header.timestamp) &&
-                    // There was an incident on Base Sepolia chains (03-05-2025) when L1 activated pectra,
+                    // There was an incident on the Base Sepolia chain (03-05-2025) when L1 activated pectra,
                     // where the sequencer followed the incorrect chain, using the legacy Cancun blob fee
                     // schedule instead of the new Prague blob fee schedule. This portion of the chain was
                     // chosen to be canonicalized in favor of the prospect of a deep reorg imposed by the

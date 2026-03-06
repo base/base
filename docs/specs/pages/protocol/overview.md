@@ -7,7 +7,7 @@ This document combines foundational context and architecture details for Base Ch
 
 ## Background
 
-Base is an Ethereum L2 optimistic rollup. Its architecture is inspired by Ethereum and by the Base, and Base
+Base is an Ethereum L2 optimistic rollup. Its architecture is inspired by Ethereum and by the OP Stack, and Base
 diverged after Jovian to evolve independently. This specification is written for Base itself, not as a generic
 framework for third-party rollup deployments.
 
@@ -78,7 +78,7 @@ graph TD
     Verifiers -.->|fetch deposit data| EthereumL1
     Verifiers -->|submit/validate/challenge output proposals| EthereumL1
     Verifiers -.->|fetch realtime P2P updates| Sequencers
-    
+
     Users -->|submit deposits/withdrawals| EthereumL1
     Users -->|submit transactions| Sequencers
     Users -->|query data| Verifiers

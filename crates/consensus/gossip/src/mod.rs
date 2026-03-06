@@ -1,6 +1,6 @@
-//! GossipSub-based consensus layer networking for Optimism.
+//! GossipSub-based consensus layer networking for Base.
 //!
-//! This module implements the networking layer for Optimism consensus using libp2p's GossipSub
+//! This module implements the networking layer for Base consensus using libp2p's GossipSub
 //! protocol. It handles the propagation and validation of Base network payload messages
 //! across the network mesh.
 //!

@@ -22,7 +22,7 @@ This document assumes knowledge of the terminology, definitions, and other mater
 
 # Motivation
 
-As of April 2025, Layer 2 (L2) protocols built with the Base have a minimum block time of one second, imposing
+As of April 2025, Base have a minimum block time of one second, imposing
 significant constraints on user experience. The limitation on minimum block times is primarily historical and
 architectural, reflecting earlier assumptions of Ethereum network as well as deeply-integrated type definitions, from
 the L2 blockchain client all the way down to smart contracts on the L1, making modification a very large task.
@@ -973,7 +973,7 @@ Some fields in the response cannot be final at the preconfirmation stage and req
 {
   "id": 1,
   "result": {
-    "blockHash": "0x...", 
+    "blockHash": "0x...",
     "blockNumber": "0x...",
     "hash": "0x...",
     "transactionIndex": "0x0",

@@ -2,7 +2,7 @@
 
 <a href="https://crates.io/crates/base-consensus-derive"><img src="https://img.shields.io/crates/v/base-consensus-derive.svg?label=base-consensus-derive&labelColor=2a2f35" alt="base-consensus-derive"></a>
 
-A `no_std` compatible implementation of the Base's [derivation pipeline][derive].
+A `no_std` compatible implementation of Base's [derivation pipeline][derive].
 
 [derive]: https://specs.optimism.io/protocol/derivation.html#l2-chain-derivation-specification
 

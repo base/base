@@ -94,7 +94,7 @@ the `withdrawalsRoot` will always be non-nil and never be the MPT root of an emp
 
 As it stands, the `withdrawalsRoot` field is unused within the Base's header consensus format, and will never be
 used for other reasons that are currently planned. Setting this value to the account storage root of the withdrawal
-directly fits with the Base, and makes use of the existing field in the L1 header consensus format.
+directly fits with Base, and makes use of the existing field in the L1 header consensus format.
 
 #### Client Implementation Considerations
 
