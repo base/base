@@ -35,12 +35,15 @@ use std::sync::Arc;
 
 use alloy_consensus::ReceiptEnvelope;
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_types_eth::TransactionReceipt;
 use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
-use base_enclave::{ChainConfig, ExecutionWitness, Proposal, RollupConfig, l2_block_to_block_info};
+use base_enclave::{
+    BlockId, ChainConfig, ExecutionWitness, Genesis, GenesisSystemConfig, PerChainConfig, Proposal,
+    RollupConfig, l2_block_to_block_info,
+};
 use base_enclave_client::{ClientError, ExecuteStatelessRequest};
 use base_proof_rpc::{L1Provider, L2Provider, OpBlock, RollupProvider, RpcResult};
 use base_protocol::Predeploys;
@@ -122,6 +125,9 @@ pub struct TeeProofGenerator<E, L1, L2, R> {
     l2_provider: Arc<L2>,
     /// Rollup RPC provider for configuration.
     rollup_provider: Arc<R>,
+    /// Keccak256 hash of the TEE image PCR0, used to identify the enclave
+    /// image that will produce the proof.
+    tee_image_hash: B256,
 }
 
 impl<E, L1, L2, R> TeeProofGenerator<E, L1, L2, R>
@@ -138,8 +144,9 @@ where
         l1_provider: Arc<L1>,
         l2_provider: Arc<L2>,
         rollup_provider: Arc<R>,
+        tee_image_hash: B256,
     ) -> Self {
-        Self { enclave_client, l1_provider, l2_provider, rollup_provider }
+        Self { enclave_client, l1_provider, l2_provider, rollup_provider, tee_image_hash }
     }
 
     /// Generates a TEE nullification proof for an invalid intermediate checkpoint.
@@ -258,11 +265,12 @@ where
         let sequenced_txs = Self::serialize_block_transactions(&target_block, false)?;
 
         let chain_config = Self::build_chain_config(&rollup_config);
+        let config_hash = Self::compute_config_hash(&rollup_config);
         let l1_receipt_envelopes = Self::convert_receipts(l1_receipts);
 
         let request = ExecuteStatelessRequest {
             config: chain_config,
-            config_hash: B256::ZERO,
+            config_hash,
             l1_origin: l1_origin.inner,
             l1_receipts: l1_receipt_envelopes,
             previous_block_txs: prev_block_txs,
@@ -271,8 +279,10 @@ where
             witness,
             message_account: msg_account,
             prev_message_account_hash: prev_msg_account.storage_hash,
+            // The challenger proves invalidity, it does not propose new outputs.
+            // Address::ZERO is the correct value for nullification proofs.
             proposer: alloy_primitives::Address::ZERO,
-            tee_image_hash: B256::ZERO,
+            tee_image_hash: self.tee_image_hash,
         };
 
         let proposal =
@@ -335,6 +345,7 @@ where
 
     /// Serializes an RPC transaction to EIP-2718 encoded bytes.
     fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, TeeProofError> {
+        // Clone required: into_inner() consumes, and we only have a reference.
         let envelope: OpTxEnvelope = tx.clone().inner.into_inner();
         let mut buf = Vec::new();
         envelope.encode_2718(&mut buf);
@@ -397,6 +408,45 @@ where
         }
 
         config
+    }
+
+    /// Computes the canonical config hash from the rollup configuration.
+    ///
+    /// Builds a [`PerChainConfig`] from the rollup config, applies
+    /// [`force_defaults()`](PerChainConfig::force_defaults) for deterministic
+    /// values, then returns the keccak256 hash — mirroring the proposer's
+    /// approach.
+    fn compute_config_hash(rollup_config: &RollupConfig) -> B256 {
+        let sc = rollup_config.genesis.system_config.as_ref();
+        let (batcher_addr, scalar, gas_limit) = sc
+            .map(|c| (c.batcher_address, B256::from(c.scalar.to_be_bytes::<32>()), c.gas_limit))
+            .unwrap_or_default();
+
+        let mut per_chain = PerChainConfig {
+            chain_id: U256::from(rollup_config.l2_chain_id.id()),
+            genesis: Genesis {
+                l1: BlockId {
+                    hash: rollup_config.genesis.l1.hash,
+                    number: rollup_config.genesis.l1.number,
+                },
+                l2: BlockId {
+                    hash: rollup_config.genesis.l2.hash,
+                    number: rollup_config.genesis.l2.number,
+                },
+                l2_time: rollup_config.genesis.l2_time,
+                system_config: GenesisSystemConfig {
+                    batcher_addr,
+                    overhead: B256::ZERO,
+                    scalar,
+                    gas_limit,
+                },
+            },
+            block_time: rollup_config.block_time,
+            deposit_contract_address: rollup_config.deposit_contract_address,
+            l1_system_config_address: rollup_config.l1_system_config_address,
+        };
+        per_chain.force_defaults();
+        per_chain.hash()
     }
 }
 
@@ -853,6 +903,7 @@ mod tests {
             Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() }),
             Arc::new(MockChallengerL2Provider::new()),
             Arc::new(MockRollupProvider { config: None }),
+            B256::ZERO,
         )
     }
 
@@ -988,7 +1039,7 @@ mod tests {
         let l2 = Arc::new(MockChallengerL2Provider::new());
         let rollup = Arc::new(MockRollupProvider { config: None });
 
-        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup, B256::ZERO);
         let game = test_candidate_game(100);
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
@@ -1008,7 +1059,7 @@ mod tests {
         });
         let rollup = Arc::new(MockRollupProvider { config: Some(default_rollup_config()) });
 
-        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup, B256::ZERO);
         let game = test_candidate_game(100);
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
@@ -1040,7 +1091,7 @@ mod tests {
         l2.blocks.insert(target_block_number, empty_block);
 
         let rollup = Arc::new(MockRollupProvider { config: Some(default_rollup_config()) });
-        let generator = TeeProofGenerator::new(enclave, l1, Arc::new(l2), rollup);
+        let generator = TeeProofGenerator::new(enclave, l1, Arc::new(l2), rollup, B256::ZERO);
         let game = test_candidate_game(100);
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
@@ -1059,8 +1110,13 @@ mod tests {
             "enclave down".into(),
         ))));
 
-        let generator =
-            TeeProofGenerator::new(enclave, Arc::new(l1), Arc::new(l2), Arc::new(rollup));
+        let generator = TeeProofGenerator::new(
+            enclave,
+            Arc::new(l1),
+            Arc::new(l2),
+            Arc::new(rollup),
+            B256::ZERO,
+        );
         let game = test_candidate_game(100);
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
@@ -1083,6 +1139,7 @@ mod tests {
             Arc::new(l1),
             Arc::new(l2),
             Arc::new(rollup),
+            B256::ZERO,
         );
         let game = test_candidate_game(100);
 

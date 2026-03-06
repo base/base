@@ -7,7 +7,7 @@
 
 use std::{net::IpAddr, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_cli_utils::CliStyles;
 use clap::Parser;
 use url::Url;
@@ -104,6 +104,11 @@ pub struct ChallengerArgs {
     #[arg(long = "tee-endpoint", env = "CHALLENGER_TEE_ENDPOINT")]
     pub tee_endpoint: Option<Url>,
 
+    /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
+    /// Required when --tee-endpoint is set.
+    #[arg(long = "tee-image-hash", env = "CHALLENGER_TEE_IMAGE_HASH", value_parser = parse_b256)]
+    pub tee_image_hash: Option<B256>,
+
     /// Health server port.
     #[arg(long = "health.port", env = "CHALLENGER_HEALTH_PORT", default_value = "8080")]
     pub health_port: u16,
@@ -123,8 +128,14 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("signer_address", &self.signer_address)
             .field("lookback_games", &self.lookback_games)
             .field("tee_endpoint", &self.tee_endpoint)
+            .field("tee_image_hash", &self.tee_image_hash)
             .field("health_addr", &self.health_addr)
             .field("health_port", &self.health_port)
             .finish()
     }
+}
+
+/// Parse a 32-byte hash from hex string (0x-prefixed).
+fn parse_b256(s: &str) -> Result<B256, alloy_primitives::hex::FromHexError> {
+    s.parse()
 }
