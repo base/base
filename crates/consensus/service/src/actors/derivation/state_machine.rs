@@ -161,8 +161,10 @@ fn transition(
 /// processed.
 #[derive(Debug)]
 pub struct DerivationStateMachine {
-    confirmed_safe_head: L2BlockInfo,
-    state: DerivationState,
+    /// The last safe head confirmed by the engine, which is the base of the current derivation
+    pub confirmed_safe_head: L2BlockInfo,
+    /// The derivation state.
+    pub state: DerivationState,
 }
 
 impl Default for DerivationStateMachine {
