@@ -65,15 +65,14 @@ where
     BF: L2ChainProvider + Debug,
 {
     /// Creates a new [`BatchQueue`] stage.
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn new(cfg: Arc<RollupConfig>, prev: P, fetcher: BF) -> Self {
+    pub const fn new(cfg: Arc<RollupConfig>, prev: P, fetcher: BF) -> Self {
         Self {
             cfg,
             prev,
             origin: None,
-            l1_blocks: Default::default(),
-            batches: Default::default(),
-            next_spans: Default::default(),
+            l1_blocks: Vec::new(),
+            batches: Vec::new(),
+            next_spans: Vec::new(),
             fetcher,
         }
     }
