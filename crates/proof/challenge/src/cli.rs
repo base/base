@@ -99,6 +99,11 @@ pub struct ChallengerArgs {
     #[arg(long = "health.addr", env = "CHALLENGER_HEALTH_ADDR", default_value = "0.0.0.0")]
     pub health_addr: IpAddr,
 
+    /// URL of the TEE enclave endpoint for nullification proof generation.
+    /// When absent, TEE proof generation is disabled (falls back to ZK).
+    #[arg(long = "tee-endpoint", env = "CHALLENGER_TEE_ENDPOINT")]
+    pub tee_endpoint: Option<Url>,
+
     /// Health server port.
     #[arg(long = "health.port", env = "CHALLENGER_HEALTH_PORT", default_value = "8080")]
     pub health_port: u16,
@@ -117,6 +122,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("signer_endpoint", &self.signer_endpoint)
             .field("signer_address", &self.signer_address)
             .field("lookback_games", &self.lookback_games)
+            .field("tee_endpoint", &self.tee_endpoint)
             .field("health_addr", &self.health_addr)
             .field("health_port", &self.health_port)
             .finish()

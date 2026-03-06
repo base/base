@@ -131,6 +131,9 @@ pub struct ChallengerConfig {
     pub zk_proof_service_endpoint: Validated<Url>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SigningConfig,
+    /// TEE enclave endpoint for nullification proof generation.
+    /// When `None`, TEE proof generation is disabled (falls back to ZK).
+    pub tee_endpoint: Option<Validated<Url>>,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
     /// Health server socket address.
@@ -199,6 +202,10 @@ impl ChallengerConfig {
             ));
         }
 
+        // Validate optional TEE endpoint
+        let tee_endpoint =
+            cli.challenger.tee_endpoint.map(|url| validate(url, "tee-endpoint")).transpose()?;
+
         // Validate and extract signing config
         let signing = build_signing_config(
             private_key.as_deref().map(String::as_str),
@@ -217,6 +224,7 @@ impl ChallengerConfig {
             poll_interval: cli.challenger.poll_interval,
             zk_proof_service_endpoint,
             signing,
+            tee_endpoint,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
             log: LogConfig::from(cli.logging),

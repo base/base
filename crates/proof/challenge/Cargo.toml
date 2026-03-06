@@ -13,13 +13,19 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 
+# Base Alloy
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types.workspace = true
+
 # Async
 tokio.workspace = true
 futures.workspace = true
+async-trait.workspace = true
 
 # Tracing
 tracing.workspace = true
@@ -52,6 +58,7 @@ base-protocol.workspace = true
 
 # Enclave
 base-enclave.workspace = true
+base-enclave-client.workspace = true
 
 # Metrics
 metrics.workspace = true
@@ -69,6 +76,5 @@ rstest.workspace = true
 alloy-rlp.workspace = true
 alloy-trie.workspace = true
 serde_json.workspace = true
-async-trait.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }

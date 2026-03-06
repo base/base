@@ -20,6 +20,11 @@ pub use scanner::{CandidateGame, GameScanner, ScannerConfig};
 mod service;
 pub use service::ChallengerService;
 
+mod tee_proof;
+pub use tee_proof::{
+    ChallengerEnclaveClient, ChallengerL2Provider, TeeProofError, TeeProofGenerator,
+};
+
 mod validator;
 pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
