@@ -1,5 +1,5 @@
 {
-  "name": "op-stack-specs",
+  "name": "base-specification",
   "private": true,
   "type": "module",
   "engines": {
