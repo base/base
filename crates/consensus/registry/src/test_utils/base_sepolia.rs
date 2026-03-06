@@ -1,5 +1,7 @@
 //! Base Sepolia Rollup Config.
 
+use alloc::collections::BTreeMap;
+
 use alloy_chains::Chain;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{address, b256, uint};
@@ -64,4 +66,5 @@ pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
     l1_system_config_address: address!("f272670eb55e895584501d564afeb048bed26194"),
     protocol_versions_address: address!("79add5713b383daa0a138d3c4780c7a1804a8090"),
     blobs_enabled_l1_timestamp: None,
+    features: BTreeMap::new(),
 };

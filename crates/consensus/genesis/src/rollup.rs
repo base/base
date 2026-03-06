@@ -7,7 +7,9 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_alloy_hardforks::{OpHardfork, OpHardforks};
 
-use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, Feature, HardForkConfig, Ident};
+use crate::{
+    BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, Feature, HardForkConfig, Ident,
+};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -442,6 +444,7 @@ impl OpHardforks for RollupConfig {
 mod tests {
     #[cfg(feature = "serde")]
     use alloy_eips::BlockNumHash;
+    #[cfg(feature = "serde")]
     use alloy_primitives::address;
     #[cfg(feature = "serde")]
     use alloy_primitives::{U256, b256};
@@ -712,6 +715,7 @@ mod tests {
     #[cfg(feature = "serde")]
     fn test_deserialize_reference_rollup_config() {
         use alloc::collections::BTreeMap;
+
         use crate::SystemConfig;
 
         let raw: &str = r#"

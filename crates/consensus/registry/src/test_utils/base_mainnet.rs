@@ -1,5 +1,7 @@
 //! Base Mainnet Rollup Config.
 
+use alloc::collections::BTreeMap;
+
 use alloy_chains::Chain;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{address, b256, uint};
@@ -64,4 +66,5 @@ pub const BASE_MAINNET_CONFIG: RollupConfig = RollupConfig {
     protocol_versions_address: address!("8062abc286f5e7d9428a0ccb9abd71e50d93b935"),
     blobs_enabled_l1_timestamp: None,
     chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+    features: BTreeMap::new(),
 };

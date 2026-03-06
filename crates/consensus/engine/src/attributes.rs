@@ -210,13 +210,14 @@ impl AttributesMatch {
             Some((ae, ad)) => (ae.into(), ad.into()),
         };
 
-        let extra_data_decoded = if config.is_feature_active(Feature::MIN_BASE_FEE, block.header.timestamp) {
-            decode_jovian_extra_data(&block.header.extra_data).map(|(be, bd, _)| (be, bd))
-        } else if config.is_holocene_active(block.header.timestamp) {
-            decode_holocene_extra_data(&block.header.extra_data)
-        } else {
-            return AttributesMismatch::MissingBlockEIP1559.into();
-        };
+        let extra_data_decoded =
+            if config.is_feature_active(Feature::MIN_BASE_FEE, block.header.timestamp) {
+                decode_jovian_extra_data(&block.header.extra_data).map(|(be, bd, _)| (be, bd))
+            } else if config.is_holocene_active(block.header.timestamp) {
+                decode_holocene_extra_data(&block.header.extra_data)
+            } else {
+                return AttributesMismatch::MissingBlockEIP1559.into();
+            };
 
         // We decode the extra data stemming from the block header.
         let (be, bd): (u128, u128) = match extra_data_decoded {

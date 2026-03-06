@@ -57,6 +57,9 @@ pub fn default_rollup_config() -> RollupConfig {
 
         // Base fee config
         chain_op_config: BaseFeeConfig::base_mainnet(),
+
+        // No feature overrides by default.
+        features: BTreeMap::new(),
     }
 }
 

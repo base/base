@@ -92,9 +92,8 @@ impl HardForkConfig {
     /// Bedrock is block-based rather than timestamp-based and always returns `None`.
     /// `pectra_blob_schedule` is a `HardForkConfig` field but not an `OpHardfork` variant
     /// and is therefore not reachable via this method.
-    pub fn timestamp_for(&self, hardfork: OpHardfork) -> Option<u64> {
+    pub const fn timestamp_for(&self, hardfork: OpHardfork) -> Option<u64> {
         match hardfork {
-            OpHardfork::Bedrock => None,
             OpHardfork::Regolith => self.regolith_time,
             OpHardfork::Canyon => self.canyon_time,
             OpHardfork::Ecotone => self.ecotone_time,
@@ -103,6 +102,7 @@ impl HardForkConfig {
             OpHardfork::Holocene => self.holocene_time,
             OpHardfork::Isthmus => self.isthmus_time,
             OpHardfork::Jovian => self.jovian_time,
+            // Bedrock is block-based, not timestamp-based. Future variants default to None.
             _ => None,
         }
     }
