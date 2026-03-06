@@ -45,6 +45,7 @@ serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 
 c-kzg.workspace = true
+tracing.workspace = true
 
 # `metrics` feature
 metrics = { workspace = true, optional = true }
