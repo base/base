@@ -44,7 +44,7 @@ use base_enclave::{
     RollupConfig, l2_block_to_block_info,
 };
 use base_enclave_client::{ClientError, ExecuteStatelessRequest};
-use base_proof_rpc::{L1Provider, L2Provider, OpBlock, RollupProvider, RpcResult};
+use base_proof_rpc::{L1Provider, L2Provider, OpBlock, RollupProvider, RpcError, RpcResult};
 use base_protocol::Predeploys;
 use thiserror::Error;
 use tracing::info;
@@ -101,13 +101,32 @@ pub enum TeeProofError {
     #[error("enclave execution failed: {0}")]
     Enclave(#[from] ClientError),
 
-    /// Failed to fetch required data from RPC providers.
-    #[error("failed to fetch required data: {0}")]
-    DataFetch(String),
+    /// RPC data fetch failed.
+    #[error("failed to fetch {context}: {source}")]
+    Rpc {
+        /// Description of the fetch operation.
+        context: &'static str,
+        /// The underlying RPC error.
+        source: RpcError,
+    },
+
+    /// Non-RPC data preparation failed (arithmetic overflows, missing data, derivation errors).
+    #[error("data preparation failed: {0}")]
+    DataPrep(String),
 
     /// Proof encoding or data transformation failed.
     #[error("proof encoding failed: {0}")]
     Encoding(String),
+}
+
+impl TeeProofError {
+    /// Returns `true` if the error is transient and the operation can be retried.
+    pub const fn is_retryable(&self) -> bool {
+        match self {
+            Self::Rpc { source, .. } => source.is_retryable(),
+            Self::Enclave(_) | Self::DataPrep(_) | Self::Encoding(_) => false,
+        }
+    }
 }
 
 /// Generates TEE-based nullification proofs for invalid candidate games.
@@ -174,13 +193,13 @@ where
     ) -> Result<Bytes, TeeProofError> {
         let index_plus_one =
             u64::try_from(invalid_index).ok().and_then(|i| i.checked_add(1)).ok_or_else(|| {
-                TeeProofError::DataFetch("arithmetic overflow computing target block".into())
+                TeeProofError::DataPrep("arithmetic overflow computing target block".into())
             })?;
         let target_block_number = index_plus_one
             .checked_mul(intermediate_block_interval)
             .and_then(|offset| game.starting_block_number.checked_add(offset))
             .ok_or_else(|| {
-                TeeProofError::DataFetch("arithmetic overflow computing target block".into())
+                TeeProofError::DataPrep("arithmetic overflow computing target block".into())
             })?;
 
         info!(
@@ -195,21 +214,21 @@ where
             .rollup_provider
             .rollup_config()
             .await
-            .map_err(|e| TeeProofError::DataFetch(format!("rollup config: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "rollup config", source: e })?;
 
         // Fetch the target block to get its header and transactions
         let target_block = self
             .l2_provider
             .block_by_number(Some(target_block_number))
             .await
-            .map_err(|e| TeeProofError::DataFetch(format!("target block: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "target block", source: e })?;
 
         let block_hash = target_block.header.hash;
 
         // Get the first transaction to derive L1 origin info
         let first_tx =
             target_block.transactions.txns().next().ok_or_else(|| {
-                TeeProofError::DataFetch("no transactions in target block".into())
+                TeeProofError::DataPrep("no transactions in target block".into())
             })?;
 
         let first_tx_bytes = Self::serialize_rpc_transaction(first_tx)?;
@@ -221,7 +240,7 @@ where
             block_hash,
             &first_tx_bytes,
         )
-        .map_err(|e| TeeProofError::DataFetch(format!("L2 block info derivation: {e}")))?;
+        .map_err(|e| TeeProofError::DataPrep(format!("L2 block info derivation: {e}")))?;
 
         let l1_origin_hash = l2_block_info.l1_origin.hash;
         let l1_origin_number = l2_block_info.l1_origin.number;
@@ -245,17 +264,17 @@ where
         );
 
         let witness = witness_result
-            .map_err(|e| TeeProofError::DataFetch(format!("execution witness: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "execution witness", source: e })?;
         let msg_account = msg_account_result
-            .map_err(|e| TeeProofError::DataFetch(format!("message account proof: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "message account proof", source: e })?;
         let prev_block = prev_block_result
-            .map_err(|e| TeeProofError::DataFetch(format!("previous block: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "previous block", source: e })?;
         let prev_msg_account = prev_msg_account_result
-            .map_err(|e| TeeProofError::DataFetch(format!("previous message account: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "previous message account", source: e })?;
         let l1_origin = l1_origin_result
-            .map_err(|e| TeeProofError::DataFetch(format!("L1 origin header: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "L1 origin header", source: e })?;
         let l1_receipts = l1_receipts_result
-            .map_err(|e| TeeProofError::DataFetch(format!("L1 receipts: {e}")))?;
+            .map_err(|e| TeeProofError::Rpc { context: "L1 receipts", source: e })?;
 
         // Serialize previous block transactions (all types including deposits)
         let prev_block_txs = Self::serialize_block_transactions(&prev_block, true)?;
@@ -461,7 +480,6 @@ mod tests {
     use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
     use base_enclave::{AccountResult, default_rollup_config};
     use base_proof_contracts::{GameAtIndex, GameInfo};
-    use base_proof_rpc::RpcError;
     use base_protocol::L1BlockInfoBedrock;
     use rstest::rstest;
 
@@ -907,13 +925,13 @@ mod tests {
     #[tokio::test]
     async fn test_generate_tee_proof_index_overflow() {
         // invalid_index = usize::MAX → try_from succeeds (u64::MAX on 64-bit) but
-        // checked_add(1) overflows, returning DataFetch error before any RPC calls.
+        // checked_add(1) overflows, returning DataPrep error before any RPC calls.
         let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
         let result = generator.generate_tee_proof(&game, usize::MAX, 1).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("arithmetic overflow"));
     }
 
@@ -925,7 +943,7 @@ mod tests {
 
         let result = generator.generate_tee_proof(&game, 1, u64::MAX / 2 + 1).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("arithmetic overflow"));
     }
 
@@ -937,7 +955,7 @@ mod tests {
 
         let result = generator.generate_tee_proof(&game, 0, 100).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("arithmetic overflow"));
     }
 
@@ -1007,9 +1025,72 @@ mod tests {
     }
 
     #[test]
-    fn test_tee_proof_error_data_fetch_display() {
-        let err = TeeProofError::DataFetch("rpc timeout".into());
-        assert_eq!(err.to_string(), "failed to fetch required data: rpc timeout");
+    fn test_tee_proof_error_rpc_display() {
+        let err = TeeProofError::Rpc {
+            context: "rollup config",
+            source: RpcError::Timeout("rpc timeout".into()),
+        };
+        assert_eq!(err.to_string(), "failed to fetch rollup config: Request timeout: rpc timeout");
+    }
+
+    #[test]
+    fn test_tee_proof_error_data_prep_display() {
+        let err = TeeProofError::DataPrep("arithmetic overflow".into());
+        assert_eq!(err.to_string(), "data preparation failed: arithmetic overflow");
+    }
+
+    #[test]
+    fn test_is_retryable_rpc_transport() {
+        let err = TeeProofError::Rpc {
+            context: "target block",
+            source: RpcError::Transport("connection reset".into()),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_rpc_timeout() {
+        let err = TeeProofError::Rpc {
+            context: "target block",
+            source: RpcError::Timeout("timed out".into()),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_rpc_connection() {
+        let err = TeeProofError::Rpc {
+            context: "target block",
+            source: RpcError::Connection("refused".into()),
+        };
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_not_retryable_rpc_block_not_found() {
+        let err = TeeProofError::Rpc {
+            context: "target block",
+            source: RpcError::BlockNotFound("block 123 not found".into()),
+        };
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_not_retryable_data_prep() {
+        let err = TeeProofError::DataPrep("arithmetic overflow".into());
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_not_retryable_enclave() {
+        let err = TeeProofError::Enclave(ClientError::ClientCreation("down".into()));
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_not_retryable_encoding() {
+        let err = TeeProofError::Encoding("bad bytes".into());
+        assert!(!err.is_retryable());
     }
 
     #[test]
@@ -1042,7 +1123,7 @@ mod tests {
         let result = generator.generate_tee_proof(&game, 0, 10).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(matches!(err, TeeProofError::Rpc { .. }));
         assert!(err.to_string().contains("rollup config"));
     }
 
@@ -1061,7 +1142,7 @@ mod tests {
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(matches!(err, TeeProofError::Rpc { .. }));
         assert!(err.to_string().contains("target block"));
     }
 
@@ -1093,7 +1174,7 @@ mod tests {
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("no transactions"));
     }
 
