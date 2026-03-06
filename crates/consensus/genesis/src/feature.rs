@@ -170,9 +170,8 @@ impl Feature {
         // Timestamps are stored as u32. All realistic hardfork timestamps fit within u32
         // (valid until year 2106). Values beyond that saturate to u32::MAX - 2, which
         // preserves the sentinel gap and still activates the feature (timestamp >= t).
-        self.activation_cache.store(value.map_or(NO_ACTIVATION, |t| {
-            u32::try_from(t).unwrap_or(u32::MAX - 2)
-        }));
+        self.activation_cache
+            .store(value.map_or(NO_ACTIVATION, |t| u32::try_from(t).unwrap_or(u32::MAX - 2)));
         value
     }
 
