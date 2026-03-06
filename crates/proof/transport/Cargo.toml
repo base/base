@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # Proof
-base-proof-primitives = { workspace = true, features = ["std", "serde"] }
+base-proof-primitives = { workspace = true, features = ["std"] }
 
 # Async
 async-trait = { workspace = true }
@@ -32,4 +32,4 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 test-utils = []
-vsock = ["dep:bincode", "dep:serde", "dep:vsock", "tokio/rt", "tokio/time"]
+vsock = ["base-proof-primitives/serde", "dep:bincode", "dep:serde", "dep:vsock", "tokio/rt", "tokio/time"]

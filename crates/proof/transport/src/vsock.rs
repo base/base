@@ -69,14 +69,8 @@ impl ProofTransport for VsockTransport {
             write_frame(&mut stream, &bundle)?;
             read_frame(&mut stream)
         });
-        tokio::time::timeout(PROVE_TIMEOUT, task)
-            .await
-            .map_err(|_| {
-                TransportError::Io(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "prove timed out",
-                ))
-            })?
-            .map_err(|e| TransportError::Send(e.to_string()))?
+        tokio::time::timeout(PROVE_TIMEOUT, task).await.map_err(|_| {
+            TransportError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "prove timed out"))
+        })??
     }
 }
