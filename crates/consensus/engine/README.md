@@ -22,7 +22,20 @@ The `base-consensus-engine` crate provides a task-based engine client for intera
 
 ## Architecture
 
-The engine implements a task-driven architecture where forkchoice synchronization is handled automatically:
+The engine implements a task-driven architecture where operations are queued and executed atomically:
+
+```text
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   Engine    │◄───┤  Task Queue  │◄───┤  Engine     │
+│   Client    │    │   (Priority) │    │  Tasks      │
+└─────────────┘    └──────────────┘    └─────────────┘
+       │                   │                   │
+       ▼                   ▼                   ▼
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│ Engine API  │    │ Engine State │    │  Rollup     │
+│ (HTTP/JWT)  │    │   Updates    │    │  Config     │
+└─────────────┘    └──────────────┘    └─────────────┘
+```
 
 - **Automatic Forkchoice Handling**: The [`BuildTask`](crate::BuildTask) automatically performs forkchoice updates during block building, eliminating the need for explicit forkchoice management in user code.
 - **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by other tasks rather than directly by users.
@@ -41,6 +54,18 @@ Version selection follows Optimism hardfork activation times (Bedrock, Canyon, D
 ## Features
 
 - `metrics` - Enable Prometheus metrics collection (optional)
+
+## Module Organization
+
+- **Task Queue** - Core engine task queue and execution logic via [`Engine`](crate::Engine)
+- **Client** - HTTP client for Engine API communication via [`EngineClient`](crate::EngineClient)
+- **State** - Engine state management and synchronization via [`EngineState`](crate::EngineState)
+- **Versions** - Engine API version selection via [`EngineForkchoiceVersion`](crate::EngineForkchoiceVersion),
+  [`EngineNewPayloadVersion`](crate::EngineNewPayloadVersion), [`EngineGetPayloadVersion`](crate::EngineGetPayloadVersion)
+- **Attributes** - Payload attribute validation via [`AttributesMatch`](crate::AttributesMatch)
+- **Kinds** - Engine client type identification via [`EngineKind`](crate::EngineKind)
+- **Query** - Engine query interface via [`EngineQueries`](crate::EngineQueries)
+- **Metrics** - Optional Prometheus metrics collection via [`Metrics`](crate::Metrics)
 
 <!-- Hyper Links -->
 

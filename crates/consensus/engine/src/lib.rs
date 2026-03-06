@@ -5,35 +5,6 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-//! ## Architecture
-//!
-//! The engine operates as a task-driven system where operations are queued and executed atomically:
-//!
-//! ```text
-//! ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-//! │   Engine    │◄───┤  Task Queue  │◄───┤  Engine     │
-//! │   Client    │    │   (Priority) │    │  Tasks      │
-//! └─────────────┘    └──────────────┘    └─────────────┘
-//!        │                   │                   │
-//!        ▼                   ▼                   ▼
-//! ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-//! │ Engine API  │    │ Engine State │    │  Rollup     │
-//! │ (HTTP/JWT)  │    │   Updates    │    │  Config     │
-//! └─────────────┘    └──────────────┘    └─────────────┘
-//! ```
-//!
-//! ## Module Organization
-//!
-//! - **Task Queue** - Core engine task queue and execution logic via [`Engine`]
-//! - **Client** - HTTP client for Engine API communication via [`EngineClient`]
-//! - **State** - Engine state management and synchronization via [`EngineState`]
-//! - **Versions** - Engine API version selection via [`EngineForkchoiceVersion`],
-//!   [`EngineNewPayloadVersion`], [`EngineGetPayloadVersion`]
-//! - **Attributes** - Payload attribute validation via [`AttributesMatch`]
-//! - **Kinds** - Engine client type identification via [`EngineKind`]
-//! - **Query** - Engine query interface via [`EngineQueries`]
-//! - **Metrics** - Optional Prometheus metrics collection via [`Metrics`]
-
 #[macro_use]
 extern crate tracing;
 

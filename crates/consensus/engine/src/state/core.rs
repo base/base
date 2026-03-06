@@ -182,9 +182,11 @@ impl EngineState {
 
 #[cfg(test)]
 mod test {
+    #[cfg(feature = "metrics")]
     use base_protocol::BlockInfo;
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
+    #[cfg(feature = "metrics")]
     use rstest::rstest;
 
     use super::*;
