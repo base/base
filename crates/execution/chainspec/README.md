@@ -1,6 +1,6 @@
 # `base-execution-chainspec`
 
-Chainspec types for Base/Base execution.
+Chainspec types for Base execution.
 
 This crate provides `OpChainSpec`, the chain specification type used by Base nodes, along with
 pre-built specs for Base Mainnet, Base Sepolia, and a local dev chain. It also includes base fee
