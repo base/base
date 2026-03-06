@@ -5,7 +5,7 @@
 
 pub mod cli;
 
-use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder};
+use base_builder_core::{BuilderApiExtension, BuilderConfig, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::{Cli, chainspec::OpChainSpecParser};
 use base_node_runner::BaseNodeRunner;
@@ -31,6 +31,7 @@ fn main() {
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_store);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
+        runner.install_ext::<BuilderApiExtension>(());
 
         runner.run(builder).await
     })

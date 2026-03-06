@@ -32,5 +32,8 @@ pub use flashblocks::{
     OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload, WaitForValue,
 };
 
+mod extension;
+pub use extension::BuilderApiExtension;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
