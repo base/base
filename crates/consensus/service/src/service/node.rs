@@ -5,7 +5,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
 use base_consensus_derive::StatefulAttributesBuilder;
-use base_consensus_engine::{Engine, EngineState, OpEngineClient};
+use base_consensus_engine::{Engine, EngineState};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
@@ -16,6 +16,7 @@ use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use super::LocalEngineActor;
 use crate::{
     ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
     DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest, EngineConfig,
@@ -171,20 +172,13 @@ impl RollupNode {
     /// are not relevant to other actors or logic.
     /// Note: ignoring complex type warning. This type only pertains to this function, so it is
     /// better to have the full type here than have to piece it together from multiple type defs.
-    #[allow(clippy::type_complexity)]
     fn create_engine_actor(
         &self,
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
-    ) -> EngineActor<
-        EngineProcessor<
-            OpEngineClient<RootProvider, RootProvider<Base>>,
-            QueuedEngineDerivationClient,
-        >,
-        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
-    > {
+    ) -> LocalEngineActor {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);

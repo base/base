@@ -108,7 +108,6 @@ impl AlloyChainProvider {
 }
 
 /// An error for the [`AlloyChainProvider`].
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug, thiserror::Error)]
 pub enum AlloyChainProviderError {
     /// Transport error
