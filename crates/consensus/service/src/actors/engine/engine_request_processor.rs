@@ -196,7 +196,8 @@ where
     async fn send_derivation_actor_safe_head_if_updated(&mut self) -> Result<(), EngineError> {
         let engine_safe_head = self.engine.state().sync_state.safe_head();
         if engine_safe_head == self.last_safe_head_sent {
-            info!(target: "engine", safe_head = ?engine_safe_head, "Safe head unchanged");
+            info!(target: "engine", safe_head = engine_safe_head.block_info.number, "Safe head unchanged");
+            debug!(target: "engine", safe_head = ?engine_safe_head, "unchanged safe head");
             // This was already sent, so do not send it.
             return Ok(());
         }
@@ -206,7 +207,8 @@ where
             EngineError::ChannelClosed
         })?;
 
-        info!(target: "engine", safe_head = ?engine_safe_head, "Attempted L2 Safe Head Update");
+        info!(target: "engine", safe_head = engine_safe_head.block_info.number, "Attempted L2 Safe Head Update");
+        debug!(target: "engine", safe_head = ?engine_safe_head, "Attempted L2 Safe Head Update");
         self.last_safe_head_sent = engine_safe_head;
 
         Ok(())
