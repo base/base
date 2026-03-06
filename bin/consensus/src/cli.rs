@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_chains::Chain;
 use alloy_primitives::Address;
+use alloy_provider::Provider;
 use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
@@ -14,7 +15,7 @@ use base_consensus_node::{
 use base_consensus_registry::Registry;
 use clap::{Args, Parser, Subcommand};
 use strum::IntoEnumIterator;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::metrics::{init_p2p_metrics, init_rollup_config_metrics};
@@ -97,6 +98,19 @@ pub struct Follow {
     #[command(flatten)]
     pub logging: LogArgs,
 
+    /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
+    #[arg(long = "proofs", env = "BASE_NODE_PROOFS")]
+    pub proofs: bool,
+
+    /// Maximum number of blocks the follow node may advance beyond the proofs
+    /// `ExEx` head. Only effective when `--proofs` is enabled.
+    #[arg(
+        long = "proofs.max-blocks-ahead",
+        default_value_t = 512,
+        env = "BASE_NODE_PROOFS_MAX_BLOCKS_AHEAD"
+    )]
+    pub proofs_max_blocks_ahead: u64,
+
     /// L2 configuration file.
     #[clap(flatten)]
     pub l2_config: L2ConfigFile,
@@ -115,6 +129,13 @@ impl Follow {
     /// Run the Follow subcommand.
     pub async fn exec(&self) -> eyre::Result<()> {
         let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+
+        if !self.proofs {
+            warn!(
+                target: "rollup_node",
+                "Running without --proofs; this mode is mainly meant for syncing the Proofs ExEx and does not support EL sync"
+            );
+        }
 
         info!(
             target: "rollup_node",
@@ -137,15 +158,29 @@ impl Follow {
         let local_l2_provider = alloy_provider::RootProvider::<base_alloy_network::Base>::new_http(
             self.l2_rpc_url.clone(),
         );
+
+        if self.proofs {
+            local_l2_provider
+                .raw_request::<_, serde_json::Value>("debug_proofsSyncStatus".into(), ())
+                .await
+                .map_err(|e| {
+                    error!(target: "rollup_node", error = %e, "debug_proofsSyncStatus call failed; is the Proofs ExEx enabled on the node?");
+                    eyre::eyre!("debug_proofsSyncStatus call failed: {e}")
+                })?;
+            info!(target: "rollup_node", "Proofs ExEx confirmed available via debug_proofsSyncStatus");
+        }
+
         let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
 
         FollowNode::new(rollup_config, engine_config, local_l2_provider, l2_source)
+            .with_proofs(self.proofs)
+            .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead)
             .start()
             .await
             .map_err(|e| {
-            error!(target: "rollup_node", error = %e, "Failed to start follow node");
-            eyre::eyre!("{e}")
-        })?;
+                error!(target: "rollup_node", error = %e, "Failed to start follow node");
+                eyre::eyre!("{e}")
+            })?;
 
         Ok(())
     }

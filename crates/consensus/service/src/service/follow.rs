@@ -24,6 +24,8 @@ pub struct FollowNode {
     engine_config: EngineConfig,
     local_l2_provider: RootProvider<Base>,
     l2_source: DelegateL2Client,
+    proofs_enabled: bool,
+    proofs_max_blocks_ahead: u64,
 }
 
 impl FollowNode {
@@ -34,7 +36,27 @@ impl FollowNode {
         local_l2_provider: RootProvider<Base>,
         l2_source: DelegateL2Client,
     ) -> Self {
-        Self { config, engine_config, local_l2_provider, l2_source }
+        Self {
+            config,
+            engine_config,
+            local_l2_provider,
+            l2_source,
+            proofs_enabled: false,
+            proofs_max_blocks_ahead: 512,
+        }
+    }
+
+    /// Enables proofs sync gating via `debug_proofsSyncStatus`.
+    pub const fn with_proofs(mut self, enabled: bool) -> Self {
+        self.proofs_enabled = enabled;
+        self
+    }
+
+    /// Sets the maximum number of blocks the node may advance beyond the
+    /// proofs `ExEx` head.
+    pub const fn with_proofs_max_blocks_ahead(mut self, max_blocks_ahead: u64) -> Self {
+        self.proofs_max_blocks_ahead = max_blocks_ahead;
+        self
     }
 
     #[allow(clippy::type_complexity)]
@@ -102,7 +124,9 @@ impl FollowNode {
             derivation_actor_request_rx,
             self.local_l2_provider.clone(),
             self.l2_source.clone(),
-        );
+        )
+        .with_proofs(self.proofs_enabled)
+        .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead);
 
         crate::service::spawn_and_wait!(
             cancellation,

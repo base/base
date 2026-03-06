@@ -7,6 +7,7 @@ use base_alloy_network::Base;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
 use futures::future::OptionFuture;
+use serde::Deserialize;
 use tokio::{select, sync::mpsc, task::JoinHandle, time};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, error, info, warn};
@@ -16,6 +17,13 @@ use crate::{
     NodeActor,
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
+
+const DEFAULT_PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
+
+#[derive(Debug, Deserialize)]
+struct ProofsSyncStatus {
+    latest: u64,
+}
 
 /// The [`NodeActor`] for the L2 delegate derivation sub-routine.
 ///
@@ -38,6 +46,8 @@ where
     l2_source: Arc<L2Source>,
     sent_head: u64,
     engine_head: u64,
+    proofs_enabled: bool,
+    proofs_max_blocks_ahead: u64,
 }
 
 impl<DerivationEngineClient_, L2Source> CancellableContext
@@ -74,7 +84,24 @@ where
             l2_source: Arc::new(l2_source),
             sent_head: 0,
             engine_head: 0,
+            proofs_enabled: false,
+            proofs_max_blocks_ahead: DEFAULT_PROOFS_MAX_BLOCKS_AHEAD,
         }
+    }
+
+    /// Enables proofs sync gating. When enabled, sync will not advance beyond
+    /// `proofs_latest + proofs_max_blocks_ahead` to prevent proofs from
+    /// falling too far behind.
+    pub const fn with_proofs(mut self, enabled: bool) -> Self {
+        self.proofs_enabled = enabled;
+        self
+    }
+
+    /// Sets the maximum number of blocks the node may advance beyond the
+    /// proofs `ExEx` head.
+    pub const fn with_proofs_max_blocks_ahead(mut self, max_blocks_ahead: u64) -> Self {
+        self.proofs_max_blocks_ahead = max_blocks_ahead;
+        self
     }
 }
 
@@ -157,6 +184,15 @@ where
                         continue;
                     }
 
+                    let target_block = match self.determine_target_block().await {
+                        Ok(Some(target)) => target,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            warn!(target: "derivation", error = %e, "Failed to determine target block");
+                            continue;
+                        }
+                    };
+
                     let cancellation_token = self.cancellation_token.clone();
                     let l2_source = Arc::clone(&self.l2_source);
                     let engine_client = Arc::clone(&self.engine_client);
@@ -171,6 +207,7 @@ where
                             cancellation_token,
                             engine_head,
                             sent_head,
+                            target_block,
                             l2_source,
                         )
                         .sync_from_source()
@@ -180,13 +217,57 @@ where
             }
         }
     }
-}
 
-impl<DerivationEngineClient_, L2Source> DelegateL2DerivationActor<DerivationEngineClient_, L2Source>
-where
-    DerivationEngineClient_: DerivationEngineClient,
-    L2Source: L2SourceClient,
-{
+    async fn determine_target_block(&self) -> Result<Option<u64>, DerivationError> {
+        let remote_head = self
+            .l2_source
+            .get_block_number(BlockNumberOrTag::Latest)
+            .await
+            .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+
+        let sync_limit = if self.proofs_enabled {
+            match self
+                .local_l2_provider
+                .raw_request::<_, ProofsSyncStatus>("debug_proofsSyncStatus".into(), ())
+                .await
+            {
+                Ok(status) => {
+                    let cap = status.latest + self.proofs_max_blocks_ahead;
+                    debug!(
+                        target: "derivation",
+                        proofs_latest = status.latest,
+                        cap,
+                        "Proofs sync gate active"
+                    );
+                    cap
+                }
+                Err(e) => {
+                    warn!(target: "derivation", error = %e, "Failed to fetch proofs sync status, skipping sync");
+                    return Ok(None);
+                }
+            }
+        } else {
+            u64::MAX
+        };
+
+        let target = remote_head.min(sync_limit);
+
+        if target != remote_head {
+            info!(
+                target: "derivation",
+                sync_limit,
+                remote_head,
+                "Remote head is ahead of proofs sync limit, capping sync"
+            );
+        }
+
+        if target <= self.sent_head {
+            return Ok(None);
+        }
+
+        Ok(Some(target))
+    }
+
     async fn handle_request(
         &mut self,
         request_type: DerivationActorRequest,
@@ -216,6 +297,7 @@ pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
     cancellation_token: CancellationToken,
     engine_head: u64,
     sent_head: u64,
+    target_block: u64,
     l2_source: Arc<L2Source>,
 }
 
@@ -230,6 +312,7 @@ where
         cancellation_token: CancellationToken,
         engine_head: u64,
         sent_head: u64,
+        target_block: u64,
         l2_source: Arc<L2Source>,
     ) -> Self {
         Self {
@@ -238,25 +321,20 @@ where
             cancellation_token,
             engine_head,
             sent_head,
+            target_block,
             l2_source,
         }
     }
 
-    /// Polls the source L2 node for new blocks and inserts them into the local engine.
+    /// Syncs blocks from the L2 source up to the pre-determined `target_block`.
     ///
     /// Returns the updated `sent_head` on success.
     async fn sync_from_source(&mut self) -> Result<u64, DerivationError> {
-        let remote_head = self
-            .l2_source
-            .get_block_number(BlockNumberOrTag::Latest)
-            .await
-            .map_err(|e| DerivationError::Sender(Box::new(e)))?;
-
-        if remote_head <= self.sent_head {
+        if self.target_block <= self.sent_head {
             return Ok(self.sent_head);
         }
 
-        for block_num in (self.sent_head + 1)..=remote_head {
+        for block_num in (self.sent_head + 1)..=self.target_block {
             if self.cancellation_token.is_cancelled() {
                 info!(target: "derivation", block = block_num, "Sync interrupted by shutdown");
                 return Ok(self.sent_head);
@@ -406,6 +484,7 @@ mod tests {
         l2_source: MockL2SourceClient,
         engine_head: u64,
         sent_head: u64,
+        target_block: u64,
     ) -> (
         SyncFromSourceTask<MockDerivationEngineClient, MockL2SourceClient>,
         mpsc::Receiver<EngineActorRequest>,
@@ -420,6 +499,7 @@ mod tests {
             cancel.clone(),
             engine_head,
             sent_head,
+            target_block,
             Arc::new(l2_source),
         );
 
@@ -482,13 +562,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_noop_when_remote_behind() {
+    async fn sync_noop_when_target_behind() {
         let engine_client = MockDerivationEngineClient::new();
-        let mut l2_source = MockL2SourceClient::new();
+        let l2_source = MockL2SourceClient::new();
 
-        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(5));
-
-        let (mut task, _, _) = make_sync_task(engine_client, l2_source, 0, 10);
+        let (mut task, _, _) = make_sync_task(engine_client, l2_source, 0, 10, 5);
 
         let new_head = task.sync_from_source().await.unwrap();
         assert_eq!(new_head, 10);
@@ -498,8 +576,6 @@ mod tests {
     async fn sync_fetches_and_inserts_blocks() {
         let mut engine_client = MockDerivationEngineClient::new();
         let mut l2_source = MockL2SourceClient::new();
-
-        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(3));
 
         l2_source
             .expect_get_payload_by_number()
@@ -527,7 +603,7 @@ mod tests {
         engine_client.expect_send_safe_l2_signal().returning(|_| Ok(()));
         engine_client.expect_send_finalized_l2_block().returning(|_| Ok(()));
 
-        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 2, 0);
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 2, 0, 3);
 
         let new_head = task.sync_from_source().await.unwrap();
         assert_eq!(new_head, 3);
@@ -546,14 +622,9 @@ mod tests {
     #[tokio::test]
     async fn sync_aborts_on_cancellation() {
         let engine_client = MockDerivationEngineClient::new();
-        let mut l2_source = MockL2SourceClient::new();
+        let l2_source = MockL2SourceClient::new();
 
-        l2_source
-            .expect_get_block_number()
-            .with(eq(BlockNumberOrTag::Latest))
-            .returning(|_| Ok(100));
-
-        let (mut task, engine_rx, cancel) = make_sync_task(engine_client, l2_source, 0, 0);
+        let (mut task, engine_rx, cancel) = make_sync_task(engine_client, l2_source, 0, 0, 100);
 
         cancel.cancel();
         let new_head = task.sync_from_source().await.unwrap();
