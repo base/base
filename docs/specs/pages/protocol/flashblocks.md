@@ -842,9 +842,9 @@ flowchart TD
     Mirror -->|Flashblocks| RPCN
 ```
 
-## Flashblocks RPC
+## RPC
 
-The Flashblocks JSON-RPC surface is documented separately in [Flashblocks RPC](./flashblocks-rpc-methods.md).
+The Flashblocks JSON-RPC surface is documented separately in [RPC](execution/evm/rpc.md).
 This keeps the Flashblocks transport and preconfirmation protocol specification separate from the RPC method reference.
 
 # Reliability and Operational Considerations

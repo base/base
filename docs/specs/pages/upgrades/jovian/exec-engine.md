@@ -38,7 +38,7 @@ extended by future upgrades.
 
 ### Minimum Base Fee in `PayloadAttributesV3`
 
-The Engine API [`PayloadAttributesV3`](../../protocol/exec-engine.md#extended-payloadattributesv3) is extended with a new
+The Engine API [`PayloadAttributesV3`](../../protocol/execution/index.md#extended-payloadattributesv3) is extended with a new
 field `minBaseFee`. The existing `eip1559Params` remains 8 bytes (Holocene format).
 
 ```text
@@ -115,12 +115,12 @@ The `daFootprintGasScalar` is loaded in a similar way to the `operatorFeeScalar`
 [included](../isthmus/exec-engine.md#operator-fee) in the Isthmus fork. It can be read in two interchangable ways:
 
 - read from the deposited L1 attributes (`daFootprintGasScalar`) of the current L2 block
-(decoded according to the [jovian schema](./l1-attributes.md))
+(decoded according to the [jovian schema](l1-attributes.md))
 - read from the L1 Block Info contract (`0x4200000000000000000000000000000000000015`)
   - using the solidity getter function `daFootprintGasScalar`
   - using a direct storage-read: big-endian `uint16` in slot `8` at offset `12`.
 
-It takes on a default value as described in the section on [L1 Attributes](./l1-attributes.md).
+It takes on a default value as described in the section on [L1 Attributes](l1-attributes.md).
 
 ### Receipts
 

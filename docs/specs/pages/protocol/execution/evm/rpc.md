@@ -1,9 +1,6 @@
-# Flashblocks RPC Methods Specification
+# RPC
 
 This document specifies the JSON-RPC methods implemented by the Flashblocks RPC provider.
-
-> [!NOTE]
-> This document serves as a reference for the current implementation and may differ from the full Flashblocks specification in terms of scope and methods implemented.
 
 ## Type Definitions
 

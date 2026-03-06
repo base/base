@@ -10,7 +10,7 @@ Following the Fjord upgrade, three additional values used for L1 fee computation
 
 These values are hard-coded constants in the `GasPriceOracle` contract. The
 calculation follows the same formula outlined in the
-[Fjord L1-Cost fee changes (FastLZ estimator)](./exec-engine.md#fjord-l1-cost-fee-changes-fastlz-estimator)
+[Fjord L1-Cost fee changes (FastLZ estimator)](exec-engine.md#fjord-l1-cost-fee-changes-fastlz-estimator)
 section.
 
 A new method is introduced: `getL1FeeUpperBound(uint256)`. This method returns an upper bound for the L1 fee
@@ -41,7 +41,7 @@ function getL1FeeUpperBound(uint256 unsignedTxSize) external view returns (uint2
 
 ### L1 Gas Usage Estimation
 
-The `getL1GasUsed` method is updated to take into account the improved [compression estimation](./exec-engine.md#fees)
+The `getL1GasUsed` method is updated to take into account the improved [compression estimation](exec-engine.md#fees)
 accuracy as part of the Fjord upgrade.
 
 ```solidity

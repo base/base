@@ -60,7 +60,7 @@ L1 re-orgs can happen because of network conditions or attacks. L2 re-orgs are a
 
 A contract placed in the L2 genesis state (i.e. at the start of the chain).
 
-All predeploy contracts are specified in the [predeploys specification](../protocol/predeploys.md).
+All predeploy contracts are specified in the [predeploys specification](../protocol/execution/evm/predeploys.md).
 
 ### Preinstalled Contract ("Preinstall")
 
@@ -70,7 +70,7 @@ A contract placed in the L2 genesis state (i.e. at the start of the chain). Thes
 security guarantees as [predeploys](#predeployed-contract-predeploy), but are general use contracts made
 available to improve the L2's UX.
 
-All preinstall contracts are specified in the [preinstalls specification](../protocol/preinstalls.md).
+All preinstall contracts are specified in the [preinstalls specification](../protocol/execution/evm/preinstalls.md).
 
 ### Precompiled Contract ("Precompile")
 
@@ -80,7 +80,7 @@ A contract implemented natively in the EVM that performs a specific operation mo
 (e.g. Solidity) implementation. Precompiles exist at predefined addresses. They are created and modified through
 network upgrades.
 
-All precompile contracts are specified in the [precompiles specification](../protocol/precompiles.md).
+All precompile contracts are specified in the [precompiles specification](../protocol/execution/evm/precompiles.md).
 
 ### Receipt
 
@@ -751,7 +751,7 @@ In these specifications, "execution engine" always refer to the L2 execution eng
 
 [deposits-spec]: ../protocol/deposits.md
 [system-config]: ../protocol/system-config.md
-[exec-engine]: ../protocol/exec-engine.md
+[exec-engine]: ../protocol/execution/index.md
 [derivation-spec]: ../protocol/consensus/derivation.md
 [rollup-node-spec]: ../protocol/consensus/index.md
 

@@ -45,7 +45,7 @@ L1 chain [re-organizes][g-reorg].
 
 For a complete specification of the L2 block derivation, refer to the [L2 block derivation document](derivation.md).
 
-The rollup node RPC surface is specified in the [RPC](./rpc.md) document.
+The rollup node RPC surface is specified in the [RPC](rpc.md) document.
 
 ## Protocol Version tracking
 
@@ -54,7 +54,7 @@ the Protocol Versions contract on L1.
 
 This can be implemented through polling in the [Driver](#driver) loop.
 After polling the Protocol Version, the rollup node SHOULD communicate it with the execution-engine through an
-[`engine_signalSuperchainV1`](../exec-engine.md#enginesignalsuperchainv1) call.
+[`engine_signalSuperchainV1`](../execution/index.md#enginesignalsuperchainv1) call.
 
 The rollup node SHOULD warn the user when the recommended version is newer than
 the current version supported by the rollup node.
