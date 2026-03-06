@@ -2,6 +2,7 @@
 
 use alloc::string::String;
 
+use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use base_consensus_genesis::SystemConfigUpdateError;
 use base_protocol::{DepositError, SpanBatchError};
@@ -358,6 +359,10 @@ pub enum ResetError {
     /// The first argument is the expected blob index, and the second argument is the actual blob count.
     #[error("Blobs over-fill: expected {0} blobs, got {1}")]
     BlobsOverFill(usize, usize),
+    /// An L1 or L2 block referenced during derivation is no longer present on the chain,
+    /// typically because a reorg removed it. The pipeline must reset to recover.
+    #[error("Block not found: {0}")]
+    BlockNotFound(BlockId),
 }
 
 impl ResetError {
@@ -447,6 +452,7 @@ mod tests {
             )),
             ResetError::HoloceneActivation,
             ResetError::BlobsUnavailable(0),
+            ResetError::BlockNotFound(B256::default().into()),
         ];
         for error in reset_errors {
             let expected = PipelineErrorKind::Reset(error.clone());
