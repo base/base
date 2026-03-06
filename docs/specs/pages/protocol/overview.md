@@ -5,61 +5,6 @@ an informal manner, and direct readers to other parts of the specification so th
 
 This document combines foundational context and architecture details for Base Chain.
 
-## Background
-
-Base is an Ethereum L2 optimistic rollup. Its architecture is inspired by Ethereum and by the OP Stack, and Base
-diverged after Jovian to evolve independently. This specification is written for Base itself, not as a generic
-framework for third-party rollup deployments.
-
-## Foundations
-
-### Ethereum Scalability
-
-Scaling Ethereum means increasing the number of useful transactions the Ethereum network can process. Ethereum's
-limited resources, specifically bandwidth, computation, and storage, constrain the number of transactions which can be
-processed on the network. Of the three resources, computation and storage are currently the most significant
-bottlenecks. These bottlenecks limit the supply of transactions, leading to extremely high fees. Scaling ethereum and
-reducing fees can be achieved by better utilizing bandwidth, computation and storage.
-
-### Optimistic Rollups
-
-An [Optimistic Rollup](https://vitalik.eth.limo/general/2021/01/05/rollup.html) is a layer 2 scalability construction which
-increases the computation & storage capacity of Ethereum while aiming to minimize sacrifices to scalability or
-decentralization. In a nutshell, an Optimistic Rollup utilizes Ethereum (or some other data availability layer) to host
-transaction data. Layer 2 nodes then execute a state transition function over this data. Users can propose the result of
-this off-chain execution to a smart contract on L1. A "fault proving" process can then demonstrate that a user's proposal
-is (or is not) valid.
-
-### EVM Equivalence
-
-[EVM Equivalence](https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306) is complete compliance
-with the state transition function described in the Ethereum yellow paper, the formal definition of the protocol. By
-conforming closely to the Ethereum standard, Base minimizes friction when running Ethereum-native contracts and tools.
-
-## Protocol Guarantees
-
-We strive to preserve three critical properties: liveness, validity, and availability.
-A protocol that can maintain these properties can, effectively, scale Ethereum without sacrificing security.
-
-### Liveness
-
-Liveness is defined as the ability for any party to be able to extend the rollup chain by including a transaction within
-a bounded amount of time. It should not be possible for an actor to block the inclusion of any given transaction for more
-than this bounded time period. This bounded time period should also be acceptable such that inclusion is not just
-theoretically possible but practically useful.
-
-### Validity
-
-Validity is defined as the ability for any party to execute the rollup state transition function, subject to certain lower
-bound expectations for available computing and bandwidth resources. Validity is also extended to refer to the ability for
-a smart contract on Ethereum to be able to validate this state transition function economically.
-
-### Availability
-
-Availability is defined as the ability for any party to retrieve the inputs that are necessary to execute the rollup state
-transition function correctly. Availability is essentially an element of validity and is required to be able to guarantee
-validity in general. Similar to validity, availability is subject to lower bound resource requirements.
-
 ## Network Participants
 
 Generally speaking, there are three primary actors that interact with Base: users, sequencers, and verifiers.

@@ -1,4 +1,4 @@
-# Ecotone Network Upgrade
+# Ecotone
 
 ## Activation Timestamps
 

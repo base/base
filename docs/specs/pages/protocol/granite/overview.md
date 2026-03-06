@@ -1,4 +1,4 @@
-# Granite Network Upgrade
+# Granite
 
 ## Activation Timestamps
 

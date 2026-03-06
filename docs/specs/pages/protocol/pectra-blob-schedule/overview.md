@@ -1,4 +1,4 @@
-# Pectra Blob Schedule (Optional) Network Upgrade
+# Pectra Blob Schedule (Sepolia)
 
 ## Activation Timestamps
 

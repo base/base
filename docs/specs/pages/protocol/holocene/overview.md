@@ -1,4 +1,4 @@
-# Holocene Network Upgrade
+# Holocene
 
 ## Activation Timestamps
 

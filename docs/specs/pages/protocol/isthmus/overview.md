@@ -1,4 +1,4 @@
-# Isthmus Network Upgrade
+# Isthmus
 
 ## Activation Timestamps
 
