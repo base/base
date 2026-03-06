@@ -10,7 +10,6 @@ use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{B256, BloomInput, Bytes};
 use alloy_rpc_types_eth::TransactionReceipt;
-use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
     AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info,
@@ -378,14 +377,8 @@ where
 /// Extracts the `OpTxEnvelope` from the RPC transaction and encodes it.
 /// This handles both standard Ethereum transactions and OP Stack deposit transactions (type 0x7E).
 fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, ProposerError> {
-    // Extract the inner OpTxEnvelope from the RPC transaction
-    // base_alloy_rpc_types::Transaction.inner is alloy_rpc_types::Transaction<OpTxEnvelope>
-    // Calling into_inner() on that returns the OpTxEnvelope
-    // Clone required: into_inner() consumes, and we only have a reference.
-    let envelope: OpTxEnvelope = tx.clone().inner.into_inner();
-
     let mut buf = Vec::new();
-    envelope.encode_2718(&mut buf);
+    tx.as_ref().encode_2718(&mut buf);
     Ok(Bytes::from(buf))
 }
 

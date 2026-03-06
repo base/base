@@ -38,7 +38,6 @@ use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_types_eth::TransactionReceipt;
 use async_trait::async_trait;
-use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
     BlockId, ChainConfig, ExecutionWitness, Genesis, GenesisSystemConfig, PerChainConfig, Proposal,
@@ -345,10 +344,8 @@ where
 
     /// Serializes an RPC transaction to EIP-2718 encoded bytes.
     fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, TeeProofError> {
-        // Clone required: into_inner() consumes, and we only have a reference.
-        let envelope: OpTxEnvelope = tx.clone().inner.into_inner();
         let mut buf = Vec::new();
-        envelope.encode_2718(&mut buf);
+        tx.as_ref().encode_2718(&mut buf);
         Ok(Bytes::from(buf))
     }
 
@@ -461,7 +458,7 @@ mod tests {
         Address, LogData, Signature as PrimitiveSignature, TxKind, U256, address, b256,
     };
     use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader};
-    use base_alloy_consensus::TxDeposit;
+    use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
     use base_enclave::{AccountResult, default_rollup_config};
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_rpc::RpcError;
