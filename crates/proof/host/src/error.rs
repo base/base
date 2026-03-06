@@ -27,12 +27,6 @@ pub enum HostError {
     /// Failed precompile execution.
     #[error("Failed precompile execution: {0}")]
     PrecompileExecutionFailed(String),
-    /// No rollup config found.
-    #[error("No rollup config found")]
-    NoRollupConfig,
-    /// No L1 config found.
-    #[error("No L1 config found")]
-    NoL1Config,
     /// Output root mismatch.
     #[error("Output root does not match L2 head")]
     OutputRootMismatch,

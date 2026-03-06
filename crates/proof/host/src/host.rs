@@ -76,10 +76,15 @@ impl Host {
 
     /// Runs the fault-proof program in-process, capturing all fetched preimages into the
     /// provided [`WitnessOracle`].
-    pub async fn build_witness<W>(&self, witness: Arc<W>) -> Result<()>
+    ///
+    /// Takes ownership of the oracle and returns it after witness generation completes.
+    /// [`Arc`] sharing with internal tasks is managed entirely within this method.
+    pub async fn build_witness<W>(&self, witness: W) -> Result<W>
     where
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        let witness = Arc::new(witness);
+
         let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
         let backend = Arc::new(
@@ -122,12 +127,18 @@ impl Host {
         }
 
         server_task.abort();
+        let _ = (&mut server_task).await;
 
         witness.finalize()?;
         let preimage_count = witness.preimage_count()?;
         info!(preimage_count, "witness capture complete");
 
-        Ok(())
+        Arc::try_unwrap(witness).map_err(|arc| {
+            HostError::Custom(format!(
+                "failed to recover witness oracle: {} references still held",
+                Arc::strong_count(&arc),
+            ))
+        })
     }
 
     /// Runs the fault-proof program client: prologue → driver → epilogue.
@@ -180,27 +191,12 @@ impl Host {
 
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
-        let l1_provider = rpc_provider(
-            self.config
-                .l1_node_address
-                .as_ref()
-                .ok_or_else(|| HostError::Custom("Provider must be set".into()))?,
-        )
-        .await?;
+        let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
-            self.config
-                .l1_beacon_address
-                .clone()
-                .ok_or_else(|| HostError::Custom("Beacon API URL must be set".into()))?,
+            self.config.prover.l1_beacon_url.clone(),
         ))
         .await;
-        let l2_provider = rpc_provider::<Base>(
-            self.config
-                .l2_node_address
-                .as_ref()
-                .ok_or_else(|| HostError::Custom("L2 node address must be set".into()))?,
-        )
-        .await?;
+        let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
     }

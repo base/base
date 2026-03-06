@@ -4067,6 +4067,7 @@ dependencies = [
  "base-proof-client",
  "base-proof-mpt",
  "base-proof-preimage",
+ "base-proof-primitives",
  "base-protocol",
  "proptest",
  "revm",
@@ -4117,6 +4118,7 @@ name = "base-proof-primitives"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "async-trait",
  "base-proof-preimage",
  "serde",
 ]
