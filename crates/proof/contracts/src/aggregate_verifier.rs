@@ -3,12 +3,12 @@
 //! Used to query individual dispute game instances (status, ZK/TEE prover
 //! addresses, output roots), read configuration such as `BLOCK_INTERVAL`
 //! and `INTERMEDIATE_BLOCK_INTERVAL` from the implementation contract, and
-//! construct state-changing calls like `nullify` via the sol!-generated
-//! `IAggregateVerifier::nullifyCall` type.
+//! construct state-changing calls like `nullify` via
+//! [`encode_nullify_calldata`].
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -52,9 +52,8 @@ sol! {
         /// Nullifies an intermediate root checkpoint for the given game.
         ///
         /// The first byte of `proofBytes` is the proof type discriminator:
-        /// `0` for TEE, `1` for ZK. This is a state-changing function—no
-        /// Rust trait method is provided. Use `IAggregateVerifier::nullifyCall`
-        /// directly via alloy.
+        /// `0` for TEE, `1` for ZK. Use [`encode_nullify_calldata`] to
+        /// construct ABI-encoded calldata for this function.
         function nullify(
             bytes calldata proofBytes,
             uint256 intermediateRootIndex,
@@ -239,4 +238,21 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
 
         Ok(interval)
     }
+}
+
+/// Encodes the calldata for `IAggregateVerifier.nullify()`.
+///
+/// The first byte of `proof_bytes` is the proof type discriminator:
+/// `0` for TEE, `1` for ZK.
+pub fn encode_nullify_calldata(
+    proof_bytes: Bytes,
+    intermediate_root_index: u64,
+    intermediate_root_to_prove: B256,
+) -> Bytes {
+    let call = IAggregateVerifier::nullifyCall {
+        proofBytes: proof_bytes,
+        intermediateRootIndex: U256::from(intermediate_root_index),
+        intermediateRootToProve: intermediate_root_to_prove,
+    };
+    Bytes::from(call.abi_encode())
 }

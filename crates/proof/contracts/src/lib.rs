@@ -3,7 +3,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod aggregate_verifier;
-pub use aggregate_verifier::{AggregateVerifierClient, AggregateVerifierContractClient, GameInfo};
+pub use aggregate_verifier::{
+    AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, encode_nullify_calldata,
+};
 
 mod anchor_state_registry;
 pub use anchor_state_registry::{
