@@ -91,3 +91,59 @@ Meters a bundle and returns a recommended priority fee based on recent block con
 
 Note: The cache must be populated by the ingestion pipeline for estimates to be available.
 The `blocksSampled` field indicates how many blocks were used in the rolling estimate.
+
+## Ingestion RPCs
+
+These RPC methods are used to populate the metering cache with transaction resource usage data.
+They are called by an external ingestion pipeline (e.g., tips-ingress) that meters transactions
+as they are processed.
+
+### `base_setMeteringInfo`
+
+Sets metering information for a transaction.
+
+**Parameters:**
+- `tx_hash`: Transaction hash (B256)
+- `meter`: `MeterBundleResponse` containing resource usage data
+
+**Returns:**
+- `()`: Empty success response
+
+This method stores metering data in a pending map. When a flashblock inclusion event is received
+(via websocket), the annotator correlates the pending data with the actual block/flashblock
+location and inserts it into the cache.
+
+### `base_setMeteringEnabled`
+
+Enables or disables metering data collection.
+
+**Parameters:**
+- `enabled`: Boolean indicating whether metering should be enabled
+
+**Returns:**
+- `()`: Empty success response
+
+### `base_clearMeteringInfo`
+
+Clears all pending metering information.
+
+**Parameters:** None
+
+**Returns:**
+- `()`: Empty success response
+
+## Architecture
+
+The ingestion pipeline works as follows:
+
+1. External service (tips-ingress) meters transactions and calls `base_setMeteringInfo`
+2. Metering data is stored in a pending map indexed by transaction hash
+3. Flashblock websocket feed sends `FlashblockInclusion` events with (block, flashblock, transactions)
+4. `ResourceAnnotator` correlates pending data with flashblock inclusions
+5. DA bytes are computed from the raw transaction bytes in the `FlashblockInclusion`
+6. Matched transactions are inserted into `MeteringCache` at the correct location
+7. `base_meteredPriorityFeePerGas` uses the cache to estimate priority fees
+
+Note: The `FlashblockInclusion` must include raw transaction bytes (`IncludedTransaction.raw_tx`)
+for accurate DA-based priority fee estimation. These bytes are used to compute the compressed
+transaction size via `flz_compress_len`.
