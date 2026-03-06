@@ -552,77 +552,57 @@ mod tests {
     }
 
     #[rstest]
-    #[case::empty_create(
-        B256::default(),
-        Address::default(),
-        TxKind::Create,
-        0u128,
-        U256::ZERO,
-        0u64,
-        false,
-        Bytes::default()
-    )]
-    #[case::call_with_value(
-        B256::with_last_byte(0xff),
-        Address::with_last_byte(0xaa),
-        TxKind::Call(Address::with_last_byte(0xbb)),
-        500u128,
-        U256::from(1_000_000u64),
-        21000u64,
-        false,
-        Bytes::default()
-    )]
-    #[case::system_tx_with_calldata(
-        B256::with_last_byte(42),
-        Address::with_last_byte(1),
-        TxKind::Call(Address::ZERO),
-        0u128,
-        U256::ZERO,
-        100_000u64,
-        true,
-        Bytes::from_static(&[1, 2, 3, 4, 5]),
-    )]
-    #[case::large_mint_and_value(
-        B256::repeat_byte(0xde),
-        Address::repeat_byte(0xad),
-        TxKind::Create,
-        u128::MAX,
-        U256::MAX,
-        u64::MAX,
-        false,
-        Bytes::from_static(&[0xab; 128]),
-    )]
-    #[case::zero_gas_create_with_calldata(
-        B256::ZERO,
-        Address::ZERO,
-        TxKind::Create,
-        1u128,
-        U256::from(1u64),
-        0u64,
-        true,
-        Bytes::from_static(&[0xff; 32]),
-    )]
-    fn test_size_accounts_for_all_fields(
-        #[case] source_hash: B256,
-        #[case] from: Address,
-        #[case] to: TxKind,
-        #[case] mint: u128,
-        #[case] value: U256,
-        #[case] gas_limit: u64,
-        #[case] is_system_transaction: bool,
-        #[case] input: Bytes,
-    ) {
-        let tx = TxDeposit {
-            source_hash,
-            from,
-            to,
-            mint,
-            value,
-            gas_limit,
-            is_system_transaction,
-            input: input.clone(),
-        };
-
+    #[case::empty_create(TxDeposit {
+        source_hash: B256::default(),
+        from: Address::default(),
+        to: TxKind::Create,
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: 0,
+        is_system_transaction: false,
+        input: Bytes::new(),
+    })]
+    #[case::call_with_value(TxDeposit {
+        source_hash: B256::with_last_byte(0xff),
+        from: Address::with_last_byte(0xaa),
+        to: TxKind::Call(Address::with_last_byte(0xbb)),
+        mint: 500,
+        value: U256::from(1_000_000u64),
+        gas_limit: 21000,
+        is_system_transaction: false,
+        input: Bytes::new(),
+    })]
+    #[case::system_tx_with_calldata(TxDeposit {
+        source_hash: B256::with_last_byte(42),
+        from: Address::with_last_byte(1),
+        to: TxKind::Call(Address::ZERO),
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: 100_000,
+        is_system_transaction: true,
+        input: Bytes::from_static(&[1, 2, 3, 4, 5]),
+    })]
+    #[case::large_mint_and_value(TxDeposit {
+        source_hash: B256::repeat_byte(0xde),
+        from: Address::repeat_byte(0xad),
+        to: TxKind::Create,
+        mint: u128::MAX,
+        value: U256::MAX,
+        gas_limit: u64::MAX,
+        is_system_transaction: false,
+        input: Bytes::from_static(&[0xab; 128]),
+    })]
+    #[case::zero_gas_create_with_calldata(TxDeposit {
+        source_hash: B256::ZERO,
+        from: Address::ZERO,
+        to: TxKind::Create,
+        mint: 1,
+        value: U256::from(1u64),
+        gas_limit: 0,
+        is_system_transaction: true,
+        input: Bytes::from_static(&[0xff; 32]),
+    })]
+    fn test_size_accounts_for_all_fields(#[case] tx: TxDeposit) {
         let expected = mem::size_of::<B256>()       // source_hash
             + mem::size_of::<Address>()              // from
             + tx.to.size()                           // to
@@ -630,7 +610,7 @@ mod tests {
             + mem::size_of::<U256>()                 // value
             + mem::size_of::<u64>()                  // gas_limit
             + mem::size_of::<bool>()                 // is_system_transaction
-            + input.len(); // input
+            + tx.input.len(); // input
         assert_eq!(tx.size(), expected);
     }
 
