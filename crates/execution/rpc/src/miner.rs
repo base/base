@@ -37,6 +37,14 @@ impl MinerApiExtServer for OpMinerExtApi {
         Ok(true)
     }
 
+    /// Handler for `miner_getMaxDASize` RPC method.
+    async fn get_max_da_size(&self) -> RpcResult<(U64, U64)> {
+        let max_tx_size = U64::from(self.da_config.max_da_tx_size().unwrap_or(0));
+        let max_block_size = U64::from(self.da_config.max_da_block_size().unwrap_or(0));
+        debug!(target: "rpc", max_tx_size = %max_tx_size, max_block_size = %max_block_size, "Getting max DA size");
+        Ok((max_tx_size, max_block_size))
+    }
+
     async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool> {
         debug!(target: "rpc", gas_limit = %gas_limit, "Setting gas limit");
         self.gas_limit_config.set_gas_limit(gas_limit.to());

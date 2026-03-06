@@ -45,6 +45,22 @@ pub struct Args {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
+
+    /// Maximum gas per flashblock for priority fee estimation.
+    #[arg(long = "metering.gas-limit")]
+    pub metering_gas_limit: Option<u64>,
+
+    /// Maximum execution time per block in microseconds for priority fee estimation.
+    #[arg(long = "metering.execution-time-us")]
+    pub metering_execution_time_us: Option<u64>,
+
+    /// Maximum state root computation time per block in microseconds for priority fee estimation.
+    #[arg(long = "metering.state-root-time-us")]
+    pub metering_state_root_time_us: Option<u64>,
+
+    /// Maximum data availability bytes per flashblock for priority fee estimation.
+    #[arg(long = "metering.da-bytes")]
+    pub metering_da_bytes: Option<u64>,
 }
 
 impl From<&Args> for Option<FlashblocksConfig> {
