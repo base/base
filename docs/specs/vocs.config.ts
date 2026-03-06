@@ -173,6 +173,15 @@ const rpcSection: SidebarItem = {
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
   {
+    text: 'Protocol',
+    items: [
+      { text: 'Overview', link: '/protocol/overview' },
+      evmSection,
+      rpcSection,
+      { ...sectionItem('fault-proof', 'Fault Proof'), collapsed: true },
+    ],
+  },
+  {
     text: 'Upgrades',
     items: [
       { text: 'Jovian', link: '/protocol/jovian/overview' },
@@ -184,15 +193,6 @@ const sidebar: SidebarItem[] = [
       { text: 'Ecotone', link: '/protocol/ecotone/overview' },
       { text: 'Delta', link: '/protocol/delta/overview' },
       { text: 'Canyon', link: '/protocol/canyon/overview' },
-    ],
-  },
-  {
-    text: 'Protocol',
-    items: [
-      { text: 'Overview', link: '/protocol/overview' },
-      evmSection,
-      rpcSection,
-      { ...sectionItem('fault-proof', 'Fault Proof'), collapsed: true },
     ],
   },
   sectionItemWithoutDirs('protocol', 'TODO', upgradeDirs, protocolTodoExcludedFiles),
