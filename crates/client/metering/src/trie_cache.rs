@@ -122,6 +122,26 @@ mod tests {
         )
     }
 
+    #[test]
+    fn new_creates_empty_cache() {
+        let cache = PendingTrieCache::new();
+        // The cache should start empty (no cached entry)
+        let guard = cache.cache.load();
+        assert!(guard.is_none());
+    }
+
+    #[test]
+    fn default_equals_new() {
+        let cache1 = PendingTrieCache::new();
+        let cache2 = PendingTrieCache::default();
+
+        // Both should start with empty cache
+        let guard1 = cache1.cache.load();
+        let guard2 = cache2.cache.load();
+        assert!(guard1.is_none());
+        assert!(guard2.is_none());
+    }
+
     #[tokio::test]
     async fn ensure_cached_misses_on_different_payload_id() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
