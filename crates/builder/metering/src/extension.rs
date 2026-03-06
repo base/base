@@ -1,11 +1,9 @@
 //! Builder-specific node extensions.
 
-use std::sync::Arc;
-
 use base_builder_core::SharedMeteringProvider;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 
-use crate::{BaseApiExtServer, MeteringStore, MeteringStoreExt};
+use crate::{BaseApiExtServer, MeteringStoreExt};
 
 /// Extension that registers the [`MeteringStoreExt`] RPC module.
 #[derive(Debug)]
@@ -25,9 +23,9 @@ impl BaseNodeExtension for MeteringStoreExtension {
 }
 
 impl FromExtensionConfig for MeteringStoreExtension {
-    type Config = MeteringStore;
+    type Config = SharedMeteringProvider;
 
     fn from_config(config: Self::Config) -> Self {
-        Self { metering_provider: Arc::new(config) }
+        Self { metering_provider: config }
     }
 }

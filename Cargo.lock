@@ -2448,8 +2448,10 @@ dependencies = [
 name = "base-builder-bin"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-builder-core",
  "base-builder-metering",
+ "base-bundles",
  "base-cli-utils",
  "base-execution-cli",
  "base-node-core",
