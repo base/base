@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Errors that can occur during witness transport operations.
+/// Errors that can occur during proof transport operations.
 #[derive(Error, Debug)]
 pub enum TransportError {
     /// Sending a message failed.
