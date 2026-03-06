@@ -8,7 +8,7 @@ use base_alloy_consensus::{
     EIP1559ParamError, OpTxEnvelope, decode_holocene_extra_data, decode_jovian_extra_data,
 };
 use base_alloy_rpc_types::Transaction;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{Feature, RollupConfig};
 use base_protocol::OpAttributesWithParent;
 
 /// Result of validating payload attributes against an execution layer block.
@@ -210,7 +210,7 @@ impl AttributesMatch {
             Some((ae, ad)) => (ae.into(), ad.into()),
         };
 
-        let extra_data_decoded = if config.is_jovian_active(block.header.timestamp) {
+        let extra_data_decoded = if config.is_feature_active(Feature::MIN_BASE_FEE, block.header.timestamp) {
             decode_jovian_extra_data(&block.header.extra_data).map(|(be, bd, _)| (be, bd))
         } else if config.is_holocene_active(block.header.timestamp) {
             decode_holocene_extra_data(&block.header.extra_data)
@@ -402,7 +402,9 @@ mod tests {
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
     use base_alloy_consensus::encode_holocene_extra_data;
+    use base_alloy_hardforks::OpHardfork;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_consensus_genesis::{Feature, Ident};
     use base_consensus_registry::Registry;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -940,6 +942,10 @@ mod tests {
         let (mut cfg, mut attributes, mut block) = eip1559_test_setup();
 
         cfg.hardforks.jovian_time = Some(0);
+        cfg.features.insert(
+            Ident::new(Feature::MIN_BASE_FEE),
+            Feature::new(Feature::MIN_BASE_FEE, "min base fee", Some(OpHardfork::Jovian)),
+        );
 
         let eip1559_extra_params = encode_holocene_extra_data(
             Default::default(),

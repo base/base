@@ -53,6 +53,7 @@ metrics = { workspace = true, optional = true }
 [dev-dependencies]
 rstest.workspace = true
 arbitrary.workspace = true
+base-alloy-hardforks.workspace = true
 base-consensus-registry.workspace = true
 metrics-exporter-prometheus.workspace = true
 rand = {workspace = true, features = ["thread_rng"]}

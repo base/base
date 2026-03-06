@@ -117,6 +117,20 @@ pub struct Feature {
 }
 
 impl Feature {
+    /// Creates a new [`Feature`] with the given id, reason, and optional hardfork activation.
+    pub fn new(
+        id: impl Into<String>,
+        reason: impl Into<String>,
+        hardfork: Option<OpHardfork>,
+    ) -> Self {
+        Self {
+            id: Ident(id.into()),
+            reason: reason.into(),
+            hardfork,
+            activation_cache: ActivationCache::default(),
+        }
+    }
+
     /// Jovian L1 block info feature identifier.
     pub const L1_BLOCK_INFO: &str = "JovianL1BlockInfo";
     /// DA footprint gas scalar feature identifier.

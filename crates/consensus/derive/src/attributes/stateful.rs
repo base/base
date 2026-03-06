@@ -9,7 +9,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::{Feature, L1ChainConfig, RollupConfig};
 use base_consensus_upgrades::{Hardfork, Hardforks};
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
@@ -211,9 +211,9 @@ where
             ),
             min_base_fee: self
                 .rollup_cfg
-                .is_jovian_active(next_l2_time)
+                .is_feature_active(Feature::MIN_BASE_FEE, next_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
-                                                                        * set at Jovian */
+                                                                        * set at MinBaseFee */
         })
     }
 }

@@ -6,7 +6,7 @@ use alloy_consensus::{Transaction, TxType, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
 use base_alloy_consensus::{OpBlock, decode_holocene_extra_data, decode_jovian_extra_data};
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_consensus_genesis::{Feature, RollupConfig, SystemConfig};
 
 use crate::{
     L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _, L1BlockInfoTx,
@@ -61,7 +61,7 @@ pub fn to_system_config(
     };
 
     // After holocene's activation, the EIP-1559 parameters are stored in the block header's nonce.
-    if rollup_config.is_jovian_active(block.header.timestamp) {
+    if rollup_config.is_feature_active(Feature::MIN_BASE_FEE, block.header.timestamp) {
         let (elasticity, denominator, min_base_fee) =
             decode_jovian_extra_data(&block.header.extra_data)?;
         cfg.eip1559_denominator = Some(denominator);

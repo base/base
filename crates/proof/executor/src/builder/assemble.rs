@@ -9,7 +9,7 @@ use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_alloy_consensus::OpReceiptEnvelope;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{Feature, RollupConfig};
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use base_protocol::{OutputRoot, Predeploys};
 use revm::{context::BlockEnv, database::BundleState};
@@ -61,7 +61,7 @@ where
         let logs_bloom = logs_bloom(ex_result.receipts.iter().flat_map(|r| r.logs()));
 
         // Compute Cancun fields, if active.
-        let (blob_gas_used, excess_blob_gas) = if self.config.is_jovian_active(timestamp) {
+        let (blob_gas_used, excess_blob_gas) = if self.config.is_feature_active(Feature::DA_FOOTPRINT_GAS_SCALAR, timestamp) {
             (Some(ex_result.blob_gas_used), Some(0))
         } else if self.config.is_ecotone_active(timestamp) {
             (Some(0), Some(0))
@@ -75,7 +75,7 @@ where
         // If the payload's `eip_1559_params` are equal to `0`, then the header's `extraData`
         // field is set to the encoded canyon base fee parameters.
         let encoded_base_fee_params = match self.config {
-            config if config.is_jovian_active(timestamp) => {
+            config if config.is_feature_active(Feature::MIN_BASE_FEE, timestamp) => {
                 let extra_data = encode_jovian_eip_1559_params(self.config, attrs)?;
                 Ok(extra_data)
             }

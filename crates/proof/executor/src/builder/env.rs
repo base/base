@@ -5,7 +5,7 @@ use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::Blob
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{Feature, RollupConfig};
 use base_proof_mpt::TrieHinter;
 use base_revm::OpSpecId;
 use revm::{
@@ -63,7 +63,7 @@ where
         parent: &Header,
         min_base_fee: u64,
     ) -> Option<u64> {
-        if !self.config.is_jovian_active(parent.timestamp()) {
+        if !self.config.is_feature_active(Feature::DA_FOOTPRINT_BASE_FEE, parent.timestamp()) {
             return parent.next_block_base_fee(params);
         }
 
@@ -144,7 +144,7 @@ where
             // After Holocene activation, the base fee parameters are stored in the
             // `extraData` field of the parent header. If Holocene wasn't active in the
             // parent block, the default base fee parameters are used.
-            _ if config.is_jovian_active(parent_header.timestamp) => {
+            _ if config.is_feature_active(Feature::MIN_BASE_FEE, parent_header.timestamp) => {
                 decode_jovian_eip_1559_params_block_header(parent_header)
             }
             _ if config.is_holocene_active(parent_header.timestamp) => {
