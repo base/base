@@ -402,8 +402,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::{collections::HashMap, sync::Mutex};
 
     use alloy_consensus::{
         Header as ConsensusHeader, Receipt, ReceiptWithBloom, Sealable, Signed, TxEip1559,
