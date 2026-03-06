@@ -3,6 +3,7 @@ use alloy_sol_types::SolValue;
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, AGGREGATION_OUTPUTS_SIZE};
+use op_succinct_host_utils::proof_cache::{get_range_proof_dir, save_range_proof};
 use sp1_sdk::{
     network::proto::{
         types::{ExecutionStatus, FulfillmentStatus},
@@ -10,7 +11,7 @@ use sp1_sdk::{
     },
     ProverClient, SP1ProofWithPublicValues,
 };
-use std::{fs, path::Path};
+use std::fs;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -22,6 +23,10 @@ struct Args {
     /// Aggregate proof.
     #[arg(short, long)]
     agg_proof: bool,
+
+    /// L2 chain ID.
+    #[arg(short, long)]
+    chain_id: u64,
 
     /// Start L2 block number.
     #[arg(short, long, required = false)]
@@ -66,25 +71,17 @@ async fn main() -> Result<()> {
         // Read the BootInfoStruct from the proof
         let _boot_info: BootInfoStruct = proof.public_values.read();
 
-        // Create the proofs directory if it doesn't exist
-        let proof_path = "data/fetched_proofs".to_string();
-        let proof_dir = Path::new(&proof_path);
-        fs::create_dir_all(proof_dir)?;
-
-        let filename: String = if args.start.is_some() && args.end.is_some() {
-            let start = args.start.unwrap();
-            let end = args.end.unwrap();
-            format!("{start}_{end}.bin")
+        let file_path = if let (Some(start), Some(end)) = (args.start, args.end) {
+            save_range_proof(args.chain_id, start, end, &proof)?
         } else {
-            // Generate the filename
-            format!("{}.bin", args.request_id)
+            let dir = get_range_proof_dir(args.chain_id);
+            fs::create_dir_all(&dir)?;
+            let path = dir.join(format!("{}.bin", args.request_id));
+            proof.save(&path).expect("Failed to save proof");
+            path
         };
-        let file_path = proof_dir.join(filename);
 
-        // Save the proof
-        proof.save(&file_path).expect("Failed to save proof");
-
-        println!("Proof saved successfully to path: {}", file_path.to_str().unwrap());
+        println!("Proof saved successfully to path: {}", file_path.display());
     }
 
     Ok(())

@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let split_ranges = split_range_basic(l2_start_block, l2_end_block, args.batch_size);
+    let split_ranges = split_range_basic(l2_start_block, l2_end_block, args.effective_batch_size());
 
     info!("The span batch ranges which will be executed: {split_ranges:?}");
 

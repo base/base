@@ -45,6 +45,7 @@
 - [Advanced](./advanced/intro.md)
   - [Self-Hosted Proving Cluster](./advanced/self-hosted-cluster.md)
   - [Cost Estimation Tools](./advanced/cost-estimation-tools.md)
+  - [Prove Scripts](./advanced/prove-scripts.md)
   - [Reproduce Binaries](./advanced/verify-binaries.md)
   - [Node Setup](./advanced/node-setup.md)
   - [FAQ](./faq.md)
