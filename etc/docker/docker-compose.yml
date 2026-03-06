@@ -243,6 +243,7 @@ services:
       - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-consensus
     command:
+      - node
       - --chain
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
@@ -413,6 +414,7 @@ services:
       - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-consensus
     command:
+      - node
       - --chain
       - ${L2_CHAIN_ID}
       - --l1-eth-rpc
