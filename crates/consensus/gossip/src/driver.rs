@@ -397,7 +397,7 @@ where
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 let peer_count = self.swarm.connected_peers().count();
-                info!(target: "gossip", peer_id = %peer_id, peer_count, "Connection established");
+                debug!(target: "gossip", peer_id = %peer_id, peer_count, "Connection established");
                 base_macros::inc!(
                     gauge,
                     crate::Metrics::GOSSIPSUB_CONNECTION,
@@ -434,7 +434,7 @@ where
             }
             SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
                 let peer_count = self.swarm.connected_peers().count();
-                warn!(target: "gossip", ?peer_id, ?cause, peer_count, "Connection closed");
+                debug!(target: "gossip", ?peer_id, ?cause, peer_count, "Connection closed");
                 base_macros::inc!(
                     gauge,
                     crate::Metrics::GOSSIPSUB_CONNECTION,
