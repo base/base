@@ -5,7 +5,7 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_alloy_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{Feature, L1ChainConfig, RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -114,8 +114,8 @@ impl L1BlockInfoTx {
         let block_hash = l1_header.hash_slow();
         let base_fee = l1_header.base_fee_per_gas.unwrap_or(0);
 
-        if rollup_config.is_jovian_active(l2_block_time)
-            && !rollup_config.is_first_jovian_block(l2_block_time)
+        if rollup_config.is_feature_active(Feature::L1_BLOCK_INFO, l2_block_time)
+            && !rollup_config.is_feature_first_active_block(Feature::L1_BLOCK_INFO, l2_block_time)
         {
             let operator_fee_scalar = system_config.operator_fee_scalar.unwrap_or_default();
             let operator_fee_constant = system_config.operator_fee_constant.unwrap_or_default();

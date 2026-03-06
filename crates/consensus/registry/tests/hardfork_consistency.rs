@@ -2,10 +2,11 @@
 //! [`base_alloy_hardforks`] chain hardfork schedules for every [`OpHardfork`] variant.
 
 use base_alloy_hardforks::{OpChainHardforks, OpHardfork, OpHardforks};
-use base_consensus_registry::test_utils::{BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONFIG};
+use base_consensus_registry::test_utils::{base_mainnet_config, base_sepolia_config};
 
 #[test]
 fn mainnet_rollup_config_matches_chain_hardforks() {
+    let config = base_mainnet_config();
     let chain = OpChainHardforks::base_mainnet();
     for fork in OpHardfork::VARIANTS {
         // Regolith activated at genesis on Base and is stored as `regolith_time: None`
@@ -17,7 +18,7 @@ fn mainnet_rollup_config_matches_chain_hardforks() {
             continue;
         }
         assert_eq!(
-            BASE_MAINNET_CONFIG.op_fork_activation(*fork),
+            config.op_fork_activation(*fork),
             chain.op_fork_activation(*fork),
             "mainnet fork activation mismatch for {fork:?}",
         );
@@ -26,6 +27,7 @@ fn mainnet_rollup_config_matches_chain_hardforks() {
 
 #[test]
 fn sepolia_rollup_config_matches_chain_hardforks() {
+    let config = base_sepolia_config();
     let chain = OpChainHardforks::base_sepolia();
     for fork in OpHardfork::VARIANTS {
         // See comment in mainnet test above.
@@ -33,7 +35,7 @@ fn sepolia_rollup_config_matches_chain_hardforks() {
             continue;
         }
         assert_eq!(
-            BASE_SEPOLIA_CONFIG.op_fork_activation(*fork),
+            config.op_fork_activation(*fork),
             chain.op_fork_activation(*fork),
             "sepolia fork activation mismatch for {fork:?}",
         );

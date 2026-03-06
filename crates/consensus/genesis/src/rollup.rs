@@ -5,7 +5,9 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_alloy_hardforks::{OpHardfork, OpHardforks};
 
-use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
+use crate::{
+    BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, FeatureMap, HardForkConfig,
+};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -73,6 +75,18 @@ pub struct RollupConfig {
     /// `chain_op_config` is the chain-specific EIP1559 config for the rollup.
     #[cfg_attr(feature = "serde", serde(default = "BaseFeeConfig::base_mainnet"))]
     pub chain_op_config: BaseFeeConfig,
+    /// Per-feature hardfork activation overrides.
+    ///
+    /// Defaults to the canonical Jovian feature set (see [`FeatureMap::default`]).
+    /// Each [`Feature`] maps to an [`OpHardfork`]; the corresponding timestamp is
+    /// resolved lazily from [`RollupConfig::hardforks`] on the first call to
+    /// [`is_feature_active`] and cached for all subsequent calls.
+    ///
+    /// Use [`FeatureMap::empty`] to explicitly opt out of all features.
+    ///
+    /// [`is_feature_active`]: RollupConfig::is_feature_active
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub features: FeatureMap,
 }
 
 #[cfg(feature = "arbitrary")]
@@ -100,6 +114,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             protocol_versions_address: Address::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
             chain_op_config,
+            features: FeatureMap::new(),
         })
     }
 }
@@ -123,7 +138,28 @@ impl Default for RollupConfig {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+            features: FeatureMap::new(),
         }
+    }
+}
+
+impl RollupConfig {
+    /// Returns `true` if the named feature is active at `timestamp`.
+    ///
+    /// The activation timestamp is resolved from the feature's configured [`OpHardfork`]
+    /// and cached in the [`Feature`] on first access. Returns `false` if the feature is
+    /// absent from the config or has no hardfork assigned.
+    pub fn is_feature_active(&self, feature_id: &str, timestamp: u64) -> bool {
+        self.features
+            .get(feature_id)
+            .and_then(|f| f.activation_time(&self.hardforks))
+            .is_some_and(|t| timestamp >= t)
+    }
+
+    /// Returns `true` if `timestamp` is the first block where the named feature is active.
+    pub fn is_feature_first_active_block(&self, feature_id: &str, timestamp: u64) -> bool {
+        self.is_feature_active(feature_id, timestamp)
+            && !self.is_feature_active(feature_id, timestamp.saturating_sub(self.block_time))
     }
 }
 
@@ -411,11 +447,14 @@ impl OpHardforks for RollupConfig {
 mod tests {
     #[cfg(feature = "serde")]
     use alloy_eips::BlockNumHash;
+    #[cfg(feature = "serde")]
     use alloy_primitives::address;
     #[cfg(feature = "serde")]
     use alloy_primitives::{U256, b256};
+    use rstest::rstest;
 
     use super::*;
+    use crate::{Feature, FeatureMap, Ident};
 
     #[test]
     #[cfg(feature = "arbitrary")]
@@ -779,6 +818,8 @@ mod tests {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+            // No `features` key in the JSON → serde(default) → FeatureMap::default()
+            features: FeatureMap::new(),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();
@@ -844,5 +885,177 @@ mod tests {
 
         assert_eq!(cfg.block_number_from_timestamp(20), 5);
         assert_eq!(cfg.block_number_from_timestamp(30), 10);
+    }
+
+    #[test]
+    fn test_is_feature_active_absent_from_map() {
+        let config = RollupConfig::default();
+        // Feature not in the map → always inactive regardless of timestamp.
+        assert!(!config.is_feature_active("MissingFeature", 0));
+        assert!(!config.is_feature_active("MissingFeature", u64::MAX));
+    }
+
+    #[test]
+    fn test_is_feature_active_no_hardfork() {
+        use base_alloy_hardforks::OpHardfork;
+
+        let mut config = RollupConfig {
+            hardforks: HardForkConfig { jovian_time: Some(100), ..Default::default() },
+            block_time: 2,
+            ..Default::default()
+        };
+        // Feature present but hardfork: None → always inactive, even when Jovian is scheduled.
+        config.features.insert(
+            Ident::new(Feature::MIN_BASE_FEE),
+            Feature::new(Feature::MIN_BASE_FEE, "no hardfork", None),
+        );
+        assert!(!config.is_feature_active(Feature::MIN_BASE_FEE, 0));
+        assert!(!config.is_feature_active(Feature::MIN_BASE_FEE, 100));
+        assert!(!config.is_feature_active(Feature::MIN_BASE_FEE, u64::MAX));
+
+        // A second feature whose hardfork IS scheduled is unaffected.
+        config.features.insert(
+            Ident::new(Feature::DA_FOOTPRINT_GAS_SCALAR),
+            Feature::new(
+                Feature::DA_FOOTPRINT_GAS_SCALAR,
+                "da footprint gas scalar",
+                Some(OpHardfork::Jovian),
+            ),
+        );
+        assert!(config.is_feature_active(Feature::DA_FOOTPRINT_GAS_SCALAR, 100));
+    }
+
+    #[test]
+    fn test_is_feature_active_at_exact_timestamp() {
+        use base_alloy_hardforks::OpHardfork;
+
+        let mut config = RollupConfig {
+            hardforks: HardForkConfig { jovian_time: Some(100), ..Default::default() },
+            block_time: 2,
+            ..Default::default()
+        };
+        config.features.insert(
+            Ident::new(Feature::MIN_BASE_FEE),
+            Feature::new(Feature::MIN_BASE_FEE, "min base fee", Some(OpHardfork::Jovian)),
+        );
+        // Inactive one second before activation.
+        assert!(!config.is_feature_active(Feature::MIN_BASE_FEE, 99));
+        // Active at the exact activation timestamp.
+        assert!(config.is_feature_active(Feature::MIN_BASE_FEE, 100));
+        // Still active after activation.
+        assert!(config.is_feature_active(Feature::MIN_BASE_FEE, 101));
+        assert!(config.is_feature_active(Feature::MIN_BASE_FEE, u64::MAX));
+    }
+
+    #[test]
+    fn test_is_feature_first_active_block_boundary() {
+        use base_alloy_hardforks::OpHardfork;
+
+        let mut config = RollupConfig {
+            hardforks: HardForkConfig { jovian_time: Some(100), ..Default::default() },
+            block_time: 2,
+            ..Default::default()
+        };
+        config.features.insert(
+            Ident::new(Feature::MIN_BASE_FEE),
+            Feature::new(Feature::MIN_BASE_FEE, "min base fee", Some(OpHardfork::Jovian)),
+        );
+        // Block before activation → not the first active block.
+        assert!(!config.is_feature_first_active_block(Feature::MIN_BASE_FEE, 98));
+        // Exact activation timestamp → first active block.
+        assert!(config.is_feature_first_active_block(Feature::MIN_BASE_FEE, 100));
+        // Next block → feature is active but no longer the first block.
+        assert!(!config.is_feature_first_active_block(Feature::MIN_BASE_FEE, 102));
+    }
+
+    #[test]
+    fn test_is_feature_first_active_block_zero_block_time() {
+        use base_alloy_hardforks::OpHardfork;
+
+        // block_time = 0 → timestamp.saturating_sub(0) == timestamp, so both the
+        // "active at timestamp" and "active at timestamp - block_time" checks return
+        // the same value. saturating_sub prevents any underflow; the result is that
+        // is_feature_first_active_block is always false (never a "first" block).
+        let mut config = RollupConfig {
+            hardforks: HardForkConfig { jovian_time: Some(100), ..Default::default() },
+            block_time: 0,
+            ..Default::default()
+        };
+        config.features.insert(
+            Ident::new(Feature::MIN_BASE_FEE),
+            Feature::new(Feature::MIN_BASE_FEE, "min base fee", Some(OpHardfork::Jovian)),
+        );
+        // Feature is active, but no "first" block exists when block_time is 0.
+        assert!(config.is_feature_active(Feature::MIN_BASE_FEE, 100));
+        assert!(!config.is_feature_first_active_block(Feature::MIN_BASE_FEE, 100));
+    }
+
+    /// A [`RollupConfig`] whose default [`FeatureMap`] has all 6 Jovian features
+    /// activating at `jovian_ts`, with `block_time` seconds per block.
+    fn config_with_jovian(jovian_ts: u64, block_time: u64) -> RollupConfig {
+        RollupConfig {
+            hardforks: HardForkConfig { jovian_time: Some(jovian_ts), ..Default::default() },
+            block_time,
+            ..Default::default()
+        }
+    }
+
+    /// All 6 canonical Jovian features should activate at the Jovian timestamp when the
+    /// default [`FeatureMap`] is in place.
+    #[rstest]
+    #[case::l1_block_info(Feature::L1_BLOCK_INFO)]
+    #[case::da_footprint_gas_scalar(Feature::DA_FOOTPRINT_GAS_SCALAR)]
+    #[case::min_base_fee(Feature::MIN_BASE_FEE)]
+    #[case::operator_fee_multiplier(Feature::OPERATOR_FEE_MULTIPLIER)]
+    #[case::da_footprint_receipts(Feature::DA_FOOTPRINT_RECEIPTS)]
+    #[case::da_footprint_base_fee(Feature::DA_FOOTPRINT_BASE_FEE)]
+    fn test_default_feature_map_activates_at_jovian(#[case] feature_id: &str) {
+        let config = config_with_jovian(100, 2);
+        // Inactive before activation.
+        assert!(!config.is_feature_active(feature_id, 99));
+        // Active at and after the activation timestamp.
+        assert!(config.is_feature_active(feature_id, 100));
+        assert!(config.is_feature_active(feature_id, 101));
+    }
+
+    /// The first-active-block predicate fires exactly at the activation timestamp and
+    /// not before or after for all 6 canonical features.
+    #[rstest]
+    #[case::l1_block_info(Feature::L1_BLOCK_INFO)]
+    #[case::da_footprint_gas_scalar(Feature::DA_FOOTPRINT_GAS_SCALAR)]
+    #[case::min_base_fee(Feature::MIN_BASE_FEE)]
+    #[case::operator_fee_multiplier(Feature::OPERATOR_FEE_MULTIPLIER)]
+    #[case::da_footprint_receipts(Feature::DA_FOOTPRINT_RECEIPTS)]
+    #[case::da_footprint_base_fee(Feature::DA_FOOTPRINT_BASE_FEE)]
+    fn test_default_feature_map_first_active_block(#[case] feature_id: &str) {
+        let config = config_with_jovian(100, 2);
+        assert!(!config.is_feature_first_active_block(feature_id, 98));
+        assert!(config.is_feature_first_active_block(feature_id, 100));
+        assert!(!config.is_feature_first_active_block(feature_id, 102));
+    }
+
+    /// A feature overridden to `hardfork: None` in the map is always inactive,
+    /// even when the corresponding hardfork is scheduled.
+    #[rstest]
+    #[case::l1_block_info(Feature::L1_BLOCK_INFO)]
+    #[case::min_base_fee(Feature::MIN_BASE_FEE)]
+    fn test_feature_overridden_to_no_hardfork_is_inactive(#[case] feature_id: &str) {
+        let mut config = config_with_jovian(100, 2);
+        config
+            .features
+            .insert(Ident::new(feature_id), Feature::new(feature_id, "no hardfork", None));
+        assert!(!config.is_feature_active(feature_id, 100));
+        assert!(!config.is_feature_active(feature_id, u64::MAX));
+    }
+
+    /// A feature entirely absent from the map is always inactive.
+    #[rstest]
+    #[case("NonExistent")]
+    #[case("")]
+    fn test_missing_feature_is_always_inactive(#[case] feature_id: &str) {
+        let mut config = config_with_jovian(0, 2);
+        config.features = FeatureMap::empty();
+        assert!(!config.is_feature_active(feature_id, 0));
+        assert!(!config.is_feature_active(feature_id, u64::MAX));
     }
 }

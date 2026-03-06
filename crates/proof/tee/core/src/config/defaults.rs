@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use alloy_eips::{eip1898::BlockNumHash, eip7840::BlobParams};
 use alloy_primitives::Address;
 use base_consensus_genesis::{
-    BaseFeeConfig, ChainGenesis, HardForkConfig, L1ChainConfig, RollupConfig, SystemConfig,
+    BaseFeeConfig, ChainGenesis, FeatureMap, HardForkConfig, L1ChainConfig, RollupConfig,
+    SystemConfig,
 };
 
 /// Create a default rollup config matching Go's `DefaultDeployConfig()`.
@@ -57,6 +58,9 @@ pub fn default_rollup_config() -> RollupConfig {
 
         // Base fee config
         chain_op_config: BaseFeeConfig::base_mainnet(),
+
+        // Pre-populated with the canonical Jovian feature set.
+        features: FeatureMap::new(),
     }
 }
 
