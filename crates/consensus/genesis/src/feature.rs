@@ -1,7 +1,8 @@
-use alloc::string::String;
+use alloc::{collections::BTreeMap, string::String};
 use core::{
     borrow::Borrow,
     fmt,
+    ops::{Deref, DerefMut},
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -183,5 +184,81 @@ impl Feature {
     /// [`hardfork`](Feature::hardfork) depends on.
     pub fn invalidate_cache(&self) {
         self.activation_cache.store(UNCACHED);
+    }
+}
+
+/// A map of named protocol features, pre-populated with the canonical Jovian feature set.
+///
+/// [`Default`]/[`FeatureMap::new`] inserts every known Jovian feature tied to
+/// [`OpHardfork::Jovian`], so any [`RollupConfig`](crate::RollupConfig) built from
+/// `Default` or deserialized without an explicit `features` key will activate those
+/// features at the Jovian timestamp — matching the behaviour of the legacy
+/// `is_jovian_active` calls they replaced.
+///
+/// Use [`FeatureMap::empty`] for `const` items or tests that need an unpopulated map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeatureMap(BTreeMap<Ident, Feature>);
+
+impl FeatureMap {
+    /// Creates a [`FeatureMap`] pre-populated with all canonical Jovian features.
+    ///
+    /// Equivalent to [`Default::default`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates an empty [`FeatureMap`] with no features.
+    ///
+    /// This is a `const fn` and is suitable for use in `const` items (e.g. test-utility
+    /// rollup configs). Prefer [`FeatureMap::new`] for runtime construction.
+    pub const fn empty() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl Default for FeatureMap {
+    /// Returns a [`FeatureMap`] containing every canonical Jovian feature, each
+    /// mapped to [`OpHardfork::Jovian`].
+    fn default() -> Self {
+        let map = [
+            (Feature::L1_BLOCK_INFO, "Jovian L1 block info encoding"),
+            (Feature::DA_FOOTPRINT_GAS_SCALAR, "DA footprint gas scalar in block header"),
+            (Feature::MIN_BASE_FEE, "minimum base fee in extra data"),
+            (Feature::OPERATOR_FEE_MULTIPLIER, "operator fee multiplier"),
+            (Feature::DA_FOOTPRINT_RECEIPTS, "DA footprint in receipts"),
+            (Feature::DA_FOOTPRINT_BASE_FEE, "DA footprint base fee"),
+        ]
+        .into_iter()
+        .map(|(id, reason)| (Ident::new(id), Feature::new(id, reason, Some(OpHardfork::Jovian))))
+        .collect();
+        Self(map)
+    }
+}
+
+impl Deref for FeatureMap {
+    type Target = BTreeMap<Ident, Feature>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for FeatureMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for FeatureMap {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for FeatureMap {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        BTreeMap::deserialize(d).map(Self)
     }
 }

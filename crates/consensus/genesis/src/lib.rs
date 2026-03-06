@@ -9,7 +9,7 @@
 extern crate alloc;
 
 mod feature;
-pub use feature::{Feature, Ident};
+pub use feature::{Feature, FeatureMap, Ident};
 
 mod params;
 pub use params::{

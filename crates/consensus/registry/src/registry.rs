@@ -92,8 +92,7 @@ mod tests {
     #[test]
     fn test_hardcoded_rollup_configs() {
         let test_cases =
-            [(8453, test_utils::BASE_MAINNET_CONFIG), (84532, test_utils::BASE_SEPOLIA_CONFIG)]
-                .to_vec();
+            [(8453, test_utils::base_mainnet_config()), (84532, test_utils::base_sepolia_config())];
 
         for (chain_id, expected) in test_cases {
             let derived = Registry::rollup_config(chain_id).unwrap();

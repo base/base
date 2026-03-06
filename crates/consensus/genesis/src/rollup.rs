@@ -1,14 +1,12 @@
 //! Rollup Config Types
 
-use alloc::collections::BTreeMap;
-
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_alloy_hardforks::{OpHardfork, OpHardforks};
 
 use crate::{
-    BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, Feature, HardForkConfig, Ident,
+    BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, FeatureMap, HardForkConfig,
 };
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
@@ -79,14 +77,16 @@ pub struct RollupConfig {
     pub chain_op_config: BaseFeeConfig,
     /// Per-feature hardfork activation overrides.
     ///
-    /// Absent or empty = no features active via the feature system. Each [`Feature`] maps
-    /// to an [`OpHardfork`]; the corresponding timestamp is resolved lazily from
-    /// [`RollupConfig::hardforks`] on the first call to [`is_feature_active`] and cached
-    /// for all subsequent calls.
+    /// Defaults to the canonical Jovian feature set (see [`FeatureMap::default`]).
+    /// Each [`Feature`] maps to an [`OpHardfork`]; the corresponding timestamp is
+    /// resolved lazily from [`RollupConfig::hardforks`] on the first call to
+    /// [`is_feature_active`] and cached for all subsequent calls.
+    ///
+    /// Use [`FeatureMap::empty`] to explicitly opt out of all features.
     ///
     /// [`is_feature_active`]: RollupConfig::is_feature_active
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "BTreeMap::is_empty"))]
-    pub features: BTreeMap<Ident, Feature>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub features: FeatureMap,
 }
 
 #[cfg(feature = "arbitrary")]
@@ -114,7 +114,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             protocol_versions_address: Address::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
             chain_op_config,
-            features: BTreeMap::new(),
+            features: FeatureMap::new(),
         })
     }
 }
@@ -138,7 +138,7 @@ impl Default for RollupConfig {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
-            features: BTreeMap::new(),
+            features: FeatureMap::new(),
         }
     }
 }
@@ -453,6 +453,7 @@ mod tests {
     use alloy_primitives::{U256, b256};
 
     use super::*;
+    use crate::{Feature, Ident};
 
     #[test]
     #[cfg(feature = "arbitrary")]
@@ -717,8 +718,6 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_deserialize_reference_rollup_config() {
-        use alloc::collections::BTreeMap;
-
         use crate::SystemConfig;
 
         let raw: &str = r#"
@@ -818,7 +817,8 @@ mod tests {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
-            features: BTreeMap::new(),
+            // No `features` key in the JSON → serde(default) → FeatureMap::default()
+            features: FeatureMap::new(),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();
