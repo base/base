@@ -182,7 +182,7 @@ where
                 TeeProofError::DataFetch("no transactions in target block".into())
             })?;
 
-        let first_tx_bytes = serialize_rpc_transaction(first_tx)?;
+        let first_tx_bytes = Self::serialize_rpc_transaction(first_tx)?;
 
         // Derive L2 block info to get L1 origin
         let l2_block_info = l2_block_to_block_info(
@@ -228,13 +228,13 @@ where
             .map_err(|e| TeeProofError::DataFetch(format!("L1 receipts: {e}")))?;
 
         // Serialize previous block transactions (all types including deposits)
-        let prev_block_txs = serialize_block_transactions(&prev_block, true)?;
+        let prev_block_txs = Self::serialize_block_transactions(&prev_block, true)?;
 
         // Serialize current block transactions (excluding deposits)
-        let sequenced_txs = serialize_block_transactions(&target_block, false)?;
+        let sequenced_txs = Self::serialize_block_transactions(&target_block, false)?;
 
-        let chain_config = build_chain_config(&rollup_config);
-        let l1_receipt_envelopes = convert_receipts(l1_receipts);
+        let chain_config = Self::build_chain_config(&rollup_config);
+        let l1_receipt_envelopes = Self::convert_receipts(l1_receipts);
 
         let request = ExecuteStatelessRequest {
             config: chain_config,
@@ -254,7 +254,7 @@ where
         let proposal =
             self.enclave_client.execute_stateless(request).await.map_err(TeeProofError::Enclave)?;
 
-        let proof_bytes = encode_proof_bytes(&proposal, l1_origin_hash, l1_origin_number)?;
+        let proof_bytes = Self::encode_proof_bytes(&proposal, l1_origin_hash, l1_origin_number)?;
 
         info!(
             target_block = %target_block_number,
@@ -265,115 +265,115 @@ where
 
         Ok(proof_bytes)
     }
-}
 
-/// Encodes a TEE proposal into the 130-byte proof format.
-///
-/// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)`
-fn encode_proof_bytes(
-    proposal: &Proposal,
-    l1_origin_hash: B256,
-    l1_origin_number: u64,
-) -> Result<Bytes, TeeProofError> {
-    let sig = &proposal.signature;
-    if sig.len() < ECDSA_SIGNATURE_LENGTH {
-        return Err(TeeProofError::Encoding(format!(
-            "signature too short: expected at least {ECDSA_SIGNATURE_LENGTH} bytes, got {}",
-            sig.len()
-        )));
-    }
-
-    let mut proof_data = vec![0u8; 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH];
-
-    // Byte 0: proof type (TEE = 0)
-    proof_data[0] = PROOF_TYPE_TEE;
-
-    // Bytes 1-32: L1 origin hash
-    proof_data[1..33].copy_from_slice(l1_origin_hash.as_slice());
-
-    // Bytes 33-64: L1 origin number as 32-byte big-endian uint256
-    // The u64 is placed in the last 8 bytes of the 32-byte field (bytes 57-64)
-    proof_data[57..65].copy_from_slice(&l1_origin_number.to_be_bytes());
-
-    // Bytes 65-129: ECDSA signature with v-value adjusted from 0/1 to 27/28
-    proof_data[65..130].copy_from_slice(&sig[..ECDSA_SIGNATURE_LENGTH]);
-    proof_data[129] = match proof_data[129] {
-        0 | 1 => proof_data[129] + ECDSA_V_OFFSET,
-        27 | 28 => proof_data[129],
-        v => {
+    /// Encodes a TEE proposal into the 130-byte proof format.
+    ///
+    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)`
+    fn encode_proof_bytes(
+        proposal: &Proposal,
+        l1_origin_hash: B256,
+        l1_origin_number: u64,
+    ) -> Result<Bytes, TeeProofError> {
+        let sig = &proposal.signature;
+        if sig.len() < ECDSA_SIGNATURE_LENGTH {
             return Err(TeeProofError::Encoding(format!(
-                "unexpected ECDSA v-value: {v}, expected 0, 1, 27, or 28"
+                "signature too short: expected at least {ECDSA_SIGNATURE_LENGTH} bytes, got {}",
+                sig.len()
             )));
         }
-    };
 
-    Ok(Bytes::from(proof_data))
-}
+        let mut proof_data = vec![0u8; 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH];
 
-/// Serializes an RPC transaction to EIP-2718 encoded bytes.
-fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, TeeProofError> {
-    let envelope: OpTxEnvelope = tx.clone().inner.into_inner();
-    let mut buf = Vec::new();
-    envelope.encode_2718(&mut buf);
-    Ok(Bytes::from(buf))
-}
+        // Byte 0: proof type (TEE = 0)
+        proof_data[0] = PROOF_TYPE_TEE;
 
-/// Serializes all transactions in a block to EIP-2718 encoded bytes.
-fn serialize_block_transactions(
-    block: &OpBlock,
-    include_deposits: bool,
-) -> Result<Vec<Bytes>, TeeProofError> {
-    block
-        .transactions
-        .txns()
-        .filter(|tx| include_deposits || tx.ty() != DEPOSIT_TX_TYPE)
-        .map(serialize_rpc_transaction)
-        .collect()
-}
+        // Bytes 1-32: L1 origin hash
+        proof_data[1..33].copy_from_slice(l1_origin_hash.as_slice());
 
-/// Converts transaction receipts to receipt envelopes for the enclave.
-fn convert_receipts(receipts: Vec<TransactionReceipt>) -> Vec<ReceiptEnvelope> {
-    receipts
-        .into_iter()
-        .map(|r| {
-            r.inner.map_logs(|log| alloy_primitives::Log {
-                address: log.inner.address,
-                data: log.inner.data,
-            })
-        })
-        .collect()
-}
+        // Bytes 33-64: L1 origin number as 32-byte big-endian uint256
+        // The u64 is placed in the last 8 bytes of the 32-byte field (bytes 57-64)
+        proof_data[57..65].copy_from_slice(&l1_origin_number.to_be_bytes());
 
-/// Builds the chain configuration expected by the enclave RPC.
-fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
-    let mut config = ChainConfig {
-        name: "base-challenger".to_string(),
-        l1_chain_id: rollup_config.l1_chain_id,
-        public_rpc: String::new(),
-        sequencer_rpc: String::new(),
-        explorer: String::new(),
-        data_availability_type: "eth-da".to_string(),
-        chain_id: rollup_config.l2_chain_id.id(),
-        batch_inbox_addr: rollup_config.batch_inbox_address,
-        block_time: rollup_config.block_time,
-        seq_window_size: rollup_config.seq_window_size,
-        max_sequencer_drift: rollup_config.max_sequencer_drift,
-        gas_paying_token: None,
-        protocol_versions_addr: Some(rollup_config.protocol_versions_address),
-        hardfork_config: rollup_config.hardforks,
-        optimism: Some(rollup_config.chain_op_config),
-        genesis: rollup_config.genesis,
-        roles: None,
-        addresses: Some(Default::default()),
-    };
+        // Bytes 65-129: ECDSA signature with v-value adjusted from 0/1 to 27/28
+        proof_data[65..130].copy_from_slice(&sig[..ECDSA_SIGNATURE_LENGTH]);
+        proof_data[129] = match proof_data[129] {
+            0 | 1 => proof_data[129] + ECDSA_V_OFFSET,
+            27 | 28 => proof_data[129],
+            v => {
+                return Err(TeeProofError::Encoding(format!(
+                    "unexpected ECDSA v-value: {v}, expected 0, 1, 27, or 28"
+                )));
+            }
+        };
 
-    if let Some(addresses) = config.addresses.as_mut() {
-        addresses.address_manager = Some(rollup_config.protocol_versions_address);
-        addresses.optimism_portal_proxy = Some(rollup_config.deposit_contract_address);
-        addresses.system_config_proxy = Some(rollup_config.l1_system_config_address);
+        Ok(Bytes::from(proof_data))
     }
 
-    config
+    /// Serializes an RPC transaction to EIP-2718 encoded bytes.
+    fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, TeeProofError> {
+        let envelope: OpTxEnvelope = tx.clone().inner.into_inner();
+        let mut buf = Vec::new();
+        envelope.encode_2718(&mut buf);
+        Ok(Bytes::from(buf))
+    }
+
+    /// Serializes all transactions in a block to EIP-2718 encoded bytes.
+    fn serialize_block_transactions(
+        block: &OpBlock,
+        include_deposits: bool,
+    ) -> Result<Vec<Bytes>, TeeProofError> {
+        block
+            .transactions
+            .txns()
+            .filter(|tx| include_deposits || tx.ty() != DEPOSIT_TX_TYPE)
+            .map(Self::serialize_rpc_transaction)
+            .collect()
+    }
+
+    /// Converts transaction receipts to receipt envelopes for the enclave.
+    fn convert_receipts(receipts: Vec<TransactionReceipt>) -> Vec<ReceiptEnvelope> {
+        receipts
+            .into_iter()
+            .map(|r| {
+                r.inner.map_logs(|log| alloy_primitives::Log {
+                    address: log.inner.address,
+                    data: log.inner.data,
+                })
+            })
+            .collect()
+    }
+
+    /// Builds the chain configuration expected by the enclave RPC.
+    fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
+        let mut config = ChainConfig {
+            name: "base-challenger".to_string(),
+            l1_chain_id: rollup_config.l1_chain_id,
+            public_rpc: String::new(),
+            sequencer_rpc: String::new(),
+            explorer: String::new(),
+            data_availability_type: "eth-da".to_string(),
+            chain_id: rollup_config.l2_chain_id.id(),
+            batch_inbox_addr: rollup_config.batch_inbox_address,
+            block_time: rollup_config.block_time,
+            seq_window_size: rollup_config.seq_window_size,
+            max_sequencer_drift: rollup_config.max_sequencer_drift,
+            gas_paying_token: None,
+            protocol_versions_addr: Some(rollup_config.protocol_versions_address),
+            hardfork_config: rollup_config.hardforks,
+            optimism: Some(rollup_config.chain_op_config),
+            genesis: rollup_config.genesis,
+            roles: None,
+            addresses: Some(Default::default()),
+        };
+
+        if let Some(addresses) = config.addresses.as_mut() {
+            addresses.address_manager = Some(rollup_config.protocol_versions_address);
+            addresses.optimism_portal_proxy = Some(rollup_config.deposit_contract_address);
+            addresses.system_config_proxy = Some(rollup_config.l1_system_config_address);
+        }
+
+        config
+    }
 }
 
 #[cfg(test)]
@@ -392,6 +392,14 @@ mod tests {
 
     use super::*;
     use crate::CandidateGame;
+
+    /// Concrete type alias for tests so associated functions are callable.
+    type TestGenerator = TeeProofGenerator<
+        MockEnclaveClient,
+        MockL1Provider,
+        MockChallengerL2Provider,
+        MockRollupProvider,
+    >;
 
     // ========================================================================
     // Mock types
@@ -725,14 +733,16 @@ mod tests {
     #[test]
     fn test_encode_proof_bytes_length() {
         let proposal = test_proposal(B256::repeat_byte(0xCC), 500);
-        let proof = encode_proof_bytes(&proposal, B256::repeat_byte(0xCC), 500).unwrap();
+        let proof =
+            TestGenerator::encode_proof_bytes(&proposal, B256::repeat_byte(0xCC), 500).unwrap();
         assert_eq!(proof.len(), 130);
     }
 
     #[test]
     fn test_encode_proof_bytes_type() {
         let proposal = test_proposal(B256::repeat_byte(0xCC), 500);
-        let proof = encode_proof_bytes(&proposal, B256::repeat_byte(0xCC), 500).unwrap();
+        let proof =
+            TestGenerator::encode_proof_bytes(&proposal, B256::repeat_byte(0xCC), 500).unwrap();
         assert_eq!(proof[0], PROOF_TYPE_TEE);
     }
 
@@ -740,14 +750,14 @@ mod tests {
     fn test_encode_proof_bytes_l1_origin_hash() {
         let l1_hash = B256::repeat_byte(0xDD);
         let proposal = test_proposal(l1_hash, 500);
-        let proof = encode_proof_bytes(&proposal, l1_hash, 500).unwrap();
+        let proof = TestGenerator::encode_proof_bytes(&proposal, l1_hash, 500).unwrap();
         assert_eq!(&proof[1..33], l1_hash.as_slice());
     }
 
     #[test]
     fn test_encode_proof_bytes_l1_origin_number() {
         let proposal = test_proposal(B256::ZERO, 12345);
-        let proof = encode_proof_bytes(&proposal, B256::ZERO, 12345).unwrap();
+        let proof = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 12345).unwrap();
         // u64 is placed in bytes 57-64 (last 8 bytes of the 32-byte field)
         let mut expected = [0u8; 8];
         expected.copy_from_slice(&proof[57..65]);
@@ -765,7 +775,7 @@ mod tests {
         sig[64] = input_v;
         proposal.signature = Bytes::from(sig);
 
-        let proof = encode_proof_bytes(&proposal, B256::ZERO, 0).unwrap();
+        let proof = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 0).unwrap();
         assert_eq!(proof[129], expected_v);
     }
 
@@ -776,7 +786,7 @@ mod tests {
         sig[64] = 5;
         proposal.signature = Bytes::from(sig);
 
-        let result = encode_proof_bytes(&proposal, B256::ZERO, 0);
+        let result = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unexpected ECDSA v-value"));
     }
@@ -786,7 +796,7 @@ mod tests {
         let mut proposal = test_proposal(B256::ZERO, 0);
         proposal.signature = Bytes::from(vec![0u8; 32]);
 
-        let result = encode_proof_bytes(&proposal, B256::ZERO, 0);
+        let result = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("signature too short"));
     }
