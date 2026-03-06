@@ -133,7 +133,11 @@ where
         // Optimistically extend the queue with the new frames.
         self.queue.extend(frames);
 
-        // Update metrics with last frame count
+        // Prune frames if Holocene is active.
+        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        self.prune(origin);
+
+        // Update metrics with the post-prune queue state.
         base_macros::set!(
             gauge,
             crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_BUFFER,
@@ -144,10 +148,6 @@ where
             let queue_size = self.queue.iter().map(|f| f.size()).sum::<usize>() as f64;
             base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM, queue_size);
         }
-
-        // Prune frames if Holocene is active.
-        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-        self.prune(origin);
 
         Ok(())
     }
