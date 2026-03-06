@@ -172,6 +172,7 @@ base-builder-metering = { path = "crates/builder/metering" }
 # Client
 base-client-cli = { path = "crates/client/cli" }
 base-metering = { path = "crates/client/metering" }
+base-tx-forwarding = { path = "crates/client/tx-forwarding" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-tx-forwarding = { path = "crates/client/tx-forwarding" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }

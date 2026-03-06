@@ -290,7 +290,6 @@ async fn test_tx_forwarding_pipeline_e2e() -> Result<()> {
 
     Ok(())
 }
-
 /// Tests that the forwarding pipeline handles high transaction load under rate limiting.
 ///
 /// Uses all 4 available test accounts (`ANVIL_ACCOUNT_1` through `ANVIL_ACCOUNT_4`) to send

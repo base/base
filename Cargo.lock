@@ -4733,6 +4733,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-tx-forwarding"
+version = "0.0.0"
+dependencies = [
+ "base-node-runner",
+ "base-txpool",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-txpool"
 version = "0.0.0"
 dependencies = [

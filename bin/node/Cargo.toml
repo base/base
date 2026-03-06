@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-tx-forwarding.workspace = true
 base-metering.workspace = true
 base-cli-utils.workspace = true
 base-txpool-rpc.workspace = true
