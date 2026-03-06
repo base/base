@@ -9,7 +9,7 @@ use crate::{Host, HostConfig, HostError, ProverConfig};
 ///
 /// Long-lived — holds static config and a backend instance.
 /// Receives per-proof [`ProofRequest`]s via [`prove_block`](Self::prove_block).
-pub struct ProverService<B: ProverBackend> {
+pub struct ProverService<B> {
     config: ProverConfig,
     backend: B,
 }
