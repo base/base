@@ -15,7 +15,7 @@ use alloy_transport_http::{
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
-use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind};
+use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
@@ -202,8 +202,8 @@ impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
             AlloyL2ChainProviderError::Transport(e) => {
                 Self::Temporary(PipelineError::Provider(format!("Transport error: {e}")))
             }
-            AlloyL2ChainProviderError::BlockNotFound(_) => {
-                Self::Temporary(PipelineError::Provider("Block not found".to_string()))
+            AlloyL2ChainProviderError::BlockNotFound(number) => {
+                ResetError::BlockNotFound(alloy_eips::BlockId::Number(number.into())).reset()
             }
             AlloyL2ChainProviderError::L2BlockInfoConstruction(_) => Self::Temporary(
                 PipelineError::Provider("L2 block info construction failed".to_string()),
@@ -212,6 +212,40 @@ impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
                 PipelineError::Provider("system config conversion failed".to_string()),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_alloy_l2_chain_provider_error() {
+        // Transport errors are transient — retry makes sense.
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::Transport(alloy_transport::RpcError::Transport(
+                alloy_transport::TransportErrorKind::Custom("timeout".into()),
+            ))
+            .into();
+        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
+
+        // L2BlockInfoConstruction is a decode failure — transient.
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::L2BlockInfoConstruction(0).into();
+        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
+
+        // SystemConfigConversion is a decode failure — transient.
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::SystemConfigConversion(0).into();
+        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
+
+        // L2 BlockNotFound: the pipeline only requests blocks that should exist on the
+        // canonical chain. A missing L2 block means a reorg occurred — must Reset.
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::BlockNotFound(42).into();
+        assert!(
+            matches!(kind, PipelineErrorKind::Reset(_)),
+            "L2 BlockNotFound must map to Reset (block disappeared due to reorg)"
+        );
     }
 }
 
