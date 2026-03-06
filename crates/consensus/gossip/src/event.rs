@@ -13,7 +13,6 @@ pub enum Event {
     /// Network connectivity check event from the ping protocol.
     ///
     /// Used to verify peer connectivity and measure round-trip times.
-    #[allow(dead_code)]
     Ping(ping::Event),
 
     /// `GossipSub` mesh networking event.

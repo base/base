@@ -6,13 +6,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod metrics;
-pub use beacon_client::BeaconClientError;
 pub use metrics::Metrics;
 
 mod beacon_client;
 pub use beacon_client::{
-    APIConfigResponse, APIGenesisResponse, BeaconClient, OnlineBeaconClient, ReducedConfigData,
-    ReducedGenesisData,
+    APIConfigResponse, APIGenesisResponse, BeaconClient, BeaconClientError, OnlineBeaconClient,
+    ReducedConfigData, ReducedGenesisData,
 };
 
 mod blobs;
