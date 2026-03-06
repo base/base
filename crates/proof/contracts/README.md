@@ -11,10 +11,10 @@ Provides async client traits and concrete Alloy-backed implementations for:
 
 - **`DisputeGameFactoryClient`**: Creating new dispute games and querying existing ones.
 - **`AnchorStateRegistryClient`**: Reading the anchor state (latest finalized output root).
-- **`AggregateVerifierClient`**: Querying individual dispute game instances (status, ZK/TEE prover addresses, output roots), reading onchain configuration (`BLOCK_INTERVAL`, `INTERMEDIATE_BLOCK_INTERVAL`), and constructing state-changing calls such as `nullify` via the sol!-generated `IAggregateVerifier::nullifyCall` type.
+- **`AggregateVerifierClient`**: Querying individual dispute game instances (status, ZK/TEE prover addresses, output roots), reading onchain configuration (`BLOCK_INTERVAL`, `INTERMEDIATE_BLOCK_INTERVAL`), and constructing state-changing calls such as `nullify` via [`encode_nullify_calldata`].
 
 Also provides shared data types (`GameAtIndex`, `AnchorRoot`, `GameInfo`), pure encoding helpers
-(`encode_extra_data`, `encode_create_calldata`), and a `ContractError` type for error handling.
+(`encode_extra_data`, `encode_create_calldata`, `encode_nullify_calldata`), and a `ContractError` type for error handling.
 
 These bindings are used by both [`base-proposer`](../proposer/) and the challenger.
 
