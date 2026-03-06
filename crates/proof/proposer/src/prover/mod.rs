@@ -14,12 +14,14 @@ use base_enclave::{
 use base_enclave_client::ExecuteStatelessRequest;
 use base_proof_rpc::{L1BlockId, L1Provider, L2BlockRef, OpBlock};
 use base_protocol::Predeploys;
-use base_tee_prover::{ConfigBuilder, ENCLAVE_TIMEOUT, ReceiptConverter, TransactionSerializer};
+use base_tee_prover::{
+    ConfigBuilder, ENCLAVE_TIMEOUT, ReceiptConverter, TeeExecutor, TransactionSerializer,
+};
 pub use types::ProverProposal;
 #[cfg(test)]
 pub(crate) use types::test_helpers;
 
-use crate::{ProposerError, enclave::EnclaveClientTrait, rpc::ProverL2Provider};
+use crate::{ProposerError, rpc::ProverL2Provider};
 
 /// Maximum number of missing trie nodes to fetch via `debug_dbGet` per proposal attempt.
 const MAX_MISSING_TRIE_NODE_REPAIRS: usize = 64;
@@ -42,7 +44,7 @@ impl<L1, L2, E> Prover<L1, L2, E>
 where
     L1: L1Provider,
     L2: ProverL2Provider,
-    E: EnclaveClientTrait,
+    E: TeeExecutor,
 {
     /// Creates a new prover instance.
     ///
@@ -417,14 +419,14 @@ mod tests {
 
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
     use async_trait::async_trait;
-    use base_enclave::Proposal;
+    use base_enclave::{AggregateRequest, Proposal};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use base_tee_prover::TeeExecutor;
     use rstest::rstest;
     use types::test_helpers::test_proposal;
 
     use super::*;
-    use crate::{enclave::EnclaveClientTrait, test_utils::test_prover};
+    use crate::test_utils::test_prover;
 
     fn zero_proposal() -> Proposal {
         Proposal {
@@ -501,14 +503,8 @@ mod tests {
         ) -> Result<Proposal, ClientError> {
             unimplemented!("not needed for aggregate tests")
         }
-    }
 
-    #[async_trait]
-    impl EnclaveClientTrait for MockEnclaveClient {
-        async fn aggregate(
-            &self,
-            _request: base_enclave::AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
+        async fn aggregate(&self, _req: AggregateRequest) -> Result<Proposal, ClientError> {
             Ok(self.aggregate_result.clone())
         }
     }
@@ -612,14 +608,8 @@ mod tests {
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-    }
 
-    #[async_trait]
-    impl EnclaveClientTrait for FailingEnclaveClient {
-        async fn aggregate(
-            &self,
-            _: base_enclave::AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
+        async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
             Err(ClientError::ClientCreation("enclave aggregate failed".into()))
         }
     }
@@ -656,14 +646,8 @@ mod tests {
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-    }
 
-    #[async_trait]
-    impl EnclaveClientTrait for SlowEnclaveClient {
-        async fn aggregate(
-            &self,
-            _: base_enclave::AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
+        async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
             Ok(zero_proposal())
         }

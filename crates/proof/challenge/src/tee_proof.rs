@@ -1,9 +1,8 @@
 //! TEE-based nullification proof generation for the challenger.
 //!
-//! Re-executes a specific intermediate block inside a TEE to produce a
-//! nullification proof, proving that a claimed output root is wrong. This
-//! mirrors the proposer's use of `execute_stateless()` but for the inverse
-//! purpose: demonstrating that an onchain checkpoint is invalid.
+//! Re-executes a range of intermediate blocks inside a TEE to produce a
+//! nullification proof, proving that a claimed output root is wrong.
+//! Delegates block proving and aggregation to the shared [`RangeProver`].
 //!
 //! ## Proof format
 //!
@@ -24,14 +23,10 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::{B256, Bytes};
-use base_enclave::{RollupConfig, l2_block_to_block_info};
-use base_enclave_client::ExecuteStatelessRequest;
+use alloy_primitives::{Address, B256, Bytes};
 use base_proof_rpc::{L1Provider, RollupProvider, RpcError};
-use base_protocol::Predeploys;
 use base_tee_prover::{
-    ConfigBuilder, ENCLAVE_TIMEOUT, ExecutionWitnessProvider, ProofEncoder, ReceiptConverter,
-    TeeExecutor, TransactionSerializer,
+    ExecutionWitnessProvider, ProofEncoder, RangeProver, RangeProverError, TeeExecutor,
 };
 use thiserror::Error;
 use tracing::info;
@@ -39,13 +34,9 @@ use tracing::info;
 /// Errors that can occur during TEE proof generation.
 #[derive(Debug, Error)]
 pub enum TeeProofError {
-    /// Enclave execution failed.
-    #[error("enclave execution failed: {0}")]
-    Enclave(#[from] base_enclave_client::ClientError),
-
-    /// Enclave execution timed out.
-    #[error("enclave execution timed out")]
-    Timeout,
+    /// Range prover failed.
+    #[error(transparent)]
+    RangeProver(#[from] RangeProverError),
 
     /// RPC data fetch failed.
     #[error("failed to fetch {context}: {source}")]
@@ -69,16 +60,16 @@ impl TeeProofError {
     /// Returns `true` if the error is transient and the operation can be retried.
     pub const fn is_retryable(&self) -> bool {
         match self {
+            Self::RangeProver(e) => e.is_retryable(),
             Self::Rpc { source, .. } => source.is_retryable(),
-            Self::Enclave(e) => e.is_retryable(),
-            Self::Timeout | Self::DataPrep(_) | Self::Encoding(_) => false,
+            Self::DataPrep(_) | Self::Encoding(_) => false,
         }
     }
 }
 
 /// Generates TEE-based nullification proofs for invalid candidate games.
 ///
-/// Re-executes a specific intermediate block inside a TEE to produce a
+/// Re-executes a range of intermediate blocks inside a TEE to produce a
 /// proof that the claimed output root at that checkpoint is wrong.
 #[derive(Debug)]
 pub struct TeeProofGenerator<E, L1, L2, R> {
@@ -116,14 +107,15 @@ where
 
     /// Generates a TEE nullification proof for an invalid intermediate checkpoint.
     ///
-    /// The target block is computed as:
-    /// `starting_block_number + (invalid_index + 1) * intermediate_block_interval`
+    /// Proves every block in the intermediate interval and aggregates the
+    /// results, matching the format the `AggregateVerifier` contract expects.
     ///
     /// # Arguments
     ///
     /// * `game` - The candidate game containing the invalid checkpoint
     /// * `invalid_index` - Zero-based index of the first invalid intermediate root
     /// * `intermediate_block_interval` - Number of blocks between checkpoints
+    /// * `prev_output_root` - The output root at the block before the interval starts
     ///
     /// # Returns
     ///
@@ -137,20 +129,19 @@ where
         game: &crate::CandidateGame,
         invalid_index: usize,
         intermediate_block_interval: u64,
+        prev_output_root: B256,
     ) -> Result<Bytes, TeeProofError> {
-        let index_plus_one =
-            u64::try_from(invalid_index).ok().and_then(|i| i.checked_add(1)).ok_or_else(|| {
-                TeeProofError::DataPrep("arithmetic overflow computing target block".into())
-            })?;
-        let target_block_number = index_plus_one
-            .checked_mul(intermediate_block_interval)
+        let prev_block_number = u64::try_from(invalid_index)
+            .ok()
+            .and_then(|i| i.checked_mul(intermediate_block_interval))
             .and_then(|offset| game.starting_block_number.checked_add(offset))
             .ok_or_else(|| {
-                TeeProofError::DataPrep("arithmetic overflow computing target block".into())
+                TeeProofError::DataPrep("arithmetic overflow computing prev block".into())
             })?;
 
         info!(
-            target_block = %target_block_number,
+            prev_block = %prev_block_number,
+            block_count = %intermediate_block_interval,
             game_index = %game.index,
             invalid_index = %invalid_index,
             "generating TEE proof"
@@ -163,150 +154,41 @@ where
             .await
             .map_err(|e| TeeProofError::Rpc { context: "rollup config", source: e })?;
 
-        // Fetch the target block to get its header and transactions
-        let target_block = self
-            .l2_provider
-            .block_by_number(Some(target_block_number))
-            .await
-            .map_err(|e| TeeProofError::Rpc { context: "target block", source: e })?;
+        let range_prover = RangeProver::new(
+            rollup_config,
+            Arc::clone(&self.l1_provider),
+            Arc::clone(&self.l2_provider),
+            Arc::clone(&self.enclave_client),
+            Address::ZERO,
+            self.tee_image_hash,
+            "base-challenger",
+        )?;
 
-        let block_hash = target_block.header.hash;
+        let proposal = range_prover
+            .prove_range(prev_block_number, intermediate_block_interval, prev_output_root, vec![])
+            .await?;
 
-        // Get the first transaction to derive L1 origin info
-        let first_tx = target_block
-            .transactions
-            .txns()
-            .next()
-            .ok_or_else(|| TeeProofError::DataPrep("no transactions in target block".into()))?;
+        let l1_origin_number: u64 = proposal
+            .l1_origin_number
+            .try_into()
+            .map_err(|_| TeeProofError::DataPrep("L1 origin number overflows u64".into()))?;
 
-        let first_tx_bytes = TransactionSerializer::serialize_rpc_transaction(first_tx)
-            .map_err(|e| TeeProofError::DataPrep(e.to_string()))?;
-
-        // Derive L2 block info to get L1 origin
-        let l2_block_info = l2_block_to_block_info(
-            &rollup_config,
-            &target_block.header.inner,
-            block_hash,
-            &first_tx_bytes,
+        let proof_bytes = ProofEncoder::encode_proof_bytes(
+            &proposal.signature,
+            proposal.l1_origin_hash,
+            l1_origin_number,
         )
-        .map_err(|e| TeeProofError::DataPrep(format!("L2 block info derivation: {e}")))?;
-
-        let l1_origin_hash = l2_block_info.l1_origin.hash;
-        let l1_origin_number = l2_block_info.l1_origin.number;
-
-        // Fetch all required data in parallel
-        let (
-            witness_result,
-            msg_account_result,
-            prev_block_result,
-            prev_msg_account_result,
-            l1_origin_result,
-            l1_receipts_result,
-        ) = tokio::join!(
-            self.l2_provider.execution_witness(target_block_number),
-            self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, block_hash),
-            self.l2_provider.block_by_hash(target_block.header.parent_hash),
-            self.l2_provider
-                .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, target_block.header.parent_hash),
-            self.l1_provider.header_by_hash(l1_origin_hash),
-            self.l1_provider.block_receipts(l1_origin_hash),
-        );
-
-        let witness = witness_result
-            .map_err(|e| TeeProofError::Rpc { context: "execution witness", source: e })?;
-        let msg_account = msg_account_result
-            .map_err(|e| TeeProofError::Rpc { context: "message account proof", source: e })?;
-        let prev_block = prev_block_result
-            .map_err(|e| TeeProofError::Rpc { context: "previous block", source: e })?;
-        let prev_msg_account = prev_msg_account_result
-            .map_err(|e| TeeProofError::Rpc { context: "previous message account", source: e })?;
-        let l1_origin = l1_origin_result
-            .map_err(|e| TeeProofError::Rpc { context: "L1 origin header", source: e })?;
-        let l1_receipts = l1_receipts_result
-            .map_err(|e| TeeProofError::Rpc { context: "L1 receipts", source: e })?;
-
-        // Serialize previous block transactions (all types including deposits)
-        let prev_block_txs = TransactionSerializer::serialize_block_transactions(&prev_block, true)
-            .map_err(|e| TeeProofError::DataPrep(e.to_string()))?;
-
-        // Serialize current block transactions (excluding deposits)
-        let sequenced_txs =
-            TransactionSerializer::serialize_block_transactions(&target_block, false)
-                .map_err(|e| TeeProofError::DataPrep(e.to_string()))?;
-
-        let chain_config = ConfigBuilder::build_chain_config(&rollup_config, "base-challenger");
-        let config_hash = Self::compute_config_hash(&rollup_config);
-        let l1_receipt_envelopes = ReceiptConverter::convert_receipts(l1_receipts);
-
-        let request = ExecuteStatelessRequest {
-            config: chain_config,
-            config_hash,
-            l1_origin: l1_origin.inner,
-            l1_receipts: l1_receipt_envelopes,
-            previous_block_txs: prev_block_txs,
-            block_header: target_block.header.inner,
-            sequenced_txs,
-            witness,
-            message_account: msg_account,
-            prev_message_account_hash: prev_msg_account.storage_hash,
-            // The challenger proves invalidity, it does not propose new outputs.
-            // Address::ZERO is the correct value for nullification proofs.
-            proposer: alloy_primitives::Address::ZERO,
-            tee_image_hash: self.tee_image_hash,
-        };
-
-        let proposal =
-            tokio::time::timeout(ENCLAVE_TIMEOUT, self.enclave_client.execute_stateless(request))
-                .await
-                .map_err(|_| TeeProofError::Timeout)?
-                .map_err(TeeProofError::Enclave)?;
-
-        let proof_bytes =
-            ProofEncoder::encode_proof_bytes(&proposal.signature, l1_origin_hash, l1_origin_number)
-                .map_err(|e| TeeProofError::Encoding(e.to_string()))?;
+        .map_err(|e| TeeProofError::Encoding(e.to_string()))?;
 
         info!(
-            target_block = %target_block_number,
+            prev_block = %prev_block_number,
+            block_count = %intermediate_block_interval,
             game_index = %game.index,
             proof_len = %proof_bytes.len(),
             "TEE proof generated"
         );
 
         Ok(proof_bytes)
-    }
-
-    /// Computes the canonical config hash from the rollup configuration.
-    ///
-    /// Uses default values when genesis `system_config` is missing, mirroring
-    /// the original challenger behavior.
-    fn compute_config_hash(rollup_config: &RollupConfig) -> B256 {
-        // Use the shared helper when system_config is present, otherwise fall back
-        // to defaults to match the original challenger behavior.
-        ConfigBuilder::compute_config_hash(rollup_config).unwrap_or_else(|_| {
-            use alloy_primitives::U256;
-            use base_enclave::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig};
-
-            let mut per_chain = PerChainConfig {
-                chain_id: U256::from(rollup_config.l2_chain_id.id()),
-                genesis: Genesis {
-                    l1: BlockId {
-                        hash: rollup_config.genesis.l1.hash,
-                        number: rollup_config.genesis.l1.number,
-                    },
-                    l2: BlockId {
-                        hash: rollup_config.genesis.l2.hash,
-                        number: rollup_config.genesis.l2.number,
-                    },
-                    l2_time: rollup_config.genesis.l2_time,
-                    system_config: GenesisSystemConfig::default(),
-                },
-                block_time: rollup_config.block_time,
-                deposit_contract_address: rollup_config.deposit_contract_address,
-                l1_system_config_address: rollup_config.l1_system_config_address,
-            };
-            per_chain.force_defaults();
-            per_chain.hash()
-        })
     }
 }
 
@@ -323,13 +205,15 @@ mod tests {
     use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader, TransactionReceipt};
     use async_trait::async_trait;
     use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
-    use base_enclave::{AccountResult, ExecutionWitness, Proposal, default_rollup_config};
-    use base_enclave_client::ClientError;
+    use base_enclave::{
+        AccountResult, AggregateRequest, ExecutionWitness, Proposal, RollupConfig,
+        default_rollup_config,
+    };
+    use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_rpc::{L2Provider, OpBlock, RollupProvider, RpcResult};
-    use base_protocol::L1BlockInfoBedrock;
-    use base_tee_prover::PROOF_TYPE_TEE;
-    use jsonrpsee::core::client::Error as JrpcError;
+    use base_protocol::{L1BlockInfoBedrock, Predeploys};
+    use base_tee_prover::{ConfigBuilder, PROOF_TYPE_TEE, ReceiptConverter, TransactionSerializer};
 
     use super::*;
     use crate::CandidateGame;
@@ -369,6 +253,13 @@ mod tests {
             req: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             *self.captured_request.lock().unwrap() = Some(req);
+            match &self.result {
+                Ok(p) => Ok(p.clone()),
+                Err(e) => Err(ClientError::ClientCreation(e.to_string())),
+            }
+        }
+
+        async fn aggregate(&self, _req: AggregateRequest) -> Result<Proposal, ClientError> {
             match &self.result {
                 Ok(p) => Ok(p.clone()),
                 Err(e) => Err(ClientError::ClientCreation(e.to_string())),
@@ -692,7 +583,8 @@ mod tests {
         let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
-        let result = generator.generate_tee_proof(&game, usize::MAX, 1).await;
+        // index * interval overflows: usize::MAX * 2
+        let result = generator.generate_tee_proof(&game, usize::MAX, 2, B256::ZERO).await;
         let err = result.unwrap_err();
         assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("arithmetic overflow"));
@@ -703,7 +595,8 @@ mod tests {
         let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
-        let result = generator.generate_tee_proof(&game, 1, u64::MAX / 2 + 1).await;
+        // index * interval overflows: 2 * (u64::MAX / 2 + 1)
+        let result = generator.generate_tee_proof(&game, 2, u64::MAX / 2 + 1, B256::ZERO).await;
         let err = result.unwrap_err();
         assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("arithmetic overflow"));
@@ -714,7 +607,8 @@ mod tests {
         let generator = generator_with_no_data();
         let game = test_candidate_game(u64::MAX - 50);
 
-        let result = generator.generate_tee_proof(&game, 0, 100).await;
+        // index * interval + starting_block overflows: 1 * 100 + (u64::MAX - 50)
+        let result = generator.generate_tee_proof(&game, 1, 100, B256::ZERO).await;
         let err = result.unwrap_err();
         assert!(matches!(err, TeeProofError::DataPrep(_)));
         assert!(err.to_string().contains("arithmetic overflow"));
@@ -776,12 +670,6 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_tee_proof_error_enclave_display() {
-        let err = TeeProofError::Enclave(ClientError::ClientCreation("test".into()));
-        assert!(err.to_string().contains("enclave execution failed"));
-    }
-
-    #[test]
     fn test_tee_proof_error_rpc_display() {
         let err = TeeProofError::Rpc {
             context: "rollup config",
@@ -839,48 +727,18 @@ mod tests {
     }
 
     #[test]
-    fn test_is_not_retryable_enclave_creation_error() {
-        let err = TeeProofError::Enclave(ClientError::ClientCreation("down".into()));
-        assert!(!err.is_retryable());
-    }
-
-    #[test]
-    fn test_is_retryable_enclave_transport() {
-        let inner = JrpcError::Transport("connection refused".into());
-        let err = TeeProofError::Enclave(ClientError::Rpc(inner));
+    fn test_is_retryable_range_prover_rpc() {
+        let inner = RangeProverError::Rpc {
+            context: "target block",
+            source: RpcError::Transport("connection reset".into()),
+        };
+        let err = TeeProofError::RangeProver(inner);
         assert!(err.is_retryable());
     }
 
     #[test]
-    fn test_is_retryable_enclave_request_timeout() {
-        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::RequestTimeout));
-        assert!(err.is_retryable());
-    }
-
-    #[test]
-    fn test_is_retryable_enclave_restart_needed() {
-        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::RestartNeeded(
-            std::sync::Arc::new(JrpcError::Custom("died".into())),
-        )));
-        assert!(err.is_retryable());
-    }
-
-    #[test]
-    fn test_is_retryable_enclave_service_disconnect() {
-        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::ServiceDisconnect));
-        assert!(err.is_retryable());
-    }
-
-    #[test]
-    fn test_is_not_retryable_enclave_call_error() {
-        let call_err = jsonrpsee_types::ErrorObject::owned(-32000, "enclave rejected", None::<()>);
-        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::Call(call_err)));
-        assert!(!err.is_retryable());
-    }
-
-    #[test]
-    fn test_is_not_retryable_enclave_invalid_url() {
-        let err = TeeProofError::Enclave(ClientError::InvalidUrl("bad://url".into()));
+    fn test_is_not_retryable_range_prover_empty() {
+        let err = TeeProofError::RangeProver(RangeProverError::Empty);
         assert!(!err.is_retryable());
     }
 
@@ -894,13 +752,6 @@ mod tests {
     fn test_tee_proof_error_encoding_display() {
         let err = TeeProofError::Encoding("bad bytes".into());
         assert_eq!(err.to_string(), "proof encoding failed: bad bytes");
-    }
-
-    #[test]
-    fn test_tee_proof_error_from_client_error() {
-        let client_err = ClientError::ClientCreation("conn refused".into());
-        let tee_err: TeeProofError = client_err.into();
-        assert!(matches!(tee_err, TeeProofError::Enclave(_)));
     }
 
     // ========================================================================
@@ -917,7 +768,7 @@ mod tests {
         let generator = TeeProofGenerator::new(enclave, l1, l2, rollup, B256::ZERO);
         let game = test_candidate_game(100);
 
-        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        let result = generator.generate_tee_proof(&game, 0, 10, B256::ZERO).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, TeeProofError::Rpc { .. }));
@@ -937,10 +788,9 @@ mod tests {
         let generator = TeeProofGenerator::new(enclave, l1, l2, rollup, B256::ZERO);
         let game = test_candidate_game(100);
 
-        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        let result = generator.generate_tee_proof(&game, 0, 10, B256::ZERO).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::Rpc { .. }));
-        assert!(err.to_string().contains("target block"));
+        assert!(matches!(err, TeeProofError::RangeProver(RangeProverError::Rpc { .. })));
     }
 
     #[tokio::test]
@@ -968,10 +818,10 @@ mod tests {
         let generator = TeeProofGenerator::new(enclave, l1, Arc::new(l2), rollup, B256::ZERO);
         let game = test_candidate_game(100);
 
-        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        // interval=1, index=9 => prev_block=109, proves only block 110 (the empty one)
+        let result = generator.generate_tee_proof(&game, 9, 1, B256::ZERO).await;
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::DataPrep(_)));
-        assert!(err.to_string().contains("no transactions"));
+        assert!(matches!(err, TeeProofError::RangeProver(RangeProverError::DataPrep(_))));
     }
 
     #[tokio::test]
@@ -992,11 +842,14 @@ mod tests {
         );
         let game = test_candidate_game(100);
 
-        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        // interval=1, index=9 => prev_block=109, proves only block 110
+        let result = generator.generate_tee_proof(&game, 9, 1, B256::ZERO).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, TeeProofError::Enclave(_)), "expected Enclave error, got: {err}");
-        assert!(err.to_string().contains("enclave down"));
+        assert!(
+            matches!(err, TeeProofError::RangeProver(RangeProverError::Enclave(_))),
+            "expected Enclave error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1015,7 +868,8 @@ mod tests {
         );
         let game = test_candidate_game(100);
 
-        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        // interval=1, invalid_index=9 => prev_block=109, proves block 110
+        let result = generator.generate_tee_proof(&game, 9, 1, B256::ZERO).await;
         assert!(result.is_ok(), "expected Ok, got: {}", result.unwrap_err());
 
         let proof = result.unwrap();
@@ -1030,11 +884,6 @@ mod tests {
         number_bytes.copy_from_slice(&proof[57..65]);
         assert_eq!(u64::from_be_bytes(number_bytes), 500);
         assert_eq!(proof[129], 27);
-
-        // Verify the enclave received a request with the correct target block number
-        let captured = enclave.captured_request.lock().unwrap();
-        let req = captured.as_ref().expect("enclave should have received a request");
-        assert_eq!(req.block_header.number, target_block_number);
     }
 
     // ========================================================================

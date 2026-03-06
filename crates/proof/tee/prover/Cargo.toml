@@ -20,15 +20,25 @@ alloy-rpc-types-eth.workspace = true
 
 # Base
 base-enclave.workspace = true
+base-protocol.workspace = true
 base-proof-rpc.workspace = true
 base-enclave-client.workspace = true
 base-alloy-rpc-types.workspace = true
 
 # Async
+tokio.workspace = true
 async-trait.workspace = true
+
+# Tracing
+tracing.workspace = true
 
 # Error handling
 thiserror.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+serde_json.workspace = true
+alloy-rlp.workspace = true
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

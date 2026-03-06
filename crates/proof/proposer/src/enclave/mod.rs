@@ -1,30 +1,10 @@
 //! Enclave client types for TEE proof generation.
 
-use async_trait::async_trait;
-use base_enclave::{AggregateRequest, RollupConfig};
+use base_enclave::RollupConfig;
 pub use base_enclave::{PerChainConfig, Proposal};
-use base_enclave_client::ClientError;
 pub use base_enclave_client::EnclaveClient;
-use base_tee_prover::TeeExecutor;
 
 use crate::ProposerError;
-
-/// Trait abstracting the enclave RPC client for testability.
-///
-/// Extends [`TeeExecutor`] (which provides `execute_stateless`) with the
-/// `aggregate` method needed only by the proposer.
-#[async_trait]
-pub trait EnclaveClientTrait: TeeExecutor {
-    /// Aggregates multiple proposals into a single batched proposal.
-    async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError>;
-}
-
-#[async_trait]
-impl EnclaveClientTrait for EnclaveClient {
-    async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
-        self.aggregate(request).await
-    }
-}
 
 /// Convert a [`RollupConfig`] (from RPC) to [`PerChainConfig`].
 ///

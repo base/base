@@ -4360,14 +4360,20 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-rlp",
  "alloy-rpc-types-eth",
  "async-trait",
+ "base-alloy-consensus",
  "base-alloy-rpc-types",
  "base-enclave",
  "base-enclave-client",
  "base-proof-rpc",
+ "base-protocol",
  "rstest",
+ "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

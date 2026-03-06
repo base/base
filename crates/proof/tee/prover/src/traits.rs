@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use base_enclave::{ExecutionWitness, Proposal};
+use base_enclave::{AggregateRequest, ExecutionWitness, Proposal};
 use base_enclave_client::{ClientError, EnclaveClient, ExecuteStatelessRequest};
 use base_proof_rpc::{L2Provider, RpcResult};
 
-/// Trait for executing stateless block validation in a TEE.
+/// Trait for executing stateless block validation and aggregation in a TEE.
 ///
-/// Both the proposer and challenger need `execute_stateless`; only the proposer
-/// needs `aggregate`. This trait extracts the shared requirement.
+/// Both the proposer and challenger need `execute_stateless` and `aggregate`.
 #[async_trait]
 pub trait TeeExecutor: Send + Sync {
     /// Executes stateless block validation in the enclave.
@@ -14,6 +13,9 @@ pub trait TeeExecutor: Send + Sync {
         &self,
         req: ExecuteStatelessRequest,
     ) -> Result<Proposal, ClientError>;
+
+    /// Aggregates multiple proposals into a single batched proposal.
+    async fn aggregate(&self, req: AggregateRequest) -> Result<Proposal, ClientError>;
 }
 
 /// Blanket implementation for [`EnclaveClient`].
@@ -24,6 +26,10 @@ impl TeeExecutor for EnclaveClient {
         req: ExecuteStatelessRequest,
     ) -> Result<Proposal, ClientError> {
         self.execute_stateless(req).await
+    }
+
+    async fn aggregate(&self, req: AggregateRequest) -> Result<Proposal, ClientError> {
+        self.aggregate(req).await
     }
 }
 
