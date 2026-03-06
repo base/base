@@ -1,5 +1,12 @@
 # Pectra Blob Schedule (Optional) Network Upgrade
 
+## Activation Timestamps
+
+| Network | Activation timestamp |
+| --- | --- |
+| `mainnet` | Not activated |
+| `sepolia` | `1742486400` (2025-03-20 16:00:00 UTC) |
+
 The Pectra Blob Schedule hardfork is an optional hardfork which delays the adoption of the
 Prague blob base fee update fraction until the specified time. Until that time, the Cancun
 update fraction from the previous fork is retained.

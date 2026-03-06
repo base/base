@@ -1,5 +1,12 @@
 # Canyon
 
+## Activation Timestamps
+
+| Network | Activation timestamp |
+| --- | --- |
+| `mainnet` | `1704992401` (2024-01-11 17:00:01 UTC) |
+| `sepolia` | `1699981200` (2023-11-14 17:00:00 UTC) |
+
 [eip3651]: https://eips.ethereum.org/EIPS/eip-3651
 [eip3855]: https://eips.ethereum.org/EIPS/eip-3855
 [eip3860]: https://eips.ethereum.org/EIPS/eip-3860
