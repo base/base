@@ -3,6 +3,8 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
+use base_alloy_hardforks::OpHardfork;
+
 /// Hardfork configuration.
 ///
 /// See: <https://github.com/ethereum-optimism/superchain-registry/blob/8ff62ada16e14dd59d0fb94ffb47761c7fa96e01/ops/internal/config/chain.go#L102-L110>
@@ -85,6 +87,26 @@ impl Display for HardForkConfig {
 }
 
 impl HardForkConfig {
+    /// Returns the activation timestamp for `hardfork`, or `None` if not scheduled.
+    ///
+    /// Bedrock is block-based rather than timestamp-based and always returns `None`.
+    /// `pectra_blob_schedule` is a `HardForkConfig` field but not an `OpHardfork` variant
+    /// and is therefore not reachable via this method.
+    pub fn timestamp_for(&self, hardfork: OpHardfork) -> Option<u64> {
+        match hardfork {
+            OpHardfork::Bedrock => None,
+            OpHardfork::Regolith => self.regolith_time,
+            OpHardfork::Canyon => self.canyon_time,
+            OpHardfork::Ecotone => self.ecotone_time,
+            OpHardfork::Fjord => self.fjord_time,
+            OpHardfork::Granite => self.granite_time,
+            OpHardfork::Holocene => self.holocene_time,
+            OpHardfork::Isthmus => self.isthmus_time,
+            OpHardfork::Jovian => self.jovian_time,
+            _ => None,
+        }
+    }
+
     /// Returns an iterator of hardfork names -> their activation times (if scheduled.)
     pub fn iter(&self) -> impl Iterator<Item = (&'static str, Option<u64>)> {
         [

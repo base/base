@@ -1,6 +1,6 @@
 //! Contains the chain config type.
 
-use alloc::string::String;
+use alloc::{collections::BTreeMap, string::String};
 
 use alloy_chains::Chain;
 use alloy_eips::eip1559::BaseFeeParams;
@@ -141,6 +141,7 @@ impl ChainConfig {
             channel_timeout: 300,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
             chain_op_config: self.base_fee_config(),
+            features: BTreeMap::new(),
         }
     }
 }

@@ -1,11 +1,13 @@
 //! Rollup Config Types
 
+use alloc::collections::BTreeMap;
+
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_alloy_hardforks::{OpHardfork, OpHardforks};
 
-use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
+use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, Feature, HardForkConfig, Ident};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -73,6 +75,13 @@ pub struct RollupConfig {
     /// `chain_op_config` is the chain-specific EIP1559 config for the rollup.
     #[cfg_attr(feature = "serde", serde(default = "BaseFeeConfig::base_mainnet"))]
     pub chain_op_config: BaseFeeConfig,
+    /// Per-feature hardfork activation overrides.
+    ///
+    /// Absent or empty = no features active via the feature system.
+    /// `activation_time` inside each [`Feature`] is resolved by [`RollupConfig::resolve_features`]
+    /// after deserialization.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "BTreeMap::is_empty"))]
+    pub features: BTreeMap<Ident, Feature>,
 }
 
 #[cfg(feature = "arbitrary")]
@@ -100,6 +109,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             protocol_versions_address: Address::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
             chain_op_config,
+            features: BTreeMap::new(),
         })
     }
 }
@@ -123,7 +133,28 @@ impl Default for RollupConfig {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+            features: BTreeMap::new(),
         }
+    }
+}
+
+impl RollupConfig {
+    /// Returns `true` if the named feature is active at `timestamp`.
+    ///
+    /// The activation timestamp is resolved from the feature's configured [`OpHardfork`]
+    /// and cached in the [`Feature`] on first access. Returns `false` if the feature is
+    /// absent from the config or has no hardfork assigned.
+    pub fn is_feature_active(&self, feature_id: &str, timestamp: u64) -> bool {
+        self.features
+            .get(feature_id)
+            .and_then(|f| f.activation_time(&self.hardforks))
+            .is_some_and(|t| timestamp >= t)
+    }
+
+    /// Returns `true` if `timestamp` is the first block where the named feature is active.
+    pub fn is_feature_first_active_block(&self, feature_id: &str, timestamp: u64) -> bool {
+        self.is_feature_active(feature_id, timestamp)
+            && !self.is_feature_active(feature_id, timestamp.saturating_sub(self.block_time))
     }
 }
 
@@ -680,6 +711,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_deserialize_reference_rollup_config() {
+        use alloc::collections::BTreeMap;
         use crate::SystemConfig;
 
         let raw: &str = r#"
@@ -779,6 +811,7 @@ mod tests {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
             chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+            features: BTreeMap::new(),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();

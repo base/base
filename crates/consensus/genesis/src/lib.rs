@@ -8,6 +8,9 @@
 
 extern crate alloc;
 
+mod feature;
+pub use feature::{Feature, Ident};
+
 mod params;
 pub use params::{
     BASE_MAINNET_BASE_FEE_CONFIG, BASE_MAINNET_BASE_FEE_PARAMS,
