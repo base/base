@@ -79,6 +79,9 @@ pub enum ConfigError {
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signing(String),
+    /// Invalid TEE configuration.
+    #[error("invalid TEE config: {0}")]
+    Tee(String),
 }
 
 /// Signing configuration for L1 transaction submission.
@@ -212,7 +215,7 @@ impl ChallengerConfig {
         // Validate tee_image_hash is provided when tee_endpoint is set
         let tee_image_hash = cli.challenger.tee_image_hash;
         if tee_endpoint.is_some() && tee_image_hash.is_none() {
-            return Err(ConfigError::Signing(
+            return Err(ConfigError::Tee(
                 "--tee-image-hash is required when --tee-endpoint is set".to_string(),
             ));
         }
@@ -418,6 +421,10 @@ mod tests {
         ConfigError::Signing("missing key".to_string()),
         "invalid signing config: missing key"
     )]
+    #[case::tee(
+        ConfigError::Tee("missing image hash".to_string()),
+        "invalid TEE config: missing image hash"
+    )]
     fn test_config_error_display(#[case] error: ConfigError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
     }
@@ -514,7 +521,7 @@ mod tests {
     fn test_tee_endpoint_requires_image_hash() {
         let cli = cli_from_args(&["--tee-endpoint", "http://localhost:9999"]);
         let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::Signing(_))));
+        assert!(matches!(result, Err(ConfigError::Tee(_))));
         assert!(result.unwrap_err().to_string().contains("--tee-image-hash is required"));
     }
 
