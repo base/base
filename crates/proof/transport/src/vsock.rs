@@ -1,10 +1,15 @@
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use base_proof_primitives::{ProofBundle, ProofResult};
 use vsock::{VsockAddr, VsockStream};
 
 use crate::{ProofTransport, TransportError, TransportResult};
+
+const PROVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// Vsock-backed proof transport for Nitro Enclaves.
 ///
@@ -57,12 +62,21 @@ impl ProofTransport for VsockTransport {
     async fn prove(&self, bundle: &ProofBundle) -> TransportResult<ProofResult> {
         let bundle = bundle.clone();
         let addr = VsockAddr::new(self.cid, self.port);
-        tokio::task::spawn_blocking(move || {
+        let task = tokio::task::spawn_blocking(move || {
             let mut stream = VsockStream::connect(&addr)?;
+            stream.set_read_timeout(Some(PROVE_TIMEOUT))?;
+            stream.set_write_timeout(Some(PROVE_TIMEOUT))?;
             write_frame(&mut stream, &bundle)?;
             read_frame(&mut stream)
-        })
-        .await
-        .map_err(|e| TransportError::Send(e.to_string()))?
+        });
+        tokio::time::timeout(PROVE_TIMEOUT, task)
+            .await
+            .map_err(|_| {
+                TransportError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "prove timed out",
+                ))
+            })?
+            .map_err(|e| TransportError::Send(e.to_string()))?
     }
 }

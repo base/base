@@ -32,4 +32,4 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 test-utils = []
-vsock = [ "dep:bincode", "dep:serde", "dep:vsock", "tokio/rt" ]
+vsock = ["dep:bincode", "dep:serde", "dep:vsock", "tokio/rt", "tokio/time"]
