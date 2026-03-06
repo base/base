@@ -91,10 +91,23 @@ impl BroadcastLoop {
                     return;
                 }
                 self.metrics.on_message_sent();
-                if let Err(e) = self.stream.send(Message::Text(payload.clone())).await {
-                    self.metrics.on_send_error();
-                    debug!(peer_addr = %peer_addr, error = %e, "Error during ring buffer replay");
-                    return;
+                match tokio::time::timeout(
+                    SEND_TIMEOUT,
+                    self.stream.send(Message::Text(payload.clone())),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        self.metrics.on_send_error();
+                        debug!(peer_addr = %peer_addr, error = %e, "Error during ring buffer replay");
+                        return;
+                    }
+                    Err(_) => {
+                        self.metrics.on_send_error();
+                        debug!(peer_addr = %peer_addr, "Send timeout during ring buffer replay");
+                        return;
+                    }
                 }
             }
 
