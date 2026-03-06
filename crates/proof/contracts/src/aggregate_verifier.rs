@@ -1,7 +1,10 @@
 //! `AggregateVerifier` contract bindings.
 //!
-//! Used to query individual dispute game instances and read the
-//! `BLOCK_INTERVAL` from the implementation contract at startup.
+//! Used to query individual dispute game instances (status, ZK/TEE prover
+//! addresses, output roots), read configuration such as `BLOCK_INTERVAL`
+//! and `INTERMEDIATE_BLOCK_INTERVAL` from the implementation contract, and
+//! construct state-changing calls like `nullify` via the sol!-generated
+//! `IAggregateVerifier::nullifyCall` type.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::RootProvider;
