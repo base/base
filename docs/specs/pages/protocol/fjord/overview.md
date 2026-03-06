@@ -1,5 +1,12 @@
 # Fjord Network Upgrade
 
+## Activation Timestamps
+
+| Network | Activation timestamp |
+| --- | --- |
+| `mainnet` | `1720627201` (2024-07-10 16:00:01 UTC) |
+| `sepolia` | `1716998400` (2024-05-29 16:00:00 UTC) |
+
 ## Execution Layer
 
 - [RIP-7212: Precompile for secp256r1 Curve Support](../precompiles.md#P256VERIFY)

@@ -1,5 +1,12 @@
 # Jovian Network Upgrade
 
+## Activation Timestamps
+
+| Network | Activation timestamp |
+| --- | --- |
+| `mainnet` | `1764691201` (2025-12-02 16:00:01 UTC) |
+| `sepolia` | `1763568001` (2025-11-19 16:00:01 UTC) |
+
 ## Execution Layer
 
 - [Minimum Base Fee](./exec-engine.md#minimum-base-fee)

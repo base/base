@@ -1,5 +1,12 @@
 # Isthmus Network Upgrade
 
+## Activation Timestamps
+
+| Network | Activation timestamp |
+| --- | --- |
+| `mainnet` | `1746806401` (2025-05-09 16:00:01 UTC) |
+| `sepolia` | `1744905600` (2025-04-17 16:00:00 UTC) |
+
 ## Execution Layer
 
 - [Pectra](https://eips.ethereum.org/EIPS/eip-7600) (Execution Layer):

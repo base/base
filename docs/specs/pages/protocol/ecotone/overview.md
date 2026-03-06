@@ -1,5 +1,12 @@
 # Ecotone Network Upgrade
 
+## Activation Timestamps
+
+| Network | Activation timestamp |
+| --- | --- |
+| `mainnet` | `1710374401` (2024-03-14 00:00:01 UTC) |
+| `sepolia` | `1708534800` (2024-02-21 17:00:00 UTC) |
+
 The Ecotone upgrade contains the Dencun upgrade from L1, and adopts EIP-4844 blobs for data-availability.
 
 ## Execution Layer
