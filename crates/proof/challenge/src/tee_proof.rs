@@ -226,10 +226,11 @@ where
         let block_hash = target_block.header.hash;
 
         // Get the first transaction to derive L1 origin info
-        let first_tx =
-            target_block.transactions.txns().next().ok_or_else(|| {
-                TeeProofError::DataPrep("no transactions in target block".into())
-            })?;
+        let first_tx = target_block
+            .transactions
+            .txns()
+            .next()
+            .ok_or_else(|| TeeProofError::DataPrep("no transactions in target block".into()))?;
 
         let first_tx_bytes = Self::serialize_rpc_transaction(first_tx)?;
 
