@@ -207,7 +207,8 @@ where
             EngineError::ChannelClosed
         })?;
 
-        info!(target: "engine", safe_head = ?engine_safe_head, "Attempted L2 Safe Head Update");
+        info!(target: "engine", safe_head = engine_safe_head.block_info.number, "Attempted L2 Safe Head Update");
+        debug!(target: "engine", safe_head = ?engine_safe_head, "Attempted L2 Safe Head Update");
         self.last_safe_head_sent = engine_safe_head;
 
         Ok(())
