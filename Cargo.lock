@@ -2608,6 +2608,7 @@ dependencies = [
 name = "base-builder-publish"
 version = "0.0.0"
 dependencies = [
+ "base-ring-buffer",
  "futures",
  "metrics",
  "rstest",
@@ -4345,6 +4346,10 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
 ]
+
+[[package]]
+name = "base-ring-buffer"
+version = "0.0.0"
 
 [[package]]
 name = "base-test-utils"
@@ -18267,6 +18272,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "backoff",
+ "base-ring-buffer",
  "brotli",
  "futures",
  "http 1.4.0",
