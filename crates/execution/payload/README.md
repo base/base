@@ -1,3 +1,3 @@
 # `base-execution-payload-builder`
 
-Payload builder for Base/Base.
+Payload builder for Base.

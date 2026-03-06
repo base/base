@@ -1,3 +1,3 @@
 # `base-execution-consensus`
 
-Consensus implementation for Base/Base.
+Consensus implementation for Base.

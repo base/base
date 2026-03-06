@@ -1,3 +1,3 @@
 # `base-execution-storage`
 
-Storage implementation for Base/Base.
+Storage implementation for Base.
