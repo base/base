@@ -161,11 +161,11 @@ mod tests {
             parent_beacon_block_root: None,
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -175,7 +175,7 @@ mod tests {
         let encoded = handler.encode(handler.blocks_v2_topic.clone(), envelope).unwrap();
         let decoded = OpNetworkPayloadEnvelope::decode_v2(&encoded).unwrap();
 
-        let msg = decoded.payload_hash.signature_message(10);
+        let msg = decoded.payload_hash.signature_message(8453);
         let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         handler.signer_recv = unsafe_signer;
@@ -206,11 +206,11 @@ mod tests {
             parent_beacon_block_root: None,
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -240,11 +240,11 @@ mod tests {
             parent_beacon_block_root: None,
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -279,11 +279,11 @@ mod tests {
             ),
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -318,11 +318,11 @@ mod tests {
             ),
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -361,11 +361,11 @@ mod tests {
             ),
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -403,11 +403,11 @@ mod tests {
             ),
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -417,7 +417,7 @@ mod tests {
         let encoded = handler.encode(handler.blocks_v4_topic.clone(), envelope).unwrap();
         let decoded = OpNetworkPayloadEnvelope::decode_v4(&encoded).unwrap();
 
-        let msg = decoded.payload_hash.signature_message(10);
+        let msg = decoded.payload_hash.signature_message(8453);
         let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         handler.signer_recv = unsafe_signer;
@@ -449,11 +449,11 @@ mod tests {
             ),
         };
 
-        let msg = envelope.payload_hash.signature_message(10);
+        let msg = envelope.payload_hash.signature_message(8453);
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             unsafe_signer,
         );
 
@@ -463,7 +463,7 @@ mod tests {
         let encoded = handler.encode(handler.blocks_v3_topic.clone(), envelope).unwrap();
         let decoded = OpNetworkPayloadEnvelope::decode_v3(&encoded).unwrap();
 
-        let msg = decoded.payload_hash.signature_message(10);
+        let msg = decoded.payload_hash.signature_message(8453);
         let signer = decoded.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         handler.signer_recv = unsafe_signer;

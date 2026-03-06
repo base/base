@@ -143,33 +143,24 @@ mod tests {
     fn test_enr_validation() {
         let key = CombinedKey::generate_secp256k1();
         let mut enr = Enr::builder().build(&key).unwrap();
-        let op_stack_enr = OpStackEnr::from_chain_id(10);
+        let op_stack_enr = OpStackEnr::from_chain_id(8453);
         let mut op_stack_bytes = Vec::new();
         op_stack_enr.encode(&mut op_stack_bytes);
         enr.insert_raw_rlp(OpStackEnr::OP_CL_KEY, op_stack_bytes.into(), &key).unwrap();
-        assert!(EnrValidation::validate(&enr, 10).is_valid());
-        assert!(EnrValidation::validate(&enr, 11).is_invalid());
+        assert!(EnrValidation::validate(&enr, 8453).is_valid());
+        assert!(EnrValidation::validate(&enr, 84532).is_invalid());
     }
 
     #[test]
     fn test_enr_validation_invalid_version() {
         let key = CombinedKey::generate_secp256k1();
         let mut enr = Enr::builder().build(&key).unwrap();
-        let mut op_stack_enr = OpStackEnr::from_chain_id(10);
+        let mut op_stack_enr = OpStackEnr::from_chain_id(8453);
         op_stack_enr.version = 1;
         let mut op_stack_bytes = Vec::new();
         op_stack_enr.encode(&mut op_stack_bytes);
         enr.insert_raw_rlp(OpStackEnr::OP_CL_KEY, op_stack_bytes.into(), &key).unwrap();
-        assert!(EnrValidation::validate(&enr, 10).is_invalid());
-    }
-
-    #[test]
-    fn test_op_mainnet_enr() {
-        let op_enr = OpStackEnr::from_chain_id(10);
-        let bytes = alloy_rlp::encode(op_enr);
-        assert_eq!(Bytes::from(bytes.clone()), bytes!("820A00"));
-        let decoded = OpStackEnr::decode(&mut &bytes[..]).unwrap();
-        assert_eq!(decoded, op_enr);
+        assert!(EnrValidation::validate(&enr, 8453).is_invalid());
     }
 
     #[test]

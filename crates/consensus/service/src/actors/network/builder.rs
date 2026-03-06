@@ -239,7 +239,7 @@ mod tests {
 
         let driver = network_builder(NetworkBuilderParams {
             rollup_config: RollupConfig {
-                l2_chain_id: Chain::optimism_mainnet(),
+                l2_chain_id: Chain::base_mainnet(),
                 ..Default::default()
             },
             signer,
@@ -251,7 +251,7 @@ mod tests {
         .unwrap();
 
         // Driver Assertions
-        let id = 10;
+        let id = 8453;
         assert_eq!(driver.gossip.addr, gossip_addr);
         assert_eq!(driver.discovery.chain_id, id);
         assert_eq!(driver.discovery.disc.local_enr().tcp4().unwrap(), 9098);
