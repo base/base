@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::B256;
+use base_proof_preimage::PreimageKey;
 
 /// The claim being proven: an L2 output root at a given block, anchored to an L1 head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,4 +62,14 @@ pub struct ProofRequest {
     pub claimed_l2_output_root: B256,
     /// L2 block number that the claimed output root commits to.
     pub claimed_l2_block_number: u64,
+}
+
+/// A proof request bundled with the witness data needed to fulfill it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProofBundle {
+    /// What to prove.
+    pub request: ProofRequest,
+    /// The preimage key-value pairs.
+    pub preimages: Vec<(PreimageKey, Vec<u8>)>,
 }

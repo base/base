@@ -1,27 +1,20 @@
 use async_trait::async_trait;
-use base_proof_primitives::{ProofResult, WitnessBundle};
+use base_proof_primitives::{ProofBundle, ProofResult};
 
 use crate::TransportError;
 
-/// Result type for witness transport operations.
+/// Result type for proof transport operations.
 pub type TransportResult<T> = Result<T, TransportError>;
 
-/// Abstracts how witness bundles reach proof backends and how results come
-/// back.
+/// Proves a [`ProofBundle`] and returns the [`ProofResult`].
 ///
-/// Implementations handle the underlying channel — in-process, `AF_VSOCK`, or
-/// ZK guest stdin — so callers remain transport-agnostic.
-///
-/// Both ends are single-consumer: a transport should be owned by one sender
-/// task and one receiver task. Concurrent calls to [`recv_result`] may
-/// serialize depending on the implementation.
-///
-/// [`recv_result`]: WitnessTransport::recv_result
+/// Implementations handle the underlying mechanics — in-process call,
+/// vsock connection, or remote prover API — so callers remain
+/// transport-agnostic. Each `prove()` call is independent and
+/// self-contained; concurrency is achieved by the caller spawning
+/// multiple `prove()` calls.
 #[async_trait]
-pub trait WitnessTransport: Send + Sync {
-    /// Send a witness bundle to the proof backend.
-    async fn send_witness(&self, bundle: &WitnessBundle) -> TransportResult<()>;
-
-    /// Receive a proof result from the backend.
-    async fn recv_result(&self) -> TransportResult<ProofResult>;
+pub trait ProofTransport: Send + Sync {
+    /// Prove a bundle and return the result.
+    async fn prove(&self, bundle: &ProofBundle) -> TransportResult<ProofResult>;
 }

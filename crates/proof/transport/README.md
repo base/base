@@ -1,14 +1,14 @@
 # base-proof-transport
 
-Witness transport abstraction for proof backends.
+Proof transport abstraction for proof backends.
 
-Defines `WitnessTransport`, a trait that abstracts how witness bundles reach
-proof backends and how results come back. Implementations handle the
-underlying channel — in-process, `AF_VSOCK`, or guest stdin — so callers remain
-transport-agnostic.
+Defines `ProofTransport`, a trait with a single `prove(bundle) -> result`
+method. Implementations handle the underlying mechanics — in-process call,
+vsock connection, or remote API — so callers remain transport-agnostic.
 
 ## Transports
 
 | Transport | Purpose |
 |-----------|---------|
 | `NativeTransport` | In-process channel for testing and single-process provers |
+| `VsockTransport` | Connect-per-request bincode over `AF_VSOCK` for Nitro Enclaves (feature `vsock`, unix-only) |
