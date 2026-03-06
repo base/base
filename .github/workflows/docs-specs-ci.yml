@@ -1,0 +1,36 @@
+name: Docs Specs CI
+
+on:
+  pull_request:
+    paths:
+      - "docs/specs/**"
+  push:
+    branches: [main]
+    paths:
+      - "docs/specs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs-specs-build:
+    name: Docs Specs Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs/specs/package-lock.json
+      - name: Install dependencies
+        working-directory: docs/specs
+        run: npm ci
+      - name: Build specs site
+        working-directory: docs/specs
+        run: npm run build
