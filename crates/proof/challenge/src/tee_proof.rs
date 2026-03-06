@@ -380,11 +380,14 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
 mod tests {
     use std::collections::HashMap;
 
-    use alloy_primitives::{Address, U256, address};
-    use alloy_rpc_types_eth::Header as RpcHeader;
-    use base_enclave::AccountResult;
+    use alloy_consensus::{Header as ConsensusHeader, Sealable};
+    use alloy_primitives::{Address, TxKind, U256, address, b256};
+    use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader};
+    use base_alloy_consensus::TxDeposit;
+    use base_enclave::{AccountResult, default_rollup_config};
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_rpc::RpcError;
+    use base_protocol::L1BlockInfoBedrock;
     use rstest::rstest;
 
     use super::*;
@@ -558,6 +561,148 @@ mod tests {
         }
     }
 
+    /// Creates a deposit transaction carrying L1 block info (Bedrock format).
+    ///
+    /// The returned `OpTransaction` can be placed as the first transaction in an
+    /// `OpBlock` so that `l2_block_to_block_info` can derive the L1 origin.
+    fn make_deposit_tx(l1_hash: B256, l1_number: u64) -> OpTransaction {
+        let l1_info = L1BlockInfoBedrock::new(
+            l1_number,
+            1_700_000_000, // timestamp
+            1_000_000_000, // base_fee
+            l1_hash,
+            0,                  // sequence_number
+            Address::ZERO,      // batcher_address
+            U256::ZERO,         // l1_fee_overhead
+            U256::from(684000), // l1_fee_scalar
+        );
+        let calldata = base_protocol::L1BlockInfoTx::Bedrock(l1_info).encode_calldata();
+
+        let deposit = TxDeposit {
+            source_hash: B256::repeat_byte(0x01),
+            from: address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001"),
+            to: TxKind::Call(address!("4200000000000000000000000000000000000015")),
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 1_000_000,
+            is_system_transaction: true,
+            input: calldata,
+        };
+
+        let sealed = deposit.seal_slow();
+        let envelope = OpTxEnvelope::Deposit(sealed);
+
+        OpTransaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: alloy_consensus::transaction::Recovered::new_unchecked(
+                    envelope,
+                    Address::ZERO,
+                ),
+                block_hash: None,
+                block_number: None,
+                transaction_index: Some(0),
+                effective_gas_price: Some(0),
+            },
+            deposit_nonce: Some(0),
+            deposit_receipt_version: None,
+        }
+    }
+
+    /// Builds a minimal `OpBlock` containing only a deposit transaction.
+    fn make_test_block(
+        block_number: u64,
+        parent_hash: B256,
+        l1_origin_hash: B256,
+        l1_origin_number: u64,
+    ) -> OpBlock {
+        let deposit_tx = make_deposit_tx(l1_origin_hash, l1_origin_number);
+        let consensus_header = ConsensusHeader {
+            parent_hash,
+            number: block_number,
+            timestamp: 1_700_000_000 + block_number * 2,
+            ..Default::default()
+        };
+        let block_hash = consensus_header.hash_slow();
+        let rpc_header =
+            RpcHeader { hash: block_hash, inner: consensus_header, ..Default::default() };
+
+        Block {
+            header: rpc_header,
+            uncles: vec![],
+            transactions: BlockTransactions::Full(vec![deposit_tx]),
+            withdrawals: None,
+        }
+    }
+
+    /// Creates a minimal `AccountResult` for testing.
+    fn mock_account_result() -> AccountResult {
+        AccountResult {
+            address: Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            account_proof: vec![],
+            balance: U256::ZERO,
+            code_hash: b256!("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+            nonce: U256::ZERO,
+            storage_hash: B256::repeat_byte(0x01),
+            storage_proof: vec![],
+        }
+    }
+
+    /// Builds fully-wired test fixtures: mock providers populated with
+    /// consistent block, header, proof, and witness data.
+    ///
+    /// Returns `(l2_provider, l1_provider, rollup_provider, l1_origin_hash)`.
+    fn wired_providers(
+        target_block_number: u64,
+    ) -> (MockChallengerL2Provider, MockL1Provider, MockRollupProvider, B256) {
+        let l1_origin_hash = B256::repeat_byte(0xEE);
+        let l1_origin_number = 500u64;
+
+        // Target block (the one we re-execute)
+        let parent_hash = B256::repeat_byte(0x22);
+        let target_block =
+            make_test_block(target_block_number, parent_hash, l1_origin_hash, l1_origin_number);
+        let target_hash = target_block.header.hash;
+
+        // Previous block (parent of target)
+        let prev_block = make_test_block(
+            target_block_number - 1,
+            B256::repeat_byte(0x33),
+            l1_origin_hash,
+            l1_origin_number,
+        );
+
+        let account = mock_account_result();
+        let witness = ExecutionWitness {
+            headers: vec![prev_block.header.inner.clone()],
+            codes: HashMap::new(),
+            state: HashMap::new(),
+        };
+
+        let l1_header = RpcHeader {
+            hash: l1_origin_hash,
+            inner: ConsensusHeader { number: l1_origin_number, ..Default::default() },
+            ..Default::default()
+        };
+
+        let mut l2 = MockChallengerL2Provider::new();
+        l2.blocks.insert(target_block_number, target_block);
+        l2.blocks_by_hash.insert(parent_hash, prev_block);
+        l2.proofs.insert(target_hash, account.clone());
+        l2.proofs.insert(parent_hash, account);
+        l2.witness = Some(witness);
+
+        let mut l1_headers = HashMap::new();
+        l1_headers.insert(l1_origin_hash, l1_header);
+        let mut l1_receipts = HashMap::new();
+        l1_receipts.insert(l1_origin_hash, vec![]);
+
+        let l1 = MockL1Provider { headers: l1_headers, receipts: l1_receipts };
+
+        let rollup = MockRollupProvider { config: Some(default_rollup_config()) };
+
+        (l2, l1, rollup, l1_origin_hash)
+    }
+
     // ========================================================================
     // Proof encoding tests
     // ========================================================================
@@ -699,7 +844,7 @@ mod tests {
     // ========================================================================
 
     #[tokio::test]
-    async fn test_generate_tee_proof_data_fetch_error() {
+    async fn test_generate_tee_proof_rollup_config_missing() {
         let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
         let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
         let l2 = Arc::new(MockChallengerL2Provider::new());
@@ -710,26 +855,65 @@ mod tests {
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), TeeProofError::DataFetch(_)));
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(err.to_string().contains("rollup config"));
     }
 
     #[tokio::test]
     async fn test_generate_tee_proof_enclave_error() {
+        let target_block_number = 110u64;
+        let (l2, l1, rollup, _) = wired_providers(target_block_number);
+
+        // Enclave client configured to fail
         let enclave = Arc::new(MockEnclaveClient {
             result: Err(ClientError::ClientCreation("enclave down".into())),
         });
-        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
-        let l2 = Arc::new(MockChallengerL2Provider {
-            error: Some("block not found".into()),
-            ..MockChallengerL2Provider::new()
-        });
-        let rollup = Arc::new(MockRollupProvider { config: None });
 
-        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let generator =
+            TeeProofGenerator::new(enclave, Arc::new(l1), Arc::new(l2), Arc::new(rollup));
         let game = test_candidate_game(100);
 
-        // This will fail at data fetch since rollup config is missing
         let result = generator.generate_tee_proof(&game, 0, 10).await;
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::Enclave(_)), "expected Enclave error, got: {err}");
+        assert!(err.to_string().contains("enclave down"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_tee_proof_happy_path() {
+        let target_block_number = 110u64;
+        let (l2, l1, rollup, l1_origin_hash) = wired_providers(target_block_number);
+
+        // Enclave returns a successful proposal with a valid signature
+        let enclave =
+            Arc::new(MockEnclaveClient { result: Ok(test_proposal(l1_origin_hash, 500)) });
+
+        let generator =
+            TeeProofGenerator::new(enclave, Arc::new(l1), Arc::new(l2), Arc::new(rollup));
+        let game = test_candidate_game(100);
+
+        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        assert!(result.is_ok(), "expected Ok, got: {}", result.unwrap_err());
+
+        let proof = result.unwrap();
+
+        // Verify 130-byte proof format
+        assert_eq!(proof.len(), 130);
+
+        // Byte 0: proof type TEE
+        assert_eq!(proof[0], PROOF_TYPE_TEE);
+
+        // Bytes 1-32: L1 origin hash
+        assert_eq!(&proof[1..33], l1_origin_hash.as_slice());
+
+        // Bytes 57-64: L1 origin number (500) in last 8 bytes of the 32-byte field
+        let mut number_bytes = [0u8; 8];
+        number_bytes.copy_from_slice(&proof[57..65]);
+        assert_eq!(u64::from_be_bytes(number_bytes), 500);
+
+        // Byte 129: v-value should be adjusted (0 → 27)
+        assert_eq!(proof[129], 27);
     }
 }
