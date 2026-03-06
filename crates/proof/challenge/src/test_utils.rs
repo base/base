@@ -21,6 +21,8 @@ pub struct MockGameState {
     pub status: u8,
     /// Address of the ZK prover (`Address::ZERO` if unchallenged).
     pub zk_prover: Address,
+    /// Address of the TEE prover (`Address::ZERO` if no TEE proof submitted).
+    pub tee_prover: Address,
     /// Game info (root claim, L2 block number, parent index).
     pub game_info: GameInfo,
     /// Starting block number for this game.
@@ -86,6 +88,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
     }
 
+    async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(|s| s.tee_prover)
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
+
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError> {
         self.games
             .get(&game_address)
@@ -122,6 +131,7 @@ fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameStat
     MockGameState {
         status,
         zk_prover,
+        tee_prover: Address::ZERO,
         game_info: GameInfo {
             root_claim: B256::repeat_byte(block_number as u8),
             l2_block_number: block_number,

@@ -45,6 +45,18 @@ sol! {
 
         /// Returns the starting block number.
         function startingBlockNumber() external view returns (uint256);
+
+        /// Nullifies an intermediate root checkpoint for the given game.
+        ///
+        /// The first byte of `proofBytes` is the proof type discriminator:
+        /// `0` for TEE, `1` for ZK. This is a state-changing function—no
+        /// Rust trait method is provided. Use `IAggregateVerifier::nullifyCall`
+        /// directly via alloy.
+        function nullify(
+            bytes calldata proofBytes,
+            uint256 intermediateRootIndex,
+            bytes32 intermediateRootToProve
+        ) external;
     }
 }
 
@@ -70,6 +82,9 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the address that provided a ZK proof for the given game.
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
+
+    /// Returns the address that provided a TEE proof for the given game.
+    async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError>;
 
     /// Returns the starting block number for the given game.
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError>;
@@ -147,6 +162,17 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .call()
             .await
             .map_err(|e| ContractError::Call { context: "zkProver failed".into(), source: e })
+    }
+
+    async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .teeProver()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "teeProver failed".into(), source: e })
     }
 
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError> {
