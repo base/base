@@ -4280,7 +4280,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "async-trait",
  "base-alloy-consensus",
  "base-alloy-flz",
  "base-execution-chainspec",
@@ -4301,11 +4300,9 @@ dependencies = [
  "reth-storage-api",
  "reth-tasks",
  "reth-transaction-pool",
- "serde",
  "tokio",
  "tokio-util",
  "tracing",
- "url",
 ]
 
 [[package]]
