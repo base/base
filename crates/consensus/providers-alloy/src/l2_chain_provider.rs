@@ -215,38 +215,6 @@ impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_from_alloy_l2_chain_provider_error() {
-        // Transport errors are transient — retry makes sense.
-        let kind: PipelineErrorKind =
-            AlloyL2ChainProviderError::Transport(alloy_transport::RpcError::Transport(
-                alloy_transport::TransportErrorKind::Custom("timeout".into()),
-            ))
-            .into();
-        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
-
-        // L2BlockInfoConstruction is a decode failure — transient.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::L2BlockInfoConstruction(0).into();
-        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
-
-        // SystemConfigConversion is a decode failure — transient.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::SystemConfigConversion(0).into();
-        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
-
-        // L2 BlockNotFound: the pipeline only requests blocks that should exist on the
-        // canonical chain. A missing L2 block means a reorg occurred — must Reset.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::BlockNotFound(42).into();
-        assert!(
-            matches!(kind, PipelineErrorKind::Reset(_)),
-            "L2 BlockNotFound must map to Reset (block disappeared due to reorg)"
-        );
-    }
-}
-
 #[async_trait]
 impl BatchValidationProvider for AlloyL2ChainProvider {
     type Error = AlloyL2ChainProviderError;
@@ -300,5 +268,37 @@ impl L2ChainProvider for AlloyL2ChainProvider {
             .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
         to_system_config(&block, &rollup_config)
             .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(number))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_alloy_l2_chain_provider_error() {
+        // Transport errors are transient — retry makes sense.
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::Transport(alloy_transport::RpcError::Transport(
+                alloy_transport::TransportErrorKind::Custom("timeout".into()),
+            ))
+            .into();
+        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
+
+        // L2BlockInfoConstruction is a decode failure — transient.
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::L2BlockInfoConstruction(0).into();
+        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
+
+        // SystemConfigConversion is a decode failure — transient.
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::SystemConfigConversion(0).into();
+        assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
+
+        // L2 BlockNotFound: the pipeline only requests blocks that should exist on the
+        // canonical chain. A missing L2 block means a reorg occurred — must Reset.
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::BlockNotFound(42).into();
+        assert!(
+            matches!(kind, PipelineErrorKind::Reset(_)),
+            "L2 BlockNotFound must map to Reset (block disappeared due to reorg)"
+        );
     }
 }
