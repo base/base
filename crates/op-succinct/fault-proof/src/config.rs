@@ -238,10 +238,10 @@ impl ProofProviderConfig {
                 .parse()?,
             range_proof_strategy: parse_fulfillment_strategy(
                 env::var("RANGE_PROOF_STRATEGY").unwrap_or("reserved".to_string()),
-            ),
+            )?,
             agg_proof_strategy: parse_fulfillment_strategy(
                 env::var("AGG_PROOF_STRATEGY").unwrap_or("reserved".to_string()),
-            ),
+            )?,
             agg_proof_mode: if env::var("AGG_PROOF_MODE")
                 .unwrap_or("plonk".to_string())
                 .to_lowercase() ==

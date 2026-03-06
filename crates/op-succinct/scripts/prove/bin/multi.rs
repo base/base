@@ -4,6 +4,8 @@ use op_succinct_host_utils::{
     block_range::get_validated_block_range,
     fetcher::OPSuccinctDataFetcher,
     host::OPSuccinctHost,
+    network::{build_network_prover_from_env, parse_fulfillment_strategy},
+    proof_cache::save_range_proof,
     stats::ExecutionStats,
     witness_cache::{load_stdin_from_cache, save_stdin_to_cache},
     witness_generation::WitnessGenerator,
@@ -13,9 +15,9 @@ use op_succinct_proof_utils::{
 };
 use op_succinct_prove::execute_multi;
 use op_succinct_scripts::HostExecutorArgs;
-use sp1_sdk::{utils, Elf, ProveRequest, Prover, ProverClient};
+use sp1_sdk::{utils, Elf, ProveRequest, Prover};
 use std::{
-    fs,
+    env, fs,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -88,23 +90,24 @@ async fn main() -> Result<()> {
     };
 
     if args.prove {
-        let proof_dir = format!("data/{}/proofs", l2_chain_id);
-        if !std::path::Path::new(&proof_dir).exists() {
-            fs::create_dir_all(&proof_dir).unwrap();
-        }
-
         if is_cluster_mode() {
             let proof = cluster_range_proof(args.cluster_timeout, sp1_stdin).await?;
-            proof
-                .save(format!("{proof_dir}/{l2_start_block}-{l2_end_block}.bin"))
-                .context("saving proof failed")?;
+            let path = save_range_proof(l2_chain_id, l2_start_block, l2_end_block, &proof)?;
+            info!("Range proof saved to {}", path.display());
         } else {
-            let prover = ProverClient::from_env().await;
+            let range_proof_strategy = parse_fulfillment_strategy(
+                env::var("RANGE_PROOF_STRATEGY").unwrap_or_else(|_| "reserved".to_string()),
+            )?;
+            let prover = build_network_prover_from_env(range_proof_strategy).await?;
             let pk = prover.setup(Elf::Static(get_range_elf_embedded())).await?;
-            let proof = prover.prove(&pk, sp1_stdin).compressed().await.unwrap();
-            proof
-                .save(format!("{proof_dir}/{l2_start_block}-{l2_end_block}.bin"))
-                .context("saving proof failed")?;
+            let proof = prover
+                .prove(&pk, sp1_stdin)
+                .compressed()
+                .strategy(range_proof_strategy)
+                .await
+                .expect("proving failed");
+            let path = save_range_proof(l2_chain_id, l2_start_block, l2_end_block, &proof)?;
+            info!("Range proof saved to {}", path.display());
         }
     } else {
         let (block_data, report, execution_duration) =

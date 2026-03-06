@@ -1,6 +1,6 @@
 # Cost Estimation Tools
 
-This guide covers the scripts for estimating proving costs and testing execution: `multi` and `cost-estimator`.
+This guide covers the scripts for estimating proving costs and testing execution: `multi` and `cost-estimator`. For generating actual proofs, see [Prove Scripts](./prove-scripts.md).
 
 ## Setup
 
@@ -29,7 +29,7 @@ cargo run --bin multi -- --start 1000 --end 1020 --prove
 ### Output
 
 - **Execution mode**: Prints execution stats and saves to `execution-reports/multi/{chain_id}/{start}-{end}.csv`
-- **Prove mode**: Saves proof to `data/{chain_id}/proofs/{start}-{end}.bin`
+- **Prove mode**: Saves proof to `data/{chain_id}/proofs/range/{start}-{end}.bin`
 
 ## Cost Estimator
 
@@ -57,73 +57,12 @@ Execution report saved to `execution-reports/{chain_id}/{start}-{end}-report.csv
 
 ## Witness Caching
 
-Both scripts support witness caching to skip the time-consuming witness generation step on subsequent runs.
-
-### Why Cache?
-
-The proving pipeline has two stages:
-
-```
-host.run() → WitnessData → get_sp1_stdin() → SP1Stdin
-   [hours]                    [milliseconds]
-```
-
-Witness generation (`host.run()`) fetches L1/L2 data and executes blocks, which can take **hours** for large ranges. Caching saves this data to disk.
-
-We cache `SP1Stdin` because:
-1. It skips the hours-long `host.run()` bottleneck
-2. SP1Stdin implements serde serialization via bincode
-3. The cache is compatible across Ethereum and Celestia DA (both use the same witness format)
-
-Note: The `get_sp1_stdin()` conversion is milliseconds, so caching after this step has negligible overhead.
-
-### Cache Flag
-
-Use `--cache` to enable caching. If a cache file exists for the block range, it will be loaded. Otherwise, witness generation runs and the result is saved to cache.
-
-### Examples
+Both scripts support `--cache` to skip the time-consuming witness generation step on subsequent runs. For full details on caching (usage, DA compatibility, cache management), see [Prove Scripts — Witness Caching](./prove-scripts.md#witness-caching).
 
 ```bash
 # First run: generates witness and saves to cache
 cargo run --bin multi -- --start 1000 --end 1020 --cache
 
-# Second run: loads from cache (instant), then proves
-cargo run --bin multi -- --start 1000 --end 1020 --cache --prove
-
-# Force regenerate by deleting cache first
-rm data/{chain_id}/witness-cache/1000-1020-stdin.bin
-cargo run --bin multi -- --start 1000 --end 1020 --cache
-
 # Cost estimator with caching
 cargo run --bin cost-estimator -- --start 1000 --end 1100 --batch-size 10 --cache
 ```
-
-### Cache Location
-
-```
-data/{chain_id}/witness-cache/{start_block}-{end_block}-stdin.bin
-```
-
-Example: `data/8453/witness-cache/1000-1020-stdin.bin` for Base.
-
-### DA Compatibility
-
-| DA Type | Compatible With |
-|---------|-----------------|
-| Ethereum (default) | Celestia |
-| Celestia | Ethereum |
-| EigenDA | EigenDA only |
-
-Cache files are compatible between Ethereum and Celestia (both use `DefaultWitnessData`), but **not** with EigenDA (uses `EigenDAWitnessData`). Don't mix cache files across incompatible DA types.
-
-### Cache Management
-
-```bash
-# Clear all cache for a chain
-rm -rf data/{chain_id}/witness-cache/
-
-# Clear specific range
-rm data/{chain_id}/witness-cache/{start}-{end}-stdin.bin
-```
-
-Cache files are typically 100MB-1GB per range.

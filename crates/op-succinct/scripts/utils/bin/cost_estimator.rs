@@ -255,9 +255,10 @@ async fn main() -> Result<()> {
     let safe_db_activated = data_fetcher.is_safe_db_activated().await?;
 
     let split_ranges = if safe_db_activated {
-        split_range_based_on_safe_heads(l2_start_block, l2_end_block, args.batch_size).await?
+        split_range_based_on_safe_heads(l2_start_block, l2_end_block, args.effective_batch_size())
+            .await?
     } else {
-        split_range_basic(l2_start_block, l2_end_block, args.batch_size)
+        split_range_basic(l2_start_block, l2_end_block, args.effective_batch_size())
     };
 
     info!("The span batch ranges which will be executed: {split_ranges:?}");
