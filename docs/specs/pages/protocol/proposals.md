@@ -2,9 +2,9 @@
 
 
 
-[g-rollup-node]: ../glossary.md#rollup-node
-[g-mpt]: ../glossary.md#merkle-patricia-trie
-[header-withdrawals-root]: ../protocol/isthmus/exec-engine.md#l2tol1messagepasser-storage-root-in-header
+[g-rollup-node]: ../reference/glossary.md#rollup-node
+[g-mpt]: ../reference/glossary.md#merkle-patricia-trie
+[header-withdrawals-root]: ../upgrades/isthmus/exec-engine.md#l2tol1messagepasser-storage-root-in-header
 
 ## Overview
 
@@ -27,8 +27,8 @@ are part of later specification milestones.
 
 The proposer's role is to construct and submit output roots, which are commitments to the L2's state,
 to the `L2OutputOracle` contract on L1 (the settlement layer). To do this, the proposer periodically
-queries the [rollup node](rollup-node.md) for the latest output root derived from the latest
-[finalized](rollup-node.md#finalization-guarantees) L1 block. It then takes the output root and
+queries the [rollup node](./consensus/index.md) for the latest output root derived from the latest
+[finalized](./consensus/index.md#finalization-guarantees) L1 block. It then takes the output root and
 submits it to the `L2OutputOracle` contract on the settlement layer (L1).
 
 ### L2OutputOracle v1.0.0

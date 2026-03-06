@@ -131,19 +131,9 @@ function sectionItemWithoutDirs(
   }
 }
 
-const upgradeDirs = [
-  'jovian',
-  'isthmus',
-  'holocene',
-  'granite',
-  'fjord',
-  'ecotone',
-  'delta',
-  'canyon',
-  'pectra-blob-schedule',
-]
-
 const hiddenProtocolFiles = ['access-lists.md']
+
+const protocolTodoExcludedDirs = ['consensus', 'fault-proof']
 
 const protocolTodoExcludedFiles = [
   ...hiddenProtocolFiles,
@@ -153,6 +143,17 @@ const protocolTodoExcludedFiles = [
   'preinstalls.md',
   'flashblocks-rpc-methods.md',
 ]
+
+const consensusSection: SidebarItem = {
+  text: 'Consensus',
+  link: '/protocol/consensus',
+  items: [
+    { text: 'Derivation', link: '/protocol/consensus/derivation' },
+    { text: 'P2P', link: '/protocol/consensus/p2p' },
+    { text: 'RPC', link: '/protocol/consensus/rpc' },
+  ],
+  collapsed: true,
+}
 
 const evmSection: SidebarItem = {
   text: 'EVM',
@@ -176,30 +177,28 @@ const sidebar: SidebarItem[] = [
     text: 'Protocol',
     items: [
       { text: 'Overview', link: '/protocol/overview' },
+      consensusSection,
       evmSection,
       rpcSection,
-      { ...sectionItem('fault-proof', 'Fault Proof'), collapsed: true },
+      { ...sectionItem('protocol/fault-proof', 'Fault Proof'), collapsed: true },
     ],
   },
   {
     text: 'Upgrades',
     items: [
-      { text: 'Jovian', link: '/protocol/jovian/overview' },
-      { text: 'Isthmus', link: '/protocol/isthmus/overview' },
-      { text: 'Pectra Blob Schedule (Sepolia)', link: '/protocol/pectra-blob-schedule/overview' },
-      { text: 'Holocene', link: '/protocol/holocene/overview' },
-      { text: 'Granite', link: '/protocol/granite/overview' },
-      { text: 'Fjord', link: '/protocol/fjord/overview' },
-      { text: 'Ecotone', link: '/protocol/ecotone/overview' },
-      { text: 'Delta', link: '/protocol/delta/overview' },
-      { text: 'Canyon', link: '/protocol/canyon/overview' },
+      { text: 'Jovian', link: '/upgrades/jovian/overview' },
+      { text: 'Isthmus', link: '/upgrades/isthmus/overview' },
+      { text: 'Pectra Blob Schedule (Sepolia)', link: '/upgrades/pectra-blob-schedule/overview' },
+      { text: 'Holocene', link: '/upgrades/holocene/overview' },
+      { text: 'Granite', link: '/upgrades/granite/overview' },
+      { text: 'Fjord', link: '/upgrades/fjord/overview' },
+      { text: 'Ecotone', link: '/upgrades/ecotone/overview' },
+      { text: 'Delta', link: '/upgrades/delta/overview' },
+      { text: 'Canyon', link: '/upgrades/canyon/overview' },
     ],
   },
-  sectionItemWithoutDirs('protocol', 'TODO', upgradeDirs, protocolTodoExcludedFiles),
-  {
-    text: 'Reference',
-    items: [{ text: 'Glossary', link: '/glossary' }],
-  },
+  sectionItemWithoutDirs('protocol', 'TODO', protocolTodoExcludedDirs, protocolTodoExcludedFiles),
+  sectionItem('reference', 'Reference'),
 ]
 
 export default defineConfig({

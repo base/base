@@ -10,18 +10,18 @@ the denominator in the 1559 formula rather than the prior denominator.
 
 The formula for EIP-1559 is otherwise not modified.
 
-Starting with Holocene, the EIP-1559 parameters become [dynamically configurable](holocene/exec-engine.md#dynamic-eip-1559-parameters).
+Starting with Holocene, the EIP-1559 parameters become [dynamically configurable](../upgrades/holocene/exec-engine.md#dynamic-eip-1559-parameters).
 
-Starting with Jovian, a [configurable minimum base fee](jovian/exec-engine.md#minimum-base-fee) is introduced.
+Starting with Jovian, a [configurable minimum base fee](../upgrades/jovian/exec-engine.md#minimum-base-fee) is introduced.
 
 ## Extra Data
 
 Before Holocene, the genesis block may contain an arbitrary `extraData` value whereas all normal
 blocks must have an **empty** `extraData` field.
 
-With Holocene, the `extraData` field [encodes the EIP-1559 parameters](holocene/exec-engine.md#dynamic-eip-1559-parameters).
+With Holocene, the `extraData` field [encodes the EIP-1559 parameters](../upgrades/holocene/exec-engine.md#dynamic-eip-1559-parameters).
 
-With Jovian, the `extraData` encoding is extended to [include `minBaseFee`](jovian/exec-engine.md#minimum-base-fee).
+With Jovian, the `extraData` encoding is extended to [include `minBaseFee`](../upgrades/jovian/exec-engine.md#minimum-base-fee).
 
 ## Deposited transaction processing
 
@@ -225,7 +225,7 @@ The `gasLimit` is optional w.r.t. compatibility with L1, but required when used 
 This field overrides the gas limit used during block-building.
 If not specified as rollup, a `STATUS_INVALID` is returned.
 
-[rollup-driver]: rollup-node.md
+[rollup-driver]: consensus/index.md
 
 ### `engine_forkchoiceUpdatedV3`
 
@@ -261,10 +261,10 @@ Starting at Ecotone, the `parentBeaconBlockRoot` must be set to the L1 origin `p
 or a zero `bytes32` if the Dencun functionality with `parentBeaconBlockRoot` is not active on L1.
 
 Starting with Holocene, the `eip1559Params` field must encode the EIP1559 parameters. It must be `null` before.
-See [Dynamic EIP-1559 Parameters](holocene/exec-engine.md#dynamic-eip-1559-parameters) for details.
+See [Dynamic EIP-1559 Parameters](../upgrades/holocene/exec-engine.md#dynamic-eip-1559-parameters) for details.
 
 Starting with Jovian, the `minBaseFee` field is added. It must be `null` before Jovian.
-See [Jovian Minimum Base Fee](jovian/exec-engine.md#minimum-base-fee) for details.
+See [Jovian Minimum Base Fee](../upgrades/jovian/exec-engine.md#minimum-base-fee) for details.
 
 ### `engine_newPayloadV2`
 
@@ -426,7 +426,7 @@ the operation within the engine is the exact same as with L1 (although with an E
 4. The rollup node inserts blocks, derived from L1, one by one, potentially adapting to L1 reorg(s),
    as outlined in the [rollup node spec].
 
-[rollup node spec]: rollup-node.md
+[rollup node spec]: consensus/index.md
 
 ## Ecotone: disable Blob-transactions
 

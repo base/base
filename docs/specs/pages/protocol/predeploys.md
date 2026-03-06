@@ -2,7 +2,7 @@
 
 ## Overview
 
-[Predeployed smart contracts](../glossary.md#predeployed-contract-predeploy) exist on Optimism
+[Predeployed smart contracts](../reference/glossary.md#predeployed-contract-predeploy) exist on Optimism
 at predetermined addresses in the genesis state. They are similar to precompiles but instead run
 directly in the EVM instead of running native code outside of the EVM.
 
@@ -234,7 +234,7 @@ slot. The `decimals` remains hardcoded to 6, and the `overhead` value is ignored
 
 Address: `0x4200000000000000000000000000000000000015`
 
-[l1-block-predeploy]: ../glossary.md#l1-attributes-predeployed-contract
+[l1-block-predeploy]: ../reference/glossary.md#l1-attributes-predeployed-contract
 
 The [L1Block][l1-block-predeploy] was introduced in Bedrock and is responsible for
 maintaining L1 context in L2. This allows for L1 state to be accessed in L2.

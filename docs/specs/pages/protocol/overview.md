@@ -92,8 +92,8 @@ The following diagram demonstrates this interaction and key Base protocol compon
 ```mermaid
 graph TD
     subgraph "Ethereum L1"
-        OptimismPortal(<a href="./protocol/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
     end
 
     Sequencer(Sequencer)
@@ -124,10 +124,10 @@ as standard transactions on L2 but are then completed using transactions on L1. 
 ```mermaid
 graph LR
     subgraph "Ethereum L1"
-        BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        OptimismPortal(<a href="./protocol/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         ExternalContracts(External Contracts)
     end
 
@@ -193,17 +193,17 @@ graph LR
     end
 
     subgraph "L1 Smart Contracts"
-        BatchDataEOA(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
         L1StandardBridge(<a href="./bridges.html">L1StandardBridge</a>)
         L1ERC721Bridge(<a href="./bridges.html">L1ERC721Bridge</a>)
         L1CrossDomainMessenger(<a href="./messengers.html">L1CrossDomainMessenger</a>)
         OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         SuperchainConfig(SuperchainConfig)
         SystemConfig(<a href="./system-config.html">SystemConfig</a>)
-        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        AnchorStateRegistry(<a href="../fault-proof/stage-one/fault-dispute-game.html#anchor-state-registry">AnchorStateRegistry</a>)
-        DelayedWETH(<a href="../fault-proof/stage-one/bond-incentives.html#delayedweth#de">DelayedWETH</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        AnchorStateRegistry(<a href="./fault-proof/stage-one/fault-dispute-game.html#anchor-state-registry">AnchorStateRegistry</a>)
+        DelayedWETH(<a href="./fault-proof/stage-one/bond-incentives.html#delayedweth#de">DelayedWETH</a>)
     end
 
     subgraph "User Interactions (Permissionless)"
@@ -409,7 +409,7 @@ as demonstrations of how different actors use these components to fulfill their 
 ```mermaid
 graph LR
     subgraph "L2 Node"
-        RollupNode(<a href="./rollup-node.html">Rollup Node</a>)
+        RollupNode(<a href="./consensus/">Consensus</a>)
         ExecutionEngine(<a href="./exec-engine.html">Execution Engine</a>)
     end
 
@@ -420,10 +420,10 @@ graph LR
     end
 
     subgraph "L1 Smart Contracts"
-        BatchDataEOA(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
         OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
     end
 
     BatchSubmitter -.->|fetch transaction batch info| RollupNode
@@ -563,7 +563,7 @@ block, and add it to the chain. The basic sequence of the rollup driver is as fo
 4. Call [fork choice updated][EngineAPIVersion] with the fork choice parameter's `headBlockHash` set to the block hash
    returned in step 2. The tip of the L2 chain is now the block created in step 1.
 
-[EngineAPIVersion]: derivation.md#engine-api-usage
+[EngineAPIVersion]: consensus/derivation.md#engine-api-usage
 
 The swimlane diagram below visualizes the process:
 

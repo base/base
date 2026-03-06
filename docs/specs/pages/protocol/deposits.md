@@ -2,14 +2,14 @@
 
 
 
-[g-transaction-type]: ../glossary.md#transaction-type
-[g-derivation]: ../glossary.md#L2-chain-derivation
-[g-deposited]: ../glossary.md#deposited
-[g-deposits]: ../glossary.md#deposits
-[g-l1-attr-deposit]: ../glossary.md#l1-attributes-deposited-transaction
-[g-user-deposited]: ../glossary.md#user-deposited-transaction
-[g-eoa]: ../glossary.md#eoa
-[g-exec-engine]: ../glossary.md#execution-engine
+[g-transaction-type]: ../reference/glossary.md#transaction-type
+[g-derivation]: ../reference/glossary.md#L2-chain-derivation
+[g-deposited]: ../reference/glossary.md#deposited
+[g-deposits]: ../reference/glossary.md#deposits
+[g-l1-attr-deposit]: ../reference/glossary.md#l1-attributes-deposited-transaction
+[g-user-deposited]: ../reference/glossary.md#user-deposited-transaction
+[g-eoa]: ../reference/glossary.md#eoa
+[g-exec-engine]: ../reference/glossary.md#execution-engine
 
 ## Overview
 
@@ -90,7 +90,7 @@ Without a `sourceHash` in a deposit, two different deposited transactions could 
 The outer `keccak256` hashes the actual uniquely identifying information with a domain,
 to avoid collisions between different types of sources.
 
-The [Interop derivation spec](./derivation.md) introduces two additional kinds of system deposits,
+The [Interop derivation spec](./consensus/derivation.md) introduces two additional kinds of system deposits,
 with domains `3` and `4`.
 
 We do not use the sender's nonce to ensure uniqueness because this would require an extra L2 EVM state read from the
