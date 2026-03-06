@@ -202,7 +202,7 @@ impl DerivationStateMachine {
             info!(target: "derivation", ?safe_head, "Re-received safe head. Skipping state transition.");
         }
 
-        info!(target: "derivation", state=?self.state, ?state_update, "Executing derivation state update.");
+        debug!(target: "derivation", state=?self.state, ?state_update, "Executing derivation state update.");
         self.state = transition(&self.state, state_update)?;
 
         if let DerivationStateUpdate::NewAttributesConfirmed(safe_head) = state_update {
