@@ -107,10 +107,7 @@ impl WebSocketPublisher {
         // when no clients are connected. There is no other failure mode.
         let _ = self.pipe.send((position, utf8_bytes.clone()));
 
-        self.ring_buffer
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(position, utf8_bytes);
+        self.ring_buffer.write().unwrap_or_else(|e| e.into_inner()).push(position, utf8_bytes);
 
         self.metrics.on_payload_size(size);
         Ok(size)

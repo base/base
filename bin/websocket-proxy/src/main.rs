@@ -249,10 +249,7 @@ async fn main() {
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
 
-        ring_buffer_listener
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(pos, message_data);
+        ring_buffer_listener.write().unwrap_or_else(|e| e.into_inner()).push(pos, message_data);
     };
 
     let token = CancellationToken::new();
