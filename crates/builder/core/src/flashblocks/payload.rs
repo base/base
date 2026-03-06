@@ -37,7 +37,7 @@ use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::TransactionPool;
-use reth_trie::{HashedPostState, updates::TrieUpdates};
+use reth_trie::{HashedPostState, TrieInput, updates::TrieUpdates};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -77,6 +77,9 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
 pub struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     pub(crate) last_flashblock_index: usize,
+
+    /// Cached trie updates from previous flashblock for incremental state root calculation
+    prev_trie_updates: Option<Arc<TrieUpdates>>,
 
     /// Flashblock-level access list builder
     pub(crate) access_list_builder: FlashblockAccessListBuilder,
@@ -931,20 +934,68 @@ where
     if calculate_state_root {
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-        (state_root, trie_output) = {
-            state.database.as_ref().state_root_with_updates(hashed_state.clone()).inspect_err(
-                |err| {
-                    warn!(target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
+
+        if let Some(prev_trie) = &info.extra.prev_trie_updates {
+            // Incremental path: Use cached trie from previous flashblock
+            debug!(
+                target: "payload_builder",
+                flashblock_index = info.extra.last_flashblock_index + 1,
+                "Using incremental state root calculation with cached trie"
+            );
+
+            let trie_input = TrieInput::new(
+                prev_trie.as_ref().clone(),
+                hashed_state.clone(),
+                hashed_state.construct_prefix_sets(),
+            );
+
+            (state_root, trie_output) = state_provider
+                .state_root_from_nodes_with_updates(trie_input)
+                .inspect_err(|err| {
+                    warn!(
+                        target: "payload_builder",
+                        parent_header=%ctx.parent().hash(),
+                        %err,
+                        "failed to calculate incremental state root for payload"
+                    );
+                })
+                .map_err(PayloadBuilderError::other)?;
+        } else {
+            debug!(
+                target: "payload_builder",
+                flashblock_index = info.extra.last_flashblock_index + 1,
+                "Using full state root calculation"
+            );
+
+            (state_root, trie_output) = state_provider
+                .state_root_with_updates(hashed_state.clone())
+                .inspect_err(|err| {
+                    warn!(
+                        target: "payload_builder",
+                        parent_header=%ctx.parent().hash(),
                         %err,
                         "failed to calculate state root for payload"
                     );
-                },
-            )?
+                })?;
         };
+
         let state_root_calculation_time = state_root_start_time.elapsed();
         ctx.metrics.state_root_calculation_duration.record(state_root_calculation_time);
         ctx.metrics.state_root_calculation_gauge.set(state_root_calculation_time);
+
+        debug!(
+            target: "payload_builder",
+            flashblock_index = info.extra.last_flashblock_index + 1,
+            state_root = %state_root,
+            duration_ms = state_root_calculation_time.as_millis(),
+            "State root calculation completed"
+        );
+    }
+
+    // Wrap once in Arc; the same Arc is shared with the trie cache and BuiltPayloadExecutedBlock.
+    let trie_output = Arc::new(trie_output);
+    if calculate_state_root {
+        info.extra.prev_trie_updates = Some(Arc::clone(&trie_output));
     }
 
     let mut requests_hash = None;
@@ -1029,7 +1080,7 @@ where
             state: state.take_bundle(),
         }),
         hashed_state: Either::Left(Arc::new(hashed_state)),
-        trie_updates: Either::Left(Arc::new(trie_output)),
+        trie_updates: Either::Left(trie_output),
     };
     debug!(target: "payload_builder", message = "Executed block created");
 
