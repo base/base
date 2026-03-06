@@ -158,10 +158,9 @@ semantics described in the [Isthmus spec](../isthmus/exec-engine.md#operator-fee
 
 With the new formula, the operator fee's maximum value has 103 bits:
 
-$$
-\text{operatorFee}_{\text{max}} = (\text{uint64}_{\text{max}} \times \text{uint32}_{\text{max}} \times 100) +
-\text{uint64}_{\text{max}} \approx 7.924660923989131 \times 10^{30}
-$$
+```text
+operatorFee_max = (uint64_max * uint32_max * 100) + uint64_max ≈ 7.924660923989131 * 10^30
+```
 
 Implementations that use `uint256` for intermediate arithmetic do not need additional overflow checks.
 

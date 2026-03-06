@@ -747,7 +747,7 @@ In these specifications, "execution engine" always refer to the L2 execution eng
 
 - cf. [Execution Engine Specification][exec-engine]
 
-<!-- Internal Links -->
+
 
 [deposits-spec]: ./protocol/deposits.md
 [system-config]: ./protocol/system-config.md
@@ -755,7 +755,7 @@ In these specifications, "execution engine" always refer to the L2 execution eng
 [derivation-spec]: ./protocol/derivation.md
 [rollup-node-spec]: ./protocol/rollup-node.md
 
-<!-- External Links -->
+
 
 [mpt-details]: https://github.com/norswap/nanoeth/blob/d4c0c89cc774d4225d16970aa44c74114c1cfa63/src/com/norswap/nanoeth/trees/patricia/README.md
 [trie]: https://en.wikipedia.org/wiki/Trie

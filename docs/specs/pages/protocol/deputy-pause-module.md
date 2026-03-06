@@ -339,7 +339,7 @@ remove the module if necessary.
 
 - Returns the typehash that corresponds to `struct DeputyAuthMessage { address deputy }`.
 
-<!-- References -->
+
 [design-doc]: https://github.com/ethereum-optimism/design-docs/blob/85c0f822/protocol/deputy-pause-module.md
 [safe-modules]: https://docs.safe.global/advanced/smart-account-modules
 [oz-v4.7.3]: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/ecd2ca2c

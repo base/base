@@ -1,6 +1,6 @@
 # Rollup Node Specification
 
-<!-- All glossary references in this file. -->
+
 
 [g-rollup-node]: ../glossary.md#rollup-node
 [g-derivation]: ../glossary.md#L2-chain-derivation

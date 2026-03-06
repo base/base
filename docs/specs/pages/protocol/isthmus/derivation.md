@@ -30,7 +30,7 @@ A deposit transaction is derived with the following attributes:
 - `mint`: `0`
 - `value`: `0`
 - `gasLimit`: `425,000`
-- `data`: `0x60806040523480156100105...` ([full bytecode](/static/bytecode/isthmus-l1-block-deployment.txt))
+- `data`: `0x60806040523480156100105...` (<a href="/static/bytecode/isthmus-l1-block-deployment.txt">full bytecode</a>)
 - `sourceHash`: `0x3b2d0821ca2411ad5cd3595804d1213d15737188ae4cbd58aa19c821a6c211bf`,
   computed with the "Upgrade-deposited" type, with `intent = "Isthmus: L1 Block Deployment"
 
@@ -78,7 +78,7 @@ A deposit transaction is derived with the following attributes:
 - `mint`: `0`
 - `value`: `0`
 - `gasLimit`: `1,625,000`
-- `data`: `0x60806040523480156100105...` ([full bytecode](/static/bytecode/isthmus-gas-price-oracle-deployment.txt))
+- `data`: `0x60806040523480156100105...` (<a href="/static/bytecode/isthmus-gas-price-oracle-deployment.txt">full bytecode</a>)
 - `sourceHash`: `0xfc70b48424763fa3fab9844253b4f8d508f91eb1f7cb11a247c9baec0afb8035`,
   computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Gas Price Oracle Deployment"
 
@@ -131,7 +131,7 @@ A deposit transaction is derived with the following attributes:
 - `mint`: `0`
 - `value`: `0`
 - `gasLimit`: `500,000`
-- `data`: `0x60806040523480156100105...` ([full bytecode](/static/bytecode/isthmus-operator-fee-deployment.txt))
+- `data`: `0x60806040523480156100105...` (<a href="/static/bytecode/isthmus-operator-fee-deployment.txt">full bytecode</a>)
 - `sourceHash`: `0x107a570d3db75e6110817eb024f09f3172657e920634111ce9875d08a16daa96`,
   computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Operator Fee Vault Deployment"
 

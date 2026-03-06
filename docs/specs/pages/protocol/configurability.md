@@ -252,13 +252,13 @@ like op-succinct, so their standard values are 0.
 
 **Description:** DA footprint gas scalar -- used to calculate the DA footprint<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
-**Requirement:** Requirements (if any) are declared in <https://github.com/ethereum-optimism/superchain-registry/blob/main/validation/standard/standard-config-params-mainnet.toml>
+**Requirement:** Requirements (if any) are declared in [standard-config-params-mainnet.toml](https://github.com/ethereum-optimism/superchain-registry/blob/main/validation/standard/standard-config-params-mainnet.toml)
 
 ### [Minimum Base Fee](jovian/exec-engine.md#minimum-base-fee)
 
 **Description:** Minimum base fee -- sets the minimum base fee on L2<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
-**Requirement:** Requirements (if any) are declared in <https://github.com/ethereum-optimism/superchain-registry/blob/main/validation/standard/standard-config-params-mainnet.toml>
+**Requirement:** Requirements (if any) are declared in [standard-config-params-mainnet.toml](https://github.com/ethereum-optimism/superchain-registry/blob/main/validation/standard/standard-config-params-mainnet.toml)
 
 [^chain-id-uniqueness]: The chain ID must be globally unique among all EVM chains.
 
@@ -386,7 +386,7 @@ existing [permissioned dispute games](../fault-proof/stage-one/bridge-integratio
 **Notes:** Optimism Foundation (OF) multisig
 leveraging [battle-tested software](https://github.com/safe-global/safe-smart-account). This role is only active when
 the `OptimismPortal` respected game type is [`PERMISSIONED_CANNON`]
-(<https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31>).<br/>
+([Types.sol#L31](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31)).<br/>
 
 ### [Guardian address](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SuperchainConfig.sol#L50)
 
@@ -407,7 +407,7 @@ L1.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** No requirement<br/>
 **Notes:** This role is only active when the `OptimismPortal` respected game type is [`PERMISSIONED_CANNON`]
-(<https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31>).
+([Types.sol#L31](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31)).
 The `L1ProxyAdmin` sets the implementation of the `PERMISSIONED_CANNON` game type. Thus, it determines the proposer
 configuration of the permissioned dispute game.<br/>
 

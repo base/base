@@ -1,4 +1,4 @@
-<!-- DOCTOC SKIP -->
+
 
 # Stage One Decentralization
 

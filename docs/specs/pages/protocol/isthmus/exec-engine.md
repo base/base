@@ -1,6 +1,6 @@
 # L2 Execution Engine
 
-<!-- All glossary references in this file. -->
+
 
 [l2-to-l1-mp]: ../../protocol/predeploys.md#L2ToL1MessagePasser
 [output-root]: ../../glossary.md#l2-output-root
@@ -196,10 +196,9 @@ Where:
 
 Note that the operator fee's maximum value has 77 bits, which can be calculated from the maximum input parameters:
 
-$$
-\text{operatorFee}_{\text{max}} = (\text{uint64}_{\text{max}} \times \text{uint32}_{\text{max}} \div 10^6) +
-\text{uint64}_{\text{max}} \approx 7.924660923989131 \times 10^{22}
-$$
+```text
+operatorFee_max = (uint64_max * uint32_max / 10^6) + uint64_max ≈ 7.924660923989131 * 10^22
+```
 
 So implementations don't need to check for overflows if they perform the calculations with `uint256` types.
 

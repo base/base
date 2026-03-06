@@ -510,35 +510,33 @@ expectations, and economic models.
 
 A common heuristic for gas allocation defines the gas limit for flashblock $i$ (where $i \in [1, F]$) as:
 
-$$
-\text{flashblock\_gas\_limit}(i) = (i / F) \times \text{block\_gas\_limit}
-$$
+```text
+flashblock_gas_limit(i) = (i / F) * block_gas_limit
+```
 
 This linear increase means cumulative gas usage for flashblock $i$ is bounded by:
 
-$$
-\text{cumulative\_gas\_limit}(i) = \frac {\text{block\_gas\_limit}} F \cdot \frac {i(i+1)} 2
-$$
+```text
+cumulative_gas_limit(i) = (block_gas_limit / F) * (i(i + 1) / 2)
+```
 
 When optimally filling each flashblock's gas allocation, the block gas limit is reached at flashblock index $i_{max}$
 and incidentally the theoretical maximum transaction gas limit $tx_{max}$ that can be included is:
 
-$$
-\begin{align}
-i_{max}  &= \left\lceil \frac {-1 + \sqrt{1 + 8F}} {2} \right\rceil \\
-tx_{max} &= \left\lfloor \frac {-1 + \sqrt{1 + 8F}} 2 \right\rfloor/F \cdot \text{block\_gas\_limit}
-\end{align}
-$$
+```text
+i_max  = ceil((-1 + sqrt(1 + 8F)) / 2)
+tx_max = floor((-1 + sqrt(1 + 8F)) / 2) / F * block_gas_limit
+```
 
 For example, with $F = 10$ flashblocks we have $i_{max} = 4$.
 This means that if each flashblock is optimally filled, the block gas limit is reached by flashblock 4.
 The theoretical maximum transaction gas limit would be
-$`tx_{max} = 4/10 \times \text{block\_gas\_limit} = 40\%`$ of the block gas limit.
+`tx_max = 4/10 * block_gas_limit = 40%` of the block gas limit.
 
 **Large Transaction Inclusion Guarantees**
 
 A potential concern is the difficulty of including large transactions with gas limits greater than
-$`(1/F) * \text{block\_gas\_limit}`$ when the chain experiences heavy loads of smaller transactions.
+`(1/F) * block_gas_limit` when the chain experiences heavy loads of smaller transactions.
 Due to the linear increase of gas limits across flashblocks, even transactions with higher priority
 may not fit in the earlier, smaller flashblocks.
 If subsequent flashblocks fill up with smaller transactions, large transactions may be excluded

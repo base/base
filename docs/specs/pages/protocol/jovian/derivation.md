@@ -30,15 +30,7 @@ The upgrade transaction details below are based on the monorepo at commit hash
 `b3299e0ddb55442e6496512084d16c439ea2da77`, and will be updated once a contracts release is made.
 
 ### L1Block Deployment
-<!-- Generated with: ./scripts/run_gen_predeploy_docs.sh --optimism-repo-path ../../optimism \
---fork-name Jovian \
---contract-name L1Block \
---from-address 0x4210000000000000000000000000000000000006 \
---from-address-nonce 0 \
---git-commit-hash 773798a67678ab28c3ef7ee3405f25c04616af19 \
---eth-rpc-url https://optimism.rpc.subquery.network/public \
---proxy-address 0x4200000000000000000000000000000000000015 \
---copy-contract-bytecode true -->
+
 
 The `L1Block` contract is deployed.
 
@@ -50,7 +42,7 @@ A deposit transaction is derived with the following attributes:
 - `value`: `0`
 - `nonce`: `0`
 - `gasLimit`: `447315`
-- `data`: `0x0x608060405234801561001057600080...` ([full bytecode](/static/bytecode/jovian-l1-block-deployment.txt))
+- `data`: `0x0x608060405234801561001057600080...` (<a href="/static/bytecode/jovian-l1-block-deployment.txt">full bytecode</a>)
 - `sourceHash`: `0x98faf23b9795967bc0b1c543144739d50dba3ea40420e77ad6ca9848dbfb62e8`,
   computed with the "Upgrade-deposited" type, with `intent = "Jovian: L1Block Deployment"`
 
@@ -119,15 +111,7 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 ```
 
 ### GasPriceOracle Deployment
-<!-- Generated with: ./scripts/run_gen_predeploy_docs.sh --optimism-repo-path ../../optimism \
---fork-name Jovian \
---contract-name GasPriceOracle \
---from-address 0x4210000000000000000000000000000000000007 \
---from-address-nonce 0 \
---git-commit-hash 773798a67678ab28c3ef7ee3405f25c04616af19 \
---eth-rpc-url https://optimism.rpc.subquery.network/public \
---proxy-address 0x420000000000000000000000000000000000000F \
---copy-contract-bytecode true -->
+
 
 The `GasPriceOracle` contract is deployed.
 
@@ -139,7 +123,7 @@ A deposit transaction is derived with the following attributes:
 - `value`: `0`
 - `nonce`: `0`
 - `gasLimit`: `1750714`
-- `data`: `0x0x608060405234801561001057600080...` ([full bytecode](/static/bytecode/jovian-gas-price-oracle-deployment.txt))
+- `data`: `0x0x608060405234801561001057600080...` (<a href="/static/bytecode/jovian-gas-price-oracle-deployment.txt">full bytecode</a>)
 - `sourceHash`: `0xd939cca6eca7bd0ee0c7e89f7e5b5cf7bf6f7afe7b6966bb45dfb95344b31545`,
   computed with the "Upgrade-deposited" type, with `intent = "Jovian: GasPriceOracle Deployment"`
 

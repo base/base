@@ -1,6 +1,6 @@
 # Deposits
 
-<!-- All glossary references in this file. -->
+
 
 [g-transaction-type]: ../glossary.md#transaction-type
 [g-derivation]: ../glossary.md#L2-chain-derivation

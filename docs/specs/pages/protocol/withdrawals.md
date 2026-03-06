@@ -1,6 +1,6 @@
 # Withdrawals
 
-<!-- All glossary references in this file. -->
+
 
 [g-deposits]: ../glossary.md#deposits
 [g-withdrawal]: ../glossary.md#withdrawal

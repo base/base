@@ -518,7 +518,7 @@ however, and is provided as a convenience to lower latency for verifiers and the
 
 The below diagram illustrates how the sequencer and verifiers fit together:
 
-![Propagation](../static/assets/propagation.svg)
+![Propagation](/static/assets/propagation.svg)
 
 ## Key Interactions In Depth
 
@@ -586,7 +586,7 @@ the L2 chain at worst after `SEQUENCING_WINDOW_SIZE` L1 blocks have passed.
 The following diagram describes this relationship, and how L2 blocks are derived from L1 blocks (L1 info transactions
 have been elided):
 
-![Epochs and Sequencing Windows](../static/assets/sequencer-block-gen.svg)
+![Epochs and Sequencing Windows](/static/assets/sequencer-block-gen.svg)
 
 #### Block Derivation Loop
 
@@ -622,4 +622,4 @@ block, and add it to the chain. The basic sequence of the rollup driver is as fo
 
 The swimlane diagram below visualizes the process:
 
-![Engine API](../static/assets/engine.svg)
+![Engine API](/static/assets/engine.svg)

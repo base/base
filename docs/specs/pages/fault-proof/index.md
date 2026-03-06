@@ -1,7 +1,7 @@
 # Fault Proof
 
-<!-- markdownlint-disable -->
-<!-- markdownlint-enable -->
+
+
 
 ## Overview
 
@@ -17,7 +17,7 @@ and contribute to proof diversity when resolving a dispute.
 "Stateless execution" of the program, and its individual instructions, refers to reproducing
 the exact same computation by authenticating the inputs with a [Pre-image Oracle][oracle].
 
-![Diagram of Program and VM architecture](../static/assets/fault-proof.svg)
+![Diagram of Program and VM architecture](/static/assets/fault-proof.svg)
 
 ## Pre-image Oracle
 

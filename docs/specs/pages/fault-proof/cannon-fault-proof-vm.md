@@ -377,7 +377,7 @@ If an unsupported syscall is encountered, the VM will raise an exception.
 
 ### Supported Syscalls
 
-<!-- cspell:disable -->
+
 | \$v0 | system call   | \$a0            | \$a1             | \$a2         | \$a3             | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 |------|---------------|-----------------|------------------|--------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 5009 | mmap          | uint64 addr     | uint64 len       | 🚫           | 🚫               | Allocates a page from the heap. See [heap](#heap) for details.                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -397,11 +397,11 @@ If an unsupported syscall is encountered, the VM will raise an exception.
 | 5038 | getpid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 5313 | getrandom     | char \*buf      | uint64 buflen    | 🚫           | 🚫               | Generates pseudorandom bytes and writes them to the buffer at `buf`. Uses splitmix64 seeded with the current step count. Returns the number of bytes written, which is at most `buflen` and limited by alignment boundaries.                                                                                                                                                                                                                             |
 | 5284 | eventfd2      | uint64 initval  | int64 flags      | 🚫           | 🚫               | Creates an eventfd file descriptor. Only non-blocking mode is supported: if `flags` does not include `EFD_NONBLOCK` (0x80), sets errno to `0x16`. On success, returns file descriptor 100.                                                                                                                                                                                                                                                               |
-<!-- cspell:enable -->
+
 
 ### Noop Syscalls
 
-<!-- cspell:disable -->
+
 For the following noop syscalls, the VM must do nothing except to zero out the syscall return (`$v0`)
 and errno (`$a3`) registers.
 
@@ -438,7 +438,7 @@ and errno (`$a3`) registers.
 | 5216 | timer_create       |
 | 5217 | timer_settime      |
 | 5220 | timer_delete       |
-<!-- cspell:enable -->
+
 
 ## I/O
 

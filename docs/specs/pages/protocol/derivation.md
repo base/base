@@ -1,6 +1,6 @@
 # L2 Chain Derivation Specification
 
-<!-- All glossary references in this file. -->
+
 
 [g-derivation]: ../glossary.md#l2-chain-derivation
 [g-payload-attr]: ../glossary.md#payload-attributes
@@ -201,7 +201,7 @@ data-availability layer may support.
 
 All of this is illustrated in the following diagram. Explanations below.
 
-![batch derivation chain diagram](../static/assets/batch-deriv-chain.svg)
+![batch derivation chain diagram](/static/assets/batch-deriv-chain.svg)
 
 The first line represents L1 blocks with their numbers. The boxes under the L1 blocks represent [batcher
 transactions][g-batcher-transaction] included within the block. The squiggles under the L1 blocks represent

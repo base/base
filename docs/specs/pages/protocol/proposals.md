@@ -1,6 +1,6 @@
 # L2 Output Root Proposals Specification
 
-<!-- All glossary references in this file. -->
+
 
 [g-rollup-node]: ../glossary.md#rollup-node
 [g-mpt]: ../glossary.md#merkle-patricia-trie

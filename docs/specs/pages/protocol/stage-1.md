@@ -285,7 +285,7 @@ be able to repeatedly trigger the Pause Mechanism even if the Guardian does not 
 happen. We consider this to be a High severity condition because the Guardian can choose not to
 renew the pause to allow the system to operate if truly necessary.
 
-<!-- references -->
+
 
 [stage-1]: https://forum.l2beat.com/t/stages-update-a-high-level-guiding-principle-for-stage-1/338
 [security-council]: https://medium.com/l2beat/stages-update-security-council-requirements-4c79cea8ef52

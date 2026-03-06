@@ -1,6 +1,6 @@
 # Span-batches
 
-<!-- All glossary references in this file. -->
+
 
 [g-deposit-tx-type]: ../../glossary.md#deposited-transaction-type
 [derivation]: ../derivation.md

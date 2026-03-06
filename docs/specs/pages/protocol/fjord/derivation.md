@@ -151,7 +151,7 @@ To perform this upgrade, a deposit transaction is derived with the following att
 - `mint`: `0`
 - `value`: `0`
 - `gasLimit`: `1,450,000`
-- `data`: `0x60806040523...` ([full bytecode](/static/bytecode/fjord-gas-price-oracle-deployment.txt))
+- `data`: `0x60806040523...` (<a href="/static/bytecode/fjord-gas-price-oracle-deployment.txt">full bytecode</a>)
 - `sourceHash`: `0x86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3`
   computed with the "Upgrade-deposited" type, with `intent = "Fjord: Gas Price Oracle Deployment"
 
