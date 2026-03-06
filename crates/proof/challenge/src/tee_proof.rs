@@ -375,9 +375,14 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
-    use alloy_consensus::{Header as ConsensusHeader, Sealable, Signed, TxEip1559};
-    use alloy_primitives::{Address, Signature as PrimitiveSignature, TxKind, U256, address, b256};
+    use alloy_consensus::{
+        Header as ConsensusHeader, Receipt, ReceiptWithBloom, Sealable, Signed, TxEip1559,
+    };
+    use alloy_primitives::{
+        Address, LogData, Signature as PrimitiveSignature, TxKind, U256, address, b256,
+    };
     use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader};
     use base_alloy_consensus::TxDeposit;
     use base_enclave::{AccountResult, default_rollup_config};
@@ -402,17 +407,28 @@ mod tests {
     // ========================================================================
 
     /// Mock enclave client for testing.
+    ///
+    /// Optionally captures the last request for assertion in integration tests.
     #[derive(Debug)]
     struct MockEnclaveClient {
         result: Result<Proposal, ClientError>,
+        captured_request: Mutex<Option<ExecuteStatelessRequest>>,
+    }
+
+    impl MockEnclaveClient {
+        /// Creates a mock that returns the given result without capturing.
+        fn new(result: Result<Proposal, ClientError>) -> Self {
+            Self { result, captured_request: Mutex::new(None) }
+        }
     }
 
     #[async_trait]
     impl ChallengerEnclaveClient for MockEnclaveClient {
         async fn execute_stateless(
             &self,
-            _req: ExecuteStatelessRequest,
+            req: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
+            *self.captured_request.lock().unwrap() = Some(req);
             match &self.result {
                 Ok(p) => Ok(p.clone()),
                 Err(e) => Err(ClientError::ClientCreation(e.to_string())),
@@ -803,16 +819,21 @@ mod tests {
     // Target block overflow tests
     // ========================================================================
 
+    /// Creates a generator with empty/no-op providers for arithmetic-only tests.
+    fn generator_with_no_data() -> TestGenerator {
+        TeeProofGenerator::new(
+            Arc::new(MockEnclaveClient::new(Ok(test_proposal(B256::ZERO, 0)))),
+            Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() }),
+            Arc::new(MockChallengerL2Provider::new()),
+            Arc::new(MockRollupProvider { config: None }),
+        )
+    }
+
     #[tokio::test]
     async fn test_generate_tee_proof_index_overflow() {
         // invalid_index = usize::MAX → try_from succeeds (u64::MAX on 64-bit) but
         // checked_add(1) overflows, returning DataFetch error before any RPC calls.
-        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
-        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
-        let l2 = Arc::new(MockChallengerL2Provider::new());
-        let rollup = Arc::new(MockRollupProvider { config: None });
-
-        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
         let result = generator.generate_tee_proof(&game, usize::MAX, 1).await;
@@ -824,12 +845,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_tee_proof_mul_overflow() {
         // (1 + 1) * (u64::MAX / 2 + 1) overflows in checked_mul
-        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
-        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
-        let l2 = Arc::new(MockChallengerL2Provider::new());
-        let rollup = Arc::new(MockRollupProvider { config: None });
-
-        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
         let result = generator.generate_tee_proof(&game, 1, u64::MAX / 2 + 1).await;
@@ -841,12 +857,7 @@ mod tests {
     #[tokio::test]
     async fn test_generate_tee_proof_add_overflow() {
         // starting_block = u64::MAX - 50, (0 + 1) * 100 = 100 → overflows in checked_add
-        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
-        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
-        let l2 = Arc::new(MockChallengerL2Provider::new());
-        let rollup = Arc::new(MockRollupProvider { config: None });
-
-        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let generator = generator_with_no_data();
         let game = test_candidate_game(u64::MAX - 50);
 
         let result = generator.generate_tee_proof(&game, 0, 100).await;
@@ -945,7 +956,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_tee_proof_rollup_config_missing() {
-        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
+        let enclave = Arc::new(MockEnclaveClient::new(Ok(test_proposal(B256::ZERO, 0))));
         let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
         let l2 = Arc::new(MockChallengerL2Provider::new());
         let rollup = Arc::new(MockRollupProvider { config: None });
@@ -962,7 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_tee_proof_block_fetch_error() {
-        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
+        let enclave = Arc::new(MockEnclaveClient::new(Ok(test_proposal(B256::ZERO, 0))));
         let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
         let l2 = Arc::new(MockChallengerL2Provider {
             error: Some("node unavailable".into()),
@@ -985,9 +996,9 @@ mod tests {
         let (l2, l1, rollup, _) = wired_providers(target_block_number);
 
         // Enclave client configured to fail
-        let enclave = Arc::new(MockEnclaveClient {
-            result: Err(ClientError::ClientCreation("enclave down".into())),
-        });
+        let enclave = Arc::new(MockEnclaveClient::new(Err(ClientError::ClientCreation(
+            "enclave down".into(),
+        ))));
 
         let generator =
             TeeProofGenerator::new(enclave, Arc::new(l1), Arc::new(l2), Arc::new(rollup));
@@ -1006,11 +1017,14 @@ mod tests {
         let (l2, l1, rollup, l1_origin_hash) = wired_providers(target_block_number);
 
         // Enclave returns a successful proposal with a valid signature
-        let enclave =
-            Arc::new(MockEnclaveClient { result: Ok(test_proposal(l1_origin_hash, 500)) });
+        let enclave = Arc::new(MockEnclaveClient::new(Ok(test_proposal(l1_origin_hash, 500))));
 
-        let generator =
-            TeeProofGenerator::new(enclave, Arc::new(l1), Arc::new(l2), Arc::new(rollup));
+        let generator = TeeProofGenerator::new(
+            Arc::clone(&enclave),
+            Arc::new(l1),
+            Arc::new(l2),
+            Arc::new(rollup),
+        );
         let game = test_candidate_game(100);
 
         let result = generator.generate_tee_proof(&game, 0, 10).await;
@@ -1037,5 +1051,79 @@ mod tests {
 
         // Byte 129: v-value should be adjusted (0 → 27)
         assert_eq!(proof[129], 27);
+
+        // Verify the enclave received a request with the correct target block number
+        let captured = enclave.captured_request.lock().unwrap();
+        let req = captured.as_ref().expect("enclave should have received a request");
+        assert_eq!(req.block_header.number, target_block_number);
+    }
+
+    // ========================================================================
+    // Data transformation helper tests
+    // ========================================================================
+
+    #[test]
+    fn test_convert_receipts_preserves_log_data() {
+        let log_address = address!("2222222222222222222222222222222222222222");
+        let log_data = LogData::new_unchecked(vec![], Bytes::from(vec![0x42]));
+        let rpc_log = alloy_rpc_types_eth::Log {
+            inner: alloy_primitives::Log { address: log_address, data: log_data.clone() },
+            ..Default::default()
+        };
+
+        let receipt =
+            Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![rpc_log] };
+        let envelope =
+            ReceiptEnvelope::Legacy(ReceiptWithBloom { receipt, logs_bloom: Default::default() });
+
+        let tx_receipt = TransactionReceipt {
+            inner: envelope,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: None,
+            block_number: None,
+            gas_used: 21000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
+        };
+
+        let converted = TestGenerator::convert_receipts(vec![tx_receipt]);
+        assert_eq!(converted.len(), 1);
+
+        match &converted[0] {
+            ReceiptEnvelope::Legacy(rwb) => {
+                assert_eq!(rwb.receipt.logs.len(), 1);
+                assert_eq!(rwb.receipt.logs[0].address, log_address);
+                assert_eq!(rwb.receipt.logs[0].data, log_data);
+            }
+            _ => panic!("expected Legacy receipt envelope"),
+        }
+    }
+
+    #[test]
+    fn test_build_chain_config_maps_rollup_fields() {
+        let mut rollup = default_rollup_config();
+        rollup.batch_inbox_address = address!("1111111111111111111111111111111111111111");
+        rollup.protocol_versions_address = address!("2222222222222222222222222222222222222222");
+        rollup.deposit_contract_address = address!("3333333333333333333333333333333333333333");
+        rollup.l1_system_config_address = address!("4444444444444444444444444444444444444444");
+        rollup.block_time = 2;
+        rollup.l1_chain_id = 1;
+
+        let config = TestGenerator::build_chain_config(&rollup);
+
+        assert_eq!(config.batch_inbox_addr, rollup.batch_inbox_address);
+        assert_eq!(config.block_time, 2);
+        assert_eq!(config.l1_chain_id, 1);
+        assert_eq!(config.protocol_versions_addr, Some(rollup.protocol_versions_address));
+
+        let addresses = config.addresses.expect("addresses should be populated");
+        assert_eq!(addresses.address_manager, Some(rollup.protocol_versions_address));
+        assert_eq!(addresses.optimism_portal_proxy, Some(rollup.deposit_contract_address));
+        assert_eq!(addresses.system_config_proxy, Some(rollup.l1_system_config_address));
     }
 }
