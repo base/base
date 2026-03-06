@@ -774,6 +774,7 @@ mod tests {
     use base_enclave::{Proposal, RollupConfig};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use base_proof_rpc::SyncStatus;
+    use base_tee_prover::TeeExecutor;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -792,13 +793,17 @@ mod tests {
     struct MockEnclave;
 
     #[async_trait]
-    impl EnclaveClientTrait for MockEnclave {
+    impl TeeExecutor for MockEnclave {
         async fn execute_stateless(
             &self,
             _: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
+    }
+
+    #[async_trait]
+    impl EnclaveClientTrait for MockEnclave {
         async fn aggregate(
             &self,
             _: base_enclave::AggregateRequest,
@@ -812,13 +817,17 @@ mod tests {
     struct MockEnclaveForAggregation;
 
     #[async_trait]
-    impl EnclaveClientTrait for MockEnclaveForAggregation {
+    impl TeeExecutor for MockEnclaveForAggregation {
         async fn execute_stateless(
             &self,
             _: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
+    }
+
+    #[async_trait]
+    impl EnclaveClientTrait for MockEnclaveForAggregation {
         async fn aggregate(
             &self,
             request: base_enclave::AggregateRequest,

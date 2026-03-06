@@ -21,9 +21,7 @@ mod service;
 pub use service::ChallengerService;
 
 mod tee_proof;
-pub use tee_proof::{
-    ChallengerEnclaveClient, ChallengerL2Provider, TeeProofError, TeeProofGenerator,
-};
+pub use tee_proof::{TeeProofError, TeeProofGenerator};
 
 mod validator;
 pub use validator::{

@@ -1,38 +1,26 @@
 //! Enclave client types for TEE proof generation.
 
-use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
-use base_enclave::{AggregateRequest, BlockId, Genesis, GenesisSystemConfig, RollupConfig};
+use base_enclave::{AggregateRequest, RollupConfig};
 pub use base_enclave::{PerChainConfig, Proposal};
+use base_enclave_client::ClientError;
 pub use base_enclave_client::EnclaveClient;
-use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+use base_tee_prover::TeeExecutor;
 
 use crate::ProposerError;
 
 /// Trait abstracting the enclave RPC client for testability.
 ///
-/// This follows the same pattern as [`crate::rpc::L1Client`] and [`crate::rpc::L2Client`].
+/// Extends [`TeeExecutor`] (which provides `execute_stateless`) with the
+/// `aggregate` method needed only by the proposer.
 #[async_trait]
-pub trait EnclaveClientTrait: Send + Sync {
-    /// Executes stateless block validation in the enclave.
-    async fn execute_stateless(
-        &self,
-        req: ExecuteStatelessRequest,
-    ) -> Result<Proposal, ClientError>;
-
+pub trait EnclaveClientTrait: TeeExecutor {
     /// Aggregates multiple proposals into a single batched proposal.
     async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError>;
 }
 
 #[async_trait]
 impl EnclaveClientTrait for EnclaveClient {
-    async fn execute_stateless(
-        &self,
-        req: ExecuteStatelessRequest,
-    ) -> Result<Proposal, ClientError> {
-        self.execute_stateless(req).await
-    }
-
     async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
         self.aggregate(request).await
     }
@@ -40,8 +28,8 @@ impl EnclaveClientTrait for EnclaveClient {
 
 /// Convert a [`RollupConfig`] (from RPC) to [`PerChainConfig`].
 ///
-/// This is useful when you have a rollup config from an op-node RPC and need
-/// to create a [`PerChainConfig`] for the prover.
+/// This is a thin wrapper around [`base_tee_prover::ConfigBuilder::rollup_config_to_per_chain_config`]
+/// that maps the error to [`ProposerError`].
 ///
 /// # Errors
 ///
@@ -50,33 +38,8 @@ impl EnclaveClientTrait for EnclaveClient {
 pub fn rollup_config_to_per_chain_config(
     cfg: &RollupConfig,
 ) -> Result<PerChainConfig, ProposerError> {
-    let deposit_contract_address = cfg.deposit_contract_address;
-    let l1_system_config_address = cfg.l1_system_config_address;
-
-    let sc = cfg.genesis.system_config.as_ref().ok_or_else(|| {
-        ProposerError::Config("rollup config missing genesis system_config".into())
-    })?;
-    let batcher_addr = sc.batcher_address;
-    let scalar = B256::from(sc.scalar.to_be_bytes::<32>());
-    let gas_limit = sc.gas_limit;
-
-    Ok(PerChainConfig {
-        chain_id: U256::from(cfg.l2_chain_id.id()),
-        genesis: Genesis {
-            l1: BlockId { hash: cfg.genesis.l1.hash, number: cfg.genesis.l1.number },
-            l2: BlockId { hash: cfg.genesis.l2.hash, number: cfg.genesis.l2.number },
-            l2_time: cfg.genesis.l2_time,
-            system_config: GenesisSystemConfig {
-                batcher_addr,
-                overhead: B256::ZERO,
-                scalar,
-                gas_limit,
-            },
-        },
-        block_time: cfg.block_time,
-        deposit_contract_address,
-        l1_system_config_address,
-    })
+    base_tee_prover::ConfigBuilder::rollup_config_to_per_chain_config(cfg)
+        .map_err(|e| ProposerError::Config(e.to_string()))
 }
 
 /// Creates an enclave client with the given configuration.

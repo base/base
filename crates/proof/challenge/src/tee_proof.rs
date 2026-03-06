@@ -5,15 +5,6 @@
 //! mirrors the proposer's use of `execute_stateless()` but for the inverse
 //! purpose: demonstrating that an onchain checkpoint is invalid.
 //!
-//! ## Extension traits
-//!
-//! - [`ChallengerL2Provider`] — extends [`L2Provider`] with
-//!   `debug_executionWitness` support required for proof generation.
-//! - [`ChallengerEnclaveClient`] — minimal enclave trait (only
-//!   `execute_stateless`, no `aggregate`) to keep the challenger decoupled
-//!   from the proposer crate. A blanket impl is provided for
-//!   [`EnclaveClient`](base_enclave_client::EnclaveClient).
-//!
 //! ## Proof format
 //!
 //! The 130-byte output matches the `AggregateVerifier` contract interface:
@@ -31,78 +22,26 @@
 //! flag (`CHALLENGER_TEE_ENDPOINT`). When the endpoint is not configured,
 //! the orchestrator skips TEE and falls back to ZK proof generation.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use alloy_consensus::ReceiptEnvelope;
-use alloy_eips::{Typed2718, eip2718::Encodable2718};
-use alloy_primitives::{B256, Bytes, U256};
-use alloy_rpc_types_eth::TransactionReceipt;
-use async_trait::async_trait;
-use base_alloy_rpc_types::Transaction as OpTransaction;
-use base_enclave::{
-    BlockId, ChainConfig, ExecutionWitness, Genesis, GenesisSystemConfig, PerChainConfig, Proposal,
-    RollupConfig, l2_block_to_block_info,
-};
-use base_enclave_client::{ClientError, ExecuteStatelessRequest};
-use base_proof_rpc::{L1Provider, L2Provider, OpBlock, RollupProvider, RpcError, RpcResult};
+use alloy_primitives::{B256, Bytes};
+use base_enclave::{RollupConfig, l2_block_to_block_info};
+use base_enclave_client::ExecuteStatelessRequest;
+use base_proof_rpc::{L1Provider, RollupProvider, RpcError};
 use base_protocol::Predeploys;
+use base_tee_prover::{
+    ConfigBuilder, ENCLAVE_TIMEOUT, ExecutionWitnessProvider, ProofEncoder, ReceiptConverter,
+    TeeExecutor, TransactionSerializer,
+};
 use thiserror::Error;
 use tracing::info;
-
-/// Length of an ECDSA signature in bytes (r + s + v).
-const ECDSA_SIGNATURE_LENGTH: usize = 65;
-
-/// Offset to add to ECDSA v-value (0/1 -> 27/28).
-const ECDSA_V_OFFSET: u8 = 27;
-
-/// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
-const PROOF_TYPE_TEE: u8 = 0;
-
-/// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
-const DEPOSIT_TX_TYPE: u8 = 0x7E;
-
-/// Timeout for enclave RPC calls (matches the proposer's `ENCLAVE_TIMEOUT`).
-const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
-
-/// Extension trait for L2 providers that support execution witness retrieval.
-///
-/// The base `L2Provider` trait does not include `debug_executionWitness`
-/// because it is only needed for proof generation, not general L2 queries.
-#[async_trait]
-pub trait ChallengerL2Provider: L2Provider {
-    /// Gets the execution witness for a block via `debug_executionWitness`.
-    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness>;
-}
-
-/// Trait abstracting the enclave RPC client for testability.
-///
-/// Only requires `execute_stateless` — the challenger does not need `aggregate`.
-#[async_trait]
-pub trait ChallengerEnclaveClient: Send + Sync {
-    /// Executes stateless block validation in the enclave.
-    async fn execute_stateless(
-        &self,
-        req: ExecuteStatelessRequest,
-    ) -> Result<Proposal, ClientError>;
-}
-
-/// Blanket implementation for `base_enclave_client::EnclaveClient`.
-#[async_trait]
-impl ChallengerEnclaveClient for base_enclave_client::EnclaveClient {
-    async fn execute_stateless(
-        &self,
-        req: ExecuteStatelessRequest,
-    ) -> Result<Proposal, ClientError> {
-        self.execute_stateless(req).await
-    }
-}
 
 /// Errors that can occur during TEE proof generation.
 #[derive(Debug, Error)]
 pub enum TeeProofError {
     /// Enclave execution failed.
     #[error("enclave execution failed: {0}")]
-    Enclave(#[from] ClientError),
+    Enclave(#[from] base_enclave_client::ClientError),
 
     /// Enclave execution timed out.
     #[error("enclave execution timed out")]
@@ -158,9 +97,9 @@ pub struct TeeProofGenerator<E, L1, L2, R> {
 
 impl<E, L1, L2, R> TeeProofGenerator<E, L1, L2, R>
 where
-    E: ChallengerEnclaveClient,
+    E: TeeExecutor,
     L1: L1Provider,
-    L2: ChallengerL2Provider,
+    L2: ExecutionWitnessProvider,
     R: RollupProvider,
 {
     /// Creates a new TEE proof generator.
@@ -240,7 +179,8 @@ where
             .next()
             .ok_or_else(|| TeeProofError::DataPrep("no transactions in target block".into()))?;
 
-        let first_tx_bytes = Self::serialize_rpc_transaction(first_tx)?;
+        let first_tx_bytes = TransactionSerializer::serialize_rpc_transaction(first_tx)
+            .map_err(|e| TeeProofError::DataPrep(e.to_string()))?;
 
         // Derive L2 block info to get L1 origin
         let l2_block_info = l2_block_to_block_info(
@@ -286,14 +226,17 @@ where
             .map_err(|e| TeeProofError::Rpc { context: "L1 receipts", source: e })?;
 
         // Serialize previous block transactions (all types including deposits)
-        let prev_block_txs = Self::serialize_block_transactions(&prev_block, true)?;
+        let prev_block_txs = TransactionSerializer::serialize_block_transactions(&prev_block, true)
+            .map_err(|e| TeeProofError::DataPrep(e.to_string()))?;
 
         // Serialize current block transactions (excluding deposits)
-        let sequenced_txs = Self::serialize_block_transactions(&target_block, false)?;
+        let sequenced_txs =
+            TransactionSerializer::serialize_block_transactions(&target_block, false)
+                .map_err(|e| TeeProofError::DataPrep(e.to_string()))?;
 
-        let chain_config = Self::build_chain_config(&rollup_config);
+        let chain_config = ConfigBuilder::build_chain_config(&rollup_config, "base-challenger");
         let config_hash = Self::compute_config_hash(&rollup_config);
-        let l1_receipt_envelopes = Self::convert_receipts(l1_receipts);
+        let l1_receipt_envelopes = ReceiptConverter::convert_receipts(l1_receipts);
 
         let request = ExecuteStatelessRequest {
             config: chain_config,
@@ -318,7 +261,9 @@ where
                 .map_err(|_| TeeProofError::Timeout)?
                 .map_err(TeeProofError::Enclave)?;
 
-        let proof_bytes = Self::encode_proof_bytes(&proposal, l1_origin_hash, l1_origin_number)?;
+        let proof_bytes =
+            ProofEncoder::encode_proof_bytes(&proposal.signature, l1_origin_hash, l1_origin_number)
+                .map_err(|e| TeeProofError::Encoding(e.to_string()))?;
 
         info!(
             target_block = %target_block_number,
@@ -330,151 +275,38 @@ where
         Ok(proof_bytes)
     }
 
-    /// Encodes a TEE proposal into the 130-byte proof format.
-    ///
-    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)`
-    fn encode_proof_bytes(
-        proposal: &Proposal,
-        l1_origin_hash: B256,
-        l1_origin_number: u64,
-    ) -> Result<Bytes, TeeProofError> {
-        let sig = &proposal.signature;
-        if sig.len() < ECDSA_SIGNATURE_LENGTH {
-            return Err(TeeProofError::Encoding(format!(
-                "signature too short: expected at least {ECDSA_SIGNATURE_LENGTH} bytes, got {}",
-                sig.len()
-            )));
-        }
-
-        let mut proof_data = vec![0u8; 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH];
-
-        // Byte 0: proof type (TEE = 0)
-        proof_data[0] = PROOF_TYPE_TEE;
-
-        // Bytes 1-32: L1 origin hash
-        proof_data[1..33].copy_from_slice(l1_origin_hash.as_slice());
-
-        // Bytes 33-64: L1 origin number as 32-byte big-endian uint256
-        // The u64 is placed in the last 8 bytes of the 32-byte field (bytes 57-64)
-        proof_data[57..65].copy_from_slice(&l1_origin_number.to_be_bytes());
-
-        // Bytes 65-129: ECDSA signature with v-value adjusted from 0/1 to 27/28
-        proof_data[65..130].copy_from_slice(&sig[..ECDSA_SIGNATURE_LENGTH]);
-        proof_data[129] = match proof_data[129] {
-            0 | 1 => proof_data[129] + ECDSA_V_OFFSET,
-            27 | 28 => proof_data[129],
-            v => {
-                return Err(TeeProofError::Encoding(format!(
-                    "unexpected ECDSA v-value: {v}, expected 0, 1, 27, or 28"
-                )));
-            }
-        };
-
-        Ok(Bytes::from(proof_data))
-    }
-
-    /// Serializes an RPC transaction to EIP-2718 encoded bytes.
-    fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, TeeProofError> {
-        let mut buf = Vec::new();
-        tx.as_ref().encode_2718(&mut buf);
-        Ok(Bytes::from(buf))
-    }
-
-    /// Serializes all transactions in a block to EIP-2718 encoded bytes.
-    fn serialize_block_transactions(
-        block: &OpBlock,
-        include_deposits: bool,
-    ) -> Result<Vec<Bytes>, TeeProofError> {
-        block
-            .transactions
-            .txns()
-            .filter(|tx| include_deposits || tx.ty() != DEPOSIT_TX_TYPE)
-            .map(Self::serialize_rpc_transaction)
-            .collect()
-    }
-
-    /// Converts transaction receipts to receipt envelopes for the enclave.
-    fn convert_receipts(receipts: Vec<TransactionReceipt>) -> Vec<ReceiptEnvelope> {
-        receipts
-            .into_iter()
-            .map(|r| {
-                r.inner.map_logs(|log| alloy_primitives::Log {
-                    address: log.inner.address,
-                    data: log.inner.data,
-                })
-            })
-            .collect()
-    }
-
-    /// Builds the chain configuration expected by the enclave RPC.
-    fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
-        let mut config = ChainConfig {
-            name: "base-challenger".to_string(),
-            l1_chain_id: rollup_config.l1_chain_id,
-            public_rpc: String::new(),
-            sequencer_rpc: String::new(),
-            explorer: String::new(),
-            data_availability_type: "eth-da".to_string(),
-            chain_id: rollup_config.l2_chain_id.id(),
-            batch_inbox_addr: rollup_config.batch_inbox_address,
-            block_time: rollup_config.block_time,
-            seq_window_size: rollup_config.seq_window_size,
-            max_sequencer_drift: rollup_config.max_sequencer_drift,
-            gas_paying_token: None,
-            protocol_versions_addr: Some(rollup_config.protocol_versions_address),
-            hardfork_config: rollup_config.hardforks,
-            optimism: Some(rollup_config.chain_op_config),
-            genesis: rollup_config.genesis,
-            roles: None,
-            addresses: Some(Default::default()),
-        };
-
-        if let Some(addresses) = config.addresses.as_mut() {
-            addresses.address_manager = Some(rollup_config.protocol_versions_address);
-            addresses.optimism_portal_proxy = Some(rollup_config.deposit_contract_address);
-            addresses.system_config_proxy = Some(rollup_config.l1_system_config_address);
-        }
-
-        config
-    }
-
     /// Computes the canonical config hash from the rollup configuration.
     ///
-    /// Builds a [`PerChainConfig`] from the rollup config, applies
-    /// [`force_defaults()`](PerChainConfig::force_defaults) for deterministic
-    /// values, then returns the keccak256 hash — mirroring the proposer's
-    /// approach.
+    /// Uses default values when genesis `system_config` is missing, mirroring
+    /// the original challenger behavior.
     fn compute_config_hash(rollup_config: &RollupConfig) -> B256 {
-        let sc = rollup_config.genesis.system_config.as_ref();
-        let (batcher_addr, scalar, gas_limit) = sc
-            .map(|c| (c.batcher_address, B256::from(c.scalar.to_be_bytes::<32>()), c.gas_limit))
-            .unwrap_or_default();
+        // Use the shared helper when system_config is present, otherwise fall back
+        // to defaults to match the original challenger behavior.
+        ConfigBuilder::compute_config_hash(rollup_config).unwrap_or_else(|_| {
+            use alloy_primitives::U256;
+            use base_enclave::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig};
 
-        let mut per_chain = PerChainConfig {
-            chain_id: U256::from(rollup_config.l2_chain_id.id()),
-            genesis: Genesis {
-                l1: BlockId {
-                    hash: rollup_config.genesis.l1.hash,
-                    number: rollup_config.genesis.l1.number,
+            let mut per_chain = PerChainConfig {
+                chain_id: U256::from(rollup_config.l2_chain_id.id()),
+                genesis: Genesis {
+                    l1: BlockId {
+                        hash: rollup_config.genesis.l1.hash,
+                        number: rollup_config.genesis.l1.number,
+                    },
+                    l2: BlockId {
+                        hash: rollup_config.genesis.l2.hash,
+                        number: rollup_config.genesis.l2.number,
+                    },
+                    l2_time: rollup_config.genesis.l2_time,
+                    system_config: GenesisSystemConfig::default(),
                 },
-                l2: BlockId {
-                    hash: rollup_config.genesis.l2.hash,
-                    number: rollup_config.genesis.l2.number,
-                },
-                l2_time: rollup_config.genesis.l2_time,
-                system_config: GenesisSystemConfig {
-                    batcher_addr,
-                    overhead: B256::ZERO,
-                    scalar,
-                    gas_limit,
-                },
-            },
-            block_time: rollup_config.block_time,
-            deposit_contract_address: rollup_config.deposit_contract_address,
-            l1_system_config_address: rollup_config.l1_system_config_address,
-        };
-        per_chain.force_defaults();
-        per_chain.hash()
+                block_time: rollup_config.block_time,
+                deposit_contract_address: rollup_config.deposit_contract_address,
+                l1_system_config_address: rollup_config.l1_system_config_address,
+            };
+            per_chain.force_defaults();
+            per_chain.hash()
+        })
     }
 }
 
@@ -488,13 +320,16 @@ mod tests {
     use alloy_primitives::{
         Address, LogData, Signature as PrimitiveSignature, TxKind, U256, address, b256,
     };
-    use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader};
+    use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader, TransactionReceipt};
+    use async_trait::async_trait;
     use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
-    use base_enclave::{AccountResult, default_rollup_config};
+    use base_enclave::{AccountResult, ExecutionWitness, Proposal, default_rollup_config};
+    use base_enclave_client::ClientError;
     use base_proof_contracts::{GameAtIndex, GameInfo};
+    use base_proof_rpc::{L2Provider, OpBlock, RollupProvider, RpcResult};
     use base_protocol::L1BlockInfoBedrock;
+    use base_tee_prover::PROOF_TYPE_TEE;
     use jsonrpsee::core::client::Error as JrpcError;
-    use rstest::rstest;
 
     use super::*;
     use crate::CandidateGame;
@@ -528,7 +363,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl ChallengerEnclaveClient for MockEnclaveClient {
+    impl TeeExecutor for MockEnclaveClient {
         async fn execute_stateless(
             &self,
             req: ExecuteStatelessRequest,
@@ -649,7 +484,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl ChallengerL2Provider for MockChallengerL2Provider {
+    impl ExecutionWitnessProvider for MockChallengerL2Provider {
         async fn execution_witness(&self, _block_number: u64) -> RpcResult<ExecutionWitness> {
             self.witness.clone().ok_or_else(|| RpcError::BlockNotFound("no witness".into()))
         }
@@ -687,10 +522,7 @@ mod tests {
     }
 
     /// Creates a deposit transaction carrying L1 block info (Bedrock format).
-    ///
-    /// The returned `OpTransaction` can be placed as the first transaction in an
-    /// `OpBlock` so that `l2_block_to_block_info` can derive the L1 origin.
-    fn make_deposit_tx(l1_hash: B256, l1_number: u64) -> OpTransaction {
+    fn make_deposit_tx(l1_hash: B256, l1_number: u64) -> base_alloy_rpc_types::Transaction {
         let l1_info = L1BlockInfoBedrock::new(
             l1_number,
             1_700_000_000, // timestamp
@@ -717,7 +549,7 @@ mod tests {
         let sealed = deposit.seal_slow();
         let envelope = OpTxEnvelope::Deposit(sealed);
 
-        OpTransaction {
+        base_alloy_rpc_types::Transaction {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: alloy_consensus::transaction::Recovered::new_unchecked(
                     envelope,
@@ -774,21 +606,17 @@ mod tests {
 
     /// Builds fully-wired test fixtures: mock providers populated with
     /// consistent block, header, proof, and witness data.
-    ///
-    /// Returns `(l2_provider, l1_provider, rollup_provider, l1_origin_hash)`.
     fn wired_providers(
         target_block_number: u64,
     ) -> (MockChallengerL2Provider, MockL1Provider, MockRollupProvider, B256) {
         let l1_origin_hash = B256::repeat_byte(0xEE);
         let l1_origin_number = 500u64;
 
-        // Target block (the one we re-execute)
         let parent_hash = B256::repeat_byte(0x22);
         let target_block =
             make_test_block(target_block_number, parent_hash, l1_origin_hash, l1_origin_number);
         let target_hash = target_block.header.hash;
 
-        // Previous block (parent of target)
         let prev_block = make_test_block(
             target_block_number - 1,
             B256::repeat_byte(0x33),
@@ -822,20 +650,18 @@ mod tests {
         l1_receipts.insert(l1_origin_hash, vec![]);
 
         let l1 = MockL1Provider { headers: l1_headers, receipts: l1_receipts };
-
         let rollup = MockRollupProvider { config: Some(default_rollup_config()) };
 
         (l2, l1, rollup, l1_origin_hash)
     }
 
     // ========================================================================
-    // Proof encoding tests
+    // Proof encoding tests (delegate to shared crate, tested there)
     // ========================================================================
 
     fn test_proposal(l1_hash: B256, l1_number: u64) -> Proposal {
-        // Build a 65-byte signature with v=0 (last byte) for valid encoding
         let mut sig = vec![0xAB; 65];
-        sig[64] = 0; // v-value = 0 (will be adjusted to 27)
+        sig[64] = 0;
         Proposal {
             output_root: B256::repeat_byte(0x11),
             signature: Bytes::from(sig),
@@ -847,84 +673,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_encode_proof_bytes_length() {
-        let proposal = test_proposal(B256::repeat_byte(0xCC), 500);
-        let proof =
-            TestGenerator::encode_proof_bytes(&proposal, B256::repeat_byte(0xCC), 500).unwrap();
-        assert_eq!(proof.len(), 130);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_type() {
-        let proposal = test_proposal(B256::repeat_byte(0xCC), 500);
-        let proof =
-            TestGenerator::encode_proof_bytes(&proposal, B256::repeat_byte(0xCC), 500).unwrap();
-        assert_eq!(proof[0], PROOF_TYPE_TEE);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_l1_origin_hash() {
-        let l1_hash = B256::repeat_byte(0xDD);
-        let proposal = test_proposal(l1_hash, 500);
-        let proof = TestGenerator::encode_proof_bytes(&proposal, l1_hash, 500).unwrap();
-        assert_eq!(&proof[1..33], l1_hash.as_slice());
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_l1_origin_number() {
-        let proposal = test_proposal(B256::ZERO, 12345);
-        let proof = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 12345).unwrap();
-        // Leading 24 bytes of the uint256 field (bytes 33-56) must be zero padding
-        assert_eq!(&proof[33..57], &[0u8; 24]);
-        // u64 is placed in bytes 57-64 (last 8 bytes of the 32-byte field)
-        let mut expected = [0u8; 8];
-        expected.copy_from_slice(&proof[57..65]);
-        assert_eq!(u64::from_be_bytes(expected), 12345);
-    }
-
-    #[rstest]
-    #[case::v_zero(0, 27)]
-    #[case::v_one(1, 28)]
-    #[case::v_27(27, 27)]
-    #[case::v_28(28, 28)]
-    fn test_encode_proof_bytes_v_adjustment(#[case] input_v: u8, #[case] expected_v: u8) {
-        let mut proposal = test_proposal(B256::ZERO, 0);
-        let mut sig = proposal.signature.to_vec();
-        sig[64] = input_v;
-        proposal.signature = Bytes::from(sig);
-
-        let proof = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 0).unwrap();
-        assert_eq!(proof[129], expected_v);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_invalid_v() {
-        let mut proposal = test_proposal(B256::ZERO, 0);
-        let mut sig = proposal.signature.to_vec();
-        sig[64] = 5;
-        proposal.signature = Bytes::from(sig);
-
-        let result = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 0);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unexpected ECDSA v-value"));
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_short_signature() {
-        let mut proposal = test_proposal(B256::ZERO, 0);
-        proposal.signature = Bytes::from(vec![0u8; 32]);
-
-        let result = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 0);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("signature too short"));
-    }
-
     // ========================================================================
     // Target block overflow tests
     // ========================================================================
 
-    /// Creates a generator with empty/no-op providers for arithmetic-only tests.
     fn generator_with_no_data() -> TestGenerator {
         TeeProofGenerator::new(
             Arc::new(MockEnclaveClient::new(Ok(test_proposal(B256::ZERO, 0)))),
@@ -937,8 +689,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_tee_proof_index_overflow() {
-        // invalid_index = usize::MAX → try_from succeeds (u64::MAX on 64-bit) but
-        // checked_add(1) overflows, returning DataPrep error before any RPC calls.
         let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
@@ -950,7 +700,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_tee_proof_mul_overflow() {
-        // (1 + 1) * (u64::MAX / 2 + 1) overflows in checked_mul
         let generator = generator_with_no_data();
         let game = test_candidate_game(0);
 
@@ -962,7 +711,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_tee_proof_add_overflow() {
-        // starting_block = u64::MAX - 50, (0 + 1) * 100 = 100 → overflows in checked_add
         let generator = generator_with_no_data();
         let game = test_candidate_game(u64::MAX - 50);
 
@@ -976,14 +724,13 @@ mod tests {
     // Transaction serialization tests
     // ========================================================================
 
-    /// Creates a non-deposit (EIP-1559) transaction for testing tx filtering.
-    fn make_eip1559_tx() -> OpTransaction {
+    fn make_eip1559_tx() -> base_alloy_rpc_types::Transaction {
         let tx = TxEip1559 { chain_id: 1, gas_limit: 21000, ..Default::default() };
         let sig = PrimitiveSignature::new(U256::from(1), U256::from(2), false);
         let signed = Signed::new_unchecked(tx, sig, B256::ZERO);
         let envelope = OpTxEnvelope::Eip1559(signed);
 
-        OpTransaction {
+        base_alloy_rpc_types::Transaction {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: alloy_consensus::transaction::Recovered::new_unchecked(
                     envelope,
@@ -1015,15 +762,12 @@ mod tests {
             withdrawals: None,
         };
 
-        // include_deposits=true: both transactions returned
-        let all_txs = TestGenerator::serialize_block_transactions(&block, true).unwrap();
+        let all_txs = TransactionSerializer::serialize_block_transactions(&block, true).unwrap();
         assert_eq!(all_txs.len(), 2);
 
-        // include_deposits=false: only the EIP-1559 tx (deposit is filtered out)
-        let sequenced_txs = TestGenerator::serialize_block_transactions(&block, false).unwrap();
+        let sequenced_txs =
+            TransactionSerializer::serialize_block_transactions(&block, false).unwrap();
         assert_eq!(sequenced_txs.len(), 1);
-
-        // Verify the non-deposit tx starts with EIP-1559 type byte (0x02)
         assert_eq!(sequenced_txs[0][0], 0x02);
     }
 
@@ -1205,7 +949,6 @@ mod tests {
         let enclave = Arc::new(MockEnclaveClient::new(Ok(test_proposal(B256::ZERO, 0))));
         let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
 
-        // Build a block with zero transactions
         let consensus_header =
             ConsensusHeader { number: target_block_number, ..Default::default() };
         let block_hash = consensus_header.hash_slow();
@@ -1236,7 +979,6 @@ mod tests {
         let target_block_number = 110u64;
         let (l2, l1, rollup, _) = wired_providers(target_block_number);
 
-        // Enclave client configured to fail
         let enclave = Arc::new(MockEnclaveClient::new(Err(ClientError::ClientCreation(
             "enclave down".into(),
         ))));
@@ -1262,7 +1004,6 @@ mod tests {
         let target_block_number = 110u64;
         let (l2, l1, rollup, l1_origin_hash) = wired_providers(target_block_number);
 
-        // Enclave returns a successful proposal with a valid signature
         let enclave = Arc::new(MockEnclaveClient::new(Ok(test_proposal(l1_origin_hash, 500))));
 
         let generator = TeeProofGenerator::new(
@@ -1281,22 +1022,13 @@ mod tests {
 
         // Verify 130-byte proof format
         assert_eq!(proof.len(), 130);
-
-        // Byte 0: proof type TEE
         assert_eq!(proof[0], PROOF_TYPE_TEE);
-
-        // Bytes 1-32: L1 origin hash
         assert_eq!(&proof[1..33], l1_origin_hash.as_slice());
-
-        // Bytes 33-56: leading 24 zero-padding bytes of the uint256 field
         assert_eq!(&proof[33..57], &[0u8; 24]);
 
-        // Bytes 57-64: L1 origin number (500) in last 8 bytes of the 32-byte field
         let mut number_bytes = [0u8; 8];
         number_bytes.copy_from_slice(&proof[57..65]);
         assert_eq!(u64::from_be_bytes(number_bytes), 500);
-
-        // Byte 129: v-value should be adjusted (0 → 27)
         assert_eq!(proof[129], 27);
 
         // Verify the enclave received a request with the correct target block number
@@ -1311,6 +1043,8 @@ mod tests {
 
     #[test]
     fn test_convert_receipts_preserves_log_data() {
+        use alloy_consensus::ReceiptEnvelope;
+
         let log_address = address!("2222222222222222222222222222222222222222");
         let log_data = LogData::new_unchecked(vec![], Bytes::from(vec![0x42]));
         let rpc_log = alloy_rpc_types_eth::Log {
@@ -1338,7 +1072,7 @@ mod tests {
             contract_address: None,
         };
 
-        let converted = TestGenerator::convert_receipts(vec![tx_receipt]);
+        let converted = ReceiptConverter::convert_receipts(vec![tx_receipt]);
         assert_eq!(converted.len(), 1);
 
         match &converted[0] {
@@ -1361,7 +1095,7 @@ mod tests {
         rollup.block_time = 2;
         rollup.l1_chain_id = 1;
 
-        let config = TestGenerator::build_chain_config(&rollup);
+        let config = ConfigBuilder::build_chain_config(&rollup, "base-challenger");
 
         assert_eq!(config.batch_inbox_addr, rollup.batch_inbox_address);
         assert_eq!(config.block_time, 2);

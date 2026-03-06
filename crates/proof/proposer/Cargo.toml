@@ -41,8 +41,9 @@ base-proof-rpc.workspace = true
 base-protocol.workspace = true
 
 # Enclave
-base-enclave-client.workspace = true
 base-enclave.workspace = true
+base-tee-prover.workspace = true
+base-enclave-client.workspace = true
 
 # Async
 tokio.workspace = true

@@ -4,36 +4,25 @@
 //! TEE-signed proposals for L2 block transitions.
 
 mod types;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use alloy_consensus::{Header, ReceiptEnvelope};
-use alloy_eips::{Typed2718, eip2718::Encodable2718};
-use alloy_primitives::{B256, BloomInput, Bytes};
-use alloy_rpc_types_eth::TransactionReceipt;
-use base_alloy_rpc_types::Transaction as OpTransaction;
+use alloy_consensus::Header;
+use alloy_primitives::{B256, BloomInput};
 use base_enclave::{
-    AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info,
-    output_root_v0_with_hash,
+    AggregateRequest, Proposal, RollupConfig, l2_block_to_block_info, output_root_v0_with_hash,
 };
 use base_enclave_client::ExecuteStatelessRequest;
 use base_proof_rpc::{L1BlockId, L1Provider, L2BlockRef, OpBlock};
 use base_protocol::Predeploys;
+use base_tee_prover::{ConfigBuilder, ENCLAVE_TIMEOUT, ReceiptConverter, TransactionSerializer};
 pub use types::ProverProposal;
 #[cfg(test)]
 pub(crate) use types::test_helpers;
 
-use crate::{
-    ProposerError,
-    enclave::{EnclaveClientTrait, PerChainConfig},
-    rpc::ProverL2Provider,
-};
+use crate::{ProposerError, enclave::EnclaveClientTrait, rpc::ProverL2Provider};
 
-/// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
-const DEPOSIT_TX_TYPE: u8 = 0x7E;
 /// Maximum number of missing trie nodes to fetch via `debug_dbGet` per proposal attempt.
 const MAX_MISSING_TRIE_NODE_REPAIRS: usize = 64;
-/// Timeout for enclave RPC calls (matches Go `PROPOSAL_TIMEOUT`).
-const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Prover for generating TEE-signed proposals.
 #[derive(Debug)]
@@ -68,7 +57,7 @@ where
     /// * `tee_image_hash` - The TEE image hash for the signed journal
     #[must_use]
     pub fn new(
-        mut config: PerChainConfig,
+        mut config: base_enclave::PerChainConfig,
         rollup_config: RollupConfig,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
@@ -120,7 +109,8 @@ where
             ProposerError::BlockInfoDerivation("no transactions in block".to_string())
         })?;
 
-        let first_tx_bytes = serialize_rpc_transaction(first_tx)?;
+        let first_tx_bytes = TransactionSerializer::serialize_rpc_transaction(first_tx)
+            .map_err(|e| ProposerError::TxSerialization(e.to_string()))?;
 
         // Derive L2 block info to get L1 origin
         let l2_block_info = l2_block_to_block_info(
@@ -163,13 +153,15 @@ where
         let msg_storage_hash = msg_account.storage_hash;
 
         // Serialize previous block transactions (all types including deposits)
-        let prev_block_txs = serialize_block_transactions(&prev_block, true)?;
+        let prev_block_txs = TransactionSerializer::serialize_block_transactions(&prev_block, true)
+            .map_err(|e| ProposerError::TxSerialization(e.to_string()))?;
 
         // Serialize current block transactions (excluding deposits)
-        let sequenced_txs = serialize_block_transactions(block, false)?;
+        let sequenced_txs = TransactionSerializer::serialize_block_transactions(block, false)
+            .map_err(|e| ProposerError::TxSerialization(e.to_string()))?;
 
-        let chain_config = build_chain_config(&self.rollup_config);
-        let l1_receipt_envelopes = convert_receipts(l1_receipts);
+        let chain_config = ConfigBuilder::build_chain_config(&self.rollup_config, "base-proposer");
+        let l1_receipt_envelopes = ReceiptConverter::convert_receipts(l1_receipts);
         let mut repairs = 0usize;
         let proposal = loop {
             // Clones here are acceptable: retries are rare (only on missing trie nodes)
@@ -231,11 +223,6 @@ where
                     }
 
                     // Missing header errors are not recoverable from the proposer side.
-                    // The enclave's executor needs all referenced headers in its
-                    // trie DB, and it looks them up by computing the hash from the
-                    // consensus header. If the executor version doesn't correctly hash
-                    // post-Pectra headers, this lookup will always fail regardless of
-                    // whether the header data is present.
                     if extract_missing_header_hash(&err_str).is_some() {
                         tracing::warn!(
                             block_number = block.header.number,
@@ -372,58 +359,6 @@ where
     }
 }
 
-/// Serializes an RPC transaction to EIP-2718 encoded bytes.
-///
-/// Extracts the `OpTxEnvelope` from the RPC transaction and encodes it.
-/// This handles both standard Ethereum transactions and OP Stack deposit transactions (type 0x7E).
-fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, ProposerError> {
-    let mut buf = Vec::new();
-    tx.as_ref().encode_2718(&mut buf);
-    Ok(Bytes::from(buf))
-}
-
-/// Serializes all transactions in a block to EIP-2718 encoded bytes.
-///
-/// # Arguments
-///
-/// * `block` - The block containing transactions
-/// * `include_deposits` - Whether to include deposit transactions
-fn serialize_block_transactions(
-    block: &OpBlock,
-    include_deposits: bool,
-) -> Result<Vec<Bytes>, ProposerError> {
-    block
-        .transactions
-        .txns()
-        .filter(|tx| include_deposits || !is_deposit_tx(tx))
-        .map(serialize_rpc_transaction)
-        .collect()
-}
-
-/// Checks if an RPC transaction is a deposit transaction.
-///
-/// Deposit transactions have type 0x7E (126).
-fn is_deposit_tx(tx: &OpTransaction) -> bool {
-    tx.ty() == DEPOSIT_TX_TYPE
-}
-
-/// Converts transaction receipts to receipt envelopes for the enclave.
-///
-/// This converts the RPC `ReceiptEnvelope<Log>` to consensus `ReceiptEnvelope`
-/// by mapping the log types.
-fn convert_receipts(receipts: Vec<TransactionReceipt>) -> Vec<ReceiptEnvelope> {
-    receipts.into_iter().map(|r| convert_receipt_envelope(r.inner)).collect()
-}
-
-/// Converts an RPC receipt envelope to a consensus receipt envelope.
-fn convert_receipt_envelope(
-    receipt: alloy_consensus::ReceiptEnvelope<alloy_rpc_types_eth::Log>,
-) -> ReceiptEnvelope {
-    // Map the receipt to convert logs from RPC Log to consensus Log
-    receipt
-        .map_logs(|log| alloy_primitives::Log { address: log.inner.address, data: log.inner.data })
-}
-
 /// Checks if a block has withdrawals by examining the logs bloom.
 ///
 /// Withdrawals are detected by checking if the `L2ToL1MessagePasser` address
@@ -432,43 +367,6 @@ fn check_withdrawals(header: &Header) -> bool {
     header
         .logs_bloom
         .contains_input(BloomInput::Raw(Predeploys::L2_TO_L1_MESSAGE_PASSER.as_slice()))
-}
-
-/// Builds the `base_consensus_genesis::ChainConfig` envelope expected by enclave RPC.
-fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
-    let mut config = ChainConfig {
-        name: "base-proposer".to_string(),
-        l1_chain_id: rollup_config.l1_chain_id,
-        public_rpc: String::new(),
-        sequencer_rpc: String::new(),
-        explorer: String::new(),
-        data_availability_type: "eth-da".to_string(),
-        chain_id: rollup_config.l2_chain_id.id(),
-        batch_inbox_addr: rollup_config.batch_inbox_address,
-        block_time: rollup_config.block_time,
-        seq_window_size: rollup_config.seq_window_size,
-        max_sequencer_drift: rollup_config.max_sequencer_drift,
-        gas_paying_token: None,
-        protocol_versions_addr: Some(rollup_config.protocol_versions_address),
-        hardfork_config: rollup_config.hardforks,
-        optimism: Some(rollup_config.chain_op_config),
-        genesis: rollup_config.genesis,
-        roles: None,
-        addresses: Some(Default::default()),
-    };
-
-    // These address fields are required by base_consensus_genesis::ChainConfig but are not
-    // consumed by the enclave — it only reads deposit_contract_address and
-    // l1_system_config_address from the PerChainConfig. The address_manager value
-    // is mapped to protocol_versions_address solely to satisfy the struct; the
-    // enclave discards it.
-    if let Some(addresses) = config.addresses.as_mut() {
-        addresses.address_manager = Some(rollup_config.protocol_versions_address);
-        addresses.optimism_portal_proxy = Some(rollup_config.deposit_contract_address);
-        addresses.system_config_proxy = Some(rollup_config.l1_system_config_address);
-    }
-
-    config
 }
 
 /// Extracts a missing header hash from enclave error text.
@@ -519,7 +417,9 @@ mod tests {
 
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
     use async_trait::async_trait;
+    use base_enclave::Proposal;
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_tee_prover::TeeExecutor;
     use rstest::rstest;
     use types::test_helpers::test_proposal;
 
@@ -542,13 +442,6 @@ mod tests {
     fn test_check_withdrawals_empty_bloom() {
         let header = Header { logs_bloom: Default::default(), ..Default::default() };
         assert!(!check_withdrawals(&header));
-    }
-
-    #[test]
-    fn test_deposit_tx_type_constant() {
-        // Verify the deposit transaction type constant is correct
-        assert_eq!(DEPOSIT_TX_TYPE, 0x7E);
-        assert_eq!(DEPOSIT_TX_TYPE, 126);
     }
 
     // --- extract_missing_trie_hash tests ---
@@ -593,37 +486,6 @@ mod tests {
         assert!(!check_withdrawals(&header));
     }
 
-    // --- convert_receipt_envelope test ---
-
-    #[test]
-    fn test_convert_receipt_envelope_preserves_log_data() {
-        use alloy_consensus::{Receipt, ReceiptWithBloom};
-
-        let log_address = alloy_primitives::address!("0x2222222222222222222222222222222222222222");
-        let log_data = alloy_primitives::LogData::new_unchecked(vec![], Bytes::from(vec![0x42]));
-        let rpc_log = alloy_rpc_types_eth::Log {
-            inner: alloy_primitives::Log { address: log_address, data: log_data.clone() },
-            ..Default::default()
-        };
-
-        let receipt =
-            Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![rpc_log] };
-
-        let envelope =
-            ReceiptEnvelope::Legacy(ReceiptWithBloom { receipt, logs_bloom: Default::default() });
-
-        let converted = convert_receipt_envelope(envelope);
-
-        match converted {
-            ReceiptEnvelope::Legacy(rwb) => {
-                assert_eq!(rwb.receipt.logs.len(), 1);
-                assert_eq!(rwb.receipt.logs[0].address, log_address);
-                assert_eq!(rwb.receipt.logs[0].data, log_data);
-            }
-            _ => panic!("Expected Legacy envelope"),
-        }
-    }
-
     // --- aggregate tests (via Prover::aggregate) ---
 
     /// Mock enclave client that returns a pre-configured aggregate result.
@@ -632,15 +494,21 @@ mod tests {
     }
 
     #[async_trait]
-    impl EnclaveClientTrait for MockEnclaveClient {
+    impl TeeExecutor for MockEnclaveClient {
         async fn execute_stateless(
             &self,
             _req: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!("not needed for aggregate tests")
         }
+    }
 
-        async fn aggregate(&self, _request: AggregateRequest) -> Result<Proposal, ClientError> {
+    #[async_trait]
+    impl EnclaveClientTrait for MockEnclaveClient {
+        async fn aggregate(
+            &self,
+            _request: base_enclave::AggregateRequest,
+        ) -> Result<Proposal, ClientError> {
             Ok(self.aggregate_result.clone())
         }
     }
@@ -737,14 +605,21 @@ mod tests {
     struct FailingEnclaveClient;
 
     #[async_trait]
-    impl EnclaveClientTrait for FailingEnclaveClient {
+    impl TeeExecutor for FailingEnclaveClient {
         async fn execute_stateless(
             &self,
             _: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-        async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
+    }
+
+    #[async_trait]
+    impl EnclaveClientTrait for FailingEnclaveClient {
+        async fn aggregate(
+            &self,
+            _: base_enclave::AggregateRequest,
+        ) -> Result<Proposal, ClientError> {
             Err(ClientError::ClientCreation("enclave aggregate failed".into()))
         }
     }
@@ -774,14 +649,21 @@ mod tests {
     struct SlowEnclaveClient;
 
     #[async_trait]
-    impl EnclaveClientTrait for SlowEnclaveClient {
+    impl TeeExecutor for SlowEnclaveClient {
         async fn execute_stateless(
             &self,
             _: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-        async fn aggregate(&self, _: AggregateRequest) -> Result<Proposal, ClientError> {
+    }
+
+    #[async_trait]
+    impl EnclaveClientTrait for SlowEnclaveClient {
+        async fn aggregate(
+            &self,
+            _: base_enclave::AggregateRequest,
+        ) -> Result<Proposal, ClientError> {
             tokio::time::sleep(Duration::from_secs(601)).await;
             Ok(zero_proposal())
         }
