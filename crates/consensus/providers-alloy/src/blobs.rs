@@ -2,8 +2,6 @@
 
 use std::{boxed::Box, string::ToString, vec::Vec};
 
-use tracing::warn;
-
 use alloy_eips::eip4844::{
     Blob, BlobTransactionSidecarItem, IndexedBlobHash, env_settings::EnvKzgSettings,
 };
@@ -11,6 +9,7 @@ use alloy_primitives::FixedBytes;
 use async_trait::async_trait;
 use base_consensus_derive::{BlobProvider, BlobProviderError};
 use base_protocol::BlockInfo;
+use tracing::warn;
 
 use crate::BeaconClient;
 #[cfg(feature = "metrics")]
