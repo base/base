@@ -15,7 +15,10 @@ use tokio::{
 };
 use tracing::{debug, info, trace, warn};
 
-use crate::{FlashblocksRingBuffer, client::ClientConnection, metrics::Metrics};
+use crate::{
+    FlashblockPosition, FlashblocksRingBuffer, PositionedMessage, client::ClientConnection,
+    metrics::Metrics,
+};
 
 fn get_message_size(msg: &Message) -> u64 {
     match msg {
@@ -28,7 +31,7 @@ fn get_message_size(msg: &Message) -> u64 {
 /// Manages broadcast subscriptions for connected WebSocket clients.
 #[derive(Clone, Debug)]
 pub struct Registry {
-    sender: Sender<Message>,
+    sender: Sender<PositionedMessage>,
     metrics: Arc<Metrics>,
     compressed: bool,
     ping_enabled: bool,
@@ -40,7 +43,7 @@ pub struct Registry {
 impl Registry {
     /// Creates a new registry with the given broadcast sender, configuration, and ring buffer.
     pub const fn new(
-        sender: Sender<Message>,
+        sender: Sender<PositionedMessage>,
         metrics: Arc<Metrics>,
         compressed: bool,
         ping_enabled: bool,
@@ -62,9 +65,9 @@ impl Registry {
     /// Subscribes a client to the broadcast channel and forwards matching messages.
     ///
     /// If the client has a `resume_position`, buffered entries after that position are sent
-    /// first. After replay the receiver is drained: entries whose bytes match the snapshot
-    /// are skipped (duplicates), while entries that arrived during replay are forwarded
-    /// (gap-fill). This avoids both duplicate delivery and a gap in coverage.
+    /// first. After replay the receiver is drained: entries whose position matches one
+    /// already sent are skipped (duplicates), while entries with a new position are
+    /// forwarded (gap-fill). This avoids both duplicate delivery and a gap in coverage.
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
@@ -84,12 +87,12 @@ impl Registry {
 
         // Replay ring buffer entries before joining the live stream.
         if let Some((bn, fi)) = resume_position {
-            let entries: Vec<Vec<u8>> = self
+            let entries: Vec<(Option<FlashblockPosition>, Vec<u8>)> = self
                 .ring_buffer
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
-                .entries_after(&(bn, fi))
-                .cloned()
+                .positioned_entries_after(&(bn, fi))
+                .map(|(pos, payload)| (pos.copied(), payload.clone()))
                 .collect();
             debug!(
                 client = %client_id,
@@ -98,7 +101,7 @@ impl Registry {
                 count = entries.len(),
                 "Replaying ring buffer entries to client"
             );
-            for payload in &entries {
+            for (_, payload) in &entries {
                 if !filter.matches(payload, compressed) {
                     continue;
                 }
@@ -127,21 +130,22 @@ impl Registry {
                 }
             }
 
-            // Drain messages that accumulated in the receiver during replay. The proxy
-            // pushes identical bytes to both the ring buffer and the channel, so byte
-            // equality reliably identifies duplicates. Entries not in the snapshot
-            // arrived after it was taken and are forwarded as gap-fill.
-            let replayed: HashSet<Vec<u8>> = entries.into_iter().collect();
+            // Drain messages that accumulated in the receiver during replay.
+            // Position-based deduplication is used instead of byte equality: it is
+            // cheaper (16 bytes per entry vs full payload clones) and semantically
+            // correct (identical content at different positions is not suppressed).
+            let replayed_positions: HashSet<FlashblockPosition> =
+                entries.into_iter().filter_map(|(pos, _)| pos).collect();
             loop {
                 match receiver.try_recv() {
-                    Ok(msg) => {
+                    Ok((pos, msg)) => {
+                        if pos.is_some_and(|p| replayed_positions.contains(&p)) {
+                            continue;
+                        }
                         let msg_bytes: &[u8] = match &msg {
                             Message::Binary(data) => data.as_ref(),
                             _ => &[],
                         };
-                        if replayed.contains(msg_bytes) {
-                            continue;
-                        }
                         if filter.matches(msg_bytes, compressed) {
                             let send_result =
                                 timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
@@ -184,7 +188,7 @@ impl Registry {
             tokio::select! {
                 broadcast_result = receiver.recv() => {
                     match broadcast_result {
-                        Ok(msg) => {
+                        Ok((_, msg)) => {
                             let msg_bytes = match &msg {
                                 Message::Binary(data) => data.as_ref(),
                                 _ => &[],

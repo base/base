@@ -59,6 +59,18 @@ impl<I: PartialOrd, V> RingBuffer<I, V> {
             .filter(move |e| e.position.as_ref().is_none_or(|p| p > position))
             .map(|e| &e.payload)
     }
+
+    /// Like [`entries_after`](Self::entries_after), but also yields each
+    /// entry's position alongside its payload.
+    pub fn positioned_entries_after<'a>(
+        &'a self,
+        position: &'a I,
+    ) -> impl Iterator<Item = (Option<&'a I>, &'a V)> + 'a {
+        self.entries
+            .iter()
+            .filter(move |e| e.position.as_ref().is_none_or(|p| p > position))
+            .map(|e| (e.position.as_ref(), &e.payload))
+    }
 }
 
 #[cfg(test)]

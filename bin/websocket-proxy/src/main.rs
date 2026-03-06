@@ -20,8 +20,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 use websocket_proxy::{
-    Authentication, FlashblocksRingBuffer, InMemoryRateLimit, Metrics, RateLimit, Registry, Server,
-    SubscriberOptions, WebsocketSubscriber,
+    Authentication, FlashblocksRingBuffer, InMemoryRateLimit, Metrics, PositionedMessage,
+    RateLimit, Registry, Server, SubscriberOptions, WebsocketSubscriber,
 };
 
 base_cli_utils::define_log_args!("WEBSOCKET_PROXY");
@@ -215,7 +215,7 @@ async fn main() {
 
     let ring_buffer = Arc::new(RwLock::new(FlashblocksRingBuffer::new(args.ring_buffer_capacity)));
 
-    let (send, _rec) = broadcast::channel(args.message_buffer_size);
+    let (send, _rec) = broadcast::channel::<PositionedMessage>(args.message_buffer_size);
     let sender = send.clone();
 
     let ring_buffer_listener = Arc::clone(&ring_buffer);
@@ -225,8 +225,8 @@ async fn main() {
         // to avoid the channel being closed. However this is not an active client connection.
         metrics_clone.active_connections.set((send.receiver_count() - 1) as f64);
 
-        // Build outgoing bytes and push to ring buffer before broadcasting.
-        // `pos` was already parsed by the subscriber; pass it directly to avoid a second parse.
+        // Build outgoing bytes. `pos` was already parsed by the subscriber;
+        // pass it directly to avoid a second parse.
         let message_data = if args.enable_compression {
             let mut compressed_data_bytes = Vec::new();
             {
@@ -234,26 +234,25 @@ async fn main() {
                     brotli::CompressorWriter::new(&mut compressed_data_bytes, 4096, 5, 22);
                 compressor.write_all(data.as_bytes()).unwrap();
             }
-            ring_buffer_listener
-                .write()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(pos, compressed_data_bytes.clone());
             compressed_data_bytes
         } else {
-            let bytes = data.into_bytes();
-            ring_buffer_listener
-                .write()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(pos, bytes.clone());
-            bytes
+            data.into_bytes()
         };
 
-        match send.send(message_data.into()) {
+        // Broadcast first so that live subscribers never miss a message that
+        // exists in the ring buffer. The ring buffer is then populated for
+        // reconnecting clients.
+        match send.send((pos, Message::Binary(message_data.clone().into()))) {
             Ok(_) => {
                 metrics_clone.broadcast_queue_size.set(send.len() as f64);
             }
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
+
+        ring_buffer_listener
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(pos, message_data);
     };
 
     let token = CancellationToken::new();
@@ -297,7 +296,7 @@ async fn main() {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        match ping_sender.send(Message::Ping(vec![].into())) {
+                        match ping_sender.send((None, Message::Ping(vec![].into()))) {
                             Ok(_) => {
                                 trace!(message = "sent ping to all clients");
                                 ping_metrics.broadcast_queue_size.set(ping_sender.len() as f64);

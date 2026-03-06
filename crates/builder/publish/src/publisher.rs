@@ -12,6 +12,12 @@ use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+/// Position of a flashblock entry in the stream.
+pub type FlashblockPosition = (u64, u64);
+
+/// A broadcast entry carrying an optional position alongside its payload.
+pub type PositionedPayload = (Option<FlashblockPosition>, Utf8Bytes);
+
 use crate::{Listener, PublisherMetrics, PublishingMetrics};
 
 /// Default broadcast channel capacity.
@@ -27,9 +33,9 @@ const DEFAULT_RING_BUFFER_CAPACITY: usize = 16;
 /// connections.
 pub struct WebSocketPublisher {
     cancel: CancellationToken,
-    pipe: broadcast::Sender<Utf8Bytes>,
+    pipe: broadcast::Sender<PositionedPayload>,
     metrics: Arc<dyn PublisherMetrics>,
-    ring_buffer: Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
 }
 
 impl WebSocketPublisher {
@@ -66,7 +72,7 @@ impl WebSocketPublisher {
             Listener::new(
                 listener,
                 Arc::clone(&metrics),
-                pipe.subscribe(),
+                pipe.clone(),
                 cancel.child_token(),
                 Arc::clone(&ring_buffer),
             )
@@ -76,8 +82,8 @@ impl WebSocketPublisher {
         Ok(Self { cancel, pipe, metrics, ring_buffer })
     }
 
-    /// Serializes the payload to JSON, stores it in the ring buffer keyed by
-    /// `(block_number, flashblock_index)`, then broadcasts to all connected subscribers.
+    /// Serializes the payload to JSON, broadcasts to all connected subscribers,
+    /// then stores it in the ring buffer keyed by `(block_number, flashblock_index)`.
     ///
     /// Reconnecting subscribers that supply `?block_number=N&flashblock_index=M` on
     /// their upgrade request will receive all buffered entries after that position
@@ -93,15 +99,18 @@ impl WebSocketPublisher {
         let serialized = serde_json::to_string(payload)?;
         let utf8_bytes = Utf8Bytes::from(serialized);
         let size = utf8_bytes.len();
+        let position = Some((block_number, flashblock_index));
+
+        // Broadcast first so that live subscribers never miss a message that
+        // exists in the ring buffer. A "no receivers" error is expected when
+        // no clients are connected and is safe to ignore.
+        let _ = self.pipe.send((position, utf8_bytes.clone()));
 
         self.ring_buffer
             .write()
             .unwrap_or_else(|e| e.into_inner())
-            .push(Some((block_number, flashblock_index)), utf8_bytes.clone());
+            .push(position, utf8_bytes);
 
-        self.pipe
-            .send(utf8_bytes)
-            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
         self.metrics.on_payload_size(size);
         Ok(size)
     }
@@ -189,7 +198,7 @@ mod tests {
     async fn publish_with_zero_subscribers_succeeds() {
         let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
 
-        // The listener task holds one receiver, so send should succeed.
+        // No active receivers; broadcast is silently ignored, ring buffer is populated.
         let result = publisher.publish(&serde_json::json!({"test": true}), 1, 0);
         assert!(result.is_ok());
     }
