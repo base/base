@@ -1,6 +1,6 @@
 # Batch Submitter
 
-[derivation spec]: derivation.md
+[derivation spec]: consensus/derivation.md
 
 ## Overview
 
