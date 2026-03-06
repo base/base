@@ -376,8 +376,8 @@ where
 mod tests {
     use std::collections::HashMap;
 
-    use alloy_consensus::{Header as ConsensusHeader, Sealable};
-    use alloy_primitives::{Address, TxKind, U256, address, b256};
+    use alloy_consensus::{Header as ConsensusHeader, Sealable, Signed, TxEip1559};
+    use alloy_primitives::{Address, Signature as PrimitiveSignature, TxKind, U256, address, b256};
     use alloy_rpc_types_eth::{Block, BlockTransactions, Header as RpcHeader};
     use base_alloy_consensus::TxDeposit;
     use base_enclave::{AccountResult, default_rollup_config};
@@ -861,9 +861,6 @@ mod tests {
 
     /// Creates a non-deposit (EIP-1559) transaction for testing tx filtering.
     fn make_eip1559_tx() -> OpTransaction {
-        use alloy_consensus::{Signed, TxEip1559};
-        use alloy_primitives::Signature as PrimitiveSignature;
-
         let tx = TxEip1559 { chain_id: 1, gas_limit: 21000, ..Default::default() };
         let sig = PrimitiveSignature::new(U256::from(1), U256::from(2), false);
         let signed = Signed::new_unchecked(tx, sig, B256::ZERO);
