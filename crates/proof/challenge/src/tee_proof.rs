@@ -1,7 +1,35 @@
 //! TEE-based nullification proof generation for the challenger.
 //!
 //! Re-executes a specific intermediate block inside a TEE to produce a
-//! nullification proof, proving that a claimed output root is wrong.
+//! nullification proof, proving that a claimed output root is wrong. This
+//! mirrors the proposer's use of `execute_stateless()` but for the inverse
+//! purpose: demonstrating that an onchain checkpoint is invalid.
+//!
+//! ## Extension traits
+//!
+//! - [`ChallengerL2Provider`] — extends [`L2Provider`] with
+//!   `debug_executionWitness` support required for proof generation.
+//! - [`ChallengerEnclaveClient`] — minimal enclave trait (only
+//!   `execute_stateless`, no `aggregate`) to keep the challenger decoupled
+//!   from the proposer crate. A blanket impl is provided for
+//!   [`EnclaveClient`](base_enclave_client::EnclaveClient).
+//!
+//! ## Proof format
+//!
+//! The 130-byte output matches the `AggregateVerifier` contract interface:
+//!
+//! | Offset | Length | Field |
+//! |--------|--------|-------|
+//! | 0      | 1      | Proof type (`0x00` = TEE) |
+//! | 1      | 32     | L1 origin block hash |
+//! | 33     | 32     | L1 origin block number (big-endian `uint256`) |
+//! | 65     | 65     | ECDSA signature (v-value adjusted to 27/28) |
+//!
+//! ## Availability
+//!
+//! TEE proof generation is gated behind the optional `--tee-endpoint` CLI
+//! flag (`CHALLENGER_TEE_ENDPOINT`). When the endpoint is not configured,
+//! the orchestrator skips TEE and falls back to ZK proof generation.
 
 use std::sync::Arc;
 
