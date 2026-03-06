@@ -1,5 +1,8 @@
-use core::fmt::Debug;
-use std::{sync::Arc, time::Instant};
+use core::{fmt::Debug, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
@@ -19,7 +22,7 @@ use base_execution_payload_builder::{
 use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use base_node_core::OpPayloadBuilderAttributes;
 use base_revm::{L1BlockInfo, OpSpecId};
-use base_txpool::estimated_da_size::DataAvailabilitySized;
+use base_txpool::{TimestampedTransaction, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -52,6 +55,7 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
             "block_uncompressed_size_exceeded"
         }
+        TxnExecutionError::MeteringDataPending => "metering_data_pending",
         TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 "tx_execution_time_exceeded"
@@ -168,6 +172,8 @@ pub struct OpPayloadBuilderCtx {
     pub max_uncompressed_block_size: Option<u64>,
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
+    /// Duration to wait for metering data before including a transaction.
+    pub metering_wait_duration: Option<Duration>,
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 }
@@ -526,6 +532,7 @@ impl OpPayloadBuilderCtx {
 
         while let Some(tx) = best_txs.next(()) {
             let tx_da_size = tx.estimated_da_size();
+            let tx_received_at_ms = tx.received_at();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -547,6 +554,22 @@ impl OpPayloadBuilderCtx {
             num_txs_considered += 1;
 
             let resource_usage = self.metering_provider.get(&tx_hash);
+
+            // Skip transactions that are too young and don't have metering data yet
+            if resource_usage.is_none()
+                && let Some(wait_duration) = self.metering_wait_duration {
+                    let now_ms = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
+                    if tx_age_ms < wait_duration.as_millis() {
+                        log_txn(Err(TxnExecutionError::MeteringDataPending));
+                        self.metrics.metering_data_pending_skip.increment(1);
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                }
 
             // Extract predicted execution and state root times from metering data
             let predicted_execution_time_us =

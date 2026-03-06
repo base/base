@@ -97,6 +97,9 @@ pub struct BuilderMetrics {
     /// Count of the number of times transactions did not have any metering information
     pub metering_unknown_transaction: Counter,
 
+    /// Transactions skipped because metering data has not yet arrived
+    pub metering_data_pending_skip: Counter,
+
     // === DA Size Limit Metrics (always enforced, operator-configured) ===
     /// Transactions rejected by per-tx DA size limit
     pub tx_da_size_exceeded_total: Counter,

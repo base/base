@@ -211,6 +211,7 @@ where
             block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
             max_uncompressed_block_size: self.config.max_uncompressed_block_size,
             execution_metering_mode: self.config.execution_metering_mode,
+            metering_wait_duration: self.config.metering_wait_duration,
             metering_provider: Arc::clone(&self.config.metering_provider),
         })
     }

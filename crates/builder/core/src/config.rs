@@ -54,6 +54,10 @@ pub struct BuilderConfig {
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
 
+    /// Duration to wait for metering data before including a transaction.
+    /// Transactions younger than this without metering data will be skipped.
+    pub metering_wait_duration: Option<Duration>,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 }
@@ -74,6 +78,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
             .field("execution_metering_mode", &self.execution_metering_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
+            .field("metering_wait_duration", &self.metering_wait_duration)
             .field("metering_provider", &self.metering_provider)
             .finish()
     }
@@ -95,6 +100,7 @@ impl Default for BuilderConfig {
             block_state_root_time_budget_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
+            metering_wait_duration: None,
             metering_provider: Arc::new(NoopMeteringProvider),
         }
     }
@@ -141,6 +147,16 @@ impl BuilderConfig {
         max_uncompressed_block_size: Option<u64>,
     ) -> Self {
         self.max_uncompressed_block_size = max_uncompressed_block_size;
+        self
+    }
+
+    /// Sets the metering wait duration.
+    #[must_use]
+    pub const fn with_metering_wait_duration(
+        mut self,
+        metering_wait_duration: Option<Duration>,
+    ) -> Self {
+        self.metering_wait_duration = metering_wait_duration;
         self
     }
 }
