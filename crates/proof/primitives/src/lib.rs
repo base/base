@@ -7,4 +7,7 @@ mod witness;
 pub use witness::WitnessBundle;
 
 mod proof;
-pub use proof::{ProofClaim, ProofEvidence, ProofResult};
+pub use proof::{ProofClaim, ProofEvidence, ProofRequest, ProofResult};
+
+mod prover;
+pub use prover::ProverBackend;

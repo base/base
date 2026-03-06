@@ -180,27 +180,12 @@ impl Host {
 
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
-        let l1_provider = rpc_provider(
-            self.config
-                .l1_node_address
-                .as_ref()
-                .ok_or_else(|| HostError::Custom("Provider must be set".into()))?,
-        )
-        .await?;
+        let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
-            self.config
-                .l1_beacon_address
-                .clone()
-                .ok_or_else(|| HostError::Custom("Beacon API URL must be set".into()))?,
+            self.config.prover.l1_beacon_url.clone(),
         ))
         .await;
-        let l2_provider = rpc_provider::<Base>(
-            self.config
-                .l2_node_address
-                .as_ref()
-                .ok_or_else(|| HostError::Custom("L2 node address must be set".into()))?,
-        )
-        .await?;
+        let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
     }

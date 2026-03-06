@@ -222,24 +222,24 @@ pub async fn handle_hint(
             let raw_header: Bytes = providers
                 .l2
                 .client()
-                .request("debug_getRawHeader", &[cfg.agreed_l2_head_hash])
+                .request("debug_getRawHeader", &[cfg.request.agreed_l2_head_hash])
                 .await?;
             let header = Header::decode(&mut raw_header.as_ref())?;
 
             let l2_to_l1_message_passer = providers
                 .l2
                 .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Default::default())
-                .block_id(cfg.agreed_l2_head_hash.into())
+                .block_id(cfg.request.agreed_l2_head_hash.into())
                 .await?;
 
             let output_root = OutputRoot::from_parts(
                 header.state_root,
                 l2_to_l1_message_passer.storage_hash,
-                cfg.agreed_l2_head_hash,
+                cfg.request.agreed_l2_head_hash,
             );
             let output_root_hash = output_root.hash();
 
-            if output_root_hash != cfg.agreed_l2_output_root {
+            if output_root_hash != cfg.request.agreed_l2_output_root {
                 return Err(HostError::OutputRootMismatch);
             }
 
@@ -349,7 +349,7 @@ pub async fn handle_hint(
             })?;
         }
         HintType::L2PayloadWitness => {
-            if !cfg.enable_experimental_witness_endpoint {
+            if !cfg.prover.enable_experimental_witness_endpoint {
                 warn!("L2PayloadWitness hint sent but payload witness is disabled, skipping");
                 return Ok(());
             }

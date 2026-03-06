@@ -43,3 +43,22 @@ pub struct ProofResult {
     /// The backend-specific evidence for this claim.
     pub evidence: ProofEvidence,
 }
+
+/// Per-proof parameters — which block to prove.
+///
+/// Maps 1:1 to `BootInfo` local preimage keys on the guest side.
+/// Changes every proof; the caller passes one per `prove_block()` call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProofRequest {
+    /// Hash of the L1 head block.
+    pub l1_head: B256,
+    /// Hash of the agreed-upon safe L2 block.
+    pub agreed_l2_head_hash: B256,
+    /// Agreed safe L2 output root to start derivation from.
+    pub agreed_l2_output_root: B256,
+    /// Claimed L2 output root to validate.
+    pub claimed_l2_output_root: B256,
+    /// L2 block number that the claimed output root commits to.
+    pub claimed_l2_block_number: u64,
+}

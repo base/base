@@ -4,7 +4,7 @@ mod error;
 pub use error::{HostError, Result};
 
 mod config;
-pub use config::{HostConfig, HostProviders};
+pub use config::{HostConfig, HostProviders, ProverConfig};
 
 mod host;
 pub use host::Host;
@@ -28,6 +28,9 @@ pub use recording::RecordingOracle;
 
 mod backend;
 pub use backend::{OfflineHostBackend, OnlineHostBackend};
+
+mod service;
+pub use service::{ProverError, ProverService};
 
 #[cfg(feature = "precompiles")]
 mod precompiles;
